@@ -508,3 +508,532 @@ class TestInnerGetResponseStreaming:
         
         # Should return a ResponseStream
         assert response_stream is not None
+
+
+class TestParseContentsFromAnthropic:
+    """Tests for parsing content blocks from Anthropic."""
+    
+    def test_parse_contents_mcp_tool_use(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing MCP tool use content."""
+        client = create_test_client(mock_anthropic_client)
+        
+        # Create mock MCP tool use block
+        mock_block = MagicMock()
+        mock_block.type = "mcp_tool_use"
+        mock_block.id = "call_123"
+        mock_block.name = "test_tool"
+        mock_block.input = {"arg": "value"}
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "mcp_server_tool_call"
+    
+    def test_parse_contents_code_execution_tool(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing code execution tool use."""
+        client = create_test_client(mock_anthropic_client)
+        
+        # Create mock code execution tool use block
+        mock_block = MagicMock()
+        mock_block.type = "tool_use"
+        mock_block.id = "call_456"
+        mock_block.name = "code_execution_tool"
+        mock_block.input = "print('hello')"
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "code_interpreter_tool_call"
+    
+    def test_parse_contents_mcp_tool_result_list_content(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing MCP tool result with list content."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_123", "test_tool")
+        
+        # Create mock MCP tool result with list content
+        mock_text_block = MagicMock()
+        mock_text_block.type = "text"
+        mock_text_block.text = "Result text"
+        
+        mock_block = MagicMock()
+        mock_block.type = "mcp_tool_result"
+        mock_block.tool_use_id = "call_123"
+        mock_block.content = [mock_text_block]
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "mcp_server_tool_result"
+    
+    def test_parse_contents_mcp_tool_result_string_content(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing MCP tool result with string content."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_123", "test_tool")
+        
+        # Create mock MCP tool result with string content
+        mock_block = MagicMock()
+        mock_block.type = "mcp_tool_result"
+        mock_block.tool_use_id = "call_123"
+        mock_block.content = "Simple string result"
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "mcp_server_tool_result"
+    
+    def test_parse_contents_mcp_tool_result_bytes_content(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing MCP tool result with bytes content."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_123", "test_tool")
+        
+        # Create mock MCP tool result with bytes content
+        mock_block = MagicMock()
+        mock_block.type = "mcp_tool_result"
+        mock_block.tool_use_id = "call_123"
+        mock_block.content = b"Binary data"
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "mcp_server_tool_result"
+    
+    def test_parse_contents_mcp_tool_result_object_content(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing MCP tool result with object content."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_123", "test_tool")
+        
+        # Create mock MCP tool result with object content
+        mock_content_obj = MagicMock()
+        mock_content_obj.type = "text"
+        mock_content_obj.text = "Object content"
+        
+        mock_block = MagicMock()
+        mock_block.type = "mcp_tool_result"
+        mock_block.tool_use_id = "call_123"
+        mock_block.content = mock_content_obj
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "mcp_server_tool_result"
+    
+    def test_parse_contents_web_search_tool_result(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing web search tool result."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_789", "web_search")
+        
+        # Create mock web search tool result
+        mock_block = MagicMock()
+        mock_block.type = "web_search_tool_result"
+        mock_block.tool_use_id = "call_789"
+        mock_block.content = "Search results"
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "function_result"
+    
+    def test_parse_contents_web_fetch_tool_result(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing web fetch tool result."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_101", "web_fetch")
+        
+        # Create mock web fetch tool result
+        mock_block = MagicMock()
+        mock_block.type = "web_fetch_tool_result"
+        mock_block.tool_use_id = "call_101"
+        mock_block.content = "Fetched content"
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "function_result"
+
+
+class TestCodeExecutionResults:
+    """Tests for code execution tool result parsing."""
+    
+    def test_parse_code_execution_result_with_error(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing code execution result with error."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_code1", "code_execution_tool")
+        
+        # Create mock code execution result with error
+        mock_block = MagicMock()
+        mock_block.type = "code_execution_tool_result"
+        mock_block.tool_use_id = "call_code1"
+        mock_block.result = MagicMock()
+        mock_block.result.type = "error"
+        mock_block.result.error = "Syntax error"
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "code_interpreter_tool_result"
+    
+    def test_parse_code_execution_result_with_stdout(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing code execution result with stdout."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_code2", "code_execution_tool")
+        
+        # Create mock code execution result with stdout
+        mock_block = MagicMock()
+        mock_block.type = "code_execution_tool_result"
+        mock_block.tool_use_id = "call_code2"
+        mock_block.result = MagicMock()
+        mock_block.result.type = "success"
+        mock_block.result.stdout = "Hello, world!"
+        mock_block.result.stderr = None
+        mock_block.result.file_outputs = []
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "code_interpreter_tool_result"
+    
+    def test_parse_code_execution_result_with_stderr(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing code execution result with stderr."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_code3", "code_execution_tool")
+        
+        # Create mock code execution result with stderr
+        mock_block = MagicMock()
+        mock_block.type = "code_execution_tool_result"
+        mock_block.tool_use_id = "call_code3"
+        mock_block.result = MagicMock()
+        mock_block.result.type = "success"
+        mock_block.result.stdout = None
+        mock_block.result.stderr = "Warning message"
+        mock_block.result.file_outputs = []
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "code_interpreter_tool_result"
+    
+    def test_parse_code_execution_result_with_files(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing code execution result with file outputs."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_code4", "code_execution_tool")
+        
+        # Create mock file output
+        mock_file = MagicMock()
+        mock_file.file_id = "file_123"
+        
+        # Create mock code execution result with files
+        mock_block = MagicMock()
+        mock_block.type = "code_execution_tool_result"
+        mock_block.tool_use_id = "call_code4"
+        mock_block.result = MagicMock()
+        mock_block.result.type = "success"
+        mock_block.result.stdout = None
+        mock_block.result.stderr = None
+        mock_block.result.file_outputs = [mock_file]
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "code_interpreter_tool_result"
+
+
+
+
+
+class TestBashExecutionResults:
+    """Tests for bash code execution tool result parsing."""
+    
+    def test_parse_bash_execution_result_with_stdout(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing bash execution result with stdout."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_bash2", "bash_code_execution")
+        
+        # Create mock bash execution result with stdout
+        mock_content = MagicMock()
+        mock_content.stdout = "Output text"
+        mock_content.stderr = None
+        mock_content.content = []
+        
+        mock_block = MagicMock()
+        mock_block.type = "bash_code_execution_tool_result"
+        mock_block.tool_use_id = "call_bash2"
+        mock_block.content = mock_content
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "function_result"
+    
+    def test_parse_bash_execution_result_with_stderr(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing bash execution result with stderr."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_bash3", "bash_code_execution")
+        
+        # Create mock bash execution result with stderr
+        mock_content = MagicMock()
+        mock_content.stdout = None
+        mock_content.stderr = "Error output"
+        mock_content.content = []
+        
+        mock_block = MagicMock()
+        mock_block.type = "bash_code_execution_tool_result"
+        mock_block.tool_use_id = "call_bash3"
+        mock_block.content = mock_content
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "function_result"
+
+
+class TestStreamEventParsing:
+    """Tests for stream event parsing with usage details."""
+    
+    def test_parse_usage_with_cache_tokens(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing usage with cache creation and read tokens."""
+        client = create_test_client(mock_anthropic_client)
+        
+        # Create mock usage with cache tokens
+        mock_usage = MagicMock()
+        mock_usage.input_tokens = 100
+        mock_usage.output_tokens = 50
+        mock_usage.cache_creation_input_tokens = 20
+        mock_usage.cache_read_input_tokens = 30
+        
+        result = client._parse_usage_from_anthropic(mock_usage)
+        
+        assert result is not None
+        assert result["output_token_count"] == 50
+        assert result["input_token_count"] == 100
+        assert result["anthropic.cache_creation_input_tokens"] == 20
+        assert result["anthropic.cache_read_input_tokens"] == 30
+
+
+class TestTextEditorResults:
+    """Tests for text editor code execution tool result parsing."""
+    
+    def test_parse_text_editor_result_error(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing text editor result with error."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_editor1", "text_editor_code_execution")
+        
+        # Create mock text editor result with error
+        mock_content = MagicMock()
+        mock_content.type = "text_editor_code_execution_tool_result_error"
+        mock_content.error = "File not found"
+        
+        mock_block = MagicMock()
+        mock_block.type = "text_editor_code_execution_tool_result"
+        mock_block.tool_use_id = "call_editor1"
+        mock_block.content = mock_content
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "function_result"
+    
+    def test_parse_text_editor_result_view(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing text editor view result."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_editor2", "text_editor_code_execution")
+        
+        # Create mock text editor view result
+        mock_annotation = MagicMock()
+        mock_annotation.start_line = 10
+        mock_annotation.num_lines = 5
+        
+        mock_content = MagicMock()
+        mock_content.type = "text_editor_code_execution_tool_result_view"
+        mock_content.view = "File content"
+        mock_content.annotations = [mock_annotation]
+        
+        mock_block = MagicMock()
+        mock_block.type = "text_editor_code_execution_tool_result"
+        mock_block.tool_use_id = "call_editor2"
+        mock_block.content = mock_content
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "function_result"
+    
+    def test_parse_text_editor_result_str_replace(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing text editor string replace result."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_editor3", "text_editor_code_execution")
+        
+        # Create mock text editor str_replace result
+        mock_content = MagicMock()
+        mock_content.type = "text_editor_code_execution_tool_result_str_replace"
+        mock_content.old_str = "old text"
+        mock_content.new_str = "new text"
+        mock_content.old_str_line_range = [5, 10]
+        mock_content.new_str_line_range = [5, 11]
+        
+        mock_block = MagicMock()
+        mock_block.type = "text_editor_code_execution_tool_result"
+        mock_block.tool_use_id = "call_editor3"
+        mock_block.content = mock_content
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "function_result"
+    
+    def test_parse_text_editor_result_file_create(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing text editor file create result."""
+        client = create_test_client(mock_anthropic_client)
+        client._last_call_id_name = ("call_editor4", "text_editor_code_execution")
+        
+        # Create mock text editor create/insert result
+        mock_content = MagicMock()
+        mock_content.type = "text_editor_code_execution_tool_result_create_or_insert"
+        mock_content.file_created = True
+        
+        mock_block = MagicMock()
+        mock_block.type = "text_editor_code_execution_tool_result"
+        mock_block.tool_use_id = "call_editor4"
+        mock_block.content = mock_content
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "function_result"
+
+
+class TestThinkingBlocks:
+    """Tests for thinking block parsing."""
+    
+    def test_parse_thinking_block(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing thinking content block."""
+        client = create_test_client(mock_anthropic_client)
+        
+        # Create mock thinking block
+        mock_block = MagicMock()
+        mock_block.type = "thinking"
+        mock_block.thinking = "Let me think about this..."
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "text_reasoning"
+    
+    def test_parse_thinking_delta_block(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing thinking delta content block."""
+        client = create_test_client(mock_anthropic_client)
+        
+        # Create mock thinking delta block  
+        mock_block = MagicMock()
+        mock_block.type = "thinking_delta"
+        mock_block.thinking = "more thinking..."
+        
+        result = client._parse_contents_from_anthropic([mock_block])
+        
+        assert len(result) == 1
+        assert result[0].type == "text_reasoning"
+
+
+class TestCitations:
+    """Tests for citation parsing."""
+    
+    def test_parse_citations_char_location(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing citations with char_location."""
+        client = create_test_client(mock_anthropic_client)
+        
+        # Create mock text block with citations
+        mock_citation = MagicMock()
+        mock_citation.type = "char_location"
+        mock_citation.title = "Source Title"
+        mock_citation.snippet = "Citation snippet"
+        mock_citation.start_char_index = 0
+        mock_citation.end_char_index = 10
+        mock_citation.file_id = None
+        
+        mock_block = MagicMock()
+        mock_block.type = "text"
+        mock_block.text = "Text with citation"
+        mock_block.citations = [mock_citation]
+        
+        result = client._parse_citations_from_anthropic(mock_block)
+        
+        assert len(result) > 0
+    
+    def test_parse_citations_page_location(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing citations with page_location."""
+        client = create_test_client(mock_anthropic_client)
+        
+        # Create mock citation with page location
+        mock_citation = MagicMock()
+        mock_citation.type = "page_location"
+        mock_citation.document_title = "Document Title"
+        mock_citation.start_page_number = 1
+        mock_citation.end_page_number = 3
+        mock_citation.file_id = None
+        
+        mock_block = MagicMock()
+        mock_block.type = "text"
+        mock_block.text = "Text with page citation"
+        mock_block.citations = [mock_citation]
+        
+        result = client._parse_citations_from_anthropic(mock_block)
+        
+        assert len(result) > 0
+    
+    def test_parse_citations_content_block_location(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing citations with content_block_location."""
+        client = create_test_client(mock_anthropic_client)
+        
+        # Create mock citation with content block location
+        mock_citation = MagicMock()
+        mock_citation.type = "content_block_location"
+        mock_citation.start_content_block_index = 0
+        mock_citation.end_content_block_index = 2
+        mock_citation.file_id = None
+        
+        mock_block = MagicMock()
+        mock_block.type = "text"
+        mock_block.text = "Text with block citation"
+        mock_block.citations = [mock_citation]
+        
+        result = client._parse_citations_from_anthropic(mock_block)
+        
+        assert len(result) > 0
+    
+    def test_parse_citations_web_search_location(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing citations with web_search_result_location."""
+        client = create_test_client(mock_anthropic_client)
+        
+        # Create mock citation with web search location
+        mock_citation = MagicMock()
+        mock_citation.type = "web_search_result_location"
+        mock_citation.url = "https://example.com"
+        mock_citation.file_id = None
+        
+        mock_block = MagicMock()
+        mock_block.type = "text"
+        mock_block.text = "Text with web citation"
+        mock_block.citations = [mock_citation]
+        
+        result = client._parse_citations_from_anthropic(mock_block)
+        
+        assert len(result) > 0
+    
+    def test_parse_citations_search_result_location(self, mock_anthropic_client: MagicMock) -> None:
+        """Test parsing citations with search_result_location."""
+        client = create_test_client(mock_anthropic_client)
+        
+        # Create mock citation with search result location
+        mock_citation = MagicMock()
+        mock_citation.type = "search_result_location"
+        mock_citation.source = "https://source.com"
+        mock_citation.start_content_block_index = 0
+        mock_citation.end_content_block_index = 1
+        mock_citation.file_id = None
+        
+        mock_block = MagicMock()
+        mock_block.type = "text"
+        mock_block.text = "Text with search citation"
+        mock_block.citations = [mock_citation]
+        
+        result = client._parse_citations_from_anthropic(mock_block)
+        
+        assert len(result) > 0

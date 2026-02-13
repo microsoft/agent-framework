@@ -33,9 +33,9 @@ ENFORCED_MODULES: set[str] = {
     "packages.core.agent_framework",
     "packages.core.agent_framework._workflows",
     "packages.purview.agent_framework_purview",
+    "packages.anthropic.agent_framework_anthropic",
     # Add more modules here as coverage improves:
     # "packages.azure-ai-search.agent_framework_azure_ai_search",
-    # "packages.anthropic.agent_framework_anthropic",
 }
 
 
