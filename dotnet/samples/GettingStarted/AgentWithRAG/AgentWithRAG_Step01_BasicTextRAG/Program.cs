@@ -18,9 +18,12 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? th
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 var embeddingDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-3-large";
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AzureOpenAIClient azureOpenAIClient = new(
     new Uri(endpoint),
-    new AzureCliCredential());
+    new DefaultAzureCredential());
 
 // Create an In-Memory vector store that uses the Azure OpenAI embedding model to generate embeddings.
 VectorStore vectorStore = new InMemoryVectorStore(new()

@@ -81,6 +81,61 @@ __all__ = [
 ]
 
 
+def _parse_prompt_result_from_mcp(
+    mcp_type: types.GetPromptResult,
+) -> str:
+    """Parse an MCP GetPromptResult directly into a string representation.
+
+    Converts each message in the prompt result to its string form and combines them.
+
+    Args:
+        mcp_type: The MCP GetPromptResult object to convert.
+
+    Returns:
+        A string representation of the prompt result.
+    """
+    import json
+
+    parts: list[str] = []
+    for message in mcp_type.messages:
+        content = message.content
+        if isinstance(content, types.TextContent):
+            parts.append(content.text)
+        elif isinstance(content, (types.ImageContent, types.AudioContent)):
+            parts.append(
+                json.dumps(
+                    {
+                        "type": "image" if isinstance(content, types.ImageContent) else "audio",
+                        "data": content.data,
+                        "mimeType": content.mimeType,
+                    },
+                    default=str,
+                )
+            )
+        elif isinstance(content, types.EmbeddedResource):
+            match content.resource:
+                case types.TextResourceContents():
+                    parts.append(content.resource.text)
+                case types.BlobResourceContents():
+                    parts.append(
+                        json.dumps(
+                            {
+                                "type": "blob",
+                                "data": content.resource.blob,
+                                "mimeType": content.resource.mimeType,
+                            },
+                            default=str,
+                        )
+                    )
+        else:
+            parts.append(str(content))
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    return json.dumps(parts, default=str)
+
+
 def _parse_message_from_mcp(
     mcp_type: types.PromptMessage | types.SamplingMessage,
 ) -> Message:
@@ -92,54 +147,71 @@ def _parse_message_from_mcp(
     )
 
 
-def _parse_contents_from_mcp_tool_result(
+def _parse_tool_result_from_mcp(
     mcp_type: types.CallToolResult,
-) -> list[Content]:
-    """Parse an MCP CallToolResult into Agent Framework content types.
+) -> str:
+    """Parse an MCP CallToolResult directly into a string representation.
 
-    This function extracts the complete _meta field from CallToolResult objects
-    and merges all metadata into the additional_properties field of converted
-    content items.
-
-    Note: The _meta field from CallToolResult is applied to ALL content items
-    in the result, as the Agent Framework's content model doesn't have a
-    result-level metadata container. This ensures metadata is preserved but
-    means it will be duplicated across multiple content items if present.
+    Converts each content item in the MCP result to its string form and combines them.
+    This skips the intermediate Content object step for tool results.
 
     Args:
         mcp_type: The MCP CallToolResult object to convert.
 
     Returns:
-        A list of Agent Framework content items with metadata merged into
-        additional_properties.
+        A string representation of the tool result — either plain text or serialized JSON.
     """
-    meta_data = mcp_type.meta
+    import json
 
-    # Prepare merged metadata once if present
-    merged_meta_props = None
-    if meta_data:
-        merged_meta_props = {}
-        if hasattr(meta_data, "__dict__"):
-            merged_meta_props.update(meta_data.__dict__)
-        elif isinstance(meta_data, dict):
-            merged_meta_props.update(meta_data)
-        else:
-            merged_meta_props["_meta"] = meta_data
-
-    # Convert each content item and merge metadata
-    result_contents = []
+    parts: list[str] = []
     for item in mcp_type.content:
-        contents = _parse_content_from_mcp(item)
-
-        if merged_meta_props:
-            for content in contents:
-                existing_props = getattr(content, "additional_properties", None) or {}
-                # Merge with content-specific properties, letting content-specific props override
-                final_props = merged_meta_props.copy()
-                final_props.update(existing_props)
-                content.additional_properties = final_props
-        result_contents.extend(contents)
-    return result_contents
+        match item:
+            case types.TextContent():
+                parts.append(item.text)
+            case types.ImageContent() | types.AudioContent():
+                parts.append(
+                    json.dumps(
+                        {
+                            "type": "image" if isinstance(item, types.ImageContent) else "audio",
+                            "data": item.data,
+                            "mimeType": item.mimeType,
+                        },
+                        default=str,
+                    )
+                )
+            case types.ResourceLink():
+                parts.append(
+                    json.dumps(
+                        {
+                            "type": "resource_link",
+                            "uri": str(item.uri),
+                            "mimeType": item.mimeType,
+                        },
+                        default=str,
+                    )
+                )
+            case types.EmbeddedResource():
+                match item.resource:
+                    case types.TextResourceContents():
+                        parts.append(item.resource.text)
+                    case types.BlobResourceContents():
+                        parts.append(
+                            json.dumps(
+                                {
+                                    "type": "blob",
+                                    "data": item.resource.blob,
+                                    "mimeType": item.resource.mimeType,
+                                },
+                                default=str,
+                            )
+                        )
+            case _:
+                parts.append(str(item))
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    return json.dumps(parts, default=str)
 
 
 def _parse_content_from_mcp(
@@ -344,9 +416,9 @@ class MCPTool:
         approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         load_tools: bool = True,
-        parse_tool_results: Literal[True] | Callable[[types.CallToolResult], Any] | None = True,
+        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
         load_prompts: bool = True,
-        parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
+        parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         session: ClientSession | None = None,
         request_timeout: int | None = None,
         client: SupportsChatGetResponse | None = None,
@@ -357,6 +429,30 @@ class MCPTool:
         Note:
             Do not use this method, use one of the subclasses: MCPStreamableHTTPTool, MCPWebsocketTool
             or MCPStdioTool.
+
+        Args:
+            name: The name of the MCP tool.
+            description: A description of the MCP tool.
+            approval_mode: Whether approval is required to run tools.
+            allowed_tools: A collection of tool names to allow.
+            load_tools: Whether to load tools from the MCP server.
+            parse_tool_results: An optional callable with signature
+                ``Callable[[types.CallToolResult], str]`` that overrides the default result
+                parsing. When ``None`` (the default), the built-in parser converts MCP types
+                directly to a string. If you need per-function result parsing, access the
+                ``.functions`` list after connecting and set ``result_parser`` on individual
+                ``FunctionTool`` instances.
+            load_prompts: Whether to load prompts from the MCP server.
+            parse_prompt_results: An optional callable with signature
+                ``Callable[[types.GetPromptResult], str]`` that overrides the default prompt
+                result parsing. When ``None`` (the default), the built-in parser converts
+                MCP prompt results to a string. If you need per-function result parsing,
+                access the ``.functions`` list after connecting and set ``result_parser`` on
+                individual ``FunctionTool`` instances.
+            session: An existing MCP client session to use.
+            request_timeout: Timeout in seconds for MCP requests.
+            client: A chat client for sampling callbacks.
+            additional_properties: Additional properties for the tool.
         """
         self.name = name
         self.description = description or ""
@@ -371,7 +467,7 @@ class MCPTool:
         self.session = session
         self.request_timeout = request_timeout
         self.client = client
-        self._functions: list[FunctionTool[Any, Any]] = []
+        self._functions: list[FunctionTool[Any]] = []
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
@@ -380,7 +476,7 @@ class MCPTool:
         return f"MCPTool(name={self.name}, description={self.description})"
 
     @property
-    def functions(self) -> list[FunctionTool[Any, Any]]:
+    def functions(self) -> list[FunctionTool[Any]]:
         """Get the list of functions that are allowed."""
         if not self.allowed_tools:
             return self._functions
@@ -648,7 +744,7 @@ class MCPTool:
 
                 input_model = _get_input_model_from_mcp_prompt(prompt)
                 approval_mode = self._determine_approval_mode(local_name)
-                func: FunctionTool[BaseModel, list[Message] | Any | types.GetPromptResult] = FunctionTool(
+                func: FunctionTool[BaseModel] = FunctionTool(
                     func=partial(self.get_prompt, prompt.name),
                     name=local_name,
                     description=prompt.description or "",
@@ -692,7 +788,7 @@ class MCPTool:
                 input_model = _get_input_model_from_mcp_tool(tool)
                 approval_mode = self._determine_approval_mode(local_name)
                 # Create FunctionTools out of each tool
-                func: FunctionTool[BaseModel, list[Content] | Any | types.CallToolResult] = FunctionTool(
+                func: FunctionTool[BaseModel] = FunctionTool(
                     func=partial(self.call_tool, tool.name),
                     name=local_name,
                     description=tool.description or "",
@@ -746,7 +842,7 @@ class MCPTool:
                     inner_exception=ex,
                 ) from ex
 
-    async def call_tool(self, tool_name: str, **kwargs: Any) -> list[Content] | Any | types.CallToolResult:
+    async def call_tool(self, tool_name: str, **kwargs: Any) -> str:
         """Call a tool with the given arguments.
 
         Args:
@@ -756,7 +852,7 @@ class MCPTool:
             kwargs: Arguments to pass to the tool.
 
         Returns:
-            A list of content items returned by the tool.
+            A string representation of the tool result — either plain text or serialized JSON.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected, tools are not loaded,
@@ -776,20 +872,25 @@ class MCPTool:
             k: v
             for k, v in kwargs.items()
             if k
-            not in {"chat_options", "tools", "tool_choice", "thread", "conversation_id", "options", "response_format"}
+            not in {
+                "chat_options",
+                "tools",
+                "tool_choice",
+                "session",
+                "thread",
+                "conversation_id",
+                "options",
+                "response_format",
+            }
         }
+
+        parser = self.parse_tool_results or _parse_tool_result_from_mcp
 
         # Try the operation, reconnecting once if the connection is closed
         for attempt in range(2):
             try:
                 result = await self.session.call_tool(tool_name, arguments=filtered_kwargs)  # type: ignore
-                if self.parse_tool_results is None:
-                    return result
-                if self.parse_tool_results is True:
-                    return _parse_contents_from_mcp_tool_result(result)
-                if callable(self.parse_tool_results):
-                    return self.parse_tool_results(result)
-                return result
+                return parser(result)
             except ClosedResourceError as cl_ex:
                 if attempt == 0:
                     # First attempt failed, try reconnecting
@@ -815,7 +916,7 @@ class MCPTool:
                 raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
         raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
 
-    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> list[Message] | Any | types.GetPromptResult:
+    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> str:
         """Call a prompt with the given arguments.
 
         Args:
@@ -825,7 +926,7 @@ class MCPTool:
             kwargs: Arguments to pass to the prompt.
 
         Returns:
-            A list of chat messages returned by the prompt.
+            A string representation of the prompt result — either plain text or serialized JSON.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected, prompts are not loaded,
@@ -836,17 +937,13 @@ class MCPTool:
                 "Prompts are not loaded for this server, please set load_prompts=True in the constructor."
             )
 
+        parser = self.parse_prompt_results or _parse_prompt_result_from_mcp
+
         # Try the operation, reconnecting once if the connection is closed
         for attempt in range(2):
             try:
                 prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
-                if self.parse_prompt_results is None:
-                    return prompt_result
-                if self.parse_prompt_results is True:
-                    return [_parse_message_from_mcp(message) for message in prompt_result.messages]
-                if callable(self.parse_prompt_results):
-                    return self.parse_prompt_results(prompt_result)
-                return prompt_result
+                return parser(prompt_result)
             except ClosedResourceError as cl_ex:
                 if attempt == 0:
                     # First attempt failed, try reconnecting
@@ -945,9 +1042,9 @@ class MCPStdioTool(MCPTool):
         command: str,
         *,
         load_tools: bool = True,
-        parse_tool_results: Literal[True] | Callable[[types.CallToolResult], Any] | None = True,
+        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
         load_prompts: bool = True,
-        parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
+        parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
@@ -973,15 +1070,19 @@ class MCPStdioTool(MCPTool):
 
         Keyword Args:
             load_tools: Whether to load tools from the MCP server.
-            parse_tool_results: How to parse tool results from the MCP server.
-                Set to True, to use the default parser that converts to Agent Framework types.
-                Set to a callable to use a custom parser function.
-                Set to None to return the raw MCP tool result.
+            parse_tool_results: An optional callable with signature
+                ``Callable[[types.CallToolResult], str]`` that overrides the default result
+                parsing. When ``None`` (the default), the built-in parser converts MCP types
+                directly to a string. If you need per-function result parsing, access the
+                ``.functions`` list after connecting and set ``result_parser`` on individual
+                ``FunctionTool`` instances.
             load_prompts: Whether to load prompts from the MCP server.
-            parse_prompt_results: How to parse prompt results from the MCP server.
-                Set to True, to use the default parser that converts to Agent Framework types.
-                Set to a callable to use a custom parser function.
-                Set to None to return the raw MCP prompt result.
+            parse_prompt_results: An optional callable with signature
+                ``Callable[[types.GetPromptResult], str]`` that overrides the default prompt
+                result parsing. When ``None`` (the default), the built-in parser converts
+                MCP prompt results to a string. If you need per-function result parsing,
+                access the ``.functions`` list after connecting and set ``result_parser`` on
+                individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
             session: The session to use for the MCP connection.
             description: The description of the tool.
@@ -1066,9 +1167,9 @@ class MCPStreamableHTTPTool(MCPTool):
         url: str,
         *,
         load_tools: bool = True,
-        parse_tool_results: Literal[True] | Callable[[types.CallToolResult], Any] | None = True,
+        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
         load_prompts: bool = True,
-        parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
+        parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
@@ -1094,15 +1195,19 @@ class MCPStreamableHTTPTool(MCPTool):
 
         Keyword Args:
             load_tools: Whether to load tools from the MCP server.
-            parse_tool_results: How to parse tool results from the MCP server.
-                Set to True, to use the default parser that converts to Agent Framework types.
-                Set to a callable to use a custom parser function.
-                Set to None to return the raw MCP tool result.
+            parse_tool_results: An optional callable with signature
+                ``Callable[[types.CallToolResult], str]`` that overrides the default result
+                parsing. When ``None`` (the default), the built-in parser converts MCP types
+                directly to a string. If you need per-function result parsing, access the
+                ``.functions`` list after connecting and set ``result_parser`` on individual
+                ``FunctionTool`` instances.
             load_prompts: Whether to load prompts from the MCP server.
-            parse_prompt_results: How to parse prompt results from the MCP server.
-                Set to True, to use the default parser that converts to Agent Framework types.
-                Set to a callable to use a custom parser function.
-                Set to None to return the raw MCP prompt result.
+            parse_prompt_results: An optional callable with signature
+                ``Callable[[types.GetPromptResult], str]`` that overrides the default prompt
+                result parsing. When ``None`` (the default), the built-in parser converts
+                MCP prompt results to a string. If you need per-function result parsing,
+                access the ``.functions`` list after connecting and set ``result_parser`` on
+                individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
             session: The session to use for the MCP connection.
             description: The description of the tool.
@@ -1181,9 +1286,9 @@ class MCPWebsocketTool(MCPTool):
         url: str,
         *,
         load_tools: bool = True,
-        parse_tool_results: Literal[True] | Callable[[types.CallToolResult], Any] | None = True,
+        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
         load_prompts: bool = True,
-        parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
+        parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
@@ -1207,15 +1312,19 @@ class MCPWebsocketTool(MCPTool):
 
         Keyword Args:
             load_tools: Whether to load tools from the MCP server.
-            parse_tool_results: How to parse tool results from the MCP server.
-                Set to True, to use the default parser that converts to Agent Framework types.
-                Set to a callable to use a custom parser function.
-                Set to None to return the raw MCP tool result.
+            parse_tool_results: An optional callable with signature
+                ``Callable[[types.CallToolResult], str]`` that overrides the default result
+                parsing. When ``None`` (the default), the built-in parser converts MCP types
+                directly to a string. If you need per-function result parsing, access the
+                ``.functions`` list after connecting and set ``result_parser`` on individual
+                ``FunctionTool`` instances.
             load_prompts: Whether to load prompts from the MCP server.
-            parse_prompt_results: How to parse prompt results from the MCP server.
-                Set to True, to use the default parser that converts to Agent Framework types.
-                Set to a callable to use a custom parser function.
-                Set to None to return the raw MCP prompt result.
+            parse_prompt_results: An optional callable with signature
+                ``Callable[[types.GetPromptResult], str]`` that overrides the default prompt
+                result parsing. When ``None`` (the default), the built-in parser converts
+                MCP prompt results to a string. If you need per-function result parsing,
+                access the ``.functions`` list after connecting and set ``result_parser`` on
+                individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
             session: The session to use for the MCP connection.
             description: The description of the tool.

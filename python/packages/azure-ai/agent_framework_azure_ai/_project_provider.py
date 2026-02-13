@@ -9,7 +9,7 @@ from typing import Any, Generic
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Agent,
-    ContextProvider,
+    BaseContextProvider,
     FunctionTool,
     MiddlewareTypes,
     get_logger,
@@ -168,7 +168,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Create a new agent on the Azure AI service and return a local Agent wrapper.
 
@@ -182,7 +182,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
-            context_provider: Context provider to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
 
         Returns:
             Agent: A Agent instance configured with the created agent.
@@ -255,7 +255,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             normalized_tools,
             default_options=default_options,
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
         )
 
     async def get_agent(
@@ -270,7 +270,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Retrieve an existing agent from the Azure AI service and return a local Agent wrapper.
 
@@ -284,7 +284,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
-            context_provider: Context provider to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
 
         Returns:
             Agent: A Agent instance configured with the retrieved agent.
@@ -317,7 +317,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             normalize_tools(tools),
             default_options=default_options,
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
         )
 
     def as_agent(
@@ -330,7 +330,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Wrap an SDK agent version object into a Agent without making HTTP calls.
 
@@ -342,7 +342,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
-            context_provider: Context provider to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
 
         Returns:
             Agent: A Agent instance configured with the agent version.
@@ -361,7 +361,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             normalize_tools(tools),
             default_options=default_options,
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
         )
 
     def _to_chat_agent_from_details(
@@ -370,7 +370,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         provided_tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Create a Agent from an AgentVersionDetails.
 
@@ -381,7 +381,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
-            context_provider: Context provider to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
         """
         if not isinstance(details.definition, PromptAgentDefinition):
             raise ValueError("Agent definition must be PromptAgentDefinition to get a Agent.")
@@ -409,7 +409,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             tools=merged_tools,
             default_options=default_options,  # type: ignore[arg-type]
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
         )
 
     def _merge_tools(

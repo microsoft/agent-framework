@@ -2,9 +2,8 @@
 
 """New-pattern Redis context provider using BaseContextProvider.
 
-This module provides ``_RedisContextProvider``, a side-by-side implementation of
-:class:`RedisProvider` built on the new :class:`BaseContextProvider` hooks pattern.
-It will be renamed to ``RedisContextProvider`` in PR2 when the old class is removed.
+This module provides ``RedisContextProvider``, built on the new
+:class:`BaseContextProvider` hooks pattern.
 """
 
 from __future__ import annotations
@@ -43,17 +42,11 @@ if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
 
 
-class _RedisContextProvider(BaseContextProvider):
+class RedisContextProvider(BaseContextProvider):
     """Redis context provider using the new BaseContextProvider hooks pattern.
 
     Stores context in Redis and retrieves scoped context via full-text or
-    optional hybrid vector search. This is the new-pattern equivalent of
-    :class:`RedisProvider`.
-
-    Note:
-        This class uses a temporary ``_`` prefix to coexist with the existing
-        :class:`RedisProvider`. It will be renamed to ``RedisContextProvider``
-        in PR2.
+    optional hybrid vector search.
     """
 
     DEFAULT_CONTEXT_PROMPT = "## Memories\nConsider the following memories when answering user questions:"
@@ -429,4 +422,4 @@ class _RedisContextProvider(BaseContextProvider):
         """Async context manager exit."""
 
 
-__all__ = ["_RedisContextProvider"]
+__all__ = ["RedisContextProvider"]

@@ -543,7 +543,7 @@ def test_agent_framework_to_agui_function_result_dict():
     """Test converting FunctionResultContent with dict result to AG-UI."""
     msg = Message(
         role="tool",
-        contents=[Content.from_function_result(call_id="call-123", result={"key": "value", "count": 42})],
+        contents=[Content.from_function_result(call_id="call-123", result='{"key": "value", "count": 42}')],
         message_id="msg-789",
     )
 
@@ -568,8 +568,8 @@ def test_agent_framework_to_agui_function_result_none():
 
     assert len(messages) == 1
     agui_msg = messages[0]
-    # None serializes as JSON null
-    assert agui_msg["content"] == "null"
+    # None result maps to empty string (FunctionTool.invoke returns "" for None)
+    assert agui_msg["content"] == ""
 
 
 def test_agent_framework_to_agui_function_result_string():
@@ -591,7 +591,7 @@ def test_agent_framework_to_agui_function_result_empty_list():
     """Test converting FunctionResultContent with empty list result to AG-UI."""
     msg = Message(
         role="tool",
-        contents=[Content.from_function_result(call_id="call-123", result=[])],
+        contents=[Content.from_function_result(call_id="call-123", result="[]")],
         message_id="msg-789",
     )
 
@@ -604,16 +604,10 @@ def test_agent_framework_to_agui_function_result_empty_list():
 
 
 def test_agent_framework_to_agui_function_result_single_text_content():
-    """Test converting FunctionResultContent with single TextContent-like item."""
-    from dataclasses import dataclass
-
-    @dataclass
-    class MockTextContent:
-        text: str
-
+    """Test converting FunctionResultContent with single TextContent-like item (pre-parsed)."""
     msg = Message(
         role="tool",
-        contents=[Content.from_function_result(call_id="call-123", result=[MockTextContent("Hello from MCP!")])],
+        contents=[Content.from_function_result(call_id="call-123", result='["Hello from MCP!"]')],
         message_id="msg-789",
     )
 
@@ -626,19 +620,13 @@ def test_agent_framework_to_agui_function_result_single_text_content():
 
 
 def test_agent_framework_to_agui_function_result_multiple_text_contents():
-    """Test converting FunctionResultContent with multiple TextContent-like items."""
-    from dataclasses import dataclass
-
-    @dataclass
-    class MockTextContent:
-        text: str
-
+    """Test converting FunctionResultContent with multiple TextContent-like items (pre-parsed)."""
     msg = Message(
         role="tool",
         contents=[
             Content.from_function_result(
                 call_id="call-123",
-                result=[MockTextContent("First result"), MockTextContent("Second result")],
+                result='["First result", "Second result"]',
             )
         ],
         message_id="msg-789",

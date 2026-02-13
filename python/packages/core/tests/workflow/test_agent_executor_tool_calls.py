@@ -13,7 +13,7 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     ChatResponse,
     ChatResponseUpdate,
@@ -42,7 +42,7 @@ class _ToolCallingAgent(BaseAgent):
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         if stream:

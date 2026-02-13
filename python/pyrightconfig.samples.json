@@ -5,6 +5,8 @@
         "**/autogen-migration/**",
         "**/semantic-kernel-migration/**",
         "**/demos/**",
+        "**/_to_delete/**",
+        "**/05-end-to-end/**",
         "**/agent_with_foundry_tracing.py",
         "**/azure_responses_client_with_foundry.py"
     ],

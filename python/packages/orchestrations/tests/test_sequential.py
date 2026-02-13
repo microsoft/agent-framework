@@ -8,7 +8,7 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     Content,
     Executor,
@@ -30,7 +30,7 @@ class _EchoAgent(BaseAgent):
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
         if stream:

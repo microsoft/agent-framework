@@ -48,12 +48,12 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         """Resolve a session/conversation id from the agent run context.
 
         Resolution order:
-          1. thread.service_thread_id
+          1. session.service_session_id
           2. First message whose additional_properties contains 'conversation_id'
           3. None: the downstream processor will generate a new UUID
         """
-        if context.thread and context.thread.service_thread_id:
-            return context.thread.service_thread_id
+        if context.session and context.session.service_session_id:
+            return context.session.service_session_id
 
         for message in context.messages:
             conversation_id = message.additional_properties.get("conversation_id")

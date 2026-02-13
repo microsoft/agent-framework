@@ -80,7 +80,7 @@ internal sealed class AFAgentApplication : AgentApplication
         }
 
         // Serialize and save the updated conversation history back to turn state.
-        JsonElement sessionElementEnd = this._agent.SerializeSession(agentSession, JsonUtilities.DefaultOptions);
+        JsonElement sessionElementEnd = await this._agent.SerializeSessionAsync(agentSession, JsonUtilities.DefaultOptions, cancellationToken);
         turnState.SetValue("conversation.chatHistory", sessionElementEnd);
 
         // End the streaming response

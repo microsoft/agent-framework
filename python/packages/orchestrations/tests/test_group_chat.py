@@ -9,7 +9,7 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     ChatResponse,
     ChatResponseUpdate,
@@ -41,7 +41,7 @@ class StubAgent(BaseAgent):
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
         if stream:
@@ -78,7 +78,7 @@ class StubManagerAgent(Agent):
         self,
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         if self._call_count == 0:
@@ -132,7 +132,7 @@ class ConcatenatedJsonManagerAgent(Agent):
         self,
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         if self._call_count == 0:
@@ -346,7 +346,7 @@ class TestGroupChatBuilder:
                 super().__init__(name="", description="test")
 
             def run(
-                self, messages: Any = None, *, stream: bool = False, thread: Any = None, **kwargs: Any
+                self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any
             ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
                 if stream:
 
@@ -898,7 +898,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
             self,
             messages: str | Message | Sequence[str | Message] | None = None,
             *,
-            thread: AgentThread | None = None,
+            session: AgentSession | None = None,
             **kwargs: Any,
         ) -> AgentResponse:
             if self._call_count == 0:

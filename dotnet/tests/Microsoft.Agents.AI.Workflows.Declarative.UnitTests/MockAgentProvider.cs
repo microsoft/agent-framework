@@ -11,9 +11,9 @@ using Moq;
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
 
 /// <summary>
-/// Mock implementation of <see cref="WorkflowAgentProvider"/> for unit testing purposes.
+/// Mock implementation of <see cref="ResponseAgentProvider"/> for unit testing purposes.
 /// </summary>
-internal sealed class MockAgentProvider : Mock<WorkflowAgentProvider>
+internal sealed class MockAgentProvider : Mock<ResponseAgentProvider>
 {
     public IList<string> ExistingConversationIds { get; } = [];
 

@@ -45,7 +45,6 @@ from .._types import (
     Message,
     ResponseStream,
     UsageDetails,
-    prepare_function_call_results,
 )
 from ..exceptions import ServiceInitializationError
 from ..observability import ChatTelemetryLayer
@@ -805,10 +804,11 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
                 if tool_outputs is None:
                     tool_outputs = []
-                if function_result_content.result:
-                    output = prepare_function_call_results(function_result_content.result)
-                else:
-                    output = "No output received."
+                output = (
+                    function_result_content.result
+                    if function_result_content.result is not None
+                    else "No output received."
+                )
                 tool_outputs.append(ToolOutput(tool_call_id=call_id, output=output))
 
         return run_id, tool_outputs

@@ -25,8 +25,8 @@ from agent_framework._mcp import (
     _get_input_model_from_mcp_tool,
     _normalize_mcp_name,
     _parse_content_from_mcp,
-    _parse_contents_from_mcp_tool_result,
     _parse_message_from_mcp,
+    _parse_tool_result_from_mcp,
     _prepare_content_for_mcp,
     _prepare_message_for_mcp,
     logger,
@@ -68,144 +68,58 @@ def test_mcp_prompt_message_to_ai_content():
     assert ai_content.raw_representation == mcp_message
 
 
-def test_parse_contents_from_mcp_tool_result():
-    """Test conversion from MCP tool result to AI contents."""
+def test_parse_tool_result_from_mcp():
+    """Test conversion from MCP tool result to string representation."""
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Result text"),
-            types.ImageContent(type="image", data="eHl6", mimeType="image/png"),  # base64 for "xyz"
-            types.ImageContent(type="image", data="YWJj", mimeType="image/webp"),  # base64 for "abc"
+            types.ImageContent(type="image", data="eHl6", mimeType="image/png"),
+            types.ImageContent(type="image", data="YWJj", mimeType="image/webp"),
         ]
     )
-    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
+    result = _parse_tool_result_from_mcp(mcp_result)
 
-    assert len(ai_contents) == 3
-    assert ai_contents[0].type == "text"
-    assert ai_contents[0].text == "Result text"
-    assert ai_contents[1].type == "data"
-    assert ai_contents[1].uri == "data:image/png;base64,eHl6"
-    assert ai_contents[1].media_type == "image/png"
-    assert ai_contents[2].type == "data"
-    assert ai_contents[2].uri == "data:image/webp;base64,YWJj"
-    assert ai_contents[2].media_type == "image/webp"
+    # Multiple items produce a JSON array of strings
+    assert isinstance(result, str)
+    import json
+
+    parsed = json.loads(result)
+    assert len(parsed) == 3
+    assert parsed[0] == "Result text"
+    # Image items are JSON-encoded strings within the array
+    img1 = json.loads(parsed[1])
+    assert img1["type"] == "image"
+    assert img1["data"] == "eHl6"
+    img2 = json.loads(parsed[2])
+    assert img2["type"] == "image"
+    assert img2["data"] == "YWJj"
 
 
-def test_mcp_call_tool_result_with_meta_error():
-    """Test conversion from MCP tool result with _meta field containing isError=True."""
-    # Create a mock CallToolResult with _meta field containing error information
+def test_parse_tool_result_from_mcp_single_text():
+    """Test conversion from MCP tool result with a single text item."""
+    mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="Simple result")])
+    result = _parse_tool_result_from_mcp(mcp_result)
+
+    # Single text item returns just the text
+    assert result == "Simple result"
+
+
+def test_parse_tool_result_from_mcp_meta_not_in_string():
+    """Test that _meta data is not included in the string result (it's tool-level, not content-level)."""
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="Error occurred")],
-        _meta={"isError": True, "errorCode": "TOOL_ERROR", "errorMessage": "Tool execution failed"},
+        _meta={"isError": True, "errorCode": "TOOL_ERROR"},
     )
 
-    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
-
-    assert len(ai_contents) == 1
-    assert ai_contents[0].type == "text"
-    assert ai_contents[0].text == "Error occurred"
-
-    # Check that _meta data is merged into additional_properties
-    assert ai_contents[0].additional_properties is not None
-    assert ai_contents[0].additional_properties["isError"] is True
-    assert ai_contents[0].additional_properties["errorCode"] == "TOOL_ERROR"
-    assert ai_contents[0].additional_properties["errorMessage"] == "Tool execution failed"
+    result = _parse_tool_result_from_mcp(mcp_result)
+    assert result == "Error occurred"
 
 
-def test_mcp_call_tool_result_with_meta_arbitrary_data():
-    """Test conversion from MCP tool result with _meta field containing arbitrary metadata.
-
-    Note: The _meta field is optional and can contain any structure that a specific
-    MCP server chooses to provide. This test uses example metadata to verify that
-    whatever is provided gets preserved in additional_properties.
-    """
-    mcp_result = types.CallToolResult(
-        content=[types.TextContent(type="text", text="Success result")],
-        _meta={
-            "serverVersion": "2.1.0",
-            "executionId": "exec_abc123",
-            "metrics": {"responseTime": 1.25, "memoryUsed": "64MB"},
-            "source": "example-mcp-server",
-            "customField": "arbitrary_value",
-        },
-    )
-
-    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
-
-    assert len(ai_contents) == 1
-    assert ai_contents[0].type == "text"
-    assert ai_contents[0].text == "Success result"
-
-    # Check that _meta data is preserved in additional_properties
-    props = ai_contents[0].additional_properties
-    assert props is not None
-    assert props["serverVersion"] == "2.1.0"
-    assert props["executionId"] == "exec_abc123"
-    assert props["metrics"] == {"responseTime": 1.25, "memoryUsed": "64MB"}
-    assert props["source"] == "example-mcp-server"
-    assert props["customField"] == "arbitrary_value"
-
-
-def test_mcp_call_tool_result_with_meta_merging_existing_properties():
-    """Test that _meta data merges correctly with existing additional_properties."""
-    # Create content with existing additional_properties
-    text_content = types.TextContent(type="text", text="Test content")
-    mcp_result = types.CallToolResult(content=[text_content], _meta={"newField": "newValue", "isError": False})
-
-    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
-
-    assert len(ai_contents) == 1
-    content = ai_contents[0]
-
-    # Check that _meta data is present in additional_properties
-    assert content.additional_properties is not None
-    assert content.additional_properties["newField"] == "newValue"
-    assert content.additional_properties["isError"] is False
-
-
-def test_mcp_call_tool_result_with_meta_none():
-    """Test that missing _meta field is handled gracefully."""
-    mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="No meta test")])
-    # No _meta field set
-
-    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
-
-    assert len(ai_contents) == 1
-    assert ai_contents[0].type == "text"
-    assert ai_contents[0].text == "No meta test"
-
-    # Should handle gracefully when no _meta field exists
-    # additional_properties may be None or empty dict
-    props = ai_contents[0].additional_properties
-    assert props is None or props == {}
-
-
-def test_mcp_call_tool_result_regression_successful_workflow():
-    """Regression test to ensure existing successful workflows remain unchanged."""
-    # Test the original successful workflow still works
-    mcp_result = types.CallToolResult(
-        content=[
-            types.TextContent(type="text", text="Success message"),
-            types.ImageContent(type="image", data="YWJjMTIz", mimeType="image/jpeg"),  # base64 for "abc123"
-        ]
-    )
-
-    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
-
-    # Verify basic conversion still works correctly
-    assert len(ai_contents) == 2
-
-    text_content = ai_contents[0]
-    assert text_content.type == "text"
-    assert text_content.text == "Success message"
-
-    image_content = ai_contents[1]
-    assert image_content.type == "data"
-    assert image_content.uri == "data:image/jpeg;base64,YWJjMTIz"
-    assert image_content.media_type == "image/jpeg"
-
-    # Should have no additional_properties when no _meta field
-    assert text_content.additional_properties is None or text_content.additional_properties == {}
-    assert image_content.additional_properties is None or image_content.additional_properties == {}
+def test_parse_tool_result_from_mcp_empty_content():
+    """Test that empty content produces empty string."""
+    mcp_result = types.CallToolResult(content=[])
+    result = _parse_tool_result_from_mcp(mcp_result)
+    assert result == ""
 
 
 def test_mcp_content_types_to_ai_content_text():
@@ -874,17 +788,7 @@ async def test_mcp_tool_call_tool_with_meta_integration():
         func = server.functions[0]
         result = await func.invoke(param="test_value")
 
-        assert len(result) == 1
-        assert result[0].type == "text"
-        assert result[0].text == "Tool executed with metadata"
-
-        # Verify that _meta data is present in additional_properties
-        props = result[0].additional_properties
-        assert props is not None
-        assert props["executionTime"] == 1.5
-        assert props["cost"] == {"usd": 0.002}
-        assert props["isError"] is False
-        assert props["toolVersion"] == "1.2.3"
+        assert result == "Tool executed with metadata"
 
 
 async def test_local_mcp_server_function_execution():
@@ -923,9 +827,7 @@ async def test_local_mcp_server_function_execution():
         func = server.functions[0]
         result = await func.invoke(param="test_value")
 
-        assert len(result) == 1
-        assert result[0].type == "text"
-        assert result[0].text == "Tool executed successfully"
+        assert result == "Tool executed successfully"
 
 
 async def test_local_mcp_server_function_execution_with_nested_object():
@@ -972,8 +874,7 @@ async def test_local_mcp_server_function_execution_with_nested_object():
         # Call with nested object
         result = await func.invoke(params={"customer_id": 251})
 
-        assert len(result) == 1
-        assert result[0].type == "text"
+        assert result == '{"name": "John Doe", "id": 251}'
 
         # Verify the session.call_tool was called with the correct nested structure
         server.session.call_tool.assert_called_once()
@@ -1057,11 +958,7 @@ async def test_local_mcp_server_prompt_execution():
         prompt = server.functions[0]
         result = await prompt.invoke(arg="test_value")
 
-        assert len(result) == 1
-        assert isinstance(result[0], Message)
-        assert result[0].role == "user"
-        assert len(result[0].contents) == 1
-        assert result[0].contents[0].text == "Test message"
+        assert result == "Test message"
 
 
 @pytest.mark.parametrize(
@@ -1249,7 +1146,8 @@ async def test_streamable_http_integration():
         assert hasattr(func, "description")
 
         result = await func.invoke(query="What is Agent Framework?")
-        assert result[0].text is not None
+        assert isinstance(result, str)
+        assert len(result) > 0
 
 
 @pytest.mark.flaky
@@ -1314,11 +1212,11 @@ async def test_mcp_connection_reset_integration():
         # Verify tools are still available after reconnection
         assert len(tool.functions) > 0
 
-        # Both results should be valid (we don't compare content as it may vary)
-        if hasattr(first_result[0], "text"):
-            assert first_result[0].text is not None
-        if hasattr(second_result[0], "text"):
-            assert second_result[0].text is not None
+        # Both results should be valid strings (we don't compare content as it may vary)
+        assert isinstance(first_result, str)
+        assert len(first_result) > 0
+        assert isinstance(second_result, str)
+        assert len(second_result) > 0
 
 
 async def test_mcp_tool_message_handler_notification():
@@ -2690,7 +2588,7 @@ async def test_mcp_tool_filters_framework_kwargs():
             chat_options={"some": "option"},  # Should be filtered
             tools=[Mock()],  # Should be filtered
             tool_choice="auto",  # Should be filtered
-            thread=Mock(),  # Should be filtered
+            session=Mock(),  # Should be filtered
             conversation_id="conv-123",  # Should be filtered
             options={"metadata": "value"},  # Should be filtered
         )

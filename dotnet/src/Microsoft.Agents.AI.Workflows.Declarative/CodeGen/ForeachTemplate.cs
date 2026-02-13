@@ -65,7 +65,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
             this._values = [evaluatedValue];
         }
 
-        await this.ResetAsync(context, null, cancellationToken).ConfigureAwait(false);
+        await this.ResetAsync(context, cancellationToken).ConfigureAwait(false);
 
         return default;
     }
@@ -84,9 +84,19 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
                 AssignVariable(this.Index, "this._index", tightFormat: true);
             }
             
-            this.Write("\n\n            this._index++;\n        }\n    }\n\n    public async ValueTask ResetAsy" +
-                    "nc(IWorkflowContext context, object? _, CancellationToken cancellationToken)\n   " +
-                    " {");
+            this.Write(@"
+
+            this._index++;
+        }
+    }
+
+    public async ValueTask CompleteAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
+    {
+        await this.ResetAsync(context, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask ResetAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {");
  
         AssignVariable(this.Value, "UnassignedValue.Instance", tightFormat: true);
 

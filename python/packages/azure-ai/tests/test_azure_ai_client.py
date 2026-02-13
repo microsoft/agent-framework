@@ -1473,39 +1473,39 @@ async def test_integration_agent_hosted_code_interpreter_tool():
 
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
-async def test_integration_agent_existing_thread():
-    """Test Azure Responses Client agent with existing thread to continue conversations across agent instances."""
-    # First conversation - capture the thread
-    preserved_thread = None
+async def test_integration_agent_existing_session():
+    """Test Azure Responses Client agent with existing session to continue conversations across agent instances."""
+    # First conversation - capture the session
+    preserved_session = None
 
     async with (
-        temporary_chat_client(agent_name="af-int-test-existing-thread") as client,
+        temporary_chat_client(agent_name="af-int-test-existing-session") as client,
         Agent(
             client=client,
             instructions="You are a helpful assistant with good memory.",
         ) as first_agent,
     ):
-        # Start a conversation and capture the thread
-        thread = first_agent.get_new_thread()
-        first_response = await first_agent.run("My hobby is photography. Remember this.", thread=thread, store=True)
+        # Start a conversation and capture the session
+        session = first_agent.create_session()
+        first_response = await first_agent.run("My hobby is photography. Remember this.", session=session, store=True)
 
         assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
 
-        # Preserve the thread for reuse
-        preserved_thread = thread
+        # Preserve the session for reuse
+        preserved_session = session
 
-    # Second conversation - reuse the thread in a new agent instance
-    if preserved_thread:
+    # Second conversation - reuse the session in a new agent instance
+    if preserved_session:
         async with (
-            temporary_chat_client(agent_name="af-int-test-existing-thread-2") as client,
+            temporary_chat_client(agent_name="af-int-test-existing-session-2") as client,
             Agent(
                 client=client,
                 instructions="You are a helpful assistant with good memory.",
             ) as second_agent,
         ):
-            # Reuse the preserved thread
-            second_response = await second_agent.run("What is my hobby?", thread=preserved_thread)
+            # Reuse the preserved session
+            second_response = await second_agent.run("What is my hobby?", session=preserved_session)
 
             assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None

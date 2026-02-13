@@ -15,7 +15,7 @@ The Azure AI Search integration provides context providers for RAG (Retrieval Au
 
 ### Basic Usage Example
 
-See the [Azure AI Search context provider examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents/azure_ai/) which demonstrate:
+See the [Azure AI Search context provider examples](../../samples/02-agents/providers/azure_ai/) which demonstrate:
 
 - Semantic search with hybrid (vector + keyword) queries
 - Agentic mode with Knowledge Bases for complex multi-hop reasoning

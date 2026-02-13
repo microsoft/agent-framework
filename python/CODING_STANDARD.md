@@ -403,21 +403,36 @@ If in doubt, use the link above to read much more considerations of what to do a
 
 ### Explicit Exports
 
-> **Note:** This convention is being adopted. See [#3605](https://github.com/microsoft/agent-framework/issues/3605) for progress.
+**All wildcard imports (`from ... import *`) are prohibited** in production code, including both `.py` and `.pyi` files. Always use explicit import lists to maintain clarity and avoid namespace pollution.
 
-Define `__all__` in each module to explicitly declare the public API. Avoid using `from module import *` in `__init__.py` files as it can impact performance and makes the public API unclear:
+Define `__all__` in each module to explicitly declare the public API, then import specific symbols by name:
 
 ```python
-# ✅ Preferred - explicit __all__ and imports
+# ✅ Preferred - explicit __all__ and named imports
 __all__ = ["Agent", "Message", "ChatResponse"]
 
 from ._agents import Agent
 from ._types import Message, ChatResponse
 
-# ❌ Avoid - star imports
-from ._agents import *
-from ._types import *
+# ✅ For many exports, use parenthesized multi-line imports
+from ._types import (
+    AgentResponse,
+    ChatResponse,
+    Message,
+    ResponseStream,
+)
+
+# ❌ Prohibited pattern: wildcard/star imports (do not use)
+# from ._agents import <all public symbols>
+# from ._types import <all public symbols>
 ```
+
+**Rationale:**
+- **Clarity**: Explicit imports make it clear exactly what is being exported and used
+- **IDE Support**: Enables better autocomplete, go-to-definition, and refactoring
+- **Type Checking**: Improves static analysis and type checker accuracy
+- **Maintenance**: Makes it easier to track symbol usage and detect breaking changes
+- **Performance**: Avoids unnecessary symbol resolution during module import
 
 ## Performance considerations
 

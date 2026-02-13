@@ -11,7 +11,6 @@ from typing import Any, cast
 from agent_framework import (
     Content,
     Message,
-    prepare_function_call_results,
 )
 
 from ._utils import (
@@ -697,8 +696,7 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
             elif content.type == "function_result":
                 # Tool result content - extract call_id and result
                 tool_result_call_id = content.call_id
-                # Serialize result to string using core utility
-                content_text = prepare_function_call_results(content.result)
+                content_text = content.result if content.result is not None else ""
 
         agui_msg: dict[str, Any] = {
             "id": msg.message_id if msg.message_id else generate_event_id(),  # Always include id

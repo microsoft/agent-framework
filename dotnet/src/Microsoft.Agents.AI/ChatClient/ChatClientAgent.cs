@@ -385,7 +385,7 @@ public sealed partial class ChatClientAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(session);
 
@@ -394,7 +394,7 @@ public sealed partial class ChatClientAgent : AIAgent
             throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
         }
 
-        return typedSession.Serialize(jsonSerializerOptions);
+        return new(typedSession.Serialize(jsonSerializerOptions));
     }
 
     /// <inheritdoc/>

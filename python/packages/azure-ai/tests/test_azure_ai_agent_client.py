@@ -11,7 +11,7 @@ from agent_framework import (
     Agent,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
@@ -1024,9 +1024,10 @@ async def test_azure_ai_chat_client_convert_required_action_serde_model_results(
 
     client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    # Test with BaseModel result
+    # Test with BaseModel result (pre-parsed as it would be from FunctionTool.invoke)
     mock_result = MockResult(name="test", value=42)
-    function_result = Content.from_function_result(call_id='["run_123", "call_456"]', result=mock_result)
+    expected_json = mock_result.to_json()
+    function_result = Content.from_function_result(call_id='["run_123", "call_456"]', result=expected_json)
 
     run_id, tool_outputs, tool_approvals = client._prepare_tool_outputs_for_azure_ai([function_result])  # type: ignore
 
@@ -1035,8 +1036,7 @@ async def test_azure_ai_chat_client_convert_required_action_serde_model_results(
     assert tool_outputs is not None
     assert len(tool_outputs) == 1
     assert tool_outputs[0].tool_call_id == "call_456"
-    # Should use model_dump_json for BaseModel
-    expected_json = mock_result.to_json()
+    # Should use pre-parsed result string directly
     assert tool_outputs[0].output == expected_json
 
 
@@ -1051,10 +1051,14 @@ async def test_azure_ai_chat_client_convert_required_action_multiple_results(
 
     client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
 
-    # Test with multiple results - mix of BaseModel and regular objects
+    # Test with multiple results - pre-parsed as FunctionTool.invoke would produce
     mock_basemodel = MockResult(data="model_data")
     results_list = [mock_basemodel, {"key": "value"}, "string_result"]
-    function_result = Content.from_function_result(call_id='["run_123", "call_456"]', result=results_list)
+    # FunctionTool.parse_result would serialize this to a JSON string
+    from agent_framework import FunctionTool
+
+    pre_parsed = FunctionTool.parse_result(results_list)
+    function_result = Content.from_function_result(call_id='["run_123", "call_456"]', result=pre_parsed)
 
     run_id, tool_outputs, tool_approvals = client._prepare_tool_outputs_for_azure_ai([function_result])  # type: ignore
 
@@ -1063,14 +1067,8 @@ async def test_azure_ai_chat_client_convert_required_action_multiple_results(
     assert len(tool_outputs) == 1
     assert tool_outputs[0].tool_call_id == "call_456"
 
-    # Should JSON dump the entire results array since len > 1
-    expected_results = [
-        mock_basemodel.to_dict(),
-        {"key": "value"},
-        "string_result",
-    ]
-    expected_output = json.dumps(expected_results)
-    assert tool_outputs[0].output == expected_output
+    # Result is pre-parsed string (already JSON)
+    assert tool_outputs[0].output == pre_parsed
 
 
 async def test_azure_ai_chat_client_convert_required_action_approval_response(
@@ -1526,24 +1524,24 @@ async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
-    """Test Agent thread persistence across runs with AzureAIAgentClient."""
+    """Test Agent session persistence across runs with AzureAIAgentClient."""
     async with Agent(
         client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
-        # Create a new thread that will be reused
-        thread = agent.get_new_thread()
+        # Create a new session that will be reused
+        session = agent.create_session()
 
         # First message - establish context
         first_response = await agent.run(
-            "Remember this number: 42. What number did I just tell you to remember?", thread=thread
+            "Remember this number: 42. What number did I just tell you to remember?", session=session
         )
         assert isinstance(first_response, AgentResponse)
         assert "42" in first_response.text
 
         # Second message - test conversation memory
         second_response = await agent.run(
-            "What number did I tell you to remember in my previous message?", thread=thread
+            "What number did I tell you to remember in my previous message?", session=session
         )
         assert isinstance(second_response, AgentResponse)
         assert "42" in second_response.text
@@ -1557,16 +1555,16 @@ async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
         client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
-        # Start a conversation and get the thread ID
-        thread = first_agent.get_new_thread()
-        first_response = await first_agent.run("My name is Alice. Remember this.", thread=thread)
+        # Start a conversation and get the session ID
+        session = first_agent.create_session()
+        first_response = await first_agent.run("My name is Alice. Remember this.", session=session)
 
         # Validate first response
         assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
 
         # The thread ID is set after the first response
-        existing_thread_id = thread.service_thread_id
+        existing_thread_id = session.service_session_id
         assert existing_thread_id is not None
 
     # Now continue with the same thread ID in a new agent instance
@@ -1574,11 +1572,11 @@ async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
         client=AzureAIAgentClient(thread_id=existing_thread_id, credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as second_agent:
-        # Create a thread with the existing ID
-        thread = AgentThread(service_thread_id=existing_thread_id)
+        # Create a session with the existing ID
+        session = AgentSession(service_session_id=existing_thread_id)
 
         # Ask about the previous conversation
-        response2 = await second_agent.run("What is my name?", thread=thread)
+        response2 = await second_agent.run("What is my name?", session=session)
 
         # Validate that the agent remembers the previous conversation
         assert isinstance(response2, AgentResponse)

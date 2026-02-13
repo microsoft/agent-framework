@@ -12,14 +12,17 @@ Usage::
     class MySettings(TypedDict, total=False):
         api_key: str | None  # optional — resolves to None if not set
         model_id: str | None  # optional by default
+        source_a: str | None
+        source_b: str | None
 
 
-    # Make model_id required at call time:
+    # Make model_id required; require exactly one of source_a / source_b:
     settings = load_settings(
         MySettings,
         env_prefix="MY_APP_",
-        required_fields=["model_id"],
+        required_fields=["model_id", ("source_a", "source_b")],
         model_id="gpt-4",
+        source_a="value",
     )
     settings["api_key"]  # type-checked dict access
     settings["model_id"]  # str | None per type, but guaranteed not None at runtime
@@ -167,7 +170,7 @@ def load_settings(
     env_prefix: str = "",
     env_file_path: str | None = None,
     env_file_encoding: str | None = None,
-    required_fields: Sequence[str] | None = None,
+    required_fields: Sequence[str | tuple[str, ...]] | None = None,
     **overrides: Any,
 ) -> SettingsT:
     """Load settings from environment variables, a ``.env`` file, and explicit overrides.
@@ -181,18 +184,19 @@ def load_settings(
     4. Default values — fields with class-level defaults on the TypedDict, or
        ``None`` for optional fields.
 
-    Fields listed in *required_fields* are validated after resolution.  If any
-    required field resolves to ``None``, a ``SettingNotFoundError`` is raised.
-    This allows callers to decide which fields are required based on runtime
-    context (e.g. ``endpoint`` is only required when no pre-built client is
-    provided).
+    Entries in *required_fields* are validated after resolution:
+
+    - A **string** entry means the field must resolve to a non-``None`` value.
+    - A **tuple** entry means exactly one field in the group must be non-``None``
+      (mutually exclusive).
 
     Args:
         settings_type: A ``TypedDict`` class describing the settings schema.
         env_prefix: Prefix for environment variable lookup (e.g. ``"OPENAI_"``).
         env_file_path: Path to ``.env`` file.  Defaults to ``".env"`` when omitted.
         env_file_encoding: Encoding for reading the ``.env`` file.  Defaults to ``"utf-8"``.
-        required_fields: Field names that must resolve to a non-``None`` value.
+        required_fields: Field names (``str``) that must resolve to a non-``None``
+            value, or tuples of field names where exactly one must be set.
         **overrides: Field values.  ``None`` values are ignored so that callers can
             forward optional parameters without masking env-var / default resolution.
 
@@ -200,7 +204,8 @@ def load_settings(
         A populated dict matching *settings_type*.
 
     Raises:
-        SettingNotFoundError: If a required field could not be resolved from any source.
+        SettingNotFoundError: If a required field could not be resolved from any
+            source, or if a mutually exclusive constraint is violated.
         ServiceInitializationError: If an override value has an incompatible type.
     """
     encoding = env_file_encoding or "utf-8"
@@ -215,7 +220,6 @@ def load_settings(
 
     # Get field type hints from the TypedDict
     hints = get_type_hints(settings_type)
-    required: set[str] = set(required_fields) if required_fields else set()
 
     result: dict[str, Any] = {}
     for field_name, field_type in hints.items():
@@ -249,14 +253,28 @@ def load_settings(
             result[field_name] = None
 
     # Validate required fields after all resolution
-    if required:
-        for field_name in required:
-            if result.get(field_name) is None:
-                env_var_name = f"{env_prefix}{field_name.upper()}"
-                raise SettingNotFoundError(
-                    f"Required setting '{field_name}' was not provided. "
-                    f"Set it via the '{field_name}' parameter or the "
-                    f"'{env_var_name}' environment variable."
-                )
+    if required_fields:
+        for entry in required_fields:
+            if isinstance(entry, str):
+                # Single required field
+                if result.get(entry) is None:
+                    env_var_name = f"{env_prefix}{entry.upper()}"
+                    raise SettingNotFoundError(
+                        f"Required setting '{entry}' was not provided. "
+                        f"Set it via the '{entry}' parameter or the "
+                        f"'{env_var_name}' environment variable."
+                    )
+            else:
+                # Mutually exclusive group — exactly one must be set
+                set_fields = [f for f in entry if result.get(f) is not None]
+                if len(set_fields) == 0:
+                    names = ", ".join(f"'{f}'" for f in entry)
+                    raise SettingNotFoundError(f"Exactly one of {names} must be provided, but none was set.")
+                if len(set_fields) > 1:
+                    all_names = ", ".join(f"'{f}'" for f in entry)
+                    set_names = ", ".join(f"'{f}'" for f in set_fields)
+                    raise SettingNotFoundError(
+                        f"Only one of {all_names} may be provided, but multiple were set: {set_names}."
+                    )
 
     return result  # type: ignore[return-value]
