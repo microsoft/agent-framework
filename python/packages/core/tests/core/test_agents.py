@@ -43,6 +43,12 @@ async def test_agent_run(agent: SupportsAgentRun) -> None:
     assert response.messages[0].text == "Response"
 
 
+async def test_agent_run_with_content(agent: SupportsAgentRun) -> None:
+    response = await agent.run(Content.from_text("test"))
+    assert response.messages[0].role == "assistant"
+    assert response.messages[0].text == "Response"
+
+
 async def test_agent_run_streaming(agent: SupportsAgentRun) -> None:
     async def collect_updates(updates: AsyncIterable[AgentResponseUpdate]) -> list[AgentResponseUpdate]:
         return [u async for u in updates]

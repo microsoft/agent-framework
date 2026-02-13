@@ -145,7 +145,7 @@ class WorkflowAgent(BaseAgent):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -157,7 +157,7 @@ class WorkflowAgent(BaseAgent):
     @overload
     async def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -168,7 +168,7 @@ class WorkflowAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -214,7 +214,7 @@ class WorkflowAgent(BaseAgent):
 
     async def _run_impl(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: str | Content | Message | Sequence[str | Content | Message],
         response_id: str,
         session: AgentSession | None,
         checkpoint_id: str | None = None,
@@ -270,7 +270,7 @@ class WorkflowAgent(BaseAgent):
 
     async def _run_stream_impl(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: str | Content | Message | Sequence[str | Content | Message],
         response_id: str,
         session: AgentSession | None,
         checkpoint_id: str | None = None,

@@ -10,9 +10,10 @@ The actual execution is delegated to the context-specific providers.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Any, Generic, Literal, TypeVar
 
-from agent_framework import AgentSession, Message, SupportsAgentRun
+from agent_framework import AgentSession, Content, Message, SupportsAgentRun, normalize_messages
 
 from ._executors import DurableAgentExecutor
 from ._models import DurableAgentSession
@@ -86,7 +87,7 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
 
     def run(  # type: ignore[override]
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[False] = False,
         session: AgentSession | None = None,
@@ -143,7 +144,7 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
         """
         return self._executor.get_new_session(self.name, **kwargs)
 
-    def _normalize_messages(self, messages: str | Message | list[str] | list[Message] | None) -> str:
+    def _normalize_messages(self, messages: str | Content | Message | Sequence[str | Content | Message] | None) -> str:
         """Convert supported message inputs to a single string.
 
         Args:
@@ -152,18 +153,7 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
         Returns:
             A single string representation of the messages
         """
-        if messages is None:
+        normalized_messages = normalize_messages(messages)
+        if not normalized_messages:
             return ""
-        if isinstance(messages, str):
-            return messages
-        if isinstance(messages, Message):
-            return messages.text or ""
-        if isinstance(messages, list):
-            if not messages:
-                return ""
-            first_item = messages[0]
-            if isinstance(first_item, str):
-                return "\n".join(messages)  # type: ignore[arg-type]
-            # List of Message
-            return "\n".join([msg.text or "" for msg in messages])  # type: ignore[union-attr]
-        return ""
+        return "\n".join(message.text or "" for message in normalized_messages)

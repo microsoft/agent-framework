@@ -208,7 +208,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -220,7 +220,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -231,7 +231,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,

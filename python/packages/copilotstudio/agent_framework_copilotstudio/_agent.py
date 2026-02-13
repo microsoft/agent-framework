@@ -187,7 +187,7 @@ class CopilotStudioAgent(BaseAgent):
     @overload
     def run(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[False] = False,
         session: AgentSession | None = None,
@@ -197,7 +197,7 @@ class CopilotStudioAgent(BaseAgent):
     @overload
     def run(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -206,7 +206,7 @@ class CopilotStudioAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -236,7 +236,7 @@ class CopilotStudioAgent(BaseAgent):
 
     async def _run_impl(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         session: AgentSession | None = None,
         **kwargs: Any,
@@ -261,7 +261,7 @@ class CopilotStudioAgent(BaseAgent):
 
     def _run_stream_impl(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         session: AgentSession | None = None,
         **kwargs: Any,

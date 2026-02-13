@@ -277,7 +277,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[False] = False,
         session: AgentSession | None = None,
@@ -288,7 +288,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -298,7 +298,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -340,7 +340,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     async def _run_impl(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
@@ -388,7 +388,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     async def _stream_updates(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
