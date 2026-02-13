@@ -1037,7 +1037,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
 
         context = ChatContext(
             client=self,  # type: ignore[arg-type]
-            messages=messages,
+            messages=list(messages),
             options=options,
             stream=stream,
             kwargs=kwargs,
