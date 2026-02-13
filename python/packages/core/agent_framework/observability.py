@@ -44,8 +44,8 @@ if TYPE_CHECKING:  # pragma: no cover
     from ._types import (
         AgentResponse,
         AgentResponseUpdate,
-        AgentRunMessages,
-        AgentRunMessagesOrNone,
+        AgentRunInputs,
+        AgentRunInputsOrNone,
         ChatOptions,
         ChatResponse,
         ChatResponseUpdate,
@@ -1279,7 +1279,7 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: AgentRunMessagesOrNone = None,
+        messages: AgentRunInputsOrNone = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -1289,7 +1289,7 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: AgentRunMessagesOrNone = None,
+        messages: AgentRunInputsOrNone = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -1298,7 +1298,7 @@ class AgentTelemetryLayer:
 
     def run(
         self,
-        messages: AgentRunMessagesOrNone = None,
+        messages: AgentRunInputsOrNone = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -1616,7 +1616,7 @@ def capture_exception(span: trace.Span, exception: Exception, timestamp: int | N
 def _capture_messages(
     span: trace.Span,
     provider_name: str,
-    messages: AgentRunMessages,
+    messages: AgentRunInputs,
     system_instructions: str | list[str] | None = None,
     output: bool = False,
     finish_reason: FinishReason | None = None,
