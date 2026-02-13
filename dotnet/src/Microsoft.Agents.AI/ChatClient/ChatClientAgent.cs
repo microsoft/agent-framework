@@ -612,6 +612,12 @@ public sealed partial class ChatClientAgent : AIAgent
                 chatOptions.AllowBackgroundResponses = agentRunOptions.AllowBackgroundResponses;
             }
 
+            if (agentRunOptions?.ResponseFormat is not null)
+            {
+                chatOptions ??= new ChatOptions();
+                chatOptions.ResponseFormat = agentRunOptions.ResponseFormat;
+            }
+
             ChatClientAgentContinuationToken? agentContinuationToken = null;
 
             if ((agentRunOptions?.ContinuationToken ?? chatOptions?.ContinuationToken) is { } continuationToken)

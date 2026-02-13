@@ -214,30 +214,6 @@ public class AgentResponseTests
         Assert.Equal(100, usageContent.Details.TotalTokenCount);
     }
 
-#if NETFRAMEWORK
-    /// <summary>
-    /// Since Json Serialization using reflection is disabled in .net core builds, and we are using a custom type here that wouldn't
-    /// be registered with the default source generated serializer, this test will only pass in .net framework builds where reflection-based
-    /// serialization is available.
-    /// </summary>
-    [Fact]
-    public void ParseAsStructuredOutputSuccess()
-    {
-        // Arrange.
-        var expectedResult = new Animal { Id = 1, FullName = "Tigger", Species = Species.Tiger };
-        var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedResult, TestJsonSerializerContext.Default.Animal)));
-
-        // Act.
-        var animal = response.Deserialize<Animal>();
-
-        // Assert.
-        Assert.NotNull(animal);
-        Assert.Equal(expectedResult.Id, animal.Id);
-        Assert.Equal(expectedResult.FullName, animal.FullName);
-        Assert.Equal(expectedResult.Species, animal.Species);
-    }
-#endif
-
     [Fact]
     public void ParseAsStructuredOutputWithJSOSuccess()
     {
@@ -246,105 +222,13 @@ public class AgentResponseTests
         var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedResult, TestJsonSerializerContext.Default.Animal)));
 
         // Act.
-        var animal = response.Deserialize<Animal>(TestJsonSerializerContext.Default.Options);
+        var animal = JsonSerializer.Deserialize<Animal>(response.Text, TestJsonSerializerContext.Default.Options);
 
         // Assert.
         Assert.NotNull(animal);
         Assert.Equal(expectedResult.Id, animal.Id);
         Assert.Equal(expectedResult.FullName, animal.FullName);
         Assert.Equal(expectedResult.Species, animal.Species);
-    }
-
-    [Fact]
-    public void ParseAsStructuredOutputFailsWithEmptyString()
-    {
-        // Arrange.
-        var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, string.Empty));
-
-        // Act & Assert.
-        var exception = Assert.Throws<InvalidOperationException>(() => response.Deserialize<Animal>(TestJsonSerializerContext.Default.Options));
-        Assert.Equal("The response did not contain JSON to be deserialized.", exception.Message);
-    }
-
-    [Fact]
-    public void ParseAsStructuredOutputFailsWithInvalidJson()
-    {
-        // Arrange.
-        var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, "invalid json"));
-
-        // Act & Assert.
-        Assert.Throws<JsonException>(() => response.Deserialize<Animal>(TestJsonSerializerContext.Default.Options));
-    }
-
-    [Fact]
-    public void ParseAsStructuredOutputFailsWithIncorrectTypedJson()
-    {
-        // Arrange.
-        var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, "[]"));
-
-        // Act & Assert.
-        Assert.Throws<JsonException>(() => response.Deserialize<Animal>(TestJsonSerializerContext.Default.Options));
-    }
-
-#if NETFRAMEWORK
-    /// <summary>
-    /// Since Json Serialization using reflection is disabled in .net core builds, and we are using a custom type here that wouldn't
-    /// be registered with the default source generated serializer, this test will only pass in .net framework builds where reflection-based
-    /// serialization is available.
-    /// </summary>
-    [Fact]
-    public void TryParseAsStructuredOutputSuccess()
-    {
-        // Arrange.
-        var expectedResult = new Animal { Id = 1, FullName = "Tigger", Species = Species.Tiger };
-        var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedResult, TestJsonSerializerContext.Default.Animal)));
-
-        // Act.
-        response.TryDeserialize(out Animal? animal);
-
-        // Assert.
-        Assert.NotNull(animal);
-        Assert.Equal(expectedResult.Id, animal.Id);
-        Assert.Equal(expectedResult.FullName, animal.FullName);
-        Assert.Equal(expectedResult.Species, animal.Species);
-    }
-#endif
-
-    [Fact]
-    public void TryParseAsStructuredOutputWithJSOSuccess()
-    {
-        // Arrange.
-        var expectedResult = new Animal { Id = 1, FullName = "Tigger", Species = Species.Tiger };
-        var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedResult, TestJsonSerializerContext.Default.Animal)));
-
-        // Act.
-        response.TryDeserialize(TestJsonSerializerContext.Default.Options, out Animal? animal);
-
-        // Assert.
-        Assert.NotNull(animal);
-        Assert.Equal(expectedResult.Id, animal.Id);
-        Assert.Equal(expectedResult.FullName, animal.FullName);
-        Assert.Equal(expectedResult.Species, animal.Species);
-    }
-
-    [Fact]
-    public void TryParseAsStructuredOutputFailsWithEmptyText()
-    {
-        // Arrange.
-        var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, string.Empty));
-
-        // Act & Assert.
-        Assert.False(response.TryDeserialize<Animal>(TestJsonSerializerContext.Default.Options, out _));
-    }
-
-    [Fact]
-    public void TryParseAsStructuredOutputFailsWithIncorrectTypedJson()
-    {
-        // Arrange.
-        var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, "[]"));
-
-        // Act & Assert.
-        Assert.False(response.TryDeserialize<Animal>(TestJsonSerializerContext.Default.Options, out _));
     }
 
     [Fact]
@@ -394,17 +278,5 @@ public class AgentResponseTests
         AgentResponseUpdate update = Assert.Single(updates);
         Assert.NotNull(update.AdditionalProperties);
         Assert.Equal("value", update.AdditionalProperties!["key"]);
-    }
-
-    [Fact]
-    public void Deserialize_ThrowsWhenDeserializationReturnsNull()
-    {
-        // Arrange
-        AgentResponse response = new(new ChatMessage(ChatRole.Assistant, "null"));
-
-        // Act & Assert
-        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
-            () => response.Deserialize<Animal>(TestJsonSerializerContext.Default.Options));
-        Assert.Equal("The deserialized response is null.", exception.Message);
     }
 }

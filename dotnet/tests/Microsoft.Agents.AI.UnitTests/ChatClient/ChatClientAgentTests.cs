@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -939,45 +938,6 @@ public partial class ChatClientAgentTests
             .Protected()
             .Verify<ValueTask>("InvokedCoreAsync", Times.Once(), ItExpr.Is<AIContextProvider.InvokedContext>(x =>
                 x.InvokeException == null), ItExpr.IsAny<CancellationToken>());
-    }
-
-    #endregion
-
-    #region RunAsync Structured Output Tests
-
-    /// <summary>
-    /// Verify the invocation of <see cref="ChatClientAgent"/> with specified type parameter is
-    /// propagated to the underlying <see cref="IChatClient"/> call and the expected structured output is returned.
-    /// </summary>
-    [Fact]
-    public async Task RunAsyncWithTypeParameterInvokesChatClientMethodForStructuredOutputAsync()
-    {
-        // Arrange
-        Animal expectedSO = new() { Id = 1, FullName = "Tigger", Species = Species.Tiger };
-
-        Mock<IChatClient> mockService = new();
-        mockService.Setup(s => s
-            .GetResponseAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, JsonSerializer.Serialize(expectedSO, JsonContext2.Default.Animal)))
-            {
-                ResponseId = "test",
-            });
-
-        ChatClientAgent agent = new(mockService.Object, options: new());
-
-        // Act
-        AgentResponse<Animal> agentResponse = await agent.RunAsync<Animal>(messages: [new(ChatRole.User, "Hello")], serializerOptions: JsonContext2.Default.Options);
-
-        // Assert
-        Assert.Single(agentResponse.Messages);
-
-        Assert.NotNull(agentResponse.Result);
-        Assert.Equal(expectedSO.Id, agentResponse.Result.Id);
-        Assert.Equal(expectedSO.FullName, agentResponse.Result.FullName);
-        Assert.Equal(expectedSO.Species, agentResponse.Result.Species);
     }
 
     #endregion
@@ -1997,20 +1957,6 @@ public partial class ChatClientAgentTests
         {
             yield return update;
         }
-    }
-
-    private sealed class Animal
-    {
-        public int Id { get; set; }
-        public string? FullName { get; set; }
-        public Species Species { get; set; }
-    }
-
-    private enum Species
-    {
-        Bear,
-        Tiger,
-        Walrus,
     }
 
     [JsonSourceGenerationOptions(UseStringEnumConverter = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
