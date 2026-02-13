@@ -14,6 +14,7 @@ from agent_framework import (
     AgentSession,
     Content,
     Executor,
+    InMemoryHistoryProvider,
     Message,
     ResponseStream,
     SupportsAgentRun,
@@ -561,6 +562,35 @@ class TestWorkflowAgent:
         # Should only receive the new message
         assert len(capturing_executor.received_messages) == 1
         assert capturing_executor.received_messages[0].text == "Just a new message"
+
+    async def test_workflow_as_agent_adds_default_history_provider(self) -> None:
+        """Test that workflow.as_agent() defaults to in-memory history when no providers are configured."""
+        capturing_executor = ConversationHistoryCapturingExecutor(id="default_history_provider_test")
+        workflow = WorkflowBuilder(start_executor=capturing_executor).build()
+        agent = workflow.as_agent(name="Default History Provider Agent")
+        session = AgentSession()
+
+        await agent.run("first message", session=session)
+        await agent.run("second message", session=session)
+
+        assert any(isinstance(provider, InMemoryHistoryProvider) for provider in agent.context_providers)
+        texts = [message.text for message in capturing_executor.received_messages]
+        assert "first message" in texts
+        assert "second message" in texts
+
+    async def test_workflow_agent_keeps_explicit_context_providers(self) -> None:
+        """Test that WorkflowAgent does not append defaults when context providers are explicitly provided."""
+        workflow = WorkflowBuilder(
+            start_executor=ConversationHistoryCapturingExecutor(id="explicit_provider_test")
+        ).build()
+        explicit_provider = InMemoryHistoryProvider("custom-memory")
+        agent = WorkflowAgent(
+            workflow=workflow,
+            name="Explicit Provider Agent",
+            context_providers=[explicit_provider],
+        )
+
+        assert agent.context_providers == [explicit_provider]
 
     async def test_checkpoint_storage_passed_to_workflow(self) -> None:
         """Test that checkpoint_storage parameter is passed through to the workflow."""

@@ -782,8 +782,12 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
         # messages
         # Handle instructions by prepending to messages as system message
-        if instructions := options.get("instructions"):
+        # Only prepend instructions for the first turn (when no conversation/response ID exists)
+        conversation_id = self._get_current_conversation_id(options, **kwargs)
+        if (instructions := options.get("instructions")) and not conversation_id:
+            # First turn: prepend instructions as system message
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
+        # Continuation turn: instructions already exist in conversation context, skip prepending
         request_input = self._prepare_messages_for_openai(messages)
         if not request_input:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
