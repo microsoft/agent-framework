@@ -1,0 +1,50 @@
+#
+# This workflow demonstrates invoking a function tool directly from a workflow.
+# The function tool yields to the caller for execution and resumes when results are provided.
+#
+# Example usage in YAML:
+#
+# kind: InvokeFunctionTool
+# id: invoke_function_example
+# conversationId: =System.ConversationId    # optional - associates with conversation
+# functionName: get_weather                 # required - name of the function to invoke
+# requireApproval: true                     # optional - default = false
+# arguments:                                # optional - function arguments
+#   location: =Local.location
+#   unit: F
+# output:
+#   autoSend: false                         # optional - default = true
+#   messages: Local.weatherToolCallItems    # optional - stores response messages
+#   result: Local.WeatherInfo               # optional - stores parsed result
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_function_tool_demo
+  actions:
+
+    # Set initial variables
+    - kind: SetVariable
+      id: set_location
+      variable: Local.location
+      value: Seattle
+
+    # Invoke a function tool that requires approval
+    - kind: InvokeFunctionTool
+      id: invoke_weather
+      functionName: get_weather
+      requireApproval: true
+      arguments:
+        location: =Local.location
+        unit: Fahrenheit
+      output:
+        autoSend: true
+        result: Local.WeatherResult
+
+    # Use the result in a subsequent action
+    - kind: SendActivity
+      id: send_weather_result
+      activity:
+        kind: MessageActivity
+        text: "The weather in ${Local.location} is: ${Text(Local.WeatherResult.temperature)}°F"

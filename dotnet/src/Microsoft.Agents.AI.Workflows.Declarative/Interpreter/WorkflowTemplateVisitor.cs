@@ -365,6 +365,10 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
 
     #region Not supported
 
+    protected override void Visit(InvokeFunctionTool item) => this.NotSupported(item);
+
+    protected override void Visit(InvokeMcpTool item) => this.NotSupported(item);
+
     protected override void Visit(AnswerQuestionWithAI item) => this.NotSupported(item);
 
     protected override void Visit(DeleteActivity item) => this.NotSupported(item);

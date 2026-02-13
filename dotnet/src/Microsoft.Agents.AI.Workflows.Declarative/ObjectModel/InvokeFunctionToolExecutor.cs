@@ -1,0 +1,229 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Events;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
+using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
+using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
+
+namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
+
+/// <summary>
+/// Executor for the <see cref="InvokeFunctionTool"/> action.
+/// This executor yields to the caller for function execution and resumes when results are provided.
+/// </summary>
+internal sealed class InvokeFunctionToolExecutor(
+    InvokeFunctionTool model,
+    WorkflowAgentProvider agentProvider,
+    WorkflowFormulaState state) :
+    DeclarativeActionExecutor<InvokeFunctionTool>(model, state)
+{
+    /// <summary>
+    /// Step identifiers for the function tool invocation workflow.
+    /// </summary>
+    public static class Steps
+    {
+        /// <summary>
+        /// Step for waiting for external input (function result).
+        /// </summary>
+        public static string ExternalInput(string id) => $"{id}_{nameof(ExternalInput)}";
+
+        /// <summary>
+        /// Step for resuming after receiving function result.
+        /// </summary>
+        public static string Resume(string id) => $"{id}_{nameof(Resume)}";
+    }
+
+    /// <inheritdoc/>
+    protected override bool EmitResultEvent => false;
+
+    /// <inheritdoc/>
+    protected override bool IsDiscreteAction => false;
+
+    /// <inheritdoc/>
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        string functionName = this.GetFunctionName();
+        bool requireApproval = this.GetRequireApproval();
+        Dictionary<string, object?>? arguments = this.GetArguments();
+
+        // Create the function call content to send to the caller
+        FunctionCallContent functionCall = new(
+            callId: this.Id,
+            name: functionName,
+            arguments: arguments);
+
+        // Build the response with the function call request
+        ChatMessage requestMessage = new(ChatRole.Tool, [functionCall]);
+
+        // If approval is required, add user input request content
+        if (requireApproval)
+        {
+            requestMessage.Contents.Add(new FunctionApprovalRequestContent(this.Id, functionCall));
+        }
+
+        AgentResponse agentResponse = new([requestMessage]);
+
+        // Yield to the caller - workflow halts here until external input is received
+        ExternalInputRequest inputRequest = new(agentResponse);
+        await context.SendMessageAsync(inputRequest, cancellationToken).ConfigureAwait(false);
+
+        return default;
+    }
+
+    /// <summary>
+    /// Captures the function result and stores in output variables.
+    /// </summary>
+    /// <param name="context">The workflow context.</param>
+    /// <param name="response">The external input response containing the function result.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    public async ValueTask CaptureResponseAsync(
+        IWorkflowContext context,
+        ExternalInputResponse response,
+        CancellationToken cancellationToken)
+    {
+        bool autoSend = this.GetAutoSendValue();
+        string? conversationId = this.GetConversationId();
+
+        // Extract function results from the response
+        IEnumerable<FunctionResultContent> functionResults = response.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<FunctionResultContent>();
+
+        FunctionResultContent? matchingResult = functionResults
+            .FirstOrDefault(r => r.CallId == this.Id);
+
+        if (matchingResult is not null)
+        {
+            // Store the result in output variable
+            await this.AssignResultAsync(context, matchingResult).ConfigureAwait(false);
+
+            // Auto-send the result if configured
+            if (autoSend)
+            {
+                AgentResponse resultResponse = new([new ChatMessage(ChatRole.Tool, [matchingResult])]);
+                await context.AddEventAsync(new AgentResponseEvent(this.Id, resultResponse), cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        // Store messages if output path is configured
+        if (this.Model.Output?.Messages is not null)
+        {
+            await this.AssignAsync(this.Model.Output.Messages?.Path, response.Messages.ToFormula(), context).ConfigureAwait(false);
+        }
+
+        // Add messages to conversation if conversationId is provided
+        if (conversationId is not null)
+        {
+            foreach (ChatMessage message in response.Messages)
+            {
+                await agentProvider.CreateMessageAsync(conversationId, message, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        // Completes the action after processing the function result.
+        await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Completes the action after processing the function result.
+    /// </summary>
+    /// <param name="context">The workflow context.</param>
+    /// <param name="message">The action executor result.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    public async ValueTask CompleteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
+    {
+        await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask AssignResultAsync(IWorkflowContext context, FunctionResultContent result)
+    {
+        if (this.Model.Output?.Result is null)
+        {
+            return;
+        }
+
+        object? resultValue = result.Result;
+
+        // Attempt to parse as JSON if it's a string
+        if (resultValue is string jsonString)
+        {
+            try
+            {
+                JsonDocument jsonDocument = JsonDocument.Parse(jsonString);
+                Dictionary<string, object?> objectProperties = jsonDocument.ParseRecord(VariableType.RecordType);
+                await this.AssignAsync(this.Model.Output.Result?.Path, objectProperties.ToFormula(), context).ConfigureAwait(false);
+                return;
+            }
+            catch
+            {
+                // Not valid JSON, assign as string
+            }
+        }
+
+        await this.AssignAsync(this.Model.Output.Result?.Path, resultValue.ToFormula(), context).ConfigureAwait(false);
+    }
+
+    private string GetFunctionName() =>
+        this.Evaluator.GetValue(
+            Throw.IfNull(
+                this.Model.FunctionName,
+                $"{nameof(this.Model)}.{nameof(this.Model.FunctionName)}")).Value;
+
+    private string? GetConversationId()
+    {
+        if (this.Model.ConversationId is null)
+        {
+            return null;
+        }
+
+        string conversationIdValue = this.Evaluator.GetValue(this.Model.ConversationId).Value;
+        return conversationIdValue.Length == 0 ? null : conversationIdValue;
+    }
+
+    private bool GetRequireApproval()
+    {
+        if (this.Model.RequireApproval is null)
+        {
+            return false;
+        }
+
+        return this.Evaluator.GetValue(this.Model.RequireApproval).Value;
+    }
+
+    private bool GetAutoSendValue()
+    {
+        if (this.Model.Output?.AutoSend is null)
+        {
+            return true;
+        }
+
+        return this.Evaluator.GetValue(this.Model.Output.AutoSend).Value;
+    }
+
+    private Dictionary<string, object?>? GetArguments()
+    {
+        if (this.Model.Arguments is null)
+        {
+            return null;
+        }
+
+        Dictionary<string, object?> result = [];
+        foreach (KeyValuePair<string, ValueExpression> argument in this.Model.Arguments)
+        {
+            result[argument.Key] = this.Evaluator.GetValue(argument.Value).Value.ToObject();
+        }
+
+        return result;
+    }
+}

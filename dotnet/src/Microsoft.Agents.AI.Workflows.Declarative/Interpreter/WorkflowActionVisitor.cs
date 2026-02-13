@@ -382,6 +382,27 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this._workflowModel.AddNode(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId);
     }
 
+    protected override void Visit(InvokeFunctionTool item)
+    {
+        this.Trace(item);
+
+        // Entry point to invoke function tool - always yields for external execution
+        InvokeFunctionToolExecutor action = new(item, this._workflowOptions.AgentProvider, this._workflowState);
+        this.ContinueWith(action);
+
+        // Define request-port for function tool invocation (always requires external input)
+        string externalInputPortId = InvokeFunctionToolExecutor.Steps.ExternalInput(action.Id);
+        RequestPortAction externalInputPort = new(RequestPort.Create<ExternalInputRequest, ExternalInputResponse>(externalInputPortId));
+        this._workflowModel.AddNode(externalInputPort, action.ParentId);
+        this._workflowModel.AddLinkFromPeer(action.ParentId, externalInputPortId);
+
+        // Capture response when external input is received
+        string resumeId = InvokeFunctionToolExecutor.Steps.Resume(action.Id);
+        this.ContinueWith(
+            new DelegateActionExecutor<ExternalInputResponse>(resumeId, this._workflowState, action.CaptureResponseAsync),
+            action.ParentId);
+    }
+
     protected override void Visit(InvokeAzureResponse item)
     {
         this.NotSupported(item);
@@ -529,6 +550,8 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     protected override void Visit(SearchAndSummarizeWithCustomModel item) => this.NotSupported(item);
 
     protected override void Visit(SearchAndSummarizeContent item) => this.NotSupported(item);
+
+    protected override void Visit(InvokeMcpTool item) => this.NotSupported(item);
 
     #endregion
 
