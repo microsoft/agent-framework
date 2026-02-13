@@ -223,7 +223,7 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
         return AssignParent<ConditionGroup>(actionBuilder);
     }
 
-    private ActionScope.Builder CreateActions(string? actionScopeId) // %%% NULLABLE ???
+    private ActionScope.Builder CreateActions(string? actionScopeId)
     {
         ActionScope.Builder actions = [];
 

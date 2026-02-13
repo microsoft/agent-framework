@@ -12,7 +12,6 @@ using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
 using Xunit.Sdk;
-using static System.Collections.Specialized.BitVector32;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 
