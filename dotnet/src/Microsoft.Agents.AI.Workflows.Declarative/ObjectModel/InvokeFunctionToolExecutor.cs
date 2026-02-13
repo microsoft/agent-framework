@@ -22,7 +22,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 /// </summary>
 internal sealed class InvokeFunctionToolExecutor(
     InvokeFunctionTool model,
-    WorkflowAgentProvider agentProvider,
+    ResponseAgentProvider agentProvider,
     WorkflowFormulaState state) :
     DeclarativeActionExecutor<InvokeFunctionTool>(model, state)
 {
