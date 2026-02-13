@@ -46,7 +46,7 @@ async def run_autogen() -> None:
 
 
 async def run_agent_framework() -> None:
-    """Agent Framework agent with explicit thread and streaming."""
+    """Agent Framework agent with explicit session and streaming."""
     from agent_framework.openai import OpenAIChatClient
 
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
@@ -55,22 +55,22 @@ async def run_agent_framework() -> None:
         instructions="You are a helpful math tutor.",
     )
 
-    print("[Agent Framework] Conversation with thread:")
-    # Create a thread to maintain state
-    thread = agent.get_new_thread()
+    print("[Agent Framework] Conversation with session:")
+    # Create a session to maintain state
+    session = agent.create_session()
 
-    # First turn - pass thread to maintain history
-    result1 = await agent.run("What is 15 + 27?", thread=thread)
+    # First turn - pass session to maintain history
+    result1 = await agent.run("What is 15 + 27?", session=session)
     print(f"  Q1: {result1.text}")
 
-    # Second turn - agent remembers context via thread
-    result2 = await agent.run("What about that number times 2?", thread=thread)
+    # Second turn - agent remembers context via session
+    result2 = await agent.run("What about that number times 2?", session=session)
     print(f"  Q2: {result2.text}")
 
     print("\n[Agent Framework] Streaming response:")
     # Stream response
     print("  ", end="")
-    async for chunk in agent.run("Count from 1 to 5", thread=thread, stream=True):
+    async for chunk in agent.run("Count from 1 to 5", session=session, stream=True):
         if chunk.text:
             print(chunk.text, end="", flush=True)
     print()

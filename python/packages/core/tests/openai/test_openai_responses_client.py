@@ -677,6 +677,40 @@ def test_prepare_content_for_openai_hosted_vector_store_content() -> None:
     assert result == {}
 
 
+def test_prepare_content_for_openai_text_uses_role_specific_type() -> None:
+    """Text content should use input_text for user and output_text for assistant."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    text_content = Content.from_text(text="hello")
+
+    user_result = client._prepare_content_for_openai("user", text_content, {})
+    assistant_result = client._prepare_content_for_openai("assistant", text_content, {})
+
+    assert user_result["type"] == "input_text"
+    assert assistant_result["type"] == "output_text"
+    assert assistant_result["annotations"] == []
+    assert user_result["text"] == "hello"
+    assert assistant_result["text"] == "hello"
+
+
+def test_prepare_messages_for_openai_assistant_history_uses_output_text_with_annotations() -> None:
+    """Assistant history should be output_text and include required annotations."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    messages = [
+        Message(role="user", text="What is async/await?"),
+        Message(role="assistant", text="Async/await enables non-blocking concurrency."),
+    ]
+
+    prepared = client._prepare_messages_for_openai(messages)
+
+    assert prepared[0]["role"] == "user"
+    assert prepared[0]["content"][0]["type"] == "input_text"
+    assert prepared[1]["role"] == "assistant"
+    assert prepared[1]["content"][0]["type"] == "output_text"
+    assert prepared[1]["content"][0]["annotations"] == []
+
+
 def test_parse_response_from_openai_with_mcp_server_tool_result() -> None:
     """Test _parse_response_from_openai with MCP server tool result."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
@@ -2132,6 +2166,90 @@ async def test_conversation_id_precedence_kwargs_over_options() -> None:
     # Verify kwargs takes precedence and maps to previous_response_id for resp_* IDs
     assert run_opts.get("previous_response_id") == "resp_new_456"
     assert "conversation" not in run_opts
+
+
+def _create_mock_responses_text_response(*, response_id: str) -> MagicMock:
+    mock_response = MagicMock()
+    mock_response.id = response_id
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.finish_reason = None
+
+    mock_message_content = MagicMock()
+    mock_message_content.type = "output_text"
+    mock_message_content.text = "Hello! How can I help?"
+    mock_message_content.annotations = []
+
+    mock_message_item = MagicMock()
+    mock_message_item.type = "message"
+    mock_message_item.content = [mock_message_content]
+
+    mock_response.output = [mock_message_item]
+    return mock_response
+
+
+async def test_instructions_sent_first_turn_then_skipped_for_continuation() -> None:
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    mock_response = _create_mock_responses_text_response(response_id="resp_123")
+
+    with patch.object(client.client.responses, "create", return_value=mock_response) as mock_create:
+        await client.get_response(
+            messages=[Message(role="user", text="Hello")],
+            options={"instructions": "Reply in uppercase."},
+        )
+
+        first_input_messages = mock_create.call_args.kwargs["input"]
+        assert len(first_input_messages) == 2
+        assert first_input_messages[0]["role"] == "system"
+        assert any("Reply in uppercase" in str(c) for c in first_input_messages[0]["content"])
+        assert first_input_messages[1]["role"] == "user"
+
+        await client.get_response(
+            messages=[Message(role="user", text="Tell me a joke")],
+            options={"instructions": "Reply in uppercase.", "conversation_id": "resp_123"},
+        )
+
+        second_input_messages = mock_create.call_args.kwargs["input"]
+        assert len(second_input_messages) == 1
+        assert second_input_messages[0]["role"] == "user"
+        assert not any(message["role"] == "system" for message in second_input_messages)
+
+
+@pytest.mark.parametrize("conversation_id", ["resp_456", "conv_abc123"])
+async def test_instructions_not_repeated_for_continuation_ids(conversation_id: str) -> None:
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    mock_response = _create_mock_responses_text_response(response_id="resp_456")
+
+    with patch.object(client.client.responses, "create", return_value=mock_response) as mock_create:
+        await client.get_response(
+            messages=[Message(role="user", text="Continue conversation")],
+            options={"instructions": "Be helpful.", "conversation_id": conversation_id},
+        )
+
+        input_messages = mock_create.call_args.kwargs["input"]
+        assert len(input_messages) == 1
+        assert input_messages[0]["role"] == "user"
+        assert not any(message["role"] == "system" for message in input_messages)
+
+
+async def test_instructions_included_without_conversation_id() -> None:
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    mock_response = _create_mock_responses_text_response(response_id="resp_new")
+
+    with patch.object(client.client.responses, "create", return_value=mock_response) as mock_create:
+        await client.get_response(
+            messages=[Message(role="user", text="Hello")],
+            options={"instructions": "You are a helpful assistant."},
+        )
+
+        input_messages = mock_create.call_args.kwargs["input"]
+        assert len(input_messages) == 2
+        assert input_messages[0]["role"] == "system"
+        assert any("helpful assistant" in str(c) for c in input_messages[0]["content"])
+        assert input_messages[1]["role"] == "user"
 
 
 def test_with_callable_api_key() -> None:

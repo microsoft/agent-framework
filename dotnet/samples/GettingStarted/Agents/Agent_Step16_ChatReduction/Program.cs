@@ -16,15 +16,18 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? th
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Construct the agent, and provide a factory to create an in-memory chat message store with a reducer that keeps only the last 2 non-system messages.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new() { Instructions = "You are good at telling jokes." },
         Name = "Joker",
-        ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<ChatHistoryProvider>(new InMemoryChatHistoryProvider(new MessageCountingChatReducer(2), ctx.SerializedState, ctx.JsonSerializerOptions))
+        ChatHistoryProvider = new InMemoryChatHistoryProvider(new() { ChatReducer = new MessageCountingChatReducer(2) })
     });
 
 AgentSession session = await agent.CreateSessionAsync();
@@ -33,7 +36,10 @@ AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session));
 
 // Get the chat history to see how many messages are stored.
-IList<ChatMessage>? chatHistory = session.GetService<IList<ChatMessage>>();
+// We can use the ChatHistoryProvider, that is also used by the agent, to read the
+// chat history from the session state, and see how the reducer is affecting the stored messages.
+var provider = agent.GetService<InMemoryChatHistoryProvider>();
+List<ChatMessage>? chatHistory = provider?.GetMessages(session);
 Console.WriteLine($"\nChat history has {chatHistory?.Count} messages.\n");
 
 // Invoke the agent a few more times.

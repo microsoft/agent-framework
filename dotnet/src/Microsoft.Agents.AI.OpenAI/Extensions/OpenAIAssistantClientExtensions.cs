@@ -204,8 +204,8 @@ public static class OpenAIAssistantClientExtensions
             Name = options.Name ?? assistantMetadata.Name,
             Description = options.Description ?? assistantMetadata.Description,
             ChatOptions = options.ChatOptions,
-            AIContextProviderFactory = options.AIContextProviderFactory,
-            ChatHistoryProviderFactory = options.ChatHistoryProviderFactory,
+            AIContextProviders = options.AIContextProviders,
+            ChatHistoryProvider = options.ChatHistoryProvider,
             UseProvidedChatClientAsIs = options.UseProvidedChatClientAsIs
         };
 

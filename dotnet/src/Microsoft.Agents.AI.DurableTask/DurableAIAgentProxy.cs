@@ -11,7 +11,7 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
 
     public override string? Name { get; } = name;
 
-    protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         if (session is null)
         {
@@ -23,7 +23,7 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
             throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
         }
 
-        return durableSession.Serialize(jsonSerializerOptions);
+        return new(durableSession.Serialize(jsonSerializerOptions));
     }
 
     protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
@@ -62,13 +62,18 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         {
             enableToolCalls = durableOptions.EnableToolCalls;
             enableToolNames = durableOptions.EnableToolNames;
-            responseFormat = durableOptions.ResponseFormat;
             isFireAndForget = durableOptions.IsFireAndForget;
         }
         else if (options is ChatClientAgentRunOptions chatClientOptions)
         {
             // Honor the response format from the chat client options if specified
             responseFormat = chatClientOptions.ChatOptions?.ResponseFormat;
+        }
+
+        // Override the response format if specified in the agent run options
+        if (options?.ResponseFormat is { } format)
+        {
+            responseFormat = format;
         }
 
         RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames);

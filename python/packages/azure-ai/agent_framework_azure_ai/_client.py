@@ -9,10 +9,9 @@ from typing import Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Agent,
+    BaseContextProvider,
     ChatAndFunctionMiddlewareTypes,
-    ChatMessageStoreProtocol,
     ChatMiddlewareLayer,
-    ContextProvider,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
@@ -20,6 +19,7 @@ from agent_framework import (
     MiddlewareTypes,
     get_logger,
 )
+from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIResponsesOptions
@@ -40,7 +40,6 @@ from azure.ai.projects.models import (
 from azure.ai.projects.models import FileSearchTool as ProjectsFileSearchTool
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
-from pydantic import ValidationError
 
 from ._shared import AzureAISettings, create_text_format_config
 
@@ -171,20 +170,20 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 client: AzureAIClient[MyOptions] = AzureAIClient(credential=credential)
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            azure_ai_settings = AzureAISettings(
-                project_endpoint=project_endpoint,
-                model_deployment_name=model_deployment_name,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Azure AI settings.", ex) from ex
+        azure_ai_settings = load_settings(
+            AzureAISettings,
+            env_prefix="AZURE_AI_",
+            project_endpoint=project_endpoint,
+            model_deployment_name=model_deployment_name,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
         # If no project_client is provided, create one
         should_close_client = False
         if project_client is None:
-            if not azure_ai_settings.project_endpoint:
+            resolved_endpoint = azure_ai_settings.get("project_endpoint")
+            if not resolved_endpoint:
                 raise ServiceInitializationError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
                     "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
@@ -194,7 +193,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             if not credential:
                 raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
             project_client = AIProjectClient(
-                endpoint=azure_ai_settings.project_endpoint,
+                endpoint=resolved_endpoint,
                 credential=credential,
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
@@ -212,7 +211,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         self.use_latest_version = use_latest_version
         self.project_client = project_client
         self.credential = credential
-        self.model_id = azure_ai_settings.model_deployment_name
+        self.model_id = azure_ai_settings.get("model_deployment_name")
         self.conversation_id = conversation_id
 
         # Track whether the application endpoint is used
@@ -808,8 +807,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None = None,
         default_options: AzureAIClientOptionsT | Mapping[str, Any] | None = None,
-        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> Agent[AzureAIClientOptionsT]:
@@ -829,8 +827,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             instructions: Optional instructions for the agent.
             tools: The tools to use for the request.
             default_options: A TypedDict containing chat options.
-            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
-            context_provider: Context providers to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
             kwargs: Any additional keyword arguments.
 
@@ -844,8 +841,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             instructions=instructions,
             tools=tools,
             default_options=default_options,
-            chat_message_store_factory=chat_message_store_factory,
-            context_provider=context_provider,
+            context_providers=context_providers,
             middleware=middleware,
             **kwargs,
         )

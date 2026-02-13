@@ -10,7 +10,7 @@ import pytest
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     Content,
     Message,
 )
@@ -122,8 +122,8 @@ class TestGitHubCopilotAgentInit:
         agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
             default_options={"model": "claude-sonnet-4", "timeout": 120}
         )
-        assert agent._settings.model == "claude-sonnet-4"  # type: ignore
-        assert agent._settings.timeout == 120  # type: ignore
+        assert agent._settings["model"] == "claude-sonnet-4"  # type: ignore
+        assert agent._settings["timeout"] == 120  # type: ignore
 
     def test_init_with_tools(self) -> None:
         """Test initialization with function tools."""
@@ -300,21 +300,21 @@ class TestGitHubCopilotAgentRun:
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
 
-    async def test_run_with_thread(
+    async def test_run_with_session(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
         assistant_message_event: SessionEvent,
     ) -> None:
-        """Test run method with existing thread."""
+        """Test run method with existing session."""
         mock_session.send_and_wait.return_value = assistant_message_event
 
         agent = GitHubCopilotAgent(client=mock_client)
-        thread = AgentThread()
-        response = await agent.run("Hello", thread=thread)
+        session = AgentSession()
+        response = await agent.run("Hello", session=session)
 
         assert isinstance(response, AgentResponse)
-        assert thread.service_thread_id == mock_session.session_id
+        assert session.service_session_id == mock_session.session_id
 
     async def test_run_with_runtime_options(
         self,
@@ -392,13 +392,13 @@ class TestGitHubCopilotAgentRunStreaming:
         assert responses[0].role == "assistant"
         assert responses[0].contents[0].text == "Hello"
 
-    async def test_run_streaming_with_thread(
+    async def test_run_streaming_with_session(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
         session_idle_event: SessionEvent,
     ) -> None:
-        """Test streaming with existing thread."""
+        """Test streaming with existing session."""
 
         def mock_on(handler: Any) -> Any:
             handler(session_idle_event)
@@ -407,12 +407,12 @@ class TestGitHubCopilotAgentRunStreaming:
         mock_session.on = mock_on
 
         agent = GitHubCopilotAgent(client=mock_client)
-        thread = AgentThread()
+        session = AgentSession()
 
-        async for _ in agent.run("Hello", thread=thread, stream=True):
+        async for _ in agent.run("Hello", session=session, stream=True):
             pass
 
-        assert thread.service_thread_id == mock_session.session_id
+        assert session.service_session_id == mock_session.session_id
 
     async def test_run_streaming_error(
         self,
@@ -461,20 +461,20 @@ class TestGitHubCopilotAgentRunStreaming:
 class TestGitHubCopilotAgentSessionManagement:
     """Test cases for session management."""
 
-    async def test_session_resumed_for_same_thread(
+    async def test_session_resumed_for_same_session(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
         assistant_message_event: SessionEvent,
     ) -> None:
-        """Test that subsequent calls on the same thread resume the session."""
+        """Test that subsequent calls on the same session resume the session."""
         mock_session.send_and_wait.return_value = assistant_message_event
 
         agent = GitHubCopilotAgent(client=mock_client)
-        thread = AgentThread()
+        session = AgentSession()
 
-        await agent.run("Hello", thread=thread)
-        await agent.run("World", thread=thread)
+        await agent.run("Hello", session=session)
+        await agent.run("World", session=session)
 
         mock_client.create_session.assert_called_once()
         mock_client.resume_session.assert_called_once_with(mock_session.session_id, unittest.mock.ANY)
@@ -490,7 +490,7 @@ class TestGitHubCopilotAgentSessionManagement:
         )
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread())  # type: ignore
+        await agent._get_or_create_session(AgentSession())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -508,7 +508,7 @@ class TestGitHubCopilotAgentSessionManagement:
         )
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread())  # type: ignore
+        await agent._get_or_create_session(AgentSession())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -531,7 +531,7 @@ class TestGitHubCopilotAgentSessionManagement:
             "system_message": {"mode": "replace", "content": "Runtime instructions"}
         }
         await agent._get_or_create_session(  # type: ignore
-            AgentThread(),
+            AgentSession(),
             runtime_options=runtime_options,
         )
 
@@ -549,25 +549,25 @@ class TestGitHubCopilotAgentSessionManagement:
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread(), streaming=True)  # type: ignore
+        await agent._get_or_create_session(AgentSession(), streaming=True)  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
         assert config["streaming"] is True
 
-    async def test_resume_session_with_existing_service_thread_id(
+    async def test_resume_session_with_existing_service_session_id(
         self,
         mock_client: MagicMock,
         mock_session: MagicMock,
     ) -> None:
-        """Test that session is resumed when thread has a service_thread_id."""
+        """Test that session is resumed when session has a service_session_id."""
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
-        thread = AgentThread()
-        thread.service_thread_id = "existing-session-id"
+        session = AgentSession()
+        session.service_session_id = "existing-session-id"
 
-        await agent._get_or_create_session(thread)  # type: ignore
+        await agent._get_or_create_session(session)  # type: ignore
 
         mock_client.create_session.assert_not_called()
         mock_client.resume_session.assert_called_once()
@@ -596,10 +596,10 @@ class TestGitHubCopilotAgentSessionManagement:
         )
         await agent.start()
 
-        thread = AgentThread()
-        thread.service_thread_id = "existing-session-id"
+        session = AgentSession()
+        session.service_session_id = "existing-session-id"
 
-        await agent._get_or_create_session(thread)  # type: ignore
+        await agent._get_or_create_session(session)  # type: ignore
 
         mock_client.resume_session.assert_called_once()
         call_args = mock_client.resume_session.call_args
@@ -639,7 +639,7 @@ class TestGitHubCopilotAgentMCPServers:
         )
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread())  # type: ignore
+        await agent._get_or_create_session(AgentSession())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -672,10 +672,10 @@ class TestGitHubCopilotAgentMCPServers:
         )
         await agent.start()
 
-        thread = AgentThread()
-        thread.service_thread_id = "existing-session-id"
+        session = AgentSession()
+        session.service_session_id = "existing-session-id"
 
-        await agent._get_or_create_session(thread)  # type: ignore
+        await agent._get_or_create_session(session)  # type: ignore
 
         mock_client.resume_session.assert_called_once()
         call_args = mock_client.resume_session.call_args
@@ -692,7 +692,7 @@ class TestGitHubCopilotAgentMCPServers:
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread())  # type: ignore
+        await agent._get_or_create_session(AgentSession())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -716,7 +716,7 @@ class TestGitHubCopilotAgentToolConversion:
         agent = GitHubCopilotAgent(client=mock_client, tools=[my_tool])
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread())  # type: ignore
+        await agent._get_or_create_session(AgentSession())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -739,7 +739,7 @@ class TestGitHubCopilotAgentToolConversion:
         agent = GitHubCopilotAgent(client=mock_client, tools=[my_tool])
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread())  # type: ignore
+        await agent._get_or_create_session(AgentSession())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -764,7 +764,7 @@ class TestGitHubCopilotAgentToolConversion:
         agent = GitHubCopilotAgent(client=mock_client, tools=[failing_tool])
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread())  # type: ignore
+        await agent._get_or_create_session(AgentSession())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -867,7 +867,7 @@ class TestGitHubCopilotAgentErrorHandling:
         await agent.start()
 
         with pytest.raises(ServiceException, match="Failed to create GitHub Copilot session"):
-            await agent._get_or_create_session(AgentThread())  # type: ignore
+            await agent._get_or_create_session(AgentSession())  # type: ignore
 
     async def test_get_or_create_session_raises_when_client_not_initialized(self) -> None:
         """Test that _get_or_create_session raises ServiceException when client is not initialized."""
@@ -875,7 +875,7 @@ class TestGitHubCopilotAgentErrorHandling:
         # Don't call start() - client remains None
 
         with pytest.raises(ServiceException, match="GitHub Copilot client not initialized"):
-            await agent._get_or_create_session(AgentThread())  # type: ignore
+            await agent._get_or_create_session(AgentSession())  # type: ignore
 
 
 class TestGitHubCopilotAgentPermissions:
@@ -919,7 +919,7 @@ class TestGitHubCopilotAgentPermissions:
         )
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread())  # type: ignore
+        await agent._get_or_create_session(AgentSession())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
@@ -935,7 +935,7 @@ class TestGitHubCopilotAgentPermissions:
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
-        await agent._get_or_create_session(AgentThread())  # type: ignore
+        await agent._get_or_create_session(AgentSession())  # type: ignore
 
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]

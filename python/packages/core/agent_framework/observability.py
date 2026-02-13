@@ -18,11 +18,10 @@ from opentelemetry import metrics, trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.semconv.attributes import service_attributes
 from opentelemetry.semconv_ai import Meters, SpanAttributes
-from pydantic import PrivateAttr
 
 from . import __version__ as version_info
 from ._logging import get_logger
-from ._pydantic import AFBaseSettings
+from ._settings import load_settings
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -40,7 +39,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
     from ._agents import SupportsAgentRun
     from ._clients import SupportsChatGetResponse
-    from ._threads import AgentThread
+    from ._sessions import AgentSession
     from ._tools import FunctionTool
     from ._types import (
         AgentResponse,
@@ -566,7 +565,16 @@ def create_metric_views() -> list[View]:
     ]
 
 
-class ObservabilitySettings(AFBaseSettings):
+class _ObservabilitySettingsData(TypedDict, total=False):
+    """TypedDict schema for observability settings fields."""
+
+    enable_instrumentation: bool | None
+    enable_sensitive_data: bool | None
+    enable_console_exporters: bool | None
+    vs_code_extension_port: int | None
+
+
+class ObservabilitySettings:
     """Settings for Agent Framework Observability.
 
     If the environment variables are not found, the settings can
@@ -603,23 +611,27 @@ class ObservabilitySettings(AFBaseSettings):
             settings = ObservabilitySettings(enable_instrumentation=True, enable_console_exporters=True)
     """
 
-    env_prefix: ClassVar[str] = ""
-
-    enable_instrumentation: bool = False
-    enable_sensitive_data: bool = False
-    enable_console_exporters: bool = False
-    vs_code_extension_port: int | None = None
-    _resource: Resource = PrivateAttr()
-    _executed_setup: bool = PrivateAttr(default=False)
-
     def __init__(self, **kwargs: Any) -> None:
         """Initialize the settings and create the resource."""
-        super().__init__(**kwargs)
-        # Create resource with env file settings
-        self._resource = create_resource(
-            env_file_path=self.env_file_path,
-            env_file_encoding=self.env_file_encoding,
+        env_file_path = kwargs.pop("env_file_path", None)
+        env_file_encoding = kwargs.pop("env_file_encoding", None)
+        data = load_settings(
+            _ObservabilitySettingsData,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+            **kwargs,
         )
+        self.enable_instrumentation: bool = data.get("enable_instrumentation") or False
+        self.enable_sensitive_data: bool = data.get("enable_sensitive_data") or False
+        self.enable_console_exporters: bool = data.get("enable_console_exporters") or False
+        self.vs_code_extension_port: int | None = data.get("vs_code_extension_port")
+        self.env_file_path = env_file_path
+        self.env_file_encoding = env_file_encoding
+        self._resource = create_resource(
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+        self._executed_setup = False
 
     @property
     def ENABLED(self) -> bool:
@@ -1268,7 +1280,7 @@ class AgentTelemetryLayer:
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[False] = ...,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -1278,7 +1290,7 @@ class AgentTelemetryLayer:
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[True],
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -1287,7 +1299,7 @@ class AgentTelemetryLayer:
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Trace agent runs with OpenTelemetry spans and metrics."""
@@ -1300,7 +1312,7 @@ class AgentTelemetryLayer:
             return super_run(  # type: ignore[no-any-return]
                 messages=messages,
                 stream=stream,
-                thread=thread,
+                session=session,
                 **kwargs,
             )
 
@@ -1315,7 +1327,7 @@ class AgentTelemetryLayer:
             agent_id=getattr(self, "id", "unknown"),
             agent_name=getattr(self, "name", None) or getattr(self, "id", "unknown"),
             agent_description=getattr(self, "description", None),
-            thread_id=thread.service_thread_id if thread else None,
+            thread_id=session.service_session_id if session else None,
             all_options=merged_options,
             **kwargs,
         )
@@ -1324,7 +1336,7 @@ class AgentTelemetryLayer:
             run_result = super_run(
                 messages=messages,
                 stream=True,
-                thread=thread,
+                session=session,
                 **kwargs,
             )
             if isinstance(run_result, ResponseStream):
@@ -1411,7 +1423,7 @@ class AgentTelemetryLayer:
                     response = await super_run(
                         messages=messages,
                         stream=False,
-                        thread=thread,
+                        session=session,
                         **kwargs,
                     )
                 except Exception as exception:
@@ -1436,7 +1448,7 @@ class AgentTelemetryLayer:
 # region Otel Helpers
 
 
-def get_function_span_attributes(function: FunctionTool[Any, Any], tool_call_id: str | None = None) -> dict[str, str]:
+def get_function_span_attributes(function: FunctionTool[Any], tool_call_id: str | None = None) -> dict[str, str]:
     """Get the span attributes for the given function.
 
     Args:
@@ -1545,7 +1557,7 @@ OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | Non
     "tools": (
         OtelAttr.TOOL_DEFINITIONS,
         lambda tools: (
-            json.dumps(tools_dict)
+            json.dumps(tools_dict, ensure_ascii=False)
             if (tools_dict := __import__("agent_framework._tools", fromlist=["_tools_to_dict"])._tools_to_dict(tools))
             else None
         ),
@@ -1627,12 +1639,14 @@ def _capture_messages(
         )
     if finish_reason:
         otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
-    span.set_attribute(OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES, json.dumps(otel_messages))
+    span.set_attribute(
+        OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES, json.dumps(otel_messages, ensure_ascii=False)
+    )
     if system_instructions:
         if not isinstance(system_instructions, list):
             system_instructions = [system_instructions]
         otel_sys_instructions = [{"type": "text", "content": instruction} for instruction in system_instructions]
-        span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions))
+        span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions, ensure_ascii=False))
 
 
 def _to_otel_message(message: Message) -> dict[str, Any]:
@@ -1666,12 +1680,10 @@ def _to_otel_part(content: Content) -> dict[str, Any] | None:
         case "function_call":
             return {"type": "tool_call", "id": content.call_id, "name": content.name, "arguments": content.arguments}
         case "function_result":
-            from ._types import prepare_function_call_results
-
             return {
                 "type": "tool_call_response",
                 "id": content.call_id,
-                "response": prepare_function_call_results(content),
+                "response": content.result if content.result is not None else "",
             }
         case _:
             # GenericPart in otel output messages json spec.

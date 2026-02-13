@@ -1405,19 +1405,19 @@ class TestMiddlewareDecoratorLogic:
         assert test_function_middleware._middleware_type == MiddlewareType.FUNCTION  # type: ignore[attr-defined]
 
 
-class TestChatAgentThreadBehavior:
-    """Test cases for thread behavior in AgentContext across multiple runs."""
+class TestChatAgentSessionBehavior:
+    """Test cases for session behavior in AgentContext across multiple runs."""
 
-    async def test_agent_context_thread_behavior_across_multiple_runs(self, client: "MockChatClient") -> None:
-        """Test that AgentContext.thread property behaves correctly across multiple agent runs."""
+    async def test_agent_context_session_behavior_across_multiple_runs(self, client: "MockChatClient") -> None:
+        """Test that AgentContext.session property behaves correctly across multiple agent runs."""
         thread_states: list[dict[str, Any]] = []
 
-        class ThreadTrackingMiddleware(AgentMiddleware):
+        class SessionTrackingMiddleware(AgentMiddleware):
             async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 # Capture state before next() call
                 thread_messages = []
-                if context.thread and context.thread.message_store:
-                    thread_messages = await context.thread.message_store.list_messages()
+                if context.session and context.session.state.get("memory"):
+                    thread_messages = context.session.state.get("memory", {}).get("messages", [])
 
                 before_state = {
                     "before_next": True,
@@ -1432,8 +1432,8 @@ class TestChatAgentThreadBehavior:
 
                 # Capture state after next() call
                 thread_messages_after = []
-                if context.thread and context.thread.message_store:
-                    thread_messages_after = await context.thread.message_store.list_messages()
+                if context.session and context.session.state.get("memory"):
+                    thread_messages_after = context.session.state.get("memory", {}).get("messages", [])
 
                 after_state = {
                     "before_next": False,
@@ -1444,19 +1444,16 @@ class TestChatAgentThreadBehavior:
                 }
                 thread_states.append(after_state)
 
-        # Import the ChatMessageStore to configure the agent with a message store factory
-        from agent_framework import ChatMessageStore
+        # Create Agent with session tracking middleware
+        middleware = SessionTrackingMiddleware()
+        agent = Agent(client=client, middleware=[middleware])
 
-        # Create Agent with thread tracking middleware and a message store factory
-        middleware = ThreadTrackingMiddleware()
-        agent = Agent(client=client, middleware=[middleware], chat_message_store_factory=ChatMessageStore)
-
-        # Create a thread that will persist messages between runs
-        thread = agent.get_new_thread()
+        # Create a session that will persist messages between runs
+        session = agent.create_session()
 
         # First run
         first_messages = [Message(role="user", text="first message")]
-        first_response = await agent.run(first_messages, thread=thread)
+        first_response = await agent.run(first_messages, session=session)
 
         # Verify first response
         assert first_response is not None
@@ -1464,7 +1461,7 @@ class TestChatAgentThreadBehavior:
 
         # Second run - use the same thread
         second_messages = [Message(role="user", text="second message")]
-        second_response = await agent.run(second_messages, thread=thread)
+        second_response = await agent.run(second_messages, session=session)
 
         # Verify second response
         assert second_response is not None

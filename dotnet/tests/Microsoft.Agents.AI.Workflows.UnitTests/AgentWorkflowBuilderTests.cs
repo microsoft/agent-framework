@@ -141,7 +141,7 @@ public class AgentWorkflowBuilderTests
         protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => new(new DoubleEchoAgentSession());
 
-        protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => default;
 
         protected override Task<AgentResponse> RunCoreAsync(
@@ -161,7 +161,7 @@ public class AgentWorkflowBuilderTests
         }
     }
 
-    private sealed class DoubleEchoAgentSession() : InMemoryAgentSession();
+    private sealed class DoubleEchoAgentSession() : AgentSession();
 
     [Fact]
     public async Task BuildConcurrent_AgentsRunInParallelAsync()

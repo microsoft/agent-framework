@@ -444,13 +444,7 @@ async def test_thread_metadata_tracking(streaming_chat_client_stub):
     async for event in wrapper.run_agent(input_data):
         events.append(event)
 
-    # AG-UI internal metadata should be stored in thread.metadata
-    thread = agent.client.last_thread
-    thread_metadata = thread.metadata if thread and hasattr(thread, "metadata") else {}
-    assert thread_metadata.get("ag_ui_thread_id") == "test_thread_123"
-    assert thread_metadata.get("ag_ui_run_id") == "test_run_456"
-
-    # Internal metadata should NOT be passed to chat client options
+    # AG-UI internal metadata should NOT be passed to chat client options
     options_metadata = captured_options.get("metadata", {})
     assert "ag_ui_thread_id" not in options_metadata
     assert "ag_ui_run_id" not in options_metadata
@@ -488,15 +482,7 @@ async def test_state_context_injection(streaming_chat_client_stub):
     async for event in wrapper.run_agent(input_data):
         events.append(event)
 
-    # Current state should be stored in thread.metadata
-    thread = agent.client.last_thread
-    thread_metadata = thread.metadata if thread and hasattr(thread, "metadata") else {}
-    current_state = thread_metadata.get("current_state")
-    if isinstance(current_state, str):
-        current_state = json.loads(current_state)
-    assert current_state == {"document": "Test content"}
-
-    # Internal metadata should NOT be passed to chat client options
+    # Current state should NOT be passed to chat client options
     options_metadata = captured_options.get("metadata", {})
     assert "current_state" not in options_metadata
 
@@ -611,11 +597,11 @@ async def test_json_decode_error_in_tool_result(streaming_chat_client_stub):
     assert len(tool_events) == 0
 
 
-async def test_agent_with_use_service_thread_is_false(streaming_chat_client_stub):
-    """Test that when use_service_thread is False, the AgentThread used to run the agent is NOT set to the service thread ID."""
+async def test_agent_with_use_service_session_is_false(streaming_chat_client_stub):
+    """Test that when use_service_session is False, the AgentSession used to run the agent is NOT set to the service session ID."""
     from agent_framework.ag_ui import AgentFrameworkAgent
 
-    request_service_thread_id: str | None = None
+    request_service_session_id: str | None = None
 
     async def stream_fn(
         messages: MutableSequence[Message], chat_options: ChatOptions, **kwargs: Any
@@ -625,42 +611,42 @@ async def test_agent_with_use_service_thread_is_false(streaming_chat_client_stub
         )
 
     agent = Agent(client=streaming_chat_client_stub(stream_fn))
-    wrapper = AgentFrameworkAgent(agent=agent, use_service_thread=False)
+    wrapper = AgentFrameworkAgent(agent=agent, use_service_session=False)
 
     input_data = {"messages": [{"role": "user", "content": "Hi"}], "thread_id": "conv_123456"}
 
     events: list[Any] = []
     async for event in wrapper.run_agent(input_data):
         events.append(event)
-    assert request_service_thread_id is None  # type: ignore[attr-defined] (service_thread_id should be set)
+    assert request_service_session_id is None  # type: ignore[attr-defined] (service_session_id should be set)
 
 
-async def test_agent_with_use_service_thread_is_true(streaming_chat_client_stub):
-    """Test that when use_service_thread is True, the AgentThread used to run the agent is set to the service thread ID."""
+async def test_agent_with_use_service_session_is_true(streaming_chat_client_stub):
+    """Test that when use_service_session is True, the AgentSession used to run the agent is set to the service session ID."""
     from agent_framework.ag_ui import AgentFrameworkAgent
 
-    request_service_thread_id: str | None = None
+    request_service_session_id: str | None = None
 
     async def stream_fn(
         messages: MutableSequence[Message], chat_options: ChatOptions, **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
-        nonlocal request_service_thread_id
-        thread = kwargs.get("thread")
-        request_service_thread_id = thread.service_thread_id if thread else None
+        nonlocal request_service_session_id
+        session = kwargs.get("session")
+        request_service_session_id = session.service_session_id if session else None
         yield ChatResponseUpdate(
             contents=[Content.from_text(text="Response")], response_id="resp_67890", conversation_id="conv_12345"
         )
 
     agent = Agent(client=streaming_chat_client_stub(stream_fn))
-    wrapper = AgentFrameworkAgent(agent=agent, use_service_thread=True)
+    wrapper = AgentFrameworkAgent(agent=agent, use_service_session=True)
 
     input_data = {"messages": [{"role": "user", "content": "Hi"}], "thread_id": "conv_123456"}
 
     events: list[Any] = []
     async for event in wrapper.run_agent(input_data):
         events.append(event)
-    request_service_thread_id = agent.client.last_service_thread_id
-    assert request_service_thread_id == "conv_123456"  # type: ignore[attr-defined] (service_thread_id should be set)
+    request_service_session_id = agent.client.last_service_session_id
+    assert request_service_session_id == "conv_123456"  # type: ignore[attr-defined] (service_session_id should be set)
 
 
 async def test_function_approval_mode_executes_tool(streaming_chat_client_stub):

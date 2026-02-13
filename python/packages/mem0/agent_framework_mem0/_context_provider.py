@@ -2,9 +2,8 @@
 
 """New-pattern Mem0 context provider using BaseContextProvider.
 
-This module provides ``_Mem0ContextProvider``, a side-by-side implementation of
-:class:`Mem0Provider` built on the new :class:`BaseContextProvider` hooks pattern.
-It will be renamed to ``Mem0ContextProvider`` in PR2 when the old class is removed.
+This module provides ``Mem0ContextProvider``, built on the new
+:class:`BaseContextProvider` hooks pattern.
 """
 
 from __future__ import annotations
@@ -35,17 +34,11 @@ class _MemorySearchResponse_v1_1(TypedDict):
 _MemorySearchResponse_v2 = list[dict[str, Any]]
 
 
-class _Mem0ContextProvider(BaseContextProvider):
+class Mem0ContextProvider(BaseContextProvider):
     """Mem0 context provider using the new BaseContextProvider hooks pattern.
 
     Integrates Mem0 for persistent semantic memory, searching and storing
-    memories via the Mem0 API. This is the new-pattern equivalent of
-    :class:`Mem0Provider`.
-
-    Note:
-        This class uses a temporary ``_`` prefix to coexist with the existing
-        :class:`Mem0Provider`. It will be renamed to ``Mem0ContextProvider``
-        in PR2.
+    memories via the Mem0 API.
     """
 
     DEFAULT_CONTEXT_PROMPT = "## Memories\nConsider the following memories when answering user questions:"
@@ -115,9 +108,16 @@ class _Mem0ContextProvider(BaseContextProvider):
 
         filters = self._build_filters(session_id=context.session_id)
 
+        # AsyncMemory (OSS) expects user_id/agent_id/run_id as direct kwargs
+        # AsyncMemoryClient (Platform) expects them in a filters dict
+        search_kwargs: dict[str, Any] = {"query": input_text}
+        if isinstance(self.mem0_client, AsyncMemory):
+            search_kwargs.update(filters)
+        else:
+            search_kwargs["filters"] = filters
+
         search_response: _MemorySearchResponse_v1_1 | _MemorySearchResponse_v2 = await self.mem0_client.search(  # type: ignore[misc]
-            query=input_text,
-            filters=filters,
+            **search_kwargs,
         )
 
         if isinstance(search_response, list):
@@ -190,4 +190,4 @@ class _Mem0ContextProvider(BaseContextProvider):
         return filters
 
 
-__all__ = ["_Mem0ContextProvider"]
+__all__ = ["Mem0ContextProvider"]

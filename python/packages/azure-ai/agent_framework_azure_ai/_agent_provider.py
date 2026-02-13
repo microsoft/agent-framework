@@ -9,18 +9,19 @@ from typing import Any, Generic, cast
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Agent,
-    ContextProvider,
+    BaseContextProvider,
     FunctionTool,
     MiddlewareTypes,
     normalize_tools,
 )
 from agent_framework._mcp import MCPTool
+from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import Agent as AzureAgent
 from azure.ai.agents.models import ResponseFormatJsonSchema, ResponseFormatJsonSchemaType
 from azure.core.credentials_async import AsyncTokenCredential
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions
 from ._shared import AzureAISettings, from_azure_ai_agent_tools, to_azure_ai_agent_tools
@@ -112,21 +113,21 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         Raises:
             ServiceInitializationError: If required parameters are missing or invalid.
         """
-        try:
-            self._settings = AzureAISettings(
-                project_endpoint=project_endpoint,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Azure AI settings.", ex) from ex
+        self._settings = load_settings(
+            AzureAISettings,
+            env_prefix="AZURE_AI_",
+            project_endpoint=project_endpoint,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
         self._should_close_client = False
 
         if agents_client is not None:
             self._agents_client = agents_client
         else:
-            if not self._settings.project_endpoint:
+            resolved_endpoint = self._settings.get("project_endpoint")
+            if not resolved_endpoint:
                 raise ServiceInitializationError(
                     "Azure AI project endpoint is required. Provide 'project_endpoint' parameter "
                     "or set 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
@@ -134,7 +135,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             if not credential:
                 raise ServiceInitializationError("Azure credential is required when agents_client is not provided.")
             self._agents_client = AgentsClient(
-                endpoint=self._settings.project_endpoint,
+                endpoint=resolved_endpoint,
                 credential=credential,
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
@@ -175,7 +176,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Create a new agent on the Azure AI service and return a Agent.
 
@@ -194,7 +195,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
-            context_provider: Context provider to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
 
         Returns:
             Agent: A Agent instance configured with the created agent.
@@ -211,7 +212,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
                     tools=get_weather,
                 )
         """
-        resolved_model = model or self._settings.model_deployment_name
+        resolved_model = model or self._settings.get("model_deployment_name")
         if not resolved_model:
             raise ServiceInitializationError(
                 "Model deployment name is required. Provide 'model' parameter "
@@ -258,7 +259,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             normalized_tools,
             default_options=default_options,
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
         )
 
     async def get_agent(
@@ -272,7 +273,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Retrieve an existing agent from the service and return a Agent.
 
@@ -288,7 +289,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
-            context_provider: Context provider to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
 
         Returns:
             Agent: A Agent instance configured with the retrieved agent.
@@ -315,7 +316,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             normalized_tools,
             default_options=default_options,
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
         )
 
     def as_agent(
@@ -328,7 +329,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Wrap an existing Agent SDK object as a Agent without making HTTP calls.
 
@@ -342,7 +343,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
-            context_provider: Context provider to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
 
         Returns:
             Agent: A Agent instance configured with the agent.
@@ -372,7 +373,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             normalized_tools,
             default_options=default_options,
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
         )
 
     def _to_chat_agent_from_agent(
@@ -381,7 +382,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         provided_tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Create a Agent from an Agent SDK object.
 
@@ -391,7 +392,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
-            context_provider: Context provider to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
         """
         # Create the underlying client
         client = AzureAIAgentClient(
@@ -415,7 +416,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             tools=merged_tools,
             default_options=default_options,  # type: ignore[arg-type]
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
         )
 
     def _merge_tools(

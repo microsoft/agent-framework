@@ -20,6 +20,7 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
+from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
@@ -36,7 +37,7 @@ from azure.core.exceptions import ResourceNotFoundError
 from azure.identity.aio import AzureCliCredential
 from openai.types.responses.parsed_response import ParsedResponse
 from openai.types.responses.response import Response as OpenAIResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 from pytest import fixture, param
 
 from agent_framework_azure_ai import AzureAIClient, AzureAISettings
@@ -113,7 +114,7 @@ def create_test_azure_ai_client(
 ) -> AzureAIClient:
     """Helper function to create AzureAIClient instances for testing, bypassing normal validation."""
     if azure_ai_settings is None:
-        azure_ai_settings = AzureAISettings(env_file_path="test.env")
+        azure_ai_settings = load_settings(AzureAISettings, env_prefix="AZURE_AI_", env_file_path="test.env")
 
     # Create client instance directly
     client = object.__new__(AzureAIClient)
@@ -125,7 +126,7 @@ def create_test_azure_ai_client(
     client.agent_version = agent_version
     client.agent_description = None
     client.use_latest_version = use_latest_version
-    client.model_id = azure_ai_settings.model_deployment_name
+    client.model_id = azure_ai_settings.get("model_deployment_name")
     client.conversation_id = conversation_id
     client._is_application_endpoint = False  # type: ignore
     client._should_close_client = should_close_client  # type: ignore
@@ -143,28 +144,29 @@ def create_test_azure_ai_client(
 
 def test_azure_ai_settings_init(azure_ai_unit_test_env: dict[str, str]) -> None:
     """Test AzureAISettings initialization."""
-    settings = AzureAISettings()
+    settings = load_settings(AzureAISettings, env_prefix="AZURE_AI_")
 
-    assert settings.project_endpoint == azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
-    assert settings.model_deployment_name == azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    assert settings["project_endpoint"] == azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"]
+    assert settings["model_deployment_name"] == azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
 
 
 def test_azure_ai_settings_init_with_explicit_values() -> None:
     """Test AzureAISettings initialization with explicit values."""
-    settings = AzureAISettings(
+    settings = load_settings(
+        AzureAISettings,
+        env_prefix="AZURE_AI_",
         project_endpoint="https://custom-endpoint.com/",
         model_deployment_name="custom-model",
     )
 
-    assert settings.project_endpoint == "https://custom-endpoint.com/"
-    assert settings.model_deployment_name == "custom-model"
+    assert settings["project_endpoint"] == "https://custom-endpoint.com/"
+    assert settings["model_deployment_name"] == "custom-model"
 
 
 def test_init_with_project_client(mock_project_client: MagicMock) -> None:
     """Test AzureAIClient initialization with existing project_client."""
-    with patch("agent_framework_azure_ai._client.AzureAISettings") as mock_settings:
-        mock_settings.return_value.project_endpoint = None
-        mock_settings.return_value.model_deployment_name = "test-model"
+    with patch("agent_framework_azure_ai._client.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {"project_endpoint": None, "model_deployment_name": "test-model"}
 
         client = AzureAIClient(
             project_client=mock_project_client,
@@ -205,9 +207,8 @@ def test_init_auto_create_client(
 
 def test_init_missing_project_endpoint() -> None:
     """Test AzureAIClient initialization when project_endpoint is missing and no project_client provided."""
-    with patch("agent_framework_azure_ai._client.AzureAISettings") as mock_settings:
-        mock_settings.return_value.project_endpoint = None
-        mock_settings.return_value.model_deployment_name = "test-model"
+    with patch("agent_framework_azure_ai._client.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {"project_endpoint": None, "model_deployment_name": "test-model"}
 
         with pytest.raises(ServiceInitializationError, match="Azure AI project endpoint is required"):
             AzureAIClient(credential=MagicMock())
@@ -222,15 +223,6 @@ def test_init_missing_credential(azure_ai_unit_test_env: dict[str, str]) -> None
             project_endpoint=azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
             model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         )
-
-
-def test_init_validation_error(mock_azure_credential: MagicMock) -> None:
-    """Test that ValidationError in AzureAISettings is properly handled."""
-    with patch("agent_framework_azure_ai._client.AzureAISettings") as mock_settings:
-        mock_settings.side_effect = ValidationError.from_exception_data("test", [])
-
-        with pytest.raises(ServiceInitializationError, match="Failed to create Azure AI settings"):
-            AzureAIClient(credential=mock_azure_credential)
 
 
 async def test_get_agent_reference_or_create_existing_version(
@@ -259,7 +251,11 @@ async def test_get_agent_reference_or_create_new_agent(
     azure_ai_unit_test_env: dict[str, str],
 ) -> None:
     """Test _get_agent_reference_or_create when creating a new agent."""
-    azure_ai_settings = AzureAISettings(model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"])
+    azure_ai_settings = load_settings(
+        AzureAISettings,
+        env_prefix="AZURE_AI_",
+        model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    )
     client = create_test_azure_ai_client(
         mock_project_client, agent_name="new-agent", azure_ai_settings=azure_ai_settings
     )
@@ -270,7 +266,7 @@ async def test_get_agent_reference_or_create_new_agent(
     mock_agent.version = "1.0"
     mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
 
-    run_options = {"model": azure_ai_settings.model_deployment_name}
+    run_options = {"model": azure_ai_settings.get("model_deployment_name")}
     agent_ref = await client._get_agent_reference_or_create(run_options, None)  # type: ignore
 
     assert agent_ref == {"name": "new-agent", "version": "1.0", "type": "agent_reference"}
@@ -1477,39 +1473,39 @@ async def test_integration_agent_hosted_code_interpreter_tool():
 
 @pytest.mark.flaky
 @skip_if_azure_ai_integration_tests_disabled
-async def test_integration_agent_existing_thread():
-    """Test Azure Responses Client agent with existing thread to continue conversations across agent instances."""
-    # First conversation - capture the thread
-    preserved_thread = None
+async def test_integration_agent_existing_session():
+    """Test Azure Responses Client agent with existing session to continue conversations across agent instances."""
+    # First conversation - capture the session
+    preserved_session = None
 
     async with (
-        temporary_chat_client(agent_name="af-int-test-existing-thread") as client,
+        temporary_chat_client(agent_name="af-int-test-existing-session") as client,
         Agent(
             client=client,
             instructions="You are a helpful assistant with good memory.",
         ) as first_agent,
     ):
-        # Start a conversation and capture the thread
-        thread = first_agent.get_new_thread()
-        first_response = await first_agent.run("My hobby is photography. Remember this.", thread=thread, store=True)
+        # Start a conversation and capture the session
+        session = first_agent.create_session()
+        first_response = await first_agent.run("My hobby is photography. Remember this.", session=session, store=True)
 
         assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
 
-        # Preserve the thread for reuse
-        preserved_thread = thread
+        # Preserve the session for reuse
+        preserved_session = session
 
-    # Second conversation - reuse the thread in a new agent instance
-    if preserved_thread:
+    # Second conversation - reuse the session in a new agent instance
+    if preserved_session:
         async with (
-            temporary_chat_client(agent_name="af-int-test-existing-thread-2") as client,
+            temporary_chat_client(agent_name="af-int-test-existing-session-2") as client,
             Agent(
                 client=client,
                 instructions="You are a helpful assistant with good memory.",
             ) as second_agent,
         ):
-            # Reuse the preserved thread
-            second_response = await second_agent.run("What is my hobby?", thread=preserved_thread)
+            # Reuse the preserved session
+            second_response = await second_agent.run("What is my hobby?", session=preserved_session)
 
             assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None

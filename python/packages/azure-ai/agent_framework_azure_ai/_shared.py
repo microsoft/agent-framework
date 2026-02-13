@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Mapping, MutableMapping, Sequence
-from typing import Any, ClassVar, cast
+from typing import Any, cast
 
 from agent_framework import (
     FunctionTool,
     get_logger,
 )
-from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInvalidRequestError
 from azure.ai.agents.models import (
     CodeInterpreterToolDefinition,
@@ -32,10 +32,15 @@ from azure.ai.projects.models import (
 )
 from pydantic import BaseModel
 
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+
 logger = get_logger("agent_framework.azure")
 
 
-class AzureAISettings(AFBaseSettings):
+class AzureAISettings(TypedDict, total=False):
     """Azure AI Project settings.
 
     The settings are first loaded from environment variables with the prefix 'AZURE_AI_'.
@@ -70,10 +75,8 @@ class AzureAISettings(AFBaseSettings):
             settings = AzureAISettings(env_file_path="path/to/.env")
     """
 
-    env_prefix: ClassVar[str] = "AZURE_AI_"
-
-    project_endpoint: str | None = None
-    model_deployment_name: str | None = None
+    project_endpoint: str | None
+    model_deployment_name: str | None
 
 
 def _extract_project_connection_id(additional_properties: dict[str, Any] | None) -> str | None:

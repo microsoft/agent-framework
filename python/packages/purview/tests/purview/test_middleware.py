@@ -5,7 +5,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentContext, AgentResponse, AgentThread, Message, MiddlewareTermination
+from agent_framework import AgentContext, AgentResponse, AgentSession, Message, MiddlewareTermination
 from azure.core.credentials import AccessToken
 
 from agent_framework_purview import PurviewPolicyMiddleware, PurviewSettings
@@ -119,7 +119,7 @@ class TestPurviewPolicyMiddleware:
     ) -> None:
         """Test middleware handles result that doesn't have messages attribute."""
         # Set ignore_exceptions to True so AttributeError is caught and logged
-        middleware._settings.ignore_exceptions = True
+        middleware._settings["ignore_exceptions"] = True
 
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", text="Hello")])
 
@@ -216,7 +216,7 @@ class TestPurviewPolicyMiddleware:
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
     ) -> None:
         """Test that post-check exceptions are propagated when ignore_exceptions=False."""
-        middleware._settings.ignore_exceptions = False
+        middleware._settings["ignore_exceptions"] = False
 
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", text="Hello")])
 
@@ -242,7 +242,7 @@ class TestPurviewPolicyMiddleware:
     ) -> None:
         """Test that exceptions in pre-check are logged but don't stop processing when ignore_exceptions=True."""
         # Set ignore_exceptions to True
-        middleware._settings.ignore_exceptions = True
+        middleware._settings["ignore_exceptions"] = True
 
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", text="Test")])
 
@@ -265,7 +265,7 @@ class TestPurviewPolicyMiddleware:
     ) -> None:
         """Test that exceptions in post-check are logged but don't affect result when ignore_exceptions=True."""
         # Set ignore_exceptions to True
-        middleware._settings.ignore_exceptions = True
+        middleware._settings["ignore_exceptions"] = True
 
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", text="Test")])
 
@@ -337,12 +337,12 @@ class TestPurviewPolicyMiddleware:
             with pytest.raises(ValueError, match="Test error"):
                 await middleware.process(context, mock_next)
 
-    async def test_middleware_uses_thread_service_thread_id_as_session_id(
+    async def test_middleware_uses_session_service_session_id_as_session_id(
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
     ) -> None:
-        """Test that session_id is extracted from thread.service_thread_id."""
-        thread = AgentThread(service_thread_id="thread-123")
-        context = AgentContext(agent=mock_agent, messages=[Message(role="user", text="Hello")], thread=thread)
+        """Test that session_id is extracted from session.service_session_id."""
+        session = AgentSession(service_session_id="thread-123")
+        context = AgentContext(agent=mock_agent, messages=[Message(role="user", text="Hello")], session=session)
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
@@ -373,13 +373,13 @@ class TestPurviewPolicyMiddleware:
             assert mock_proc.call_count == 2
             mock_proc.assert_any_call(messages, Activity.UPLOAD_TEXT, session_id="conv-456")
 
-    async def test_middleware_thread_id_takes_precedence_over_message_conversation_id(
+    async def test_middleware_session_id_takes_precedence_over_message_conversation_id(
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
     ) -> None:
-        """Test that thread.service_thread_id takes precedence over message conversation_id."""
-        thread = AgentThread(service_thread_id="thread-789")
+        """Test that session.service_session_id takes precedence over message conversation_id."""
+        session = AgentSession(service_session_id="thread-789")
         messages = [Message(role="user", text="Hello", additional_properties={"conversation_id": "conv-456"})]
-        context = AgentContext(agent=mock_agent, messages=messages, thread=thread)
+        context = AgentContext(agent=mock_agent, messages=messages, session=session)
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
@@ -388,13 +388,13 @@ class TestPurviewPolicyMiddleware:
 
             await middleware.process(context, mock_next)
 
-            # Verify thread ID is used, not message conversation_id
+            # Verify session ID is used, not message conversation_id
             mock_proc.assert_any_call(messages, Activity.UPLOAD_TEXT, session_id="thread-789")
 
     async def test_middleware_passes_none_session_id_when_not_available(
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
     ) -> None:
-        """Test that session_id is None when no thread or conversation_id is available."""
+        """Test that session_id is None when no session or conversation_id is available."""
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", text="Hello")])
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
@@ -411,8 +411,8 @@ class TestPurviewPolicyMiddleware:
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
     ) -> None:
         """Test that session_id is passed to post-check process_messages call."""
-        thread = AgentThread(service_thread_id="thread-999")
-        context = AgentContext(agent=mock_agent, messages=[Message(role="user", text="Hello")], thread=thread)
+        session = AgentSession(service_session_id="thread-999")
+        context = AgentContext(agent=mock_agent, messages=[Message(role="user", text="Hello")], session=session)
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 

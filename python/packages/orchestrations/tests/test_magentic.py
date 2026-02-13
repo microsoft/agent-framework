@@ -9,7 +9,7 @@ import pytest
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     Content,
     Executor,
@@ -153,7 +153,7 @@ class StubAgent(BaseAgent):
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
         if stream:
@@ -366,6 +366,11 @@ async def test_magentic_checkpoint_resume_round_trip():
     assert checkpoints
     checkpoints.sort(key=lambda cp: cp.timestamp)
     resume_checkpoint = checkpoints[-1]
+    loaded_checkpoint = await storage.load(resume_checkpoint.checkpoint_id)
+    assert loaded_checkpoint is not None
+    # Regression check: checkpoints with pending request_info must include executor state.
+    assert "_executor_state" in loaded_checkpoint.state
+    assert "magentic_orchestrator" in loaded_checkpoint.state["_executor_state"]
 
     manager2 = FakeManager()
     wf_resume = MagenticBuilder(
@@ -378,7 +383,7 @@ async def test_magentic_checkpoint_resume_round_trip():
     completed: WorkflowEvent | None = None
     req_event = None
     async for event in wf_resume.run(
-        resume_checkpoint.checkpoint_id,
+        checkpoint_id=resume_checkpoint.checkpoint_id,
         stream=True,
     ):
         if event.type == "request_info" and event.request_type is MagenticPlanReviewRequest:
@@ -409,7 +414,7 @@ class StubManagerAgent(BaseAgent):
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
-        thread: Any = None,
+        session: Any = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
         if stream:
@@ -521,7 +526,7 @@ class StubThreadAgent(BaseAgent):
     def __init__(self, name: str | None = None) -> None:
         super().__init__(name=name or "agentA")
 
-    def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
         if stream:
             return self._run_stream()
 
@@ -549,7 +554,7 @@ class StubAssistantsAgent(BaseAgent):
         super().__init__(name="agentA")
         self.client = StubAssistantsClient()  # type name contains 'AssistantsClient'
 
-    def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
         if stream:
             return self._run_stream()
 

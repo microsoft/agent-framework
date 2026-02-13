@@ -55,7 +55,6 @@ __all__ = [
     "merge_chat_options",
     "normalize_messages",
     "normalize_tools",
-    "prepare_function_call_results",
     "prepend_instructions_to_messages",
     "validate_chat_options",
     "validate_tool_mode",
@@ -1377,36 +1376,6 @@ class Content:
 # endregion
 
 
-def _prepare_function_call_results_as_dumpable(content: Content | Any | list[Content | Any]) -> Any:
-    if isinstance(content, list):
-        # Particularly deal with lists of Content
-        return [_prepare_function_call_results_as_dumpable(item) for item in content]
-    if isinstance(content, dict):
-        return {k: _prepare_function_call_results_as_dumpable(v) for k, v in content.items()}
-    if isinstance(content, BaseModel):
-        return content.model_dump()
-    if hasattr(content, "to_dict"):
-        return content.to_dict(exclude={"raw_representation", "additional_properties"})
-    # Handle objects with text attribute (e.g., MCP TextContent)
-    if hasattr(content, "text") and isinstance(content.text, str):
-        return content.text
-    return content
-
-
-def prepare_function_call_results(content: Content | Any | list[Content | Any]) -> str:
-    """Prepare the values of the function call results."""
-    if isinstance(content, Content):
-        # For BaseContent objects, use to_dict and serialize to JSON
-        # Use default=str to handle datetime and other non-JSON-serializable objects
-        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}), default=str)
-
-    dumpable = _prepare_function_call_results_as_dumpable(content)
-    if isinstance(dumpable, str):
-        return dumpable
-    # fallback - use default=str to handle datetime and other non-JSON-serializable objects
-    return json.dumps(dumpable, default=str)
-
-
 # region Chat Response constants
 
 RoleLiteral = Literal["system", "user", "assistant", "tool"]
@@ -1822,7 +1791,7 @@ class ContinuationToken(TypedDict):
             # Restore and resume
             token = json.loads(token_json)
             response = await agent.run(
-                thread=thread,
+                session=session,
                 options={"continuation_token": token},
             )
     """

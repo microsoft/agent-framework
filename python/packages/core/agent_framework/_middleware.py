@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from ._agents import SupportsAgentRun
     from ._clients import SupportsChatGetResponse
-    from ._threads import AgentThread
+    from ._sessions import AgentSession
     from ._tools import FunctionTool
     from ._types import ChatOptions, ChatResponse, ChatResponseUpdate
 
@@ -118,7 +118,7 @@ class AgentContext:
     Attributes:
         agent: The agent being invoked.
         messages: The messages being sent to the agent.
-        thread: The agent thread for this invocation, if any.
+        session: The agent session for this invocation, if any.
         options: The options for the agent invocation as a dict.
         stream: Whether this is a streaming invocation.
         metadata: Metadata dictionary for sharing data between agent middleware.
@@ -138,7 +138,7 @@ class AgentContext:
                 async def process(self, context: AgentContext, call_next):
                     print(f"Agent: {context.agent.name}")
                     print(f"Messages: {len(context.messages)}")
-                    print(f"Thread: {context.thread}")
+                    print(f"Session: {context.session}")
                     print(f"Streaming: {context.stream}")
 
                     # Store metadata
@@ -156,7 +156,7 @@ class AgentContext:
         *,
         agent: SupportsAgentRun,
         messages: list[Message],
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         options: Mapping[str, Any] | None = None,
         stream: bool = False,
         metadata: Mapping[str, Any] | None = None,
@@ -175,7 +175,7 @@ class AgentContext:
         Args:
             agent: The agent being invoked.
             messages: The messages being sent to the agent.
-            thread: The agent thread for this invocation, if any.
+            session: The agent session for this invocation, if any.
             options: The options for the agent invocation as a dict.
             stream: Whether this is a streaming invocation.
             metadata: Metadata dictionary for sharing data between agent middleware.
@@ -187,7 +187,7 @@ class AgentContext:
         """
         self.agent = agent
         self.messages = messages
-        self.thread = thread
+        self.session = session
         self.options = options
         self.stream = stream
         self.metadata = metadata if metadata is not None else {}
@@ -234,7 +234,7 @@ class FunctionInvocationContext:
 
     def __init__(
         self,
-        function: FunctionTool[Any, Any],
+        function: FunctionTool[Any],
         arguments: BaseModel,
         metadata: Mapping[str, Any] | None = None,
         result: Any = None,
@@ -1098,7 +1098,7 @@ class AgentMiddlewareLayer:
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[False] = ...,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         options: ChatOptions[ResponseModelBoundT],
         **kwargs: Any,
@@ -1110,7 +1110,7 @@ class AgentMiddlewareLayer:
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[False] = ...,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         options: ChatOptions[None] | None = None,
         **kwargs: Any,
@@ -1122,7 +1122,7 @@ class AgentMiddlewareLayer:
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: Literal[True],
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         options: ChatOptions[Any] | None = None,
         **kwargs: Any,
@@ -1133,7 +1133,7 @@ class AgentMiddlewareLayer:
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         options: ChatOptions[Any] | None = None,
         **kwargs: Any,
@@ -1157,12 +1157,12 @@ class AgentMiddlewareLayer:
 
         # Execute with middleware if available
         if not pipeline.has_middlewares:
-            return super().run(messages, stream=stream, thread=thread, options=options, **combined_kwargs)  # type: ignore[misc, no-any-return]
+            return super().run(messages, stream=stream, session=session, options=options, **combined_kwargs)  # type: ignore[misc, no-any-return]
 
         context = AgentContext(
             agent=self,  # type: ignore[arg-type]
             messages=prepare_messages(messages),  # type: ignore[arg-type]
-            thread=thread,
+            session=session,
             options=options,
             stream=stream,
             kwargs=combined_kwargs,
@@ -1197,7 +1197,7 @@ class AgentMiddlewareLayer:
         return super().run(  # type: ignore[misc, no-any-return]
             context.messages,
             stream=context.stream,
-            thread=context.thread,
+            session=context.session,
             options=context.options,
             **context.kwargs,
         )

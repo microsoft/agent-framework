@@ -15,9 +15,12 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOIN
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Create an AI Project client and get an OpenAI client that works with the foundry service.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIProjectClient aiProjectClient = new(
     new Uri(endpoint),
-    new AzureCliCredential());
+    new DefaultAzureCredential());
 OpenAIClient openAIClient = aiProjectClient.GetProjectOpenAIClient();
 
 // Upload the file that contains the data to be used for RAG to the Foundry service.

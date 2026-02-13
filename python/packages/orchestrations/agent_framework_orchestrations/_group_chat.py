@@ -21,6 +21,7 @@ existing observability and streaming semantics continue to apply.
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 import sys
 from collections import OrderedDict
@@ -28,7 +29,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
-from agent_framework import Agent, AgentThread, Message, SupportsAgentRun
+from agent_framework import Agent, AgentSession, Message, SupportsAgentRun
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
@@ -290,7 +291,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         max_rounds: int | None = None,
         termination_condition: TerminationCondition | None = None,
         retry_attempts: int | None = None,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
     ) -> None:
         """Initialize the GroupChatOrchestrator.
 
@@ -301,7 +302,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             max_rounds: Optional limit on selection rounds to prevent infinite loops.
             termination_condition: Optional callable that halts the conversation when it returns True
             retry_attempts: Optional number of retry attempts for the agent in case of failure.
-            thread: Optional agent thread to use for the orchestrator agent.
+            session: Optional agent session to use for the orchestrator agent.
         """
         super().__init__(
             resolve_agent_id(agent),
@@ -312,7 +313,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         )
         self._agent = agent
         self._retry_attempts = retry_attempts
-        self._thread = thread or agent.get_new_thread()
+        self._session = session or agent.create_session()
         # Cache for messages since last agent invocation
         # This is different from the full conversation history maintained by the base orchestrator
         self._cache: list[Message] = []
@@ -393,6 +394,76 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         )
         self._increment_round()
 
+    @staticmethod
+    def _parse_last_json_object(text: str) -> AgentOrchestrationOutput | None:
+        """Best-effort parser for concatenated JSON and return the last object.
+
+        Stop-gap workaround:
+        In some runs, the orchestrator manager text can contain multiple JSON objects
+        concatenated back-to-back (for example: `{...}{...}`), which causes
+        `model_validate_json` to fail with trailing characters. Until the root cause
+        is fully understood and fixed, decode sequential top-level JSON values and
+        validate the last one.
+        """
+        decoder = json.JSONDecoder()
+        index = 0
+        parsed: Any | None = None
+
+        while index < len(text):
+            while index < len(text) and text[index].isspace():
+                index += 1
+            if index >= len(text):
+                break
+            parsed, index = decoder.raw_decode(text, index)
+
+        if parsed is None:
+            return None
+        return AgentOrchestrationOutput.model_validate(parsed)
+
+    @classmethod
+    def _parse_agent_output(cls, agent_response: Any) -> AgentOrchestrationOutput:
+        """Parse manager output with defensive fallbacks.
+
+        Preferred path is structured output (`agent_response.value`) when available.
+        If only text is available, first attempt strict JSON parsing and then apply a
+        temporary concatenated-JSON fallback as a stop-gap.
+        """
+        try:
+            structured_value = agent_response.value
+        except Exception:
+            structured_value = None
+
+        if structured_value is not None:
+            return AgentOrchestrationOutput.model_validate(structured_value)
+
+        text_candidates: list[str] = []
+        for message in reversed(agent_response.messages):
+            if message.role == "assistant" and message.text.strip():
+                text_candidates.append(message.text.strip())
+                break
+
+        response_text = agent_response.text.strip()
+        if response_text and response_text not in text_candidates:
+            text_candidates.append(response_text)
+
+        last_error: Exception | None = None
+        for candidate in text_candidates:
+            try:
+                return AgentOrchestrationOutput.model_validate_json(candidate)
+            except Exception as ex:
+                last_error = ex
+
+            try:
+                # Stop-gap fallback for rare cases where multiple JSON objects are
+                # returned in one text payload (concatenated with no separator).
+                parsed = cls._parse_last_json_object(candidate)
+                if parsed is not None:
+                    return parsed
+            except Exception as ex:
+                last_error = ex
+
+        raise ValueError("Failed to parse agent orchestration output.") from last_error
+
     async def _invoke_agent(self) -> AgentOrchestrationOutput:
         """Invoke the orchestrator agent to determine the next speaker and termination."""
 
@@ -400,11 +471,11 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             # Run the agent in non-streaming mode for simplicity
             agent_response = await self._agent.run(
                 messages=conversation,
-                thread=self._thread,
+                session=self._session,
                 options={"response_format": AgentOrchestrationOutput},
             )
             # Parse and validate the structured output
-            agent_orchestration_output = AgentOrchestrationOutput.model_validate_json(agent_response.text)
+            agent_orchestration_output = self._parse_agent_output(agent_response)
 
             if not agent_orchestration_output.terminate and not agent_orchestration_output.next_speaker:
                 raise ValueError("next_speaker must be provided if not terminating the conversation.")
@@ -476,8 +547,8 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         """Capture current orchestrator state for checkpointing."""
         state = await super().on_checkpoint_save()
         state["cache"] = self._cache
-        serialized_thread = await self._thread.serialize()
-        state["thread"] = serialized_thread
+        serialized_session = self._session.to_dict()
+        state["session"] = serialized_session
 
         return state
 
@@ -486,9 +557,9 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         """Restore executor state from checkpoint."""
         await super().on_checkpoint_restore(state)
         self._cache = state.get("cache", [])
-        serialized_thread = state.get("thread")
-        if serialized_thread:
-            self._thread = await self._agent.deserialize_thread(serialized_thread)
+        serialized_session = state.get("session")
+        if serialized_session:
+            self._session = AgentSession.from_dict(serialized_session)
 
 
 # endregion

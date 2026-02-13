@@ -5,7 +5,7 @@ from typing import Any
 
 IMPORT_PATH = "agent_framework_mem0"
 PACKAGE_NAME = "agent-framework-mem0"
-_IMPORTS = ["__version__", "Mem0Provider"]
+_IMPORTS = ["__version__", "Mem0ContextProvider"]
 
 
 def __getattr__(name: str) -> Any:

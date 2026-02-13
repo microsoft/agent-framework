@@ -56,17 +56,17 @@ class TestAgentContext:
         assert context.stream is True
         assert context.metadata == metadata
 
-    def test_init_with_thread(self, mock_agent: SupportsAgentRun) -> None:
-        """Test AgentContext initialization with thread parameter."""
-        from agent_framework import AgentThread
+    def test_init_with_session(self, mock_agent: SupportsAgentRun) -> None:
+        """Test AgentContext initialization with session parameter."""
+        from agent_framework import AgentSession
 
         messages = [Message(role="user", text="test")]
-        thread = AgentThread()
-        context = AgentContext(agent=mock_agent, messages=messages, thread=thread)
+        session = AgentSession()
+        context = AgentContext(agent=mock_agent, messages=messages, session=session)
 
         assert context.agent is mock_agent
         assert context.messages == messages
-        assert context.thread is thread
+        assert context.session is session
         assert context.stream is False
         assert context.metadata == {}
 
@@ -74,7 +74,7 @@ class TestAgentContext:
 class TestFunctionInvocationContext:
     """Test cases for FunctionInvocationContext."""
 
-    def test_init_with_defaults(self, mock_function: FunctionTool[Any, Any]) -> None:
+    def test_init_with_defaults(self, mock_function: FunctionTool[Any]) -> None:
         """Test FunctionInvocationContext initialization with default values."""
         arguments = FunctionTestArgs(name="test")
         context = FunctionInvocationContext(function=mock_function, arguments=arguments)
@@ -83,7 +83,7 @@ class TestFunctionInvocationContext:
         assert context.arguments == arguments
         assert context.metadata == {}
 
-    def test_init_with_custom_metadata(self, mock_function: FunctionTool[Any, Any]) -> None:
+    def test_init_with_custom_metadata(self, mock_function: FunctionTool[Any]) -> None:
         """Test FunctionInvocationContext initialization with custom metadata."""
         arguments = FunctionTestArgs(name="test")
         metadata = {"key": "value"}
@@ -356,23 +356,23 @@ class TestAgentMiddlewarePipeline:
         assert updates[1].text == "chunk2"
         assert execution_order == ["handler_start", "handler_end"]
 
-    async def test_execute_with_thread_in_context(self, mock_agent: SupportsAgentRun) -> None:
-        """Test pipeline execution properly passes thread to middleware."""
-        from agent_framework import AgentThread
+    async def test_execute_with_session_in_context(self, mock_agent: SupportsAgentRun) -> None:
+        """Test pipeline execution properly passes session to middleware."""
+        from agent_framework import AgentSession
 
-        captured_thread = None
+        captured_session = None
 
-        class ThreadCapturingMiddleware(AgentMiddleware):
+        class SessionCapturingMiddleware(AgentMiddleware):
             async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-                nonlocal captured_thread
-                captured_thread = context.thread
+                nonlocal captured_session
+                captured_session = context.session
                 await call_next()
 
-        middleware = ThreadCapturingMiddleware()
+        middleware = SessionCapturingMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
         messages = [Message(role="user", text="test")]
-        thread = AgentThread()
-        context = AgentContext(agent=mock_agent, messages=messages, thread=thread)
+        session = AgentSession()
+        context = AgentContext(agent=mock_agent, messages=messages, session=session)
 
         expected_response = AgentResponse(messages=[Message(role="assistant", text="response")])
 
@@ -381,22 +381,22 @@ class TestAgentMiddlewarePipeline:
 
         result = await pipeline.execute(context, final_handler)
         assert result == expected_response
-        assert captured_thread is thread
+        assert captured_session is session
 
-    async def test_execute_with_no_thread_in_context(self, mock_agent: SupportsAgentRun) -> None:
-        """Test pipeline execution when no thread is provided."""
-        captured_thread = "not_none"  # Use string to distinguish from None
+    async def test_execute_with_no_session_in_context(self, mock_agent: SupportsAgentRun) -> None:
+        """Test pipeline execution when no session is provided."""
+        captured_session = "not_none"  # Use string to distinguish from None
 
-        class ThreadCapturingMiddleware(AgentMiddleware):
+        class SessionCapturingMiddleware(AgentMiddleware):
             async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-                nonlocal captured_thread
-                captured_thread = context.thread
+                nonlocal captured_session
+                captured_session = context.session
                 await call_next()
 
-        middleware = ThreadCapturingMiddleware()
+        middleware = SessionCapturingMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
         messages = [Message(role="user", text="test")]
-        context = AgentContext(agent=mock_agent, messages=messages, thread=None)
+        context = AgentContext(agent=mock_agent, messages=messages, session=None)
 
         expected_response = AgentResponse(messages=[Message(role="assistant", text="response")])
 
@@ -405,7 +405,7 @@ class TestAgentMiddlewarePipeline:
 
         result = await pipeline.execute(context, final_handler)
         assert result == expected_response
-        assert captured_thread is None
+        assert captured_session is None
 
 
 class TestFunctionMiddlewarePipeline:
@@ -420,7 +420,7 @@ class TestFunctionMiddlewarePipeline:
             await call_next()
             raise MiddlewareTermination
 
-    async def test_execute_with_pre_next_termination(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_execute_with_pre_next_termination(self, mock_function: FunctionTool[Any]) -> None:
         """Test pipeline execution with termination before next() raises MiddlewareTermination."""
         middleware = self.PreNextTerminateFunctionMiddleware()
         pipeline = FunctionMiddlewarePipeline(middleware)
@@ -439,7 +439,7 @@ class TestFunctionMiddlewarePipeline:
         # Handler should not be called when terminated before next()
         assert execution_order == []
 
-    async def test_execute_with_post_next_termination(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_execute_with_post_next_termination(self, mock_function: FunctionTool[Any]) -> None:
         """Test pipeline execution with termination after next() raises MiddlewareTermination."""
         middleware = self.PostNextTerminateFunctionMiddleware()
         pipeline = FunctionMiddlewarePipeline(middleware)
@@ -480,7 +480,7 @@ class TestFunctionMiddlewarePipeline:
         pipeline = FunctionMiddlewarePipeline(test_middleware)
         assert pipeline.has_middlewares
 
-    async def test_execute_no_middleware(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_execute_no_middleware(self, mock_function: FunctionTool[Any]) -> None:
         """Test pipeline execution with no middleware."""
         pipeline = FunctionMiddlewarePipeline()
         arguments = FunctionTestArgs(name="test")
@@ -494,7 +494,7 @@ class TestFunctionMiddlewarePipeline:
         result = await pipeline.execute(context, final_handler)
         assert result == expected_result
 
-    async def test_execute_with_middleware(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_execute_with_middleware(self, mock_function: FunctionTool[Any]) -> None:
         """Test pipeline execution with middleware."""
         execution_order: list[str] = []
 
@@ -787,7 +787,7 @@ class TestClassBasedMiddleware:
         assert context.metadata["after"] is True
         assert metadata_updates == ["before", "handler", "after"]
 
-    async def test_function_middleware_execution(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_function_middleware_execution(self, mock_function: FunctionTool[Any]) -> None:
         """Test class-based function middleware execution."""
         metadata_updates: list[str] = []
 
@@ -847,7 +847,7 @@ class TestFunctionBasedMiddleware:
         assert context.metadata["function_middleware"] is True
         assert execution_order == ["function_before", "handler", "function_after"]
 
-    async def test_function_function_middleware(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_function_function_middleware(self, mock_function: FunctionTool[Any]) -> None:
         """Test function-based function middleware."""
         execution_order: list[str] = []
 
@@ -905,7 +905,7 @@ class TestMixedMiddleware:
         assert result is not None
         assert execution_order == ["class_before", "function_before", "handler", "function_after", "class_after"]
 
-    async def test_mixed_function_middleware(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_mixed_function_middleware(self, mock_function: FunctionTool[Any]) -> None:
         """Test mixed class and function-based function middleware."""
         execution_order: list[str] = []
 
@@ -1017,7 +1017,7 @@ class TestMultipleMiddlewareOrdering:
         ]
         assert execution_order == expected_order
 
-    async def test_function_middleware_execution_order(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_function_middleware_execution_order(self, mock_function: FunctionTool[Any]) -> None:
         """Test that multiple function middleware execute in registration order."""
         execution_order: list[str] = []
 
@@ -1143,7 +1143,7 @@ class TestContextContentValidation:
         result = await pipeline.execute(context, final_handler)
         assert result is not None
 
-    async def test_function_context_validation(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_function_context_validation(self, mock_function: FunctionTool[Any]) -> None:
         """Test that function context contains expected data."""
 
         class ContextValidationMiddleware(FunctionMiddleware):
@@ -1489,7 +1489,7 @@ class TestMiddlewareExecutionControl:
         assert not handler_called
         assert context.result is None
 
-    async def test_function_middleware_no_next_no_execution(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_function_middleware_no_next_no_execution(self, mock_function: FunctionTool[Any]) -> None:
         """Test that when function middleware doesn't call next(), no execution happens."""
 
         class FunctionTestArgs(BaseModel):
@@ -1666,9 +1666,9 @@ def mock_agent() -> SupportsAgentRun:
 
 
 @pytest.fixture
-def mock_function() -> FunctionTool[Any, Any]:
+def mock_function() -> FunctionTool[Any]:
     """Mock function for testing."""
-    function = MagicMock(spec=FunctionTool[Any, Any])
+    function = MagicMock(spec=FunctionTool[Any])
     function.name = "test_function"
     return function
 

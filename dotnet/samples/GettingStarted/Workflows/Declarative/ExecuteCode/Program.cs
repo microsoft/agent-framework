@@ -47,9 +47,12 @@ internal sealed class Program
 
     private Workflow CreateWorkflow()
     {
+        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
         DeclarativeWorkflowOptions options =
-            new(new AzureAgentProvider(new Uri(this.FoundryEndpoint), new AzureCliCredential()))
+            new(new AzureAgentProvider(new Uri(this.FoundryEndpoint), new DefaultAzureCredential()))
             {
                 Configuration = this.Configuration
             };

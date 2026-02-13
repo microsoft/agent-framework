@@ -48,23 +48,23 @@ async def run_semantic_kernel() -> None:
 async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
 
-    # AF thread objects are requested explicitly from the agent.
+    # AF session objects are requested explicitly from the agent.
     chat_agent = OpenAIChatClient().as_agent(
         name="Writer",
         instructions="Keep answers short and friendly.",
     )
-    thread = chat_agent.get_new_thread()
+    session = chat_agent.create_session()
 
     first = await chat_agent.run(
         "Suggest a catchy headline for our product launch.",
-        thread=thread,
+        session=session,
     )
     print("[AF]", first.text)
 
     print("[AF][stream]", end=" ")
     async for chunk in chat_agent.run(
         "Draft a 2 sentence blurb.",
-        thread=thread,
+        session=session,
         stream=True,
     ):
         if chunk.text:

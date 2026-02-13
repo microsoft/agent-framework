@@ -5,15 +5,15 @@ from __future__ import annotations
 import sys
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from azure.ai.projects.aio import AIProjectClient
 from azure.core.credentials import TokenCredential
 from openai import AsyncOpenAI
 from openai.lib.azure import AsyncAzureADTokenProvider
-from pydantic import ValidationError
 
 from .._middleware import ChatMiddlewareLayer
+from .._settings import load_settings
 from .._telemetry import AGENT_FRAMEWORK_USER_AGENT
 from .._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from ..exceptions import ServiceInitializationError
@@ -22,6 +22,7 @@ from ..openai._responses_client import RawOpenAIResponsesClient
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
+    _apply_azure_defaults,
 )
 
 if sys.version_info >= (3, 13):
@@ -195,47 +196,45 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
                 credential=credential,
             )
 
-        try:
-            azure_openai_settings = AzureOpenAISettings(
-                # pydantic settings will see if there is a value, if not, will try the env var or .env file
-                api_key=api_key,  # type: ignore
-                base_url=base_url,  # type: ignore
-                endpoint=endpoint,  # type: ignore
-                responses_deployment_name=deployment_name,
-                api_version=api_version,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-                token_endpoint=token_endpoint,
-                default_api_version="preview",
-            )
-            # TODO(peterychang): This is a temporary hack to ensure that the base_url is set correctly
-            # while this feature is in preview.
-            # But we should only do this if we're on azure. Private deployments may not need this.
-            if (
-                not azure_openai_settings.base_url
-                and azure_openai_settings.endpoint
-                and azure_openai_settings.endpoint.host
-                and azure_openai_settings.endpoint.host.endswith(".openai.azure.com")
-            ):
-                azure_openai_settings.base_url = urljoin(str(azure_openai_settings.endpoint), "/openai/v1/")  # type: ignore
-        except ValidationError as exc:
-            raise ServiceInitializationError(f"Failed to validate settings: {exc}") from exc
+        azure_openai_settings = load_settings(
+            AzureOpenAISettings,
+            env_prefix="AZURE_OPENAI_",
+            api_key=api_key,
+            base_url=base_url,
+            endpoint=endpoint,
+            responses_deployment_name=deployment_name,
+            api_version=api_version,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+            token_endpoint=token_endpoint,
+        )
+        _apply_azure_defaults(azure_openai_settings, default_api_version="preview")
+        # TODO(peterychang): This is a temporary hack to ensure that the base_url is set correctly
+        # while this feature is in preview.
+        # But we should only do this if we're on azure. Private deployments may not need this.
+        if (
+            not azure_openai_settings.get("base_url")
+            and azure_openai_settings.get("endpoint")
+            and (hostname := urlparse(str(azure_openai_settings["endpoint"])).hostname)
+            and hostname.endswith(".openai.azure.com")
+        ):
+            azure_openai_settings["base_url"] = urljoin(str(azure_openai_settings["endpoint"]), "/openai/v1/")
 
-        if not azure_openai_settings.responses_deployment_name:
+        if not azure_openai_settings["responses_deployment_name"]:
             raise ServiceInitializationError(
                 "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME' environment variable."
             )
 
         super().__init__(
-            deployment_name=azure_openai_settings.responses_deployment_name,
-            endpoint=azure_openai_settings.endpoint,
-            base_url=azure_openai_settings.base_url,
-            api_version=azure_openai_settings.api_version,  # type: ignore
-            api_key=azure_openai_settings.api_key.get_secret_value() if azure_openai_settings.api_key else None,
+            deployment_name=azure_openai_settings["responses_deployment_name"],
+            endpoint=azure_openai_settings["endpoint"],
+            base_url=azure_openai_settings["base_url"],
+            api_version=azure_openai_settings["api_version"],  # type: ignore
+            api_key=azure_openai_settings["api_key"].get_secret_value() if azure_openai_settings["api_key"] else None,
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
-            token_endpoint=azure_openai_settings.token_endpoint,
+            token_endpoint=azure_openai_settings["token_endpoint"],
             credential=credential,
             default_headers=default_headers,
             client=async_client,

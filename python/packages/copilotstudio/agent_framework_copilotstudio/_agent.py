@@ -3,37 +3,35 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Sequence
-from typing import Any, ClassVar, Literal, overload
+from typing import Any, Literal, TypedDict, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
+    BaseContextProvider,
     Content,
-    ContextProvider,
     Message,
     ResponseStream,
     normalize_messages,
 )
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
 from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
-from pydantic import ValidationError
 
 from ._acquire_token import acquire_token
 
 
-class CopilotStudioSettings(AFBaseSettings):
+class CopilotStudioSettings(TypedDict, total=False):
     """Copilot Studio model settings.
 
     The settings are first loaded from environment variables with the prefix 'COPILOTSTUDIOAGENT__'.
     If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
-    are ignored; however, validation will fail alerting that the settings are missing.
+    with the encoding 'utf-8'.
 
-    Keyword Args:
+    Keys:
         environmentid: Environment ID of environment with the Copilot Studio App.
             Can be set via environment variable COPILOTSTUDIOAGENT__ENVIRONMENTID.
         schemaname: The agent identifier or schema name of the Copilot to use.
@@ -42,32 +40,12 @@ class CopilotStudioSettings(AFBaseSettings):
             Can be set via environment variable COPILOTSTUDIOAGENT__AGENTAPPID.
         tenantid: The tenant ID of the App Registration used to login.
             Can be set via environment variable COPILOTSTUDIOAGENT__TENANTID.
-        env_file_path: If provided, the .env settings are read from this file path location.
-        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework_copilotstudio import CopilotStudioSettings
-
-            # Using environment variables
-            # Set COPILOTSTUDIOAGENT__ENVIRONMENTID=env-123
-            # Set COPILOTSTUDIOAGENT__SCHEMANAME=my-agent
-            settings = CopilotStudioSettings()
-
-            # Or passing parameters directly
-            settings = CopilotStudioSettings(environmentid="env-123", schemaname="my-agent")
-
-            # Or loading from a .env file
-            settings = CopilotStudioSettings(env_file_path="path/to/.env")
     """
 
-    env_prefix: ClassVar[str] = "COPILOTSTUDIOAGENT__"
-
-    environmentid: str | None = None
-    schemaname: str | None = None
-    agentappid: str | None = None
-    tenantid: str | None = None
+    environmentid: str | None
+    schemaname: str | None
+    agentappid: str | None
+    tenantid: str | None
 
 
 class CopilotStudioAgent(BaseAgent):
@@ -81,7 +59,7 @@ class CopilotStudioAgent(BaseAgent):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: list[AgentMiddlewareTypes] | None = None,
         environment_id: str | None = None,
         agent_identifier: str | None = None,
@@ -109,7 +87,7 @@ class CopilotStudioAgent(BaseAgent):
             id: id of the CopilotAgent
             name: Name of the CopilotAgent
             description: Description of the CopilotAgent
-            context_provider: Context Provider, to be used by the copilot agent.
+            context_providers: Context Providers, to be used by the copilot agent.
             middleware: Agent middleware used by the agent, should be a list of AgentMiddlewareTypes.
             environment_id: Environment ID of the Power Platform environment containing
                 the Copilot Studio app. Can also be set via COPILOTSTUDIOAGENT__ENVIRONMENTID
@@ -140,58 +118,57 @@ class CopilotStudioAgent(BaseAgent):
             id=id,
             name=name,
             description=description,
-            context_provider=context_provider,
+            context_providers=context_providers,
             middleware=middleware,
         )
         if not client:
-            try:
-                copilot_studio_settings = CopilotStudioSettings(
-                    environmentid=environment_id,
-                    schemaname=agent_identifier,
-                    agentappid=client_id,
-                    tenantid=tenant_id,
-                    env_file_path=env_file_path,
-                    env_file_encoding=env_file_encoding,
-                )
-            except ValidationError as ex:
-                raise ServiceInitializationError("Failed to create Copilot Studio settings.", ex) from ex
+            copilot_studio_settings = load_settings(
+                CopilotStudioSettings,
+                env_prefix="COPILOTSTUDIOAGENT__",
+                environmentid=environment_id,
+                schemaname=agent_identifier,
+                agentappid=client_id,
+                tenantid=tenant_id,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
 
             if not settings:
-                if not copilot_studio_settings.environmentid:
+                if not copilot_studio_settings["environmentid"]:
                     raise ServiceInitializationError(
                         "Copilot Studio environment ID is required. Set via 'environment_id' parameter "
                         "or 'COPILOTSTUDIOAGENT__ENVIRONMENTID' environment variable."
                     )
-                if not copilot_studio_settings.schemaname:
+                if not copilot_studio_settings["schemaname"]:
                     raise ServiceInitializationError(
                         "Copilot Studio agent identifier/schema name is required. Set via 'agent_identifier' parameter "
                         "or 'COPILOTSTUDIOAGENT__SCHEMANAME' environment variable."
                     )
 
                 settings = ConnectionSettings(
-                    environment_id=copilot_studio_settings.environmentid,
-                    agent_identifier=copilot_studio_settings.schemaname,
+                    environment_id=copilot_studio_settings["environmentid"],
+                    agent_identifier=copilot_studio_settings["schemaname"],
                     cloud=cloud,
                     copilot_agent_type=agent_type,
                     custom_power_platform_cloud=custom_power_platform_cloud,
                 )
 
             if not token:
-                if not copilot_studio_settings.agentappid:
+                if not copilot_studio_settings["agentappid"]:
                     raise ServiceInitializationError(
                         "Copilot Studio client ID is required. Set via 'client_id' parameter "
                         "or 'COPILOTSTUDIOAGENT__AGENTAPPID' environment variable."
                     )
 
-                if not copilot_studio_settings.tenantid:
+                if not copilot_studio_settings["tenantid"]:
                     raise ServiceInitializationError(
                         "Copilot Studio tenant ID is required. Set via 'tenant_id' parameter "
                         "or 'COPILOTSTUDIOAGENT__TENANTID' environment variable."
                     )
 
                 token = acquire_token(
-                    client_id=copilot_studio_settings.agentappid,
-                    tenant_id=copilot_studio_settings.tenantid,
+                    client_id=copilot_studio_settings["agentappid"],
+                    tenant_id=copilot_studio_settings["tenantid"],
                     username=username,
                     token_cache=token_cache,
                     scopes=scopes,
@@ -213,7 +190,7 @@ class CopilotStudioAgent(BaseAgent):
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: Literal[False] = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
 
@@ -223,7 +200,7 @@ class CopilotStudioAgent(BaseAgent):
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: Literal[True],
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
@@ -232,7 +209,7 @@ class CopilotStudioAgent(BaseAgent):
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
@@ -246,7 +223,7 @@ class CopilotStudioAgent(BaseAgent):
 
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
-            thread: The conversation thread associated with the message(s).
+            session: The conversation session associated with the message(s).
             kwargs: Additional keyword arguments.
 
         Returns:
@@ -254,26 +231,26 @@ class CopilotStudioAgent(BaseAgent):
             When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
         if stream:
-            return self._run_stream_impl(messages=messages, thread=thread, **kwargs)
-        return self._run_impl(messages=messages, thread=thread, **kwargs)
+            return self._run_stream_impl(messages=messages, session=session, **kwargs)
+        return self._run_impl(messages=messages, session=session, **kwargs)
 
     async def _run_impl(
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming implementation of run."""
-        if not thread:
-            thread = self.get_new_thread()
-        thread.service_thread_id = await self._start_new_conversation()
+        if not session:
+            session = self.create_session()
+        session.service_session_id = await self._start_new_conversation()
 
         input_messages = normalize_messages(messages)
 
         question = "\n".join([message.text for message in input_messages])
 
-        activities = self.client.ask_question(question, thread.service_thread_id)
+        activities = self.client.ask_question(question, session.service_session_id)
         response_messages: list[Message] = []
         response_id: str | None = None
 
@@ -286,22 +263,22 @@ class CopilotStudioAgent(BaseAgent):
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Streaming implementation of run."""
 
         async def _stream() -> AsyncIterable[AgentResponseUpdate]:
-            nonlocal thread
-            if not thread:
-                thread = self.get_new_thread()
-            thread.service_thread_id = await self._start_new_conversation()
+            nonlocal session
+            if not session:
+                session = self.create_session()
+            session.service_session_id = await self._start_new_conversation()
 
             input_messages = normalize_messages(messages)
 
             question = "\n".join([message.text for message in input_messages])
 
-            activities = self.client.ask_question(question, thread.service_thread_id)
+            activities = self.client.ask_question(question, session.service_session_id)
 
             async for message in self._process_activities(activities, streaming=True):
                 yield AgentResponseUpdate(

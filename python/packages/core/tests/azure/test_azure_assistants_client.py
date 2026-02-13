@@ -12,13 +12,14 @@ from agent_framework import (
     Agent,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     ChatResponse,
     ChatResponseUpdate,
     Message,
     SupportsChatGetResponse,
     tool,
 )
+from agent_framework._settings import SecretString
 from agent_framework.azure import AzureOpenAIAssistantsClient
 from agent_framework.exceptions import ServiceInitializationError
 
@@ -432,70 +433,70 @@ async def test_azure_assistants_agent_basic_run_streaming():
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_azure_assistants_agent_thread_persistence():
-    """Test Agent thread persistence across runs with AzureOpenAIAssistantsClient."""
+async def test_azure_assistants_agent_session_persistence():
+    """Test Agent session persistence across runs with AzureOpenAIAssistantsClient."""
     async with Agent(
         client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
-        # Create a new thread that will be reused
-        thread = agent.get_new_thread()
+        # Create a new session that will be reused
+        session = agent.create_session()
 
         # First message - establish context
         first_response = await agent.run(
-            "Remember this number: 42. What number did I just tell you to remember?", thread=thread
+            "Remember this number: 42. What number did I just tell you to remember?", session=session
         )
         assert isinstance(first_response, AgentResponse)
         assert "42" in first_response.text
 
         # Second message - test conversation memory
         second_response = await agent.run(
-            "What number did I tell you to remember in my previous message?", thread=thread
+            "What number did I tell you to remember in my previous message?", session=session
         )
         assert isinstance(second_response, AgentResponse)
         assert "42" in second_response.text
 
-        # Verify thread has been populated with conversation ID
-        assert thread.service_thread_id is not None
+        # Verify session has been populated with conversation ID
+        assert session.service_session_id is not None
 
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_azure_assistants_agent_existing_thread_id():
-    """Test Agent with existing thread ID to continue conversations across agent instances."""
-    # First, create a conversation and capture the thread ID
-    existing_thread_id = None
+async def test_azure_assistants_agent_existing_session_id():
+    """Test Agent with existing session ID to continue conversations across agent instances."""
+    # First, create a conversation and capture the session ID
+    existing_session_id = None
 
     async with Agent(
         client=AzureOpenAIAssistantsClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     ) as agent:
-        # Start a conversation and get the thread ID
-        thread = agent.get_new_thread()
-        response1 = await agent.run("What's the weather in Paris?", thread=thread)
+        # Start a conversation and get the session ID
+        session = agent.create_session()
+        response1 = await agent.run("What's the weather in Paris?", session=session)
 
         # Validate first response
         assert isinstance(response1, AgentResponse)
         assert response1.text is not None
         assert any(word in response1.text.lower() for word in ["weather", "paris"])
 
-        # The thread ID is set after the first response
-        existing_thread_id = thread.service_thread_id
-        assert existing_thread_id is not None
+        # The session ID is set after the first response
+        existing_session_id = session.service_session_id
+        assert existing_session_id is not None
 
-    # Now continue with the same thread ID in a new agent instance
+    # Now continue with the same session ID in a new agent instance
 
     async with Agent(
-        client=AzureOpenAIAssistantsClient(thread_id=existing_thread_id, credential=AzureCliCredential()),
+        client=AzureOpenAIAssistantsClient(thread_id=existing_session_id, credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     ) as agent:
-        # Create a thread with the existing ID
-        thread = AgentThread(service_thread_id=existing_thread_id)
+        # Create a session with the existing ID
+        session = AgentSession(service_session_id=existing_session_id)
 
         # Ask about the previous conversation
-        response2 = await agent.run("What was the last city I asked about?", thread=thread)
+        response2 = await agent.run("What was the last city I asked about?", session=session)
 
         # Validate that the agent remembers the previous conversation
         assert isinstance(response2, AgentResponse)
@@ -556,19 +557,21 @@ def test_azure_assistants_client_entra_id_authentication() -> None:
     mock_credential = MagicMock()
 
     with (
-        patch("agent_framework.azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework.azure._assistants_client.load_settings") as mock_load_settings,
+        patch("agent_framework.azure._assistants_client.get_entra_auth_token") as mock_get_token,
         patch("agent_framework.azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
         patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
     ):
-        mock_settings = MagicMock()
-        mock_settings.chat_deployment_name = "test-deployment"
-        mock_settings.api_key = None  # No API key to trigger Entra ID path
-        mock_settings.token_endpoint = "https://login.microsoftonline.com/test"
-        mock_settings.get_azure_auth_token.return_value = "entra-token-12345"
-        mock_settings.api_version = "2024-05-01-preview"
-        mock_settings.endpoint = "https://test-endpoint.openai.azure.com"
-        mock_settings.base_url = None
-        mock_settings_class.return_value = mock_settings
+        mock_load_settings.return_value = {
+            "chat_deployment_name": "test-deployment",
+            "responses_deployment_name": None,
+            "api_key": None,
+            "token_endpoint": "https://login.microsoftonline.com/test",
+            "api_version": "2024-05-01-preview",
+            "endpoint": "https://test-endpoint.openai.azure.com",
+            "base_url": None,
+        }
+        mock_get_token.return_value = "entra-token-12345"
 
         client = AzureOpenAIAssistantsClient(
             deployment_name="test-deployment",
@@ -579,7 +582,7 @@ def test_azure_assistants_client_entra_id_authentication() -> None:
         )
 
         # Verify Entra ID token was requested
-        mock_settings.get_azure_auth_token.assert_called_once_with(mock_credential)
+        mock_get_token.assert_called_once_with(mock_credential, "https://login.microsoftonline.com/test")
 
         # Verify client was created with the token
         mock_azure_client.assert_called_once()
@@ -592,12 +595,16 @@ def test_azure_assistants_client_entra_id_authentication() -> None:
 
 def test_azure_assistants_client_no_authentication_error() -> None:
     """Test authentication validation error when no auth provided."""
-    with patch("agent_framework.azure._assistants_client.AzureOpenAISettings") as mock_settings_class:
-        mock_settings = MagicMock()
-        mock_settings.chat_deployment_name = "test-deployment"
-        mock_settings.api_key = None  # No API key
-        mock_settings.token_endpoint = None  # No token endpoint
-        mock_settings_class.return_value = mock_settings
+    with patch("agent_framework.azure._assistants_client.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {
+            "chat_deployment_name": "test-deployment",
+            "responses_deployment_name": None,
+            "api_key": None,
+            "token_endpoint": None,
+            "api_version": "2024-05-01-preview",
+            "endpoint": "https://test-endpoint.openai.azure.com",
+            "base_url": None,
+        }
 
         # Test missing authentication raises error
         with pytest.raises(ServiceInitializationError, match="API key, ad_token, or ad_token_provider is required"):
@@ -611,17 +618,19 @@ def test_azure_assistants_client_no_authentication_error() -> None:
 def test_azure_assistants_client_ad_token_authentication() -> None:
     """Test ad_token authentication client parameter path."""
     with (
-        patch("agent_framework.azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework.azure._assistants_client.load_settings") as mock_load_settings,
         patch("agent_framework.azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
         patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
     ):
-        mock_settings = MagicMock()
-        mock_settings.chat_deployment_name = "test-deployment"
-        mock_settings.api_key = None  # No API key
-        mock_settings.api_version = "2024-05-01-preview"
-        mock_settings.endpoint = "https://test-endpoint.openai.azure.com"
-        mock_settings.base_url = None
-        mock_settings_class.return_value = mock_settings
+        mock_load_settings.return_value = {
+            "chat_deployment_name": "test-deployment",
+            "responses_deployment_name": None,
+            "api_key": None,
+            "token_endpoint": None,
+            "api_version": "2024-05-01-preview",
+            "endpoint": "https://test-endpoint.openai.azure.com",
+            "base_url": None,
+        }
 
         client = AzureOpenAIAssistantsClient(
             deployment_name="test-deployment",
@@ -645,17 +654,19 @@ def test_azure_assistants_client_ad_token_provider_authentication() -> None:
     mock_token_provider = MagicMock(spec=AsyncAzureADTokenProvider)
 
     with (
-        patch("agent_framework.azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework.azure._assistants_client.load_settings") as mock_load_settings,
         patch("agent_framework.azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
         patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
     ):
-        mock_settings = MagicMock()
-        mock_settings.chat_deployment_name = "test-deployment"
-        mock_settings.api_key = None  # No API key
-        mock_settings.api_version = "2024-05-01-preview"
-        mock_settings.endpoint = "https://test-endpoint.openai.azure.com"
-        mock_settings.base_url = None
-        mock_settings_class.return_value = mock_settings
+        mock_load_settings.return_value = {
+            "chat_deployment_name": "test-deployment",
+            "responses_deployment_name": None,
+            "api_key": None,
+            "token_endpoint": None,
+            "api_version": "2024-05-01-preview",
+            "endpoint": "https://test-endpoint.openai.azure.com",
+            "base_url": None,
+        }
 
         client = AzureOpenAIAssistantsClient(
             deployment_name="test-deployment",
@@ -675,17 +686,19 @@ def test_azure_assistants_client_ad_token_provider_authentication() -> None:
 def test_azure_assistants_client_base_url_configuration() -> None:
     """Test base_url client parameter path."""
     with (
-        patch("agent_framework.azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework.azure._assistants_client.load_settings") as mock_load_settings,
         patch("agent_framework.azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
         patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
     ):
-        mock_settings = MagicMock()
-        mock_settings.chat_deployment_name = "test-deployment"
-        mock_settings.api_key.get_secret_value.return_value = "test-api-key"
-        mock_settings.base_url = "https://custom-base-url.com"
-        mock_settings.endpoint = None  # No endpoint, should use base_url
-        mock_settings.api_version = "2024-05-01-preview"
-        mock_settings_class.return_value = mock_settings
+        mock_load_settings.return_value = {
+            "chat_deployment_name": "test-deployment",
+            "responses_deployment_name": None,
+            "api_key": SecretString("test-api-key"),
+            "token_endpoint": None,
+            "api_version": "2024-05-01-preview",
+            "endpoint": None,
+            "base_url": "https://custom-base-url.com",
+        }
 
         client = AzureOpenAIAssistantsClient(
             deployment_name="test-deployment", api_key="test-api-key", base_url="https://custom-base-url.com"
@@ -704,17 +717,19 @@ def test_azure_assistants_client_base_url_configuration() -> None:
 def test_azure_assistants_client_azure_endpoint_configuration() -> None:
     """Test azure_endpoint client parameter path."""
     with (
-        patch("agent_framework.azure._assistants_client.AzureOpenAISettings") as mock_settings_class,
+        patch("agent_framework.azure._assistants_client.load_settings") as mock_load_settings,
         patch("agent_framework.azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
         patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
     ):
-        mock_settings = MagicMock()
-        mock_settings.chat_deployment_name = "test-deployment"
-        mock_settings.api_key.get_secret_value.return_value = "test-api-key"
-        mock_settings.base_url = None  # No base_url
-        mock_settings.endpoint = "https://test-endpoint.openai.azure.com"
-        mock_settings.api_version = "2024-05-01-preview"
-        mock_settings_class.return_value = mock_settings
+        mock_load_settings.return_value = {
+            "chat_deployment_name": "test-deployment",
+            "responses_deployment_name": None,
+            "api_key": SecretString("test-api-key"),
+            "token_endpoint": None,
+            "api_version": "2024-05-01-preview",
+            "endpoint": "https://test-endpoint.openai.azure.com",
+            "base_url": None,
+        }
 
         client = AzureOpenAIAssistantsClient(
             deployment_name="test-deployment",

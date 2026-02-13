@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from agent_framework import ChatOptions
 
 # Declaration-only tools (func=None) - actual rendering happens on the client side
-generate_haiku = FunctionTool[Any, str](
+generate_haiku = FunctionTool[Any](
     name="generate_haiku",
     description="""Generate a haiku with image and gradient background (FRONTEND_RENDER).
 
@@ -71,7 +71,7 @@ generate_haiku = FunctionTool[Any, str](
     },
 )
 
-create_chart = FunctionTool[Any, str](
+create_chart = FunctionTool[Any](
     name="create_chart",
     description="""Create an interactive chart (FRONTEND_RENDER).
 
@@ -99,7 +99,7 @@ create_chart = FunctionTool[Any, str](
     },
 )
 
-display_timeline = FunctionTool[Any, str](
+display_timeline = FunctionTool[Any](
     name="display_timeline",
     description="""Display an interactive timeline (FRONTEND_RENDER).
 
@@ -127,7 +127,7 @@ display_timeline = FunctionTool[Any, str](
     },
 )
 
-show_comparison_table = FunctionTool[Any, str](
+show_comparison_table = FunctionTool[Any](
     name="show_comparison_table",
     description="""Show a comparison table (FRONTEND_RENDER).
 
