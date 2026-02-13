@@ -1,4 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
+// Trivial change to trigger CosmosDB emulator testing in CI/CD
 
 using System;
 using System.Collections.Generic;
