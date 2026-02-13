@@ -38,6 +38,10 @@ export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"
 
 For Azure authentication, run `az login` before running samples.
 
+## Note on XML tags
+
+Some sample files include XML-style snippet tags (for example `<snippet_name>` and `</snippet_name>`). These are used by our documentation tooling and can be ignored or removed when you use the samples outside this repository.
+
 ## Additional Resources
 
 - [Agent Framework Documentation](https://learn.microsoft.com/agent-framework/)

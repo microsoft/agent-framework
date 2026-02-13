@@ -33,7 +33,6 @@ from ._middleware import (
     FunctionInvocationContext,
     FunctionMiddleware,
     FunctionMiddlewareTypes,
-    MiddlewareException,
     MiddlewareTermination,
     MiddlewareType,
     MiddlewareTypes,
@@ -153,6 +152,7 @@ from ._workflows import (
     response_handler,
     validate_workflow_graph,
 )
+from .exceptions import MiddlewareException
 
 __all__ = [
     "AGENT_FRAMEWORK_USER_AGENT",
