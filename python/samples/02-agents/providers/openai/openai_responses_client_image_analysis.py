@@ -22,15 +22,14 @@ async def main():
         instructions="You are a image analysist, you get a image and need to respond with what you see in the picture.",
     )
 
-    # 2. Create image user content directly
-    image_content = Content.from_uri(
-        uri="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800",
-        media_type="image/jpeg",
-    )
-
-    # 3. Get the agent's response
+    # 2. Get the agent's response
     print("User: What do you see in this image? [Image provided]")
-    result = await agent.run(image_content)
+    result = await agent.run(
+        Content.from_uri(
+            uri="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800",
+            media_type="image/jpeg",
+        )
+    )
     print(f"Agent: {result.text}")
     print()
 
