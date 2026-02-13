@@ -1146,6 +1146,47 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal("a2a", metadata.ProviderName);
     }
 
+    /// <summary>
+    /// Verify that CreateSessionAsync with contextId creates a session with the correct context ID.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_WithContextId_CreatesSessionWithContextIdAsync()
+    {
+        // Arrange
+        const string ContextId = "test-context-123";
+
+        // Act
+        var session = await this._agent.CreateSessionAsync(ContextId);
+
+        // Assert
+        Assert.NotNull(session);
+        Assert.IsType<A2AAgentSession>(session);
+        var typedSession = (A2AAgentSession)session;
+        Assert.Equal(ContextId, typedSession.ContextId);
+        Assert.Null(typedSession.TaskId);
+    }
+
+    /// <summary>
+    /// Verify that CreateSessionAsync with contextId and taskId creates a session with both IDs set correctly.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_WithContextIdAndTaskId_CreatesSessionWithBothIdsAsync()
+    {
+        // Arrange
+        const string ContextId = "test-context-456";
+        const string TaskId = "test-task-789";
+
+        // Act
+        var session = await this._agent.CreateSessionAsync(ContextId, TaskId);
+
+        // Assert
+        Assert.NotNull(session);
+        Assert.IsType<A2AAgentSession>(session);
+        var typedSession = (A2AAgentSession)session;
+        Assert.Equal(ContextId, typedSession.ContextId);
+        Assert.Equal(TaskId, typedSession.TaskId);
+    }
+
     #endregion
 
     public void Dispose()
