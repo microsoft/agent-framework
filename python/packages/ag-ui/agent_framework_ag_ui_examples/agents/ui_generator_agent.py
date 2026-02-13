@@ -2,10 +2,12 @@
 
 """Example agent demonstrating Tool-based Generative UI (Feature 5)."""
 
+from __future__ import annotations
+
 import sys
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from agent_framework import ChatAgent, ChatClientProtocol, FunctionTool
+from agent_framework import Agent, FunctionTool, SupportsChatGetResponse
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 if sys.version_info >= (3, 13):
@@ -21,7 +23,7 @@ if TYPE_CHECKING:
     from agent_framework import ChatOptions
 
 # Declaration-only tools (func=None) - actual rendering happens on the client side
-generate_haiku = FunctionTool[Any, str](
+generate_haiku = FunctionTool[Any](
     name="generate_haiku",
     description="""Generate a haiku with image and gradient background (FRONTEND_RENDER).
 
@@ -69,7 +71,7 @@ generate_haiku = FunctionTool[Any, str](
     },
 )
 
-create_chart = FunctionTool[Any, str](
+create_chart = FunctionTool[Any](
     name="create_chart",
     description="""Create an interactive chart (FRONTEND_RENDER).
 
@@ -97,7 +99,7 @@ create_chart = FunctionTool[Any, str](
     },
 )
 
-display_timeline = FunctionTool[Any, str](
+display_timeline = FunctionTool[Any](
     name="display_timeline",
     description="""Display an interactive timeline (FRONTEND_RENDER).
 
@@ -125,7 +127,7 @@ display_timeline = FunctionTool[Any, str](
     },
 )
 
-show_comparison_table = FunctionTool[Any, str](
+show_comparison_table = FunctionTool[Any](
     name="show_comparison_table",
     description="""Show a comparison table (FRONTEND_RENDER).
 
@@ -163,22 +165,22 @@ _UI_GENERATOR_INSTRUCTIONS = """You MUST use the provided tools to generate cont
     For other requests, use the appropriate tool (create_chart, display_timeline, show_comparison_table).
     """
 
-TOptions = TypeVar("TOptions", bound=TypedDict, default="ChatOptions")  # type: ignore[valid-type]
+OptionsT = TypeVar("OptionsT", bound=TypedDict, default="ChatOptions")  # type: ignore[valid-type]
 
 
-def ui_generator_agent(chat_client: ChatClientProtocol[TOptions]) -> AgentFrameworkAgent:
+def ui_generator_agent(client: SupportsChatGetResponse[OptionsT]) -> AgentFrameworkAgent:
     """Create a UI generator agent with custom React component rendering.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A configured AgentFrameworkAgent instance with UI generation capabilities
     """
-    agent = ChatAgent(
+    agent = Agent(
         name="ui_generator",
         instructions=_UI_GENERATOR_INSTRUCTIONS,
-        chat_client=chat_client,
+        client=client,
         tools=[generate_haiku, create_chart, display_timeline, show_comparison_table],
         # Force tool usage - the LLM MUST call a tool, cannot respond with plain text
         default_options={"tool_choice": "required"},  # type: ignore

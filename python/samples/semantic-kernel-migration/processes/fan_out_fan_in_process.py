@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/processes/fan_out_fan_in_process.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 """Side-by-side sample comparing Semantic Kernel Process Framework and Agent Framework workflows."""
@@ -11,7 +20,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 ######################################################################
 # region Agent Framework imports
 ######################################################################
-from agent_framework import Executor, WorkflowBuilder, WorkflowContext,  handler
+from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
 from pydantic import BaseModel, Field
 
 ######################################################################

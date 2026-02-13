@@ -6,6 +6,8 @@ This module provides the AgentFunctionApp class that integrates Microsoft Agent 
 with Azure Durable Entities, enabling stateful and durable AI agent execution.
 """
 
+from __future__ import annotations
+
 import json
 import re
 import uuid
@@ -133,8 +135,8 @@ class AgentFunctionApp(DFAppBase):
         @app.orchestration_trigger(context_name="context")
         def my_orchestration(context):
             writer = app.get_agent(context, "WeatherAgent")
-            thread = writer.get_new_thread()
-            forecast_task = writer.run("What's the forecast?", thread=thread)
+            session = writer.create_session()
+            forecast_task = writer.run("What's the forecast?", session=session)
             forecast = yield forecast_task
             return forecast
 

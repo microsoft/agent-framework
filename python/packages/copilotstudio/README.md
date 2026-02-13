@@ -89,7 +89,7 @@ The package uses MSAL (Microsoft Authentication Library) for authentication with
 
 ### Examples
 
-For more comprehensive examples, see the [Copilot Studio examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents/copilotstudio/) which demonstrate:
+For more comprehensive examples, see the [Copilot Studio examples](../../samples/02-agents/providers/copilotstudio/) which demonstrate:
 
 - Basic non-streaming and streaming execution
 - Explicit settings and manual token acquisition

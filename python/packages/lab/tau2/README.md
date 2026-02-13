@@ -138,21 +138,21 @@ export OPENAI_BASE_URL="https://your-custom-endpoint.com/v1"
 
 ```python
 from agent_framework.lab.tau2 import TaskRunner
-from agent_framework import ChatAgent
+from agent_framework import Agent
 
 class CustomTaskRunner(TaskRunner):
     def assistant_agent(self, assistant_chat_client):
         # Override to customize the assistant agent
-        return ChatAgent(
-            chat_client=assistant_chat_client,
+        return Agent(
+            client=assistant_chat_client,
             instructions="Your custom system prompt here",
             # Add custom tools, temperature, etc.
         )
 
     def user_simulator(self, user_chat_client, task):
         # Override to customize the user simulator
-        return ChatAgent(
-            chat_client=user_chat_client,
+        return Agent(
+            client=user_chat_client,
             instructions="Custom user simulator prompt",
         )
 ```

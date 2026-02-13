@@ -2,6 +2,8 @@
 
 """FastAPI endpoint creation for AG-UI agents."""
 
+from __future__ import annotations
+
 import copy
 import logging
 from collections.abc import AsyncGenerator, Sequence
@@ -77,7 +79,7 @@ def add_agent_framework_fastapi_endpoint(
             )
             logger.info(f"Received request at {path}: {input_data.get('run_id', 'no-run-id')}")
 
-            async def event_generator() -> AsyncGenerator[str, None]:
+            async def event_generator() -> AsyncGenerator[str]:
                 encoder = EventEncoder()
                 event_count = 0
                 async for event in wrapped_agent.run_agent(input_data):

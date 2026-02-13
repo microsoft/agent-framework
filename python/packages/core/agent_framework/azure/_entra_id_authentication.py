@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -15,7 +17,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 def get_entra_auth_token(
-    credential: "TokenCredential",
+    credential: TokenCredential,
     token_endpoint: str,
     **kwargs: Any,
 ) -> str | None:
@@ -49,7 +51,7 @@ def get_entra_auth_token(
 
 
 async def get_entra_auth_token_async(
-    credential: "AsyncTokenCredential", token_endpoint: str, **kwargs: Any
+    credential: AsyncTokenCredential, token_endpoint: str, **kwargs: Any
 ) -> str | None:
     """Retrieve a async Microsoft Entra Auth Token for a given token endpoint.
 

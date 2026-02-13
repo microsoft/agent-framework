@@ -23,7 +23,7 @@ internal sealed class ClearAllVariablesExecutor(ClearAllVariables model, Workflo
             VariablesToClear.ConversationScopedVariables => WorkflowFormulaState.DefaultScopeName,
             VariablesToClear.ConversationHistory => null,
             VariablesToClear.UserScopedVariables => null,
-            _ => null
+            _ => null,
         };
 
         if (scope is not null)

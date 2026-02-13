@@ -8,6 +8,8 @@ using an MCP calculator tool.
 One GPU with 40GB of memory is sufficient for this sample.
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
@@ -18,7 +20,7 @@ import string
 from typing import TypedDict, cast
 
 import sympy  # type: ignore[import-untyped,reportMissingImports]
-from agent_framework import AgentResponse, ChatAgent, MCPStdioTool
+from agent_framework import Agent, AgentResponse, MCPStdioTool
 from agent_framework.lab.lightning import AgentFrameworkTracer
 from agent_framework.openai import OpenAIChatClient
 from agentlightning import LLM, Dataset, Trainer, rollout
@@ -164,8 +166,8 @@ async def math_agent(task: MathProblem, llm: LLM) -> float:
     # MCPStdioTool provides calculator functionality via MCP protocol
     async with (
         MCPStdioTool(name="calculator", command="uvx", args=["mcp-server-calculator"]) as mcp_server,
-        ChatAgent(
-            chat_client=OpenAIChatClient(
+        Agent(
+            client=OpenAIChatClient(
                 model_id=llm.model,  # This is the model being trained
                 api_key=os.getenv("OPENAI_API_KEY") or "dummy",  # Can be dummy when connecting to training LLM
                 base_url=llm.endpoint,  # vLLM server endpoint provided by agent-lightning

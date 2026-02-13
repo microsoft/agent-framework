@@ -18,9 +18,12 @@ using SampleApp;
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 ChatClient chatClient = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName);
 
 // Create the agent and provide a factory to add our custom memory component to
@@ -47,7 +50,7 @@ Console.WriteLine(await agent.RunAsync("My name is Ruaidhrí", session));
 Console.WriteLine(await agent.RunAsync("I am 20 years old", session));
 
 // We can serialize the session. The serialized state will include the state of the memory component.
-JsonElement sesionElement = agent.SerializeSession(session);
+JsonElement sesionElement = await agent.SerializeSessionAsync(session);
 
 Console.WriteLine("\n>> Use deserialized session with previously created memories\n");
 
@@ -104,7 +107,7 @@ namespace SampleApp
 
         public UserInfo UserInfo { get; set; }
 
-        public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
             // Try and extract the user name and age from the message if we don't have it already and it's a user message.
             if ((this.UserInfo.UserName is null || this.UserInfo.UserAge is null) && context.RequestMessages.Any(x => x.Role == ChatRole.User))
@@ -122,7 +125,7 @@ namespace SampleApp
             }
         }
 
-        public override ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             StringBuilder instructions = new();
 

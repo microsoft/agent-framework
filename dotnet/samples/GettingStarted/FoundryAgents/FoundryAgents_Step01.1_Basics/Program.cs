@@ -6,7 +6,6 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -14,7 +13,10 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJEC
 const string JokerName = "JokerAgent";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Define the agent you want to create. (Prompt Agent in this case)
 AgentVersionCreationOptions options = new(new PromptAgentDefinition(model: deploymentName) { Instructions = "You are good at telling jokes." });

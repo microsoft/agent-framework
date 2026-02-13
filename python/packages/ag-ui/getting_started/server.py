@@ -2,10 +2,12 @@
 
 """AG-UI server example with server-side tools."""
 
+from __future__ import annotations
+
 import logging
 import os
 
-from agent_framework import ChatAgent, tool
+from agent_framework import Agent, tool
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework.azure import AzureOpenAIChatClient
 from dotenv import load_dotenv
@@ -114,10 +116,10 @@ def get_time_zone(location: str) -> str:
 # The client will send get_weather tool metadata so the LLM knows about it,
 # and the function invocation mixin on AGUIChatClient will execute it client-side.
 # This matches the .NET AG-UI hybrid execution pattern.
-agent = ChatAgent(
+agent = Agent(
     name="AGUIAssistant",
     instructions="You are a helpful assistant. Use get_weather for weather and get_time_zone for time zones.",
-    chat_client=AzureOpenAIChatClient(
+    client=AzureOpenAIChatClient(
         endpoint=endpoint,
         deployment_name=deployment_name,
     ),

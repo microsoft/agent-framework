@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/openai_responses/02_responses_agent_with_tool.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Attach a lightweight function tool to the Responses API in SK and AF."""
 
@@ -33,7 +42,7 @@ async def run_semantic_kernel() -> None:
 
 
 async def run_agent_framework() -> None:
-    from agent_framework import ChatAgent
+    from agent_framework import Agent
     from agent_framework._tools import tool
     from agent_framework.openai import OpenAIResponsesClient
 
@@ -41,8 +50,8 @@ async def run_agent_framework() -> None:
     async def add(a: float, b: float) -> float:
         return a + b
 
-    chat_agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    chat_agent = Agent(
+        client=OpenAIResponsesClient(),
         instructions="Use the add tool when math is required.",
         name="MathExpert",
         # AF registers the async function as a tool at construction.

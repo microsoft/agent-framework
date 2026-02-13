@@ -118,10 +118,10 @@ Prefer attributes over inheritance when parameters are mostly the same:
 
 ```python
 # ✅ Preferred - using attributes
-from agent_framework import ChatMessage
+from agent_framework import Message
 
-user_msg = ChatMessage("user", ["Hello, world!"])
-asst_msg = ChatMessage("assistant", ["Hello, world!"])
+user_msg = Message("user", ["Hello, world!"])
+asst_msg = Message("assistant", ["Hello, world!"])
 
 # ❌ Not preferred - unnecessary inheritance
 from agent_framework import UserMessage, AssistantMessage
@@ -157,7 +157,7 @@ The package follows a flat import structure:
 
 - **Core**: Import directly from `agent_framework`
   ```python
-  from agent_framework import ChatAgent, tool
+  from agent_framework import Agent, tool
   ```
 
 - **Components**: Import from `agent_framework.<component>`
@@ -263,6 +263,13 @@ After the package has been released and gained a measure of confidence:
 1. Move samples from the package to the root `samples/` folder
 2. Add the package to the `[all]` extra in `packages/core/pyproject.toml`
 3. Create a provider folder in `agent_framework/` with lazy loading `__init__.py`
+
+### Versioning and Core Dependency
+
+All non-core packages declare a lower bound on `agent-framework-core` (e.g., `"agent-framework-core>=1.0.0b260130"`). Follow these rules when bumping versions:
+
+- **Core version changes**: When `agent-framework-core` is updated with breaking or significant changes and its version is bumped, update the `agent-framework-core>=...` lower bound in every other package's `pyproject.toml` to match the new core version.
+- **Non-core version changes**: Non-core packages (connectors, extensions) can have their own versions incremented independently while keeping the existing core lower bound pinned. Only raise the core lower bound if the non-core package actually depends on new core APIs.
 
 ### Installation Options
 
@@ -374,12 +381,12 @@ def create_client(
 Use Google-style docstrings for all public APIs:
 
 ```python
-def create_agent(name: str, chat_client: ChatClientProtocol) -> Agent:
+def create_agent(name: str, client: SupportsChatGetResponse) -> Agent:
     """Create a new agent with the specified configuration.
 
     Args:
         name: The name of the agent.
-        chat_client: The chat client to use for communication.
+        client: The chat client to use for communication.
 
     Returns:
         True if the strings are the same, False otherwise.
@@ -402,10 +409,10 @@ Define `__all__` in each module to explicitly declare the public API. Avoid usin
 
 ```python
 # ✅ Preferred - explicit __all__ and imports
-__all__ = ["ChatAgent", "ChatMessage", "ChatResponse"]
+__all__ = ["Agent", "Message", "ChatResponse"]
 
-from ._agents import ChatAgent
-from ._types import ChatMessage, ChatResponse
+from ._agents import Agent
+from ._types import Message, ChatResponse
 
 # ❌ Avoid - star imports
 from ._agents import *

@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/chat_completion/02_chat_completion_with_tool.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Demonstrate SK plugins vs Agent Framework tools with a chat agent.
 
@@ -47,10 +56,10 @@ async def run_agent_framework() -> None:
         instructions="Answer menu questions accurately.",
         tools=[specials],
     )
-    thread = chat_agent.get_new_thread()
+    session = chat_agent.create_session()
     reply = await chat_agent.run(
         "What soup can I order today?",
-        thread=thread,
+        session=session,
         tool_choice="auto",
     )
     print("[AF]", reply.text)

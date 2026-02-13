@@ -20,8 +20,13 @@ YAML/JSON-based declarative agent and workflow definitions.
 ```python
 from agent_framework.declarative import AgentFactory, WorkflowFactory
 
-agent = AgentFactory.create_from_file("agent.yaml")
-workflow = WorkflowFactory.create_from_file("workflow.yaml")
+# Create agent from YAML file
+agent_factory = AgentFactory()
+agent = agent_factory.create_agent_from_yaml_path("agent.yaml")
+
+# Create workflow from YAML file
+workflow_factory = WorkflowFactory()
+workflow = workflow_factory.create_workflow_from_yaml_path("workflow.yaml")
 ```
 
 ## Import Path

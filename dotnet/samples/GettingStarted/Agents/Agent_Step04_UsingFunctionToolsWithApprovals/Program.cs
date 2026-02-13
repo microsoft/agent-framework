@@ -23,9 +23,12 @@ static string GetWeather([Description("The location to get the weather for.")] s
 
 // Create the chat client and agent.
 // Note that we are wrapping the function tool with ApprovalRequiredAIFunction to require user approval before invoking it.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName)
     .AsAIAgent(instructions: "You are a helpful assistant", tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]);
 

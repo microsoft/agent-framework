@@ -10,10 +10,6 @@ from pydantic import BaseModel, ValidationError
 from agent_framework import (
     Content,
     FunctionTool,
-    HostedCodeInterpreterTool,
-    HostedImageGenerationTool,
-    HostedMCPTool,
-    ToolProtocol,
     tool,
 )
 from agent_framework._tools import (
@@ -21,7 +17,6 @@ from agent_framework._tools import (
     _parse_annotation,
     _parse_inputs,
 )
-from agent_framework.exceptions import ToolException
 from agent_framework.observability import OtelAttr
 
 # region FunctionTool and tool decorator tests
@@ -35,7 +30,6 @@ def test_tool_decorator():
         """A simple function that adds two numbers."""
         return x + y
 
-    assert isinstance(test_tool, ToolProtocol)
     assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A test tool"
@@ -56,7 +50,6 @@ def test_tool_decorator_without_args():
         """A simple function that adds two numbers."""
         return x + y
 
-    assert isinstance(test_tool, ToolProtocol)
     assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A simple function that adds two numbers."
@@ -70,6 +63,102 @@ def test_tool_decorator_without_args():
     assert test_tool.approval_mode == "never_require"
 
 
+def test_tool_decorator_with_pydantic_schema():
+    """Test that the tool decorator accepts an explicit Pydantic model schema."""
+    from pydantic import Field
+
+    class MyInput(BaseModel):
+        location: Annotated[str, Field(description="City name")]
+        unit: str = "celsius"
+
+    @tool(name="weather", description="Get weather", schema=MyInput)
+    def get_weather(location: str, unit: str = "celsius") -> str:
+        return f"{location}: {unit}"
+
+    assert isinstance(get_weather, FunctionTool)
+    assert get_weather.name == "weather"
+    params = get_weather.parameters()
+    assert "location" in params["properties"]
+    assert params["properties"]["location"].get("description") == "City name"
+    assert get_weather("Seattle") == "Seattle: celsius"
+    assert get_weather("Seattle", "fahrenheit") == "Seattle: fahrenheit"
+
+
+def test_tool_decorator_with_json_schema_dict():
+    """Test that the tool decorator accepts an explicit JSON schema dict."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query"},
+            "max_results": {"type": "integer", "default": 10},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str, max_results: int = 10) -> str:
+        return f"Searching for: {query} (max {max_results})"
+
+    assert isinstance(search, FunctionTool)
+    params = search.parameters()
+    assert params["properties"]["query"]["type"] == "string"
+    assert params["properties"]["query"]["description"] == "Search query"
+    assert "max_results" in params["properties"]
+    assert search("hello") == "Searching for: hello (max 10)"
+
+
+def test_tool_decorator_schema_none_default():
+    """Test that schema=None (default) still infers from function signature."""
+
+    @tool(name="adder", schema=None)
+    def add(x: int, y: int) -> int:
+        return x + y
+
+    assert isinstance(add, FunctionTool)
+    params = add.parameters()
+    assert params == {
+        "properties": {"x": {"title": "X", "type": "integer"}, "y": {"title": "Y", "type": "integer"}},
+        "required": ["x", "y"],
+        "title": "adder_input",
+        "type": "object",
+    }
+    assert add(1, 2) == 3
+
+
+async def test_tool_decorator_with_schema_invoke():
+    """Test that invoke works correctly with explicit schema."""
+
+    class CalcInput(BaseModel):
+        a: int
+        b: int
+
+    @tool(name="calc", description="Calculator", schema=CalcInput)
+    def calculate(a: int, b: int) -> int:
+        return a + b
+
+    result = await calculate.invoke(arguments=CalcInput(a=3, b=7))
+    assert result == "10"
+
+
+def test_tool_decorator_with_schema_overrides_annotations():
+    """Test that explicit schema completely overrides function signature inference."""
+    from pydantic import Field
+
+    class DetailedInput(BaseModel):
+        location: Annotated[str, Field(description="The city and state")]
+        unit: Annotated[str, Field(description="Temperature unit")] = "celsius"
+
+    @tool(schema=DetailedInput)
+    def get_weather(location: str, unit: str = "celsius") -> str:
+        """Get weather for a location."""
+        return f"{location}: {unit}"
+
+    params = get_weather.parameters()
+    assert params["properties"]["location"].get("description") == "The city and state"
+    assert params["properties"]["unit"].get("description") == "Temperature unit"
+
+
 def test_tool_without_args():
     """Test the tool decorator."""
 
@@ -78,7 +167,7 @@ def test_tool_without_args():
         """A simple function that adds two numbers."""
         return 1 + 2
 
-    assert isinstance(test_tool, ToolProtocol)
+    assert isinstance(test_tool, FunctionTool)
     assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A simple function that adds two numbers."
@@ -98,7 +187,6 @@ async def test_tool_decorator_with_async():
         """An async function that adds two numbers."""
         return x + y
 
-    assert isinstance(async_test_tool, ToolProtocol)
     assert isinstance(async_test_tool, FunctionTool)
     assert async_test_tool.name == "async_test_tool"
     assert async_test_tool.description == "An async test tool"
@@ -122,7 +210,6 @@ def test_tool_decorator_in_class():
 
     test_tool = my_tools().test_tool
 
-    assert isinstance(test_tool, ToolProtocol)
     assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A test tool"
@@ -349,7 +436,7 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == 3
+    assert result == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -393,7 +480,7 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == 3
+    assert result == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -458,7 +545,7 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     result = await pydantic_test_tool.invoke(arguments=args_model, tool_call_id="pydantic_call")
 
     # Verify result
-    assert result == 15
+    assert result == "15"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -526,7 +613,7 @@ async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanE
     result = await async_telemetry_test.invoke(x=3, y=4, tool_call_id="async_call")
 
     # Verify result
-    assert result == 12
+    assert result == "12"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -605,30 +692,7 @@ def test_tool_serialization():
     assert restored_tool_2(10, 4) == 6
 
 
-# region HostedCodeInterpreterTool and _parse_inputs
-
-
-def test_hosted_code_interpreter_tool_default():
-    """Test HostedCodeInterpreterTool with default parameters."""
-    tool = HostedCodeInterpreterTool()
-
-    assert tool.name == "code_interpreter"
-    assert tool.inputs == []
-    assert tool.description == ""
-    assert tool.additional_properties is None
-    assert str(tool) == "HostedCodeInterpreterTool(name=code_interpreter)"
-
-
-def test_hosted_code_interpreter_tool_with_description():
-    """Test HostedCodeInterpreterTool with description and additional properties."""
-    tool = HostedCodeInterpreterTool(
-        description="A test code interpreter",
-        additional_properties={"version": "1.0", "language": "python"},
-    )
-
-    assert tool.name == "code_interpreter"
-    assert tool.description == "A test code interpreter"
-    assert tool.additional_properties == {"version": "1.0", "language": "python"}
+# region _parse_inputs tests
 
 
 def test_parse_inputs_none():
@@ -757,185 +821,7 @@ def test_parse_inputs_unsupported_type():
         _parse_inputs(123)
 
 
-def test_hosted_code_interpreter_tool_with_string_input():
-    """Test HostedCodeInterpreterTool with string input."""
-
-    tool = HostedCodeInterpreterTool(inputs="http://example.com")
-
-    assert len(tool.inputs) == 1
-    assert tool.inputs[0].type == "uri"
-    assert tool.inputs[0].uri == "http://example.com"
-
-
-def test_hosted_code_interpreter_tool_with_dict_inputs():
-    """Test HostedCodeInterpreterTool with dictionary inputs."""
-
-    inputs = [{"uri": "http://example.com", "media_type": "text/html"}, {"file_id": "file-123"}]
-
-    tool = HostedCodeInterpreterTool(inputs=inputs)
-
-    assert len(tool.inputs) == 2
-    assert tool.inputs[0].type == "uri"
-    assert tool.inputs[0].uri == "http://example.com"
-    assert tool.inputs[0].media_type == "text/html"
-    assert tool.inputs[1].type == "hosted_file"
-    assert tool.inputs[1].file_id == "file-123"
-
-
-def test_hosted_code_interpreter_tool_with_ai_contents():
-    """Test HostedCodeInterpreterTool with Content instances."""
-
-    inputs = [Content.from_text(text="Hello, world!"), Content.from_data(data=b"test", media_type="text/plain")]
-
-    tool = HostedCodeInterpreterTool(inputs=inputs)
-
-    assert len(tool.inputs) == 2
-    assert tool.inputs[0].type == "text"
-    assert tool.inputs[0].text == "Hello, world!"
-    assert tool.inputs[1].type == "data"
-    assert tool.inputs[1].media_type == "text/plain"
-
-
-def test_hosted_code_interpreter_tool_with_single_input():
-    """Test HostedCodeInterpreterTool with single input (not in list)."""
-
-    input_dict = {"file_id": "file-single"}
-    tool = HostedCodeInterpreterTool(inputs=input_dict)
-
-    assert len(tool.inputs) == 1
-    assert tool.inputs[0].type == "hosted_file"
-    assert tool.inputs[0].file_id == "file-single"
-
-
-def test_hosted_code_interpreter_tool_with_unknown_input():
-    """Test HostedCodeInterpreterTool with single unknown input."""
-    with pytest.raises(ValueError, match="Unsupported input type"):
-        HostedCodeInterpreterTool(inputs={"hosted_file": "file-single"})
-
-
-def test_hosted_image_generation_tool_defaults():
-    """HostedImageGenerationTool should default name and empty description."""
-    tool = HostedImageGenerationTool()
-
-    assert tool.name == "image_generation"
-    assert tool.description == ""
-    assert tool.options is None
-    assert str(tool) == "HostedImageGenerationTool(name=image_generation)"
-
-
-def test_hosted_image_generation_tool_with_options():
-    """HostedImageGenerationTool should store options."""
-    tool = HostedImageGenerationTool(
-        description="Generate images",
-        options={"format": "png", "size": "1024x1024"},
-        additional_properties={"quality": "high"},
-    )
-
-    assert tool.name == "image_generation"
-    assert tool.description == "Generate images"
-    assert tool.options == {"format": "png", "size": "1024x1024"}
-    assert tool.additional_properties == {"quality": "high"}
-
-
-# region HostedMCPTool tests
-
-
-def test_hosted_mcp_tool_with_other_fields():
-    """Test creating a HostedMCPTool with a specific approval dict, headers and additional properties."""
-    tool = HostedMCPTool(
-        name="mcp-tool",
-        url="https://mcp.example",
-        description="A test MCP tool",
-        headers={"x": "y"},
-        additional_properties={"p": 1},
-    )
-
-    assert tool.name == "mcp-tool"
-    # pydantic AnyUrl preserves as string-like
-    assert str(tool.url).startswith("https://")
-    assert tool.headers == {"x": "y"}
-    assert tool.additional_properties == {"p": 1}
-    assert tool.description == "A test MCP tool"
-
-
-@pytest.mark.parametrize(
-    "approval_mode",
-    [
-        "always_require",
-        "never_require",
-        {
-            "always_require_approval": {"toolA"},
-            "never_require_approval": {"toolB"},
-        },
-        {
-            "always_require_approval": ["toolA"],
-            "never_require_approval": ("toolB",),
-        },
-    ],
-    ids=["always_require", "never_require", "specific", "specific_with_parsing"],
-)
-def test_hosted_mcp_tool_with_approval_mode(approval_mode: str | dict[str, Any]):
-    """Test creating a HostedMCPTool with a specific approval dict, headers and additional properties."""
-    tool = HostedMCPTool(name="mcp-tool", url="https://mcp.example", approval_mode=approval_mode)
-
-    assert tool.name == "mcp-tool"
-    # pydantic AnyUrl preserves as string-like
-    assert str(tool.url).startswith("https://")
-    if not isinstance(approval_mode, dict):
-        assert tool.approval_mode == approval_mode
-    else:
-        # approval_mode parsed to sets
-        assert isinstance(tool.approval_mode["always_require_approval"], set)
-        assert isinstance(tool.approval_mode["never_require_approval"], set)
-        assert "toolA" in tool.approval_mode["always_require_approval"]
-        assert "toolB" in tool.approval_mode["never_require_approval"]
-
-
-def test_hosted_mcp_tool_invalid_approval_mode_raises():
-    """Invalid approval_mode string should raise ServiceInitializationError."""
-    with pytest.raises(ToolException):
-        HostedMCPTool(name="bad", url="https://x", approval_mode="invalid_mode")
-
-
-@pytest.mark.parametrize(
-    "tools",
-    [
-        {"toolA", "toolB"},
-        ("toolA", "toolB"),
-        ["toolA", "toolB"],
-        ["toolA", "toolB", "toolA"],
-    ],
-    ids=[
-        "set",
-        "tuple",
-        "list",
-        "list_with_duplicates",
-    ],
-)
-def test_hosted_mcp_tool_with_allowed_tools(tools: list[str] | tuple[str, ...] | set[str]):
-    """Test creating a HostedMCPTool with a list of allowed tools."""
-    tool = HostedMCPTool(
-        name="mcp-tool",
-        url="https://mcp.example",
-        allowed_tools=tools,
-    )
-
-    assert tool.name == "mcp-tool"
-    # pydantic AnyUrl preserves as string-like
-    assert str(tool.url).startswith("https://")
-    # approval_mode parsed to set
-    assert isinstance(tool.allowed_tools, set)
-    assert tool.allowed_tools == {"toolA", "toolB"}
-
-
-def test_hosted_mcp_tool_with_dict_of_allowed_tools():
-    """Test creating a HostedMCPTool with a dict of allowed tools."""
-    with pytest.raises(ToolException):
-        HostedMCPTool(
-            name="mcp-tool",
-            url="https://mcp.example",
-            allowed_tools={"toolA": "Tool A", "toolC": "Tool C"},
-        )
+# endregion
 
 
 async def test_ai_function_with_kwargs_injection():

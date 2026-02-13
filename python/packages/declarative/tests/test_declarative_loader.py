@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import builtins
 import sys
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
@@ -483,7 +485,7 @@ class TestAgentFactoryCreateFromDict:
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
         agent = factory.create_agent_from_dict(agent_def)
 
         assert agent is not None
@@ -512,7 +514,7 @@ instructions: You are a helpful assistant.
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
 
         # Create from YAML string
         agent_from_yaml = factory.create_agent_from_yaml(yaml_content)
@@ -540,7 +542,7 @@ instructions: You are a helpful assistant.
             factory.create_agent_from_dict(agent_def)
 
     def test_create_agent_from_dict_without_model_or_client_raises(self):
-        """Test that missing both model and chat_client raises DeclarativeLoaderError."""
+        """Test that missing both model and client raises DeclarativeLoaderError."""
         from agent_framework_declarative import AgentFactory
         from agent_framework_declarative._loader import DeclarativeLoaderError
 
@@ -592,7 +594,7 @@ instructions: Hello world
         monkeypatch.setenv("TEST_DESCRIPTION", "Description from env")
 
         # With safe_mode=True (default), Env access should fail and return original value
-        factory = AgentFactory(chat_client=mock_client, safe_mode=True)
+        factory = AgentFactory(client=mock_client, safe_mode=True)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # The description should NOT be resolved from env (PowerFx fails, returns original)
@@ -618,7 +620,7 @@ instructions: Hello world
 """
 
         # With safe_mode=False, Env access should work
-        factory = AgentFactory(chat_client=mock_client, safe_mode=False)
+        factory = AgentFactory(client=mock_client, safe_mode=False)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # The description should be resolved from env
@@ -698,11 +700,9 @@ class TestAgentFactoryMcpToolConnection:
     """Tests for MCP tool connection handling in AgentFactory._parse_tool."""
 
     def _get_mcp_tools(self, agent):
-        """Helper to get MCP tools from agent's default_options."""
-        from agent_framework import HostedMCPTool
-
+        """Helper to get MCP dict tools from agent's default_options."""
         tools = agent.default_options.get("tools", [])
-        return [t for t in tools if isinstance(t, HostedMCPTool)]
+        return [t for t in tools if isinstance(t, dict) and t.get("type") == "mcp"]
 
     def test_mcp_tool_with_api_key_connection_sets_headers(self):
         """Test that MCP tool with ApiKeyConnection sets headers correctly."""
@@ -726,7 +726,7 @@ tools:
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # Find the MCP tool in the agent's tools
@@ -735,11 +735,11 @@ tools:
         mcp_tool = mcp_tools[0]
 
         # Verify headers are set with the API key
-        assert mcp_tool.headers is not None
-        assert mcp_tool.headers == {"Authorization": "Bearer my-secret-api-key"}
+        assert mcp_tool.get("headers") is not None
+        assert mcp_tool.get("headers") == {"Authorization": "Bearer my-secret-api-key"}
 
     def test_mcp_tool_with_remote_connection_sets_additional_properties(self):
-        """Test that MCP tool with RemoteConnection sets additional_properties correctly."""
+        """Test that MCP tool with RemoteConnection sets project_connection_id correctly."""
         from unittest.mock import MagicMock
 
         from agent_framework_declarative import AgentFactory
@@ -761,7 +761,7 @@ tools:
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # Find the MCP tool in the agent's tools
@@ -769,16 +769,11 @@ tools:
         assert len(mcp_tools) == 1
         mcp_tool = mcp_tools[0]
 
-        # Verify additional_properties are set with connection info
-        assert mcp_tool.additional_properties is not None
-        assert "connection" in mcp_tool.additional_properties
-        conn = mcp_tool.additional_properties["connection"]
-        assert conn["kind"] == "remote"
-        assert conn["authenticationMode"] == "oauth"
-        assert conn["name"] == "github-mcp-oauth-connection"
+        # Verify project_connection_id is set from connection name
+        assert mcp_tool.get("project_connection_id") == "github-mcp-oauth-connection"
 
     def test_mcp_tool_with_reference_connection_sets_additional_properties(self):
-        """Test that MCP tool with ReferenceConnection sets additional_properties correctly."""
+        """Test that MCP tool with ReferenceConnection sets project_connection_id correctly."""
         from unittest.mock import MagicMock
 
         from agent_framework_declarative import AgentFactory
@@ -800,7 +795,7 @@ tools:
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # Find the MCP tool in the agent's tools
@@ -808,15 +803,11 @@ tools:
         assert len(mcp_tools) == 1
         mcp_tool = mcp_tools[0]
 
-        # Verify additional_properties are set with connection info
-        assert mcp_tool.additional_properties is not None
-        assert "connection" in mcp_tool.additional_properties
-        conn = mcp_tool.additional_properties["connection"]
-        assert conn["kind"] == "reference"
-        assert conn["name"] == "my-connection-ref"
+        # Verify project_connection_id is set from connection name
+        assert mcp_tool.get("project_connection_id") == "my-connection-ref"
 
     def test_mcp_tool_with_anonymous_connection_no_headers_or_properties(self):
-        """Test that MCP tool with AnonymousConnection doesn't set headers or additional_properties."""
+        """Test that MCP tool with AnonymousConnection doesn't set headers or project_connection_id."""
         from unittest.mock import MagicMock
 
         from agent_framework_declarative import AgentFactory
@@ -836,7 +827,7 @@ tools:
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # Find the MCP tool in the agent's tools
@@ -844,9 +835,9 @@ tools:
         assert len(mcp_tools) == 1
         mcp_tool = mcp_tools[0]
 
-        # Verify no headers or additional_properties are set
-        assert mcp_tool.headers is None
-        assert mcp_tool.additional_properties is None
+        # Verify no headers or project_connection_id are set
+        assert mcp_tool.get("headers") is None
+        assert mcp_tool.get("project_connection_id") is None
 
     def test_mcp_tool_without_connection_preserves_existing_behavior(self):
         """Test that MCP tool without connection works as before (no headers or additional_properties)."""
@@ -868,7 +859,7 @@ tools:
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # Find the MCP tool in the agent's tools
@@ -877,14 +868,13 @@ tools:
         mcp_tool = mcp_tools[0]
 
         # Verify tool is created correctly without connection
-        assert mcp_tool.name == "simple-mcp-tool"
-        assert str(mcp_tool.url) == "https://api.example.com/mcp"
-        assert mcp_tool.approval_mode == "never_require"
-        assert mcp_tool.headers is None
-        assert mcp_tool.additional_properties is None
+        assert mcp_tool["server_label"] == "simple-mcp-tool"
+        assert mcp_tool["server_url"] == "https://api.example.com/mcp"
+        assert mcp_tool.get("require_approval") == "never"
+        assert mcp_tool.get("headers") is None
 
     def test_mcp_tool_with_remote_connection_with_endpoint(self):
-        """Test that MCP tool with RemoteConnection including endpoint sets it in additional_properties."""
+        """Test that MCP tool with RemoteConnection including endpoint sets project_connection_id."""
         from unittest.mock import MagicMock
 
         from agent_framework_declarative import AgentFactory
@@ -907,7 +897,7 @@ tools:
         mock_client = MagicMock()
         mock_client.create_agent.return_value = MagicMock()
 
-        factory = AgentFactory(chat_client=mock_client)
+        factory = AgentFactory(client=mock_client)
         agent = factory.create_agent_from_yaml(yaml_content)
 
         # Find the MCP tool in the agent's tools
@@ -915,7 +905,107 @@ tools:
         assert len(mcp_tools) == 1
         mcp_tool = mcp_tools[0]
 
-        # Verify additional_properties include endpoint
-        assert mcp_tool.additional_properties is not None
-        conn = mcp_tool.additional_properties["connection"]
-        assert conn["endpoint"] == "https://auth.example.com"
+        # Verify project_connection_id is set from connection name
+        assert mcp_tool.get("project_connection_id") == "my-oauth-connection"
+
+
+class TestProviderResponseFormat:
+    """response_format from outputSchema must be passed inside default_options."""
+
+    @staticmethod
+    def _make_mock_prompt_agent(*, with_output_schema: bool = False) -> MagicMock:
+        """Create a mock PromptAgent to avoid serialization complexity."""
+        mock_model = MagicMock()
+        mock_model.id = "gpt-4"
+        mock_model.connection = None
+
+        agent = MagicMock()
+        agent.name = "test-agent"
+        agent.description = "test"
+        agent.instructions = "be helpful"
+        agent.model = mock_model
+        agent.tools = None
+
+        if with_output_schema:
+            mock_schema = MagicMock()
+            mock_schema.to_json_schema.return_value = {
+                "type": "object",
+                "properties": {"answer": {"type": "string"}},
+            }
+            agent.outputSchema = mock_schema
+        else:
+            agent.outputSchema = None
+
+        return agent
+
+    @staticmethod
+    def _make_mock_provider() -> tuple[MagicMock, AsyncMock]:
+        """Create a mock provider class and its instance."""
+        mock_agent = MagicMock()
+        mock_provider_instance = AsyncMock()
+        mock_provider_instance.create_agent = AsyncMock(return_value=mock_agent)
+        mock_provider_class = MagicMock(return_value=mock_provider_instance)
+        return mock_provider_class, mock_provider_instance
+
+    @pytest.mark.asyncio
+    async def test_response_format_in_default_options(self):
+        """Provider.create_agent() should receive response_format inside default_options."""
+        from agent_framework_declarative._loader import AgentFactory
+
+        prompt_agent = self._make_mock_prompt_agent(with_output_schema=True)
+        mock_provider_class, mock_provider_instance = self._make_mock_provider()
+
+        mapping = {"package": "some_module", "name": "SomeProvider"}
+        factory = AgentFactory()
+
+        original_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "some_module":
+                mod = MagicMock()
+                mod.SomeProvider = mock_provider_class
+                return mod
+            return original_import(name, *args, **kwargs)
+
+        with (
+            patch.object(builtins, "__import__", side_effect=mock_import),
+            patch.object(factory, "_parse_tools", return_value=None),
+        ):
+            await factory._create_agent_with_provider(prompt_agent, mapping)
+
+        mock_provider_instance.create_agent.assert_called_once()
+        call_kwargs = mock_provider_instance.create_agent.call_args.kwargs
+
+        assert "response_format" not in call_kwargs
+        default_options = call_kwargs.get("default_options")
+        assert default_options is not None
+        assert "response_format" in default_options
+
+    @pytest.mark.asyncio
+    async def test_no_default_options_without_output_schema(self):
+        """When there's no outputSchema, default_options should be None."""
+        from agent_framework_declarative._loader import AgentFactory
+
+        prompt_agent = self._make_mock_prompt_agent(with_output_schema=False)
+        mock_provider_class, mock_provider_instance = self._make_mock_provider()
+
+        mapping = {"package": "some_module", "name": "SomeProvider"}
+        factory = AgentFactory()
+
+        original_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "some_module":
+                mod = MagicMock()
+                mod.SomeProvider = mock_provider_class
+                return mod
+            return original_import(name, *args, **kwargs)
+
+        with (
+            patch.object(builtins, "__import__", side_effect=mock_import),
+            patch.object(factory, "_parse_tools", return_value=None),
+        ):
+            await factory._create_agent_with_provider(prompt_agent, mapping)
+
+        call_kwargs = mock_provider_instance.create_agent.call_args.kwargs
+        assert call_kwargs.get("default_options") is None
