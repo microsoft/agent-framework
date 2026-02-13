@@ -1,60 +1,42 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
-import os
+"""Host your agent with Azure Functions.
 
-from agent_framework.azure import AzureOpenAIResponsesClient
-from azure.identity import AzureCliCredential
-
-"""
-Host Your Agent — Minimal A2A hosting stub
-
-This sample shows the pattern for exposing an agent via the Agent-to-Agent
-(A2A) protocol. It creates the agent and demonstrates how to wrap it with
-the A2A hosting layer.
+This sample shows the Python hosting pattern used in docs:
+- Create an agent with `AzureOpenAIChatClient`
+- Register it with `AgentFunctionApp`
+- Run with Azure Functions Core Tools (`func start`)
 
 Prerequisites:
-  pip install agent-framework[a2a] --pre
+  pip install agent-framework-azurefunctions --pre
 
 Environment variables:
-  AZURE_AI_PROJECT_ENDPOINT        — Your Azure AI Foundry project endpoint
-  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME — Model deployment name (e.g. gpt-4o)
-
-To run a full A2A server, see samples/04-hosting/a2a/ for a complete example.
+  AZURE_OPENAI_ENDPOINT
+  AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
 """
 
+from typing import Any
 
-async def main() -> None:
-    # <create_agent>
-    credential = AzureCliCredential()
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-        credential=credential,
-    )
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
 
-    agent = client.as_agent(
+
+# <create_agent>
+def _create_agent() -> Any:
+    """Create a hosted agent backed by Azure OpenAI."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="HostedAgent",
-        instructions="You are a helpful assistant exposed via A2A.",
+        instructions="You are a helpful assistant hosted in Azure Functions.",
     )
-    # </create_agent>
 
-    # <host_agent>
-    # The A2A hosting integration wraps your agent behind an HTTP endpoint.
-    # Import is gated so this sample can run without the a2a extra installed.
-    try:
-        from agent_framework.a2a import A2AAgent  # noqa: F401
 
-        print("A2A support is available.")
-        print("See samples/04-hosting/a2a/ for a runnable A2A server example.")
-    except ImportError:
-        print("Install a2a extras: pip install agent-framework[a2a] --pre")
+# </create_agent>
 
-    # Quick smoke-test: run the agent locally to verify it works
-    result = await agent.run("Hello! What can you do?")
-    print(f"Agent: {result}")
-    # </host_agent>
+# <host_agent>
+app = AgentFunctionApp(agents=[_create_agent()], enable_health_check=True, max_poll_retries=50)
+# </host_agent>
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    print("Start the Functions host with: func start")
+    print("Then call: POST /api/agents/HostedAgent/run")
