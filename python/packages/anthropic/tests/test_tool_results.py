@@ -186,7 +186,8 @@ def test_parse_text_editor_result_error(mock_anthropic_client: MagicMock) -> Non
     # Create mock text editor result with error
     mock_content = MagicMock()
     mock_content.type = "text_editor_code_execution_tool_result_error"
-    mock_content.error = "File not found"
+    mock_content.error_code = "file_not_found"
+    mock_content.error_message = "File not found"
 
     mock_block = MagicMock()
     mock_block.type = "text_editor_code_execution_tool_result"
