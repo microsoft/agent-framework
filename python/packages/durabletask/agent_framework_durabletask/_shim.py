@@ -2,7 +2,7 @@
 
 """Durable Agent Shim for Durable Task Framework.
 
-This module provides the DurableAIAgent shim that implements AgentProtocol
+This module provides the DurableAIAgent shim that implements SupportsAgentRun
 and provides a consistent interface for both Client and Orchestration contexts.
 The actual execution is delegated to the context-specific providers.
 """
@@ -12,10 +12,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Literal, TypeVar
 
-from agent_framework import AgentProtocol, AgentThread, ChatMessage
+from agent_framework import AgentSession, Message, SupportsAgentRun
 
 from ._executors import DurableAgentExecutor
-from ._models import DurableAgentThread
+from ._models import DurableAgentSession
 
 # TypeVar for the task type returned by executors
 # Covariant because TaskT only appears in return positions (output)
@@ -47,11 +47,11 @@ class DurableAgentProvider(ABC, Generic[TaskT]):
         raise NotImplementedError("Subclasses must implement get_agent()")
 
 
-class DurableAIAgent(AgentProtocol, Generic[TaskT]):
+class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
     """A durable agent proxy that delegates execution to the provider.
 
-    This class implements AgentProtocol but with one critical difference:
-    - AgentProtocol.run() returns a Coroutine (async, must await)
+    This class implements SupportsAgentRun but with one critical difference:
+    - SupportsAgentRun.run() returns a Coroutine (async, must await)
     - DurableAIAgent.run() returns TaskT (sync Task object - must yield
         or the AgentResponse directly in the case of TaskHubGrpcClient)
 
@@ -86,10 +86,10 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
 
     def run(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: Literal[False] = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         options: dict[str, Any] | None = None,
     ) -> TaskT:
         """Execute the agent via the injected provider.
@@ -98,14 +98,14 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
             messages: The message(s) to send to the agent
             stream: Whether to use streaming for the response (must be False)
                 DurableAgents do not support streaming mode.
-            thread: Optional agent thread for conversation context
+            session: Optional agent session for conversation context
             options: Optional options dictionary. Supported keys include
                 ``response_format``, ``enable_tool_calls``, and ``wait_for_response``.
                 Additional keys are forwarded to the agent execution.
 
         Note:
-            This method overrides AgentProtocol.run() with a different return type:
-            - AgentProtocol.run() returns Coroutine[Any, Any, AgentResponse] (async)
+            This method overrides SupportsAgentRun.run() with a different return type:
+            - SupportsAgentRun.run() returns Coroutine[Any, Any, AgentResponse] (async)
             - DurableAIAgent.run() returns TaskT (Task object for yielding)
 
             This is intentional to support orchestration contexts that use yield patterns
@@ -129,14 +129,21 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
         return self._executor.run_durable_agent(
             agent_name=self.name,
             run_request=run_request,
-            thread=thread,
+            session=session,
         )
 
-    def get_new_thread(self, **kwargs: Any) -> DurableAgentThread:
-        """Create a new agent thread via the provider."""
-        return self._executor.get_new_thread(self.name, **kwargs)
+    def create_session(self, **kwargs: Any) -> DurableAgentSession:
+        """Create a new agent session via the provider."""
+        return self._executor.get_new_session(self.name, **kwargs)
 
-    def _normalize_messages(self, messages: str | ChatMessage | list[str] | list[ChatMessage] | None) -> str:
+    def get_session(self, **kwargs: Any) -> AgentSession:
+        """Retrieve an existing session via the provider.
+
+        For durable agents, sessions do not use `service_session_id` so this is not used.
+        """
+        return self._executor.get_new_session(self.name, **kwargs)
+
+    def _normalize_messages(self, messages: str | Message | list[str] | list[Message] | None) -> str:
         """Convert supported message inputs to a single string.
 
         Args:
@@ -149,7 +156,7 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
             return ""
         if isinstance(messages, str):
             return messages
-        if isinstance(messages, ChatMessage):
+        if isinstance(messages, Message):
             return messages.text or ""
         if isinstance(messages, list):
             if not messages:
@@ -157,6 +164,6 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
             first_item = messages[0]
             if isinstance(first_item, str):
                 return "\n".join(messages)  # type: ignore[arg-type]
-            # List of ChatMessage
+            # List of Message
             return "\n".join([msg.text or "" for msg in messages])  # type: ignore[union-attr]
         return ""

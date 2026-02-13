@@ -37,8 +37,8 @@ from typing import Any, ClassVar, cast
 
 from agent_framework import (
     AgentResponse,
-    ChatMessage,
     Content,
+    Message,
     UsageDetails,
     get_logger,
 )
@@ -803,11 +803,11 @@ class DurableAgentStateMessage:
         )
 
     @staticmethod
-    def from_chat_message(chat_message: ChatMessage) -> DurableAgentStateMessage:
+    def from_chat_message(chat_message: Message) -> DurableAgentStateMessage:
         """Converts an Agent Framework chat message to a durable state message.
 
         Args:
-            chat_message: ChatMessage object with role, contents, and metadata to convert
+            chat_message: Message object with role, contents, and metadata to convert
 
         Returns:
             DurableAgentStateMessage with converted content items and metadata
@@ -824,15 +824,15 @@ class DurableAgentStateMessage:
         )
 
     def to_chat_message(self) -> Any:
-        """Converts this DurableAgentStateMessage back to an agent framework ChatMessage.
+        """Converts this DurableAgentStateMessage back to an agent framework Message.
 
         Returns:
-            ChatMessage object with role, contents, and metadata converted back to agent framework types
+            Message object with role, contents, and metadata converted back to agent framework types
         """
         # Convert DurableAgentStateContent objects back to agent_framework content objects
         ai_contents = [c.to_ai_content() for c in self.contents]
 
-        # Build kwargs for ChatMessage
+        # Build kwargs for Message
         kwargs: dict[str, Any] = {
             "role": self.role,
             "contents": ai_contents,
@@ -844,7 +844,7 @@ class DurableAgentStateMessage:
         if self.extension_data is not None:
             kwargs["additional_properties"] = self.extension_data
 
-        return ChatMessage(**kwargs)
+        return Message(**kwargs)
 
 
 class DurableAgentStateDataContent(DurableAgentStateContent):

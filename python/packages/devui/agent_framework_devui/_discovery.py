@@ -2,6 +2,8 @@
 
 """Agent Framework entity discovery implementation."""
 
+from __future__ import annotations
+
 import ast
 import importlib
 import importlib.util
@@ -539,8 +541,8 @@ class EntityDiscovery:
         """Check if a Python file has entity exports (agent or workflow) using AST parsing.
 
         This safely checks for module-level assignments like:
-        - agent = ChatAgent(...)
-        - workflow = WorkflowBuilder()...
+        - agent = Agent(...)
+        - workflow = WorkflowBuilder(start_executor=...)...
 
         Args:
             file_path: Python file to check
@@ -757,11 +759,11 @@ class EntityDiscovery:
             True if object appears to be a valid agent
         """
         try:
-            # Try to import AgentProtocol for proper type checking
+            # Try to import SupportsAgentRun for proper type checking
             try:
-                from agent_framework import AgentProtocol
+                from agent_framework import SupportsAgentRun
 
-                if isinstance(obj, AgentProtocol):
+                if isinstance(obj, SupportsAgentRun):
                     return True
             except ImportError:
                 pass

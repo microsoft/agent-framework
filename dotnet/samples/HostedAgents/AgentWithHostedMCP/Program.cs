@@ -22,6 +22,9 @@ AITool mcpTool = new HostedMcpServerTool(serverName: "microsoft_learn", serverAd
 };
 
 // Create an agent with the MCP tool using Azure OpenAI Responses.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new DefaultAzureCredential())

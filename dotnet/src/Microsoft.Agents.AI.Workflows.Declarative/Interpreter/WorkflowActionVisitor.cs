@@ -51,6 +51,14 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         this._workflowModel.Build(builder);
 
+        // Apply telemetry if configured
+        if (this._workflowOptions.IsTelemetryEnabled)
+        {
+            builder.WorkflowBuilder.WithOpenTelemetry(
+                this._workflowOptions.ConfigureTelemetry,
+                this._workflowOptions.TelemetryActivitySource);
+        }
+
         // Build final workflow
         return builder.WorkflowBuilder.Build(validateOrphans: false);
     }
@@ -193,7 +201,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         {
             // Transition to end of inner actions
             string endActionsId = ForeachExecutor.Steps.End(action.Id);
-            this.ContinueWith(new DelegateActionExecutor(endActionsId, this._workflowState, action.ResetAsync), action.Id);
+            this.ContinueWith(new DelegateActionExecutor(endActionsId, this._workflowState, action.CompleteAsync), action.Id);
             // Transition to select the next item
             this._workflowModel.AddLink(endActionsId, loopId);
         }

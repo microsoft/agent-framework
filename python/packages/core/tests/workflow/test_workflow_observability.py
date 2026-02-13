@@ -8,7 +8,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
 from agent_framework._workflows._executor import Executor, handler
-from agent_framework._workflows._runner_context import InProcRunnerContext, Message, MessageType
+from agent_framework._workflows._runner_context import InProcRunnerContext, MessageType, WorkflowMessage
 from agent_framework._workflows._state import State
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_context import WorkflowContext
@@ -268,8 +268,7 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
 
     # Create workflow with fan-in: executor1 -> [executor2, executor3] -> aggregator
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(executor1)
+        WorkflowBuilder(start_executor=executor1)
         .add_fan_out_edges(executor1, [executor2, executor3])
         .add_fan_in_edges([executor2, executor3], aggregator)
         .build()
@@ -297,18 +296,18 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
     span_exporter.clear()
 
     # Test workflow with name and description - verify OTEL attributes
-    (
-        WorkflowBuilder(name="Test Pipeline", description="Test workflow description")
-        .set_start_executor(MockExecutor("start"))
-        .build()
-    )
+    WorkflowBuilder(
+        name="Test Pipeline",
+        description="Test workflow description",
+        start_executor=MockExecutor("start"),
+    ).build()
 
     build_spans_with_metadata = [s for s in span_exporter.get_finished_spans() if s.name == "workflow.build"]
     assert len(build_spans_with_metadata) == 1
     metadata_build_span = build_spans_with_metadata[0]
     assert metadata_build_span.attributes is not None
-    assert metadata_build_span.attributes.get(OtelAttr.WORKFLOW_NAME) == "Test Pipeline"
-    assert metadata_build_span.attributes.get(OtelAttr.WORKFLOW_DESCRIPTION) == "Test workflow description"
+    assert metadata_build_span.attributes.get(OtelAttr.WORKFLOW_BUILDER_NAME) == "Test Pipeline"
+    assert metadata_build_span.attributes.get(OtelAttr.WORKFLOW_BUILDER_DESCRIPTION) == "Test workflow description"
 
     # Clear spans to separate build from run tracing
     span_exporter.clear()
@@ -412,7 +411,7 @@ async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExp
             raise ValueError("Test error")
 
     failing_executor = FailingExecutor()
-    workflow = WorkflowBuilder().set_start_executor(failing_executor).build()
+    workflow = WorkflowBuilder(start_executor=failing_executor).build()
 
     # Run workflow and expect error
     with pytest.raises(ValueError, match="Test error"):
@@ -441,7 +440,7 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
     ctx = InProcRunnerContext(InMemoryCheckpointStorage())
 
     # Create message with trace context
-    message = Message(
+    message = WorkflowMessage(
         data="test",
         source_id="source",
         target_id="target",
@@ -452,14 +451,14 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
     await ctx.send_message(message)
 
     # Create a checkpoint that includes the message
-    checkpoint_id = await ctx.create_checkpoint(State(), 0)
+    checkpoint_id = await ctx.create_checkpoint("test_name", "test_hash", State(), None, 0)
     checkpoint = await ctx.load_checkpoint(checkpoint_id)
     assert checkpoint is not None
 
     # Check serialized message includes trace context
     serialized_msg = checkpoint.messages["source"][0]
-    assert serialized_msg["trace_contexts"] == [{"traceparent": "00-trace-span-01"}]
-    assert serialized_msg["source_span_ids"] == ["span123"]
+    assert serialized_msg.trace_contexts == [{"traceparent": "00-trace-span-01"}]
+    assert serialized_msg.source_span_ids == ["span123"]
 
     # Test deserialization
     await ctx.apply_checkpoint(checkpoint)
@@ -475,10 +474,11 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
 async def test_workflow_build_error_tracing(span_exporter: InMemorySpanExporter) -> None:
     """Test that build errors are properly recorded in build spans."""
 
-    # Test validation error by not setting start executor
-    builder = WorkflowBuilder()
+    # Create a valid builder, then clear the start executor to trigger a build-time ValueError
+    builder = WorkflowBuilder(start_executor=MockExecutor(id="mock"))
+    builder._start_executor = None  # type: ignore[assignment]
 
-    with pytest.raises(ValueError, match="Starting executor must be set"):
+    with pytest.raises(ValueError):
         builder.build()
 
     spans = span_exporter.get_finished_spans()
@@ -501,5 +501,5 @@ async def test_workflow_build_error_tracing(span_exporter: InMemorySpanExporter)
 
     error_event = error_events[0]
     assert error_event.attributes is not None
-    assert "Starting executor must be set" in str(error_event.attributes.get("build.error.message"))
+    assert "starting executor" in str(error_event.attributes.get("build.error.message")).lower()
     assert error_event.attributes.get("build.error.type") == "ValueError"

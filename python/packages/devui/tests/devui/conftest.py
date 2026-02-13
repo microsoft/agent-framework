@@ -17,25 +17,23 @@ from typing import Any, Generic
 import pytest
 import pytest_asyncio
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     BaseChatClient,
-    ChatAgent,
-    ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Message,
     ResponseStream,
 )
-from agent_framework._clients import TOptions_co
+from agent_framework._clients import OptionsCoT
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
 from agent_framework._workflows._events import (
-    ExecutorCompletedEvent,
-    ExecutorFailedEvent,
-    ExecutorInvokedEvent,
     WorkflowErrorDetails,
+    WorkflowEvent,
 )
 from agent_framework.orchestrations import ConcurrentBuilder, SequentialBuilder
 
@@ -69,17 +67,17 @@ class MockChatClient:
 
     async def get_response(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        messages: str | Message | list[str] | list[Message],
         **kwargs: Any,
     ) -> ChatResponse:
         self.call_count += 1
         if self.responses:
             return self.responses.pop(0)
-        return ChatResponse(messages=ChatMessage("assistant", ["test response"]))
+        return ChatResponse(messages=Message("assistant", ["test response"]))
 
     async def get_streaming_response(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
+        messages: str | Message | list[str] | list[Message],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         self.call_count += 1
@@ -90,7 +88,7 @@ class MockChatClient:
             yield ChatResponseUpdate(contents=[Content.from_text(text="test streaming response")], role="assistant")
 
 
-class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
+class MockBaseChatClient(BaseChatClient[OptionsCoT], Generic[OptionsCoT]):
     """Full BaseChatClient mock with middleware support.
 
     Use this when testing features that require the full BaseChatClient interface.
@@ -103,13 +101,13 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
         self.run_responses: list[ChatResponse] = []
         self.streaming_responses: list[list[ChatResponseUpdate]] = []
         self.call_count: int = 0
-        self.received_messages: list[list[ChatMessage]] = []
+        self.received_messages: list[list[Message]] = []
 
     @override
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         stream: bool,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -122,11 +120,11 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
             self.received_messages.append(list(messages))
             if self.run_responses:
                 return self.run_responses.pop(0)
-            return ChatResponse(messages=ChatMessage("assistant", ["Mock response from ChatAgent"]))
+            return ChatResponse(messages=Message("assistant", ["Mock response from Agent"]))
 
         return _get()
 
-    async def _stream_impl(self, messages: Sequence[ChatMessage]) -> AsyncIterable[ChatResponseUpdate]:
+    async def _stream_impl(self, messages: Sequence[Message]) -> AsyncIterable[ChatResponseUpdate]:
         self.call_count += 1
         self.received_messages.append(list(messages))
         if self.streaming_responses:
@@ -137,7 +135,7 @@ class MockBaseChatClient(BaseChatClient[TOptions_co], Generic[TOptions_co]):
             yield ChatResponseUpdate(contents=[Content.from_text(text="Mock ")], role="assistant")
             yield ChatResponseUpdate(contents=[Content.from_text(text="streaming ")], role="assistant")
             yield ChatResponseUpdate(contents=[Content.from_text(text="response ")], role="assistant")
-            yield ChatResponseUpdate(contents=[Content.from_text(text="from ChatAgent")], role="assistant")
+            yield ChatResponseUpdate(contents=[Content.from_text(text="from Agent")], role="assistant")
 
 
 # =============================================================================
@@ -161,32 +159,32 @@ class MockAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         self.call_count += 1
         if stream:
-            return self._run_stream(messages=messages, thread=thread, **kwargs)
-        return self._run(messages=messages, thread=thread, **kwargs)
+            return self._run_stream(messages=messages, session=session, **kwargs)
+        return self._run(messages=messages, session=session, **kwargs)
 
     async def _run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         self.call_count += 1
-        return AgentResponse(messages=[ChatMessage("assistant", [Content.from_text(text=self.response_text)])])
+        return AgentResponse(messages=[Message("assistant", [Content.from_text(text=self.response_text)])])
 
     def _run_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         self.call_count += 1
@@ -207,31 +205,31 @@ class MockToolCallingAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         self.call_count += 1
         if stream:
-            return self._run_stream(messages=messages, thread=thread, **kwargs)
-        return self._run(messages=messages, thread=thread, **kwargs)
+            return self._run_stream(messages=messages, session=session, **kwargs)
+        return self._run(messages=messages, session=session, **kwargs)
 
     async def _run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
-        return AgentResponse(messages=[ChatMessage("assistant", ["done"])])
+        return AgentResponse(messages=[Message("assistant", ["done"])])
 
     def _run_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         async def _iter() -> AsyncIterable[AgentResponseUpdate]:
@@ -277,21 +275,22 @@ class MockToolCallingAgent(BaseAgent):
 
 def _create_agent_run_response(text: str = "Test response") -> AgentResponse:
     """Create an AgentResponse with the given text."""
-    return AgentResponse(messages=[ChatMessage("assistant", [Content.from_text(text=text)])])
+    return AgentResponse(messages=[Message("assistant", [Content.from_text(text=text)])])
 
 
 def _create_agent_executor_response(
     executor_id: str = "test_executor",
     response_text: str = "Executor response",
 ) -> AgentExecutorResponse:
-    """Create an AgentExecutorResponse - the type that's nested in ExecutorCompletedEvent.data."""
+    """Create an AgentExecutorResponse - the type that's nested in
+    executor_completed event (type='executor_completed').data."""
     agent_response = _create_agent_run_response(response_text)
     return AgentExecutorResponse(
         executor_id=executor_id,
         agent_response=agent_response,
         full_conversation=[
-            ChatMessage("user", [Content.from_text(text="User input")]),
-            ChatMessage("assistant", [Content.from_text(text=response_text)]),
+            Message("user", [Content.from_text(text="User input")]),
+            Message("assistant", [Content.from_text(text=response_text)]),
         ],
     )
 
@@ -306,32 +305,32 @@ def create_agent_run_response(text: str = "Test response") -> AgentResponse:
     return _create_agent_run_response(text)
 
 
-def create_executor_invoked_event(executor_id: str = "test_executor") -> ExecutorInvokedEvent:
-    """Create an ExecutorInvokedEvent."""
-    return ExecutorInvokedEvent(executor_id=executor_id)
+def create_executor_invoked_event(executor_id: str = "test_executor") -> WorkflowEvent[Any]:
+    """Create a WorkflowEvent(type='executor_invoked')."""
+    return WorkflowEvent.executor_invoked(executor_id=executor_id)
 
 
 def create_executor_completed_event(
     executor_id: str = "test_executor",
     with_agent_response: bool = True,
-) -> ExecutorCompletedEvent:
-    """Create an ExecutorCompletedEvent with realistic nested data.
+) -> WorkflowEvent[Any]:
+    """Create a WorkflowEvent(type='executor_completed') with realistic nested data.
 
     This creates the exact data structure that caused the serialization bug:
-    ExecutorCompletedEvent.data contains AgentExecutorResponse which contains
-    AgentResponse and ChatMessage objects (SerializationMixin, not Pydantic).
+    WorkflowEvent.data contains AgentExecutorResponse which contains
+    AgentResponse and Message objects (SerializationMixin, not Pydantic).
     """
     data = _create_agent_executor_response(executor_id) if with_agent_response else {"simple": "dict"}
-    return ExecutorCompletedEvent(executor_id=executor_id, data=data)
+    return WorkflowEvent.executor_completed(executor_id=executor_id, data=data)
 
 
 def create_executor_failed_event(
     executor_id: str = "test_executor",
     error_message: str = "Test error",
-) -> ExecutorFailedEvent:
-    """Create an ExecutorFailedEvent."""
+) -> WorkflowEvent[WorkflowErrorDetails]:
+    """Create a WorkflowEvent(type='executor_failed')."""
     details = WorkflowErrorDetails(error_type="TestError", message=error_message)
-    return ExecutorFailedEvent(executor_id=executor_id, details=details)
+    return WorkflowEvent.executor_failed(executor_id=executor_id, details=details)
 
 
 # =============================================================================
@@ -386,36 +385,36 @@ def agent_run_response() -> AgentResponse:
 
 
 @pytest.fixture
-def executor_completed_event() -> ExecutorCompletedEvent:
-    """Create an ExecutorCompletedEvent with realistic nested data.
+def executor_completed_event() -> WorkflowEvent[Any]:
+    """Create a WorkflowEvent(type='executor_completed') with realistic nested data.
 
     This creates the exact data structure that caused the serialization bug:
-    ExecutorCompletedEvent.data contains AgentExecutorResponse which contains
-    AgentResponse and ChatMessage objects (SerializationMixin, not Pydantic).
+    executor_completed event (type='executor_completed').data contains AgentExecutorResponse which contains
+    AgentResponse and Message objects (SerializationMixin, not Pydantic).
     """
     data = _create_agent_executor_response("test_executor")
-    return ExecutorCompletedEvent(executor_id="test_executor", data=data)
+    return WorkflowEvent.executor_completed(executor_id="test_executor", data=data)
 
 
 @pytest.fixture
-def executor_invoked_event() -> ExecutorInvokedEvent:
-    """Create an ExecutorInvokedEvent."""
-    return ExecutorInvokedEvent(executor_id="test_executor")
+def executor_invoked_event() -> WorkflowEvent[Any]:
+    """Create a WorkflowEvent(type='executor_invoked')."""
+    return WorkflowEvent.executor_invoked(executor_id="test_executor")
 
 
 @pytest.fixture
-def executor_failed_event() -> ExecutorFailedEvent:
-    """Create an ExecutorFailedEvent."""
+def executor_failed_event() -> WorkflowEvent[WorkflowErrorDetails]:
+    """Create a WorkflowEvent(type='executor_failed')."""
     details = WorkflowErrorDetails(error_type="TestError", message="Test error")
-    return ExecutorFailedEvent(executor_id="test_executor", details=details)
+    return WorkflowEvent.executor_failed(executor_id="test_executor", details=details)
 
 
 @pytest.fixture
 def test_entities_dir() -> str:
     """Use the samples directory which has proper entity structure."""
     current_dir = Path(__file__).parent
-    # Navigate to python/samples/getting_started/devui
-    samples_dir = current_dir.parent.parent.parent.parent / "samples" / "getting_started" / "devui"
+    # Navigate to python/samples/02-agents/devui
+    samples_dir = current_dir.parent.parent.parent.parent / "samples" / "02-agents" / "devui"
     return str(samples_dir.resolve())
 
 
@@ -426,10 +425,10 @@ def test_entities_dir() -> str:
 
 @pytest_asyncio.fixture
 async def executor_with_real_agent() -> tuple[AgentFrameworkExecutor, str, MockBaseChatClient]:
-    """Create an executor with a REAL ChatAgent using mock chat client.
+    """Create an executor with a REAL Agent using mock chat client.
 
     This tests the full execution pipeline:
-    - Real ChatAgent class
+    - Real Agent class
     - Real message handling and normalization
     - Real middleware pipeline
     - Only the LLM call is mocked
@@ -441,12 +440,12 @@ async def executor_with_real_agent() -> tuple[AgentFrameworkExecutor, str, MockB
     mapper = MessageMapper()
     executor = AgentFrameworkExecutor(discovery, mapper)
 
-    # Create a REAL ChatAgent with mock client
-    agent = ChatAgent(
+    # Create a REAL Agent with mock client
+    agent = Agent(
         id="test_chat_agent",
         name="Test Chat Agent",
-        description="A real ChatAgent for testing execution flow",
-        chat_client=mock_client,
+        description="A real Agent for testing execution flow",
+        client=mock_client,
         system_message="You are a helpful test assistant.",
     )
 
@@ -470,26 +469,26 @@ async def sequential_workflow() -> tuple[AgentFrameworkExecutor, str, MockBaseCh
     """
     mock_client = MockBaseChatClient()
     mock_client.run_responses = [
-        ChatResponse(messages=ChatMessage("assistant", ["Here's the draft content about the topic."])),
-        ChatResponse(messages=ChatMessage("assistant", ["Review: Content is clear and well-structured."])),
+        ChatResponse(messages=Message("assistant", ["Here's the draft content about the topic."])),
+        ChatResponse(messages=Message("assistant", ["Review: Content is clear and well-structured."])),
     ]
 
-    writer = ChatAgent(
+    writer = Agent(
         id="writer",
         name="Writer",
         description="Content writer agent",
-        chat_client=mock_client,
+        client=mock_client,
         system_message="You are a content writer. Create clear, engaging content.",
     )
-    reviewer = ChatAgent(
+    reviewer = Agent(
         id="reviewer",
         name="Reviewer",
         description="Content reviewer agent",
-        chat_client=mock_client,
+        client=mock_client,
         system_message="You are a reviewer. Provide constructive feedback.",
     )
 
-    workflow = SequentialBuilder().participants([writer, reviewer]).build()
+    workflow = SequentialBuilder(participants=[writer, reviewer]).build()
 
     discovery = EntityDiscovery(None)
     mapper = MessageMapper()
@@ -514,34 +513,34 @@ async def concurrent_workflow() -> tuple[AgentFrameworkExecutor, str, MockBaseCh
     """
     mock_client = MockBaseChatClient()
     mock_client.run_responses = [
-        ChatResponse(messages=ChatMessage("assistant", ["Research findings: Key data points identified."])),
-        ChatResponse(messages=ChatMessage("assistant", ["Analysis: Trends indicate positive growth."])),
-        ChatResponse(messages=ChatMessage("assistant", ["Summary: Overall outlook is favorable."])),
+        ChatResponse(messages=Message("assistant", ["Research findings: Key data points identified."])),
+        ChatResponse(messages=Message("assistant", ["Analysis: Trends indicate positive growth."])),
+        ChatResponse(messages=Message("assistant", ["Summary: Overall outlook is favorable."])),
     ]
 
-    researcher = ChatAgent(
+    researcher = Agent(
         id="researcher",
         name="Researcher",
         description="Research agent",
-        chat_client=mock_client,
+        client=mock_client,
         system_message="You are a researcher. Find key data and insights.",
     )
-    analyst = ChatAgent(
+    analyst = Agent(
         id="analyst",
         name="Analyst",
         description="Analysis agent",
-        chat_client=mock_client,
+        client=mock_client,
         system_message="You are an analyst. Identify trends and patterns.",
     )
-    summarizer = ChatAgent(
+    summarizer = Agent(
         id="summarizer",
         name="Summarizer",
         description="Summary agent",
-        chat_client=mock_client,
+        client=mock_client,
         system_message="You are a summarizer. Provide concise summaries.",
     )
 
-    workflow = ConcurrentBuilder().participants([researcher, analyst, summarizer]).build()
+    workflow = ConcurrentBuilder(participants=[researcher, analyst, summarizer]).build()
 
     discovery = EntityDiscovery(None)
     mapper = MessageMapper()

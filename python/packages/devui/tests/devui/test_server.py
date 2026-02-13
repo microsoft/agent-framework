@@ -142,7 +142,7 @@ async def test_credential_cleanup() -> None:
     """Test that async credentials are properly closed during server cleanup."""
     from unittest.mock import AsyncMock, Mock
 
-    from agent_framework import ChatAgent
+    from agent_framework import Agent
 
     # Create mock credential with async close
     mock_credential = AsyncMock()
@@ -155,7 +155,7 @@ async def test_credential_cleanup() -> None:
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
-    agent = ChatAgent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
+    agent = Agent(name="TestAgent", client=mock_client, instructions="Test agent")
 
     # Create DevUI server with agent
     server = DevServer()
@@ -175,7 +175,7 @@ async def test_credential_cleanup_error_handling() -> None:
     """Test that credential cleanup errors are handled gracefully."""
     from unittest.mock import AsyncMock, Mock
 
-    from agent_framework import ChatAgent
+    from agent_framework import Agent
 
     # Create mock credential that raises error on close
     mock_credential = AsyncMock()
@@ -188,7 +188,7 @@ async def test_credential_cleanup_error_handling() -> None:
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
-    agent = ChatAgent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
+    agent = Agent(name="TestAgent", client=mock_client, instructions="Test agent")
 
     # Create DevUI server with agent
     server = DevServer()
@@ -207,7 +207,7 @@ async def test_multiple_credential_attributes() -> None:
     """Test that we check all common credential attribute names."""
     from unittest.mock import AsyncMock, Mock
 
-    from agent_framework import ChatAgent
+    from agent_framework import Agent
 
     # Create mock credentials
     mock_cred1 = Mock()
@@ -223,7 +223,7 @@ async def test_multiple_credential_attributes() -> None:
     mock_client.function_invocation_configuration = None
 
     # Create agent with mock client
-    agent = ChatAgent(name="TestAgent", chat_client=mock_client, instructions="Test agent")
+    agent = Agent(name="TestAgent", client=mock_client, instructions="Test agent")
 
     # Create DevUI server with agent
     server = DevServer()
@@ -379,26 +379,27 @@ async def test_checkpoint_api_endpoints(test_entities_dir):
     storage = executor.checkpoint_manager.get_checkpoint_storage(conv_id)
     checkpoint = WorkflowCheckpoint(
         checkpoint_id="test_checkpoint_1",
-        workflow_id="test_workflow",
+        workflow_name="test_workflow",
+        graph_signature_hash="test_graph_hash",
         state={"key": "value"},
         iteration_count=1,
     )
-    await storage.save_checkpoint(checkpoint)
+    await storage.save(checkpoint)
 
     # Test list checkpoints endpoint
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(workflow_name="test_workflow")
     assert len(checkpoints) == 1
     assert checkpoints[0].checkpoint_id == "test_checkpoint_1"
-    assert checkpoints[0].workflow_id == "test_workflow"
+    assert checkpoints[0].workflow_name == "test_workflow"
 
     # Test delete checkpoint endpoint
-    deleted = await storage.delete_checkpoint("test_checkpoint_1")
+    deleted = await storage.delete("test_checkpoint_1")
     assert deleted is True
 
     # Verify checkpoint was deleted
-    remaining = await storage.list_checkpoints()
+    remaining = await storage.list_checkpoints(workflow_name="test_workflow")
     assert len(remaining) == 0
 
     # Test delete non-existent checkpoint
-    deleted = await storage.delete_checkpoint("nonexistent")
+    deleted = await storage.delete("nonexistent")
     assert deleted is False

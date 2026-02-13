@@ -28,8 +28,8 @@ def start_server() -> tuple[str, Any]:
     """Start server with samples directory."""
     # Get samples directory - updated path after samples were moved
     current_dir = Path(__file__).parent
-    # Samples are now in python/samples/getting_started/devui
-    samples_dir = current_dir.parent.parent.parent / "samples" / "getting_started" / "devui"
+    # Samples are now in python/samples/02-agents/devui
+    samples_dir = current_dir.parent.parent.parent / "samples" / "02-agents" / "devui"
 
     if not samples_dir.exists():
         raise RuntimeError(f"Samples directory not found: {samples_dir}")

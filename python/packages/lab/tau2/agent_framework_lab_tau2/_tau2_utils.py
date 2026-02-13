@@ -7,16 +7,18 @@ from typing import Any
 
 import numpy as np
 from agent_framework._tools import FunctionTool
-from agent_framework._types import ChatMessage
+from agent_framework._types import Message
 from loguru import logger
 from pydantic import BaseModel
 from tau2.data_model.message import (  # type: ignore[import-untyped]
     AssistantMessage,
-    Message,
     SystemMessage,
     ToolCall,
     ToolMessage,
     UserMessage,
+)
+from tau2.data_model.message import (
+    Message as Tau2Message,
 )
 from tau2.data_model.tasks import EnvFunctionCall, InitializationData  # type: ignore[import-untyped]
 from tau2.environment.environment import Environment  # type: ignore[import-untyped]
@@ -25,7 +27,7 @@ from tau2.environment.tool import Tool  # type: ignore[import-untyped]
 _original_set_state = Environment.set_state
 
 
-def convert_tau2_tool_to_function_tool(tau2_tool: Tool) -> FunctionTool[Any, Any]:
+def convert_tau2_tool_to_function_tool(tau2_tool: Tool) -> FunctionTool[Any]:
     """Convert a tau2 Tool to a FunctionTool for agent framework compatibility.
 
     Creates a wrapper that preserves the tool's interface while ensuring
@@ -45,7 +47,7 @@ def convert_tau2_tool_to_function_tool(tau2_tool: Tool) -> FunctionTool[Any, Any
     )
 
 
-def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage]) -> list[Message]:
+def convert_agent_framework_messages_to_tau2_messages(messages: list[Message]) -> list[Tau2Message]:
     """Convert agent framework ChatMessages to tau2 Message objects.
 
     Handles role mapping, text extraction, function calls, and function results.
@@ -119,13 +121,13 @@ def patch_env_set_state() -> None:
         self: Any,
         initialization_data: InitializationData | None,
         initialization_actions: list[EnvFunctionCall] | None,
-        message_history: list[Message],
+        message_history: list[Tau2Message],
     ) -> None:
         if self.solo_mode and any(isinstance(message, UserMessage) for message in message_history):
             raise ValueError("User messages are not allowed in solo mode")
 
         def get_actions_from_messages(
-            messages: list[Message],
+            messages: list[Tau2Message],
         ) -> list[tuple[ToolCall, ToolMessage]]:
             """Get the actions from the messages."""
             messages = deepcopy(messages)[::-1]

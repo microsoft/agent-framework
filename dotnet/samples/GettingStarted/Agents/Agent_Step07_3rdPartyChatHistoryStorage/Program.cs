@@ -25,9 +25,12 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 VectorStore vectorStore = new InMemoryVectorStore();
 
 // Create the agent
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions
     {
@@ -49,7 +52,7 @@ Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session
 // Serialize the session state, so it can be stored for later use.
 // Since the chat history is stored in the vector store, the serialized session
 // only contains the guid that the messages are stored under in the vector store.
-JsonElement serializedSession = agent.SerializeSession(session);
+JsonElement serializedSession = await agent.SerializeSessionAsync(session);
 
 Console.WriteLine("\n--- Serialized session ---\n");
 Console.WriteLine(JsonSerializer.Serialize(serializedSession, new JsonSerializerOptions { WriteIndented = true }));
@@ -89,7 +92,7 @@ namespace SampleApp
 
         public string? SessionDbKey { get; private set; }
 
-        public override async ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override async ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
@@ -107,7 +110,7 @@ namespace SampleApp
             return messages;
         }
 
-        public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
             // Don't store messages if the request failed.
             if (context.InvokeException is not null)
@@ -122,7 +125,7 @@ namespace SampleApp
 
             // Add both request and response messages to the store
             // Optionally messages produced by the AIContextProvider can also be persisted (not shown).
-            var allNewMessages = context.RequestMessages.Concat(context.AIContextProviderMessages ?? []).Concat(context.ResponseMessages ?? []);
+            var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);
 
             await collection.UpsertAsync(allNewMessages.Select(x => new ChatHistoryItem()
             {

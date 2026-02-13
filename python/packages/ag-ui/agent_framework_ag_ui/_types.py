@@ -18,8 +18,8 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
-TAGUIChatOptions = TypeVar("TAGUIChatOptions", bound=TypedDict, default="AGUIChatOptions", covariant=True)  # type: ignore[valid-type]
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+AGUIChatOptionsT = TypeVar("AGUIChatOptionsT", bound=TypedDict, default="AGUIChatOptions", covariant=True)  # type: ignore[valid-type]
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 class PredictStateConfig(TypedDict):
@@ -84,7 +84,7 @@ class AGUIRequest(BaseModel):
 # region AG-UI Chat Options TypedDict
 
 
-class AGUIChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class AGUIChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """AG-UI protocol-specific chat options dict.
 
     Extends base ChatOptions for the AG-UI (Agent-UI) protocol.

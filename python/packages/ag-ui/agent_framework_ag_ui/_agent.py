@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, cast
 
 from ag_ui.core import BaseEvent
-from agent_framework import AgentProtocol
+from agent_framework import SupportsAgentRun
 
 from ._run import run_agent_stream
 
@@ -18,7 +18,7 @@ class AgentConfig:
         self,
         state_schema: Any | None = None,
         predict_state_config: dict[str, dict[str, str]] | None = None,
-        use_service_thread: bool = False,
+        use_service_session: bool = False,
         require_confirmation: bool = True,
     ):
         """Initialize agent configuration.
@@ -26,12 +26,12 @@ class AgentConfig:
         Args:
             state_schema: Optional state schema for state management; accepts dict or Pydantic model/class
             predict_state_config: Configuration for predictive state updates
-            use_service_thread: Whether the agent thread is service-managed
+            use_service_session: Whether the agent session is service-managed
             require_confirmation: Whether predictive updates require user confirmation before applying
         """
         self.state_schema = self._normalize_state_schema(state_schema)
         self.predict_state_config = predict_state_config or {}
-        self.use_service_thread = use_service_thread
+        self.use_service_session = use_service_session
         self.require_confirmation = require_confirmation
 
     @staticmethod
@@ -65,19 +65,19 @@ class AgentConfig:
 class AgentFrameworkAgent:
     """Wraps Agent Framework agents for AG-UI protocol compatibility.
 
-    Translates between Agent Framework's AgentProtocol and AG-UI's event-based
+    Translates between Agent Framework's SupportsAgentRun and AG-UI's event-based
     protocol. Follows a simple linear flow: RunStarted -> content events -> RunFinished.
     """
 
     def __init__(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         name: str | None = None,
         description: str | None = None,
         state_schema: Any | None = None,
         predict_state_config: dict[str, dict[str, str]] | None = None,
         require_confirmation: bool = True,
-        use_service_thread: bool = False,
+        use_service_session: bool = False,
     ):
         """Initialize the AG-UI compatible agent wrapper.
 
@@ -88,7 +88,7 @@ class AgentFrameworkAgent:
             state_schema: Optional state schema for state management; accepts dict or Pydantic model/class
             predict_state_config: Configuration for predictive state updates
             require_confirmation: Whether predictive updates require user confirmation before applying
-            use_service_thread: Whether the agent thread is service-managed
+            use_service_session: Whether the agent session is service-managed
         """
         self.agent = agent
         self.name = name or getattr(agent, "name", "agent")
@@ -97,7 +97,7 @@ class AgentFrameworkAgent:
         self.config = AgentConfig(
             state_schema=state_schema,
             predict_state_config=predict_state_config,
-            use_service_thread=use_service_thread,
+            use_service_session=use_service_session,
             require_confirmation=require_confirmation,
         )
 

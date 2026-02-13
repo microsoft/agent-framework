@@ -13,7 +13,6 @@ from agent_framework import (
     WorkflowContext,
     WorkflowEvent,
     WorkflowRunState,
-    WorkflowStatusEvent,
     executor,
     handler,
 )
@@ -62,15 +61,15 @@ async def test_executor_cannot_emit_framework_lifecycle_event(caplog: "LogCaptur
     async with make_context() as (ctx, runner_ctx):
         caplog.clear()
         with caplog.at_level("WARNING"):
-            await ctx.add_event(WorkflowStatusEvent(state=WorkflowRunState.IN_PROGRESS))
+            await ctx.add_event(WorkflowEvent.status(state=WorkflowRunState.IN_PROGRESS))
 
         events: list[WorkflowEvent] = await runner_ctx.drain_events()
         assert len(events) == 1
-        assert type(events[0]).__name__ == "WorkflowWarningEvent"
-        data = getattr(events[0], "data", None)
+        assert events[0].type == "warning"
+        data = events[0].data
         assert isinstance(data, str)
         assert "reserved for framework lifecycle notifications" in data
-        assert any("attempted to emit WorkflowStatusEvent" in message for message in list(caplog.messages))
+        assert any("attempted to emit" in message and "'status'" in message for message in list(caplog.messages))
 
 
 async def test_executor_emits_normal_event() -> None:
@@ -84,7 +83,8 @@ async def test_executor_emits_normal_event() -> None:
 
 
 class _TestEvent(WorkflowEvent):
-    pass
+    def __init__(self, data: Any = None) -> None:
+        super().__init__("test_event", data=data)
 
 
 async def test_workflow_context_type_annotations_no_parameter() -> None:
@@ -93,7 +93,7 @@ async def test_workflow_context_type_annotations_no_parameter() -> None:
     async def func1(text: str, ctx: WorkflowContext) -> None:
         await ctx.add_event(_TestEvent())
 
-    wf = WorkflowBuilder().set_start_executor(func1).build()
+    wf = WorkflowBuilder(start_executor=func1).build()
     events = await wf.run("hello")
     test_events = [e for e in events if isinstance(e, _TestEvent)]
     assert len(test_events) == 1
@@ -110,7 +110,7 @@ async def test_workflow_context_type_annotations_no_parameter() -> None:
     assert executor1.output_types == []
     assert executor1.workflow_output_types == []
 
-    wf2 = WorkflowBuilder().set_start_executor(executor1).build()
+    wf2 = WorkflowBuilder(start_executor=executor1).build()
     events2 = await wf2.run("hello")
     test_events2 = [e for e in events2 if isinstance(e, _TestEvent)]
     assert len(test_events2) == 1
@@ -126,7 +126,7 @@ async def test_workflow_context_type_annotations_message_type_parameter() -> Non
     async def func2(text: str, ctx: WorkflowContext) -> None:
         await ctx.add_event(_TestEvent(data=text))
 
-    wf = WorkflowBuilder().add_edge(func1, func2).set_start_executor(func1).build()
+    wf = WorkflowBuilder(start_executor=func1).add_edge(func1, func2).build()
     events = await wf.run("hello")
     test_events = [e for e in events if isinstance(e, _TestEvent)]
     assert len(test_events) == 1
@@ -153,7 +153,7 @@ async def test_workflow_context_type_annotations_message_type_parameter() -> Non
     assert executor2.output_types == []
     assert executor2.workflow_output_types == []
 
-    wf2 = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+    wf2 = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
     events2 = await wf2.run("hello")
     test_events2 = [e for e in events2 if isinstance(e, _TestEvent)]
     assert len(test_events2) == 1
@@ -171,7 +171,7 @@ async def test_workflow_context_type_annotations_message_and_output_type_paramet
         await ctx.add_event(_TestEvent(data=text))
         await ctx.yield_output(text)
 
-    wf = WorkflowBuilder().add_edge(func1, func2).set_start_executor(func1).build()
+    wf = WorkflowBuilder(start_executor=func1).add_edge(func1, func2).build()
     events = await wf.run("hello")
     outputs = events.get_outputs()
     assert len(outputs) == 1
@@ -199,7 +199,7 @@ async def test_workflow_context_type_annotations_message_and_output_type_paramet
     assert executor2.output_types == []
     assert executor2.workflow_output_types == [str]
 
-    wf2 = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+    wf2 = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
     events2 = await wf2.run("hello")
     outputs2 = events2.get_outputs()
     assert len(outputs2) == 1

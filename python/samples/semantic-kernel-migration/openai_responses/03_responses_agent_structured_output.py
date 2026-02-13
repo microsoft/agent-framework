@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/openai_responses/03_responses_agent_structured_output.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Request structured JSON output from the Responses API in SK and AF."""
 
@@ -38,11 +47,11 @@ async def run_semantic_kernel() -> None:
 
 
 async def run_agent_framework() -> None:
-    from agent_framework import ChatAgent
+    from agent_framework import Agent
     from agent_framework.openai import OpenAIResponsesClient
 
-    chat_agent = ChatAgent(
-        chat_client=OpenAIResponsesClient(),
+    chat_agent = Agent(
+        client=OpenAIResponsesClient(),
         instructions="Return launch briefs as structured JSON.",
         name="ProductMarketer",
     )

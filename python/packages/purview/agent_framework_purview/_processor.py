@@ -1,11 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import time
 import uuid
 from collections.abc import Iterable, MutableMapping
 from typing import Any
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 from agent_framework._logging import get_logger
 
 from ._cache import CacheProvider, InMemoryCacheProvider, create_protection_scopes_cache_key
@@ -56,19 +57,27 @@ class ScopedContentProcessor:
     def __init__(self, client: PurviewClient, settings: PurviewSettings, cache_provider: CacheProvider | None = None):
         self._client = client
         self._settings = settings
+        cache_ttl = settings.get("cache_ttl_seconds")
+        max_cache = settings.get("max_cache_size_bytes")
         self._cache: CacheProvider = cache_provider or InMemoryCacheProvider(
-            default_ttl_seconds=settings.cache_ttl_seconds, max_size_bytes=settings.max_cache_size_bytes
+            default_ttl_seconds=cache_ttl if cache_ttl is not None else 14400,
+            max_size_bytes=max_cache if max_cache is not None else 200 * 1024 * 1024,
         )
         self._background_tasks: set[asyncio.Task[Any]] = set()
 
     async def process_messages(
-        self, messages: Iterable[ChatMessage], activity: Activity, user_id: str | None = None
+        self,
+        messages: Iterable[Message],
+        activity: Activity,
+        session_id: str | None = None,
+        user_id: str | None = None,
     ) -> tuple[bool, str | None]:
         """Process messages for policy evaluation.
 
         Args:
             messages: The messages to process
             activity: The activity type (e.g., UPLOAD_TEXT)
+            session_id: Optional session/conversation id. Else, a new GUID is generated.
             user_id: Optional user_id to use for all messages. If provided, this is the fallback.
 
         Returns:
@@ -76,7 +85,7 @@ class ScopedContentProcessor:
             The resolved_user_id can be stored and passed back when processing the response
             to ensure the same user context is maintained throughout the request/response cycle.
         """
-        pc_requests, resolved_user_id = await self._map_messages(messages, activity, user_id)
+        pc_requests, resolved_user_id = await self._map_messages(messages, activity, session_id, user_id)
         should_block = False
         for req in pc_requests:
             resp = await self._process_with_scopes(req)
@@ -90,13 +99,18 @@ class ScopedContentProcessor:
         return should_block, resolved_user_id
 
     async def _map_messages(
-        self, messages: Iterable[ChatMessage], activity: Activity, provided_user_id: str | None = None
+        self,
+        messages: Iterable[Message],
+        activity: Activity,
+        session_id: str | None = None,
+        provided_user_id: str | None = None,
     ) -> tuple[list[ProcessContentRequest], str | None]:
         """Map messages to ProcessContentRequests.
 
         Args:
             messages: The messages to map
             activity: The activity type
+            session_id: Optional session/conversation id to use for correlation
             provided_user_id: Optional user_id to use. If provided, this is the fallback.
 
         Returns:
@@ -105,10 +119,10 @@ class ScopedContentProcessor:
         results: list[ProcessContentRequest] = []
         token_info = None
 
-        if not (self._settings.tenant_id and self._settings.purview_app_location):
-            token_info = await self._client.get_user_info_from_token(tenant_id=self._settings.tenant_id)
+        if not (self._settings.get("tenant_id") and self._settings.get("purview_app_location")):
+            token_info = await self._client.get_user_info_from_token(tenant_id=self._settings.get("tenant_id"))
 
-        tenant_id = (token_info or {}).get("tenant_id") or self._settings.tenant_id
+        tenant_id = (token_info or {}).get("tenant_id") or self._settings.get("tenant_id")
         if not tenant_id or not _is_valid_guid(tenant_id):
             raise ValueError("Tenant id required or must be inferable from credential")
 
@@ -137,19 +151,22 @@ class ScopedContentProcessor:
         for m in messages:
             message_id = m.message_id or str(uuid.uuid4())
             content = PurviewTextContent(data=m.text or "")
+            correlation_id = (session_id or str(uuid.uuid4())) + "@AF"
             meta = ProcessConversationMetadata(
                 identifier=message_id,
                 content=content,
                 name=f"Agent Framework Message {message_id}",
                 is_truncated=False,
-                correlation_id=str(uuid.uuid4()),
+                correlation_id=correlation_id,
+                sequence_number=time.time_ns(),
             )
             activity_meta = ActivityMetadata(activity=activity)
 
-            if self._settings.purview_app_location:
+            purview_app_location = self._settings.get("purview_app_location")
+            if purview_app_location:
                 policy_location = PolicyLocation(
-                    data_type=self._settings.purview_app_location.get_policy_location()["@odata.type"],
-                    value=self._settings.purview_app_location.location_value,
+                    data_type=purview_app_location.get_policy_location()["@odata.type"],
+                    value=purview_app_location.location_value,
                 )
             elif token_info and token_info.get("client_id"):
                 policy_location = PolicyLocation(
@@ -160,11 +177,13 @@ class ScopedContentProcessor:
                 raise ValueError("App location not provided or inferable")
 
             protected_app = ProtectedAppMetadata(
-                name=self._settings.app_name,
-                version="1.0",
+                name=self._settings["app_name"],
+                version=self._settings.get("app_version", "Unknown"),
                 application_location=policy_location,
             )
-            integrated_app = IntegratedAppMetadata(name=self._settings.app_name, version="1.0")
+            integrated_app = IntegratedAppMetadata(
+                name=self._settings["app_name"], version=self._settings.get("app_version", "Unknown")
+            )
             device_meta = DeviceMetadata(
                 operating_system_specifications=OperatingSystemSpecifications(
                     operating_system_platform="Unknown", operating_system_version="Unknown"
@@ -215,11 +234,13 @@ class ScopedContentProcessor:
             ps_resp = cached_ps_resp
         else:
             try:
+                ttl = self._settings.get("cache_ttl_seconds")
+                ttl_seconds = ttl if ttl is not None else 14400
                 ps_resp = await self._client.get_protection_scopes(ps_req)
-                await self._cache.set(cache_key, ps_resp, ttl_seconds=self._settings.cache_ttl_seconds)
+                await self._cache.set(cache_key, ps_resp, ttl_seconds=ttl_seconds)
             except PurviewPaymentRequiredError as ex:
                 # Cache the exception at tenant level so all subsequent requests for this tenant fail fast
-                await self._cache.set(tenant_payment_cache_key, ex, ttl_seconds=self._settings.cache_ttl_seconds)
+                await self._cache.set(tenant_payment_cache_key, ex, ttl_seconds=ttl_seconds)
                 raise
 
         if ps_resp.scope_identifier:

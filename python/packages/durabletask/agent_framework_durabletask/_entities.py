@@ -9,12 +9,12 @@ from datetime import datetime, timezone
 from typing import Any, cast
 
 from agent_framework import (
-    AgentProtocol,
     AgentResponse,
     AgentResponseUpdate,
-    ChatMessage,
     Content,
+    Message,
     ResponseStream,
+    SupportsAgentRun,
     get_logger,
 )
 from durabletask.entities import DurableEntity
@@ -86,12 +86,12 @@ class AgentEntity:
     This class encapsulates the core logic for executing an agent within a durable entity context.
     """
 
-    agent: AgentProtocol
+    agent: SupportsAgentRun
     callback: AgentResponseCallbackProtocol | None
 
     def __init__(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         callback: AgentResponseCallbackProtocol | None = None,
         *,
         state_provider: AgentEntityStateProviderMixin,
@@ -150,7 +150,7 @@ class AgentEntity:
         self.state.data.conversation_history.append(state_request)
 
         try:
-            chat_messages: list[ChatMessage] = [
+            chat_messages: list[Message] = [
                 m.to_chat_message()
                 for entry in self.state.data.conversation_history
                 if not self._is_error_response(entry)
@@ -175,7 +175,7 @@ class AgentEntity:
         except Exception as exc:
             logger.exception("[AgentEntity.run] Agent execution failed.")
 
-            error_message = ChatMessage(
+            error_message = Message(
                 role="assistant", contents=[Content.from_error(message=str(exc), error_code=type(exc).__name__)]
             )
             error_response = AgentResponse(

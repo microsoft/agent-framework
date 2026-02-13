@@ -20,7 +20,10 @@ var embeddingDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_E
 // Replace this with a vector store implementation of your choice that can persist the chat history long term.
 VectorStore vectorStore = new InMemoryVectorStore(new InMemoryVectorStoreOptions()
 {
-    EmbeddingGenerator = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+    // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+    // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+    // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+    EmbeddingGenerator = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
         .GetEmbeddingClient(embeddingDeploymentName)
         .AsIEmbeddingGenerator()
 });
@@ -28,7 +31,7 @@ VectorStore vectorStore = new InMemoryVectorStore(new InMemoryVectorStoreOptions
 // Create the agent and add the ChatHistoryMemoryProvider to store chat messages in the vector store.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions
     {

@@ -6,6 +6,8 @@ This module provides the AgentFunctionApp class that integrates Microsoft Agent 
 with Azure Durable Entities, enabling stateful and durable AI agent execution.
 """
 
+from __future__ import annotations
+
 import json
 import re
 import uuid
@@ -16,7 +18,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import azure.durable_functions as df
 import azure.functions as func
-from agent_framework import AgentProtocol, get_logger
+from agent_framework import SupportsAgentRun, get_logger
 from agent_framework_durabletask import (
     DEFAULT_MAX_POLL_RETRIES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -51,12 +53,12 @@ class AgentMetadata:
     """Metadata for a registered agent.
 
     Attributes:
-        agent: The agent instance implementing AgentProtocol
+        agent: The agent instance implementing SupportsAgentRun
         http_endpoint_enabled: Whether HTTP endpoint is enabled for this agent
         mcp_tool_enabled: Whether MCP tool endpoint is enabled for this agent
     """
 
-    agent: AgentProtocol
+    agent: SupportsAgentRun
     http_endpoint_enabled: bool
     mcp_tool_enabled: bool
 
@@ -133,8 +135,8 @@ class AgentFunctionApp(DFAppBase):
         @app.orchestration_trigger(context_name="context")
         def my_orchestration(context):
             writer = app.get_agent(context, "WeatherAgent")
-            thread = writer.get_new_thread()
-            forecast_task = writer.run("What's the forecast?", thread=thread)
+            session = writer.create_session()
+            forecast_task = writer.run("What's the forecast?", session=session)
             forecast = yield forecast_task
             return forecast
 
@@ -145,7 +147,7 @@ class AgentFunctionApp(DFAppBase):
     - Full access to all Azure Functions capabilities
 
     Attributes:
-        agents: Dictionary of agent name to AgentProtocol instance
+        agents: Dictionary of agent name to SupportsAgentRun instance
         enable_health_check: Whether health check endpoint is enabled
         enable_http_endpoints: Whether HTTP endpoints are created for agents
         enable_mcp_tool_trigger: Whether MCP tool triggers are created for agents
@@ -160,7 +162,7 @@ class AgentFunctionApp(DFAppBase):
 
     def __init__(
         self,
-        agents: list[AgentProtocol] | None = None,
+        agents: list[SupportsAgentRun] | None = None,
         http_auth_level: func.AuthLevel = func.AuthLevel.FUNCTION,
         enable_health_check: bool = True,
         enable_http_endpoints: bool = True,
@@ -222,17 +224,17 @@ class AgentFunctionApp(DFAppBase):
         logger.debug("[AgentFunctionApp] Initialization complete")
 
     @property
-    def agents(self) -> dict[str, AgentProtocol]:
+    def agents(self) -> dict[str, SupportsAgentRun]:
         """Returns dict of agent names to agent instances.
 
         Returns:
-            Dictionary mapping agent names to their AgentProtocol instances.
+            Dictionary mapping agent names to their SupportsAgentRun instances.
         """
         return {name: metadata.agent for name, metadata in self._agent_metadata.items()}
 
     def add_agent(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         callback: AgentResponseCallbackProtocol | None = None,
         enable_http_endpoint: bool | None = None,
         enable_mcp_tool_trigger: bool | None = None,
@@ -240,7 +242,7 @@ class AgentFunctionApp(DFAppBase):
         """Add an agent to the function app after initialization.
 
         Args:
-            agent: The Microsoft Agent Framework agent instance (must implement AgentProtocol)
+            agent: The Microsoft Agent Framework agent instance (must implement SupportsAgentRun)
                    The agent must have a 'name' attribute.
             callback: Optional callback invoked during agent execution
             enable_http_endpoint: Optional flag to enable/disable HTTP endpoint for this agent.
@@ -322,7 +324,7 @@ class AgentFunctionApp(DFAppBase):
 
     def _setup_agent_functions(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         agent_name: str,
         callback: AgentResponseCallbackProtocol | None,
         enable_http_endpoint: bool,
@@ -484,7 +486,7 @@ class AgentFunctionApp(DFAppBase):
 
     def _setup_agent_entity(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         agent_name: str,
         callback: AgentResponseCallbackProtocol | None,
     ) -> None:
