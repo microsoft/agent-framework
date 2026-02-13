@@ -42,7 +42,7 @@ await UseStructuredOutputWithRunAsync(chatClient);
 await UseStructuredOutputWithRunStreamingAsync(chatClient);
 
 // Demonstrates how to add structured output support to agents that don't natively support it using the structured output middleware.
-// This approach is useful when working with agents that don't support structured output natively, like A2A, or agents using models
+// This approach is useful when working with agents that don't support structured output natively, or agents using models
 // that don't have the capability to produce structured output, allowing you to still leverage structured output features by transforming
 // the text output from the agent into structured data using a chat client.
 await UseStructuredOutputWithMiddlewareAsync(chatClient);
@@ -66,9 +66,18 @@ static async Task UseStructuredOutputWithResponseFormatAsync(ChatClient chatClie
     // Invoke the agent with some unstructured input to extract the structured information from.
     AgentResponse response = await agent.RunAsync("Provide information about the capital of France.");
 
-    // Access the structured output via the Text property of the agent response.
-    Console.WriteLine("Assistant Output:");
+    // Access the structured output via the Text property of the agent response as JSON in scenarios when JSON as text is required
+    // and no object instance is needed (e.g., for logging, forwarding to another service, or storing in a database).
+    Console.WriteLine("Assistant Output (JSON):");
     Console.WriteLine(response.Text);
+    Console.WriteLine();
+
+    // Deserialize the JSON text to work with the structured object in scenarios when you need to access properties,
+    // perform operations, or pass the data to methods that require the typed object instance.
+    CityInfo cityInfo = JsonSerializer.Deserialize<CityInfo>(response.Text)!;
+
+    Console.WriteLine("Assistant Output (Deserialized):");
+    Console.WriteLine($"Name: {cityInfo.Name}");
     Console.WriteLine();
 }
 
