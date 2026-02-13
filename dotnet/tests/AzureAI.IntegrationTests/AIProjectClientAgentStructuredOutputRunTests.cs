@@ -76,7 +76,7 @@ public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRu
 
     [Fact(Skip = NotSupported)]
     public override Task RunWithPrimitiveTypeReturnsExpectedResultAsync() =>
-       base.RunWithPrimitiveTypeReturnsExpectedResultAsync();
+        base.RunWithPrimitiveTypeReturnsExpectedResultAsync();
 }
 
 /// <summary>
