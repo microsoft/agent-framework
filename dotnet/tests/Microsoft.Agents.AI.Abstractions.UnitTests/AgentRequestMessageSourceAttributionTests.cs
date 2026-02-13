@@ -390,6 +390,49 @@ public sealed class AgentRequestMessageSourceAttributionTests
 
     #endregion
 
+    #region ToString Tests
+
+    [Fact]
+    public void ToString_WithSourceId_ReturnsTypeColonId()
+    {
+        // Arrange
+        AgentRequestMessageSourceAttribution attribution = new(AgentRequestMessageSourceType.AIContextProvider, "MyProvider");
+
+        // Act
+        string result = attribution.ToString();
+
+        // Assert
+        Assert.Equal("AIContextProvider:MyProvider", result);
+    }
+
+    [Fact]
+    public void ToString_WithNullSourceId_ReturnsTypeOnly()
+    {
+        // Arrange
+        AgentRequestMessageSourceAttribution attribution = new(AgentRequestMessageSourceType.ChatHistory, null);
+
+        // Act
+        string result = attribution.ToString();
+
+        // Assert
+        Assert.Equal("ChatHistory", result);
+    }
+
+    [Fact]
+    public void ToString_Default_ReturnsExternalOnly()
+    {
+        // Arrange
+        AgentRequestMessageSourceAttribution attribution = default;
+
+        // Act
+        string result = attribution.ToString();
+
+        // Assert
+        Assert.Equal("External", result);
+    }
+
+    #endregion
+
     #region Inequality Operator Tests
 
     [Fact]

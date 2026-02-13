@@ -27,7 +27,7 @@ AIAgent agent = new AzureOpenAIClient(
     {
         ChatOptions = new() { Instructions = "You are good at telling jokes." },
         Name = "Joker",
-        ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<ChatHistoryProvider>(new InMemoryChatHistoryProvider(new MessageCountingChatReducer(2), ctx.SerializedState, ctx.JsonSerializerOptions))
+        ChatHistoryProvider = new InMemoryChatHistoryProvider(new() { ChatReducer = new MessageCountingChatReducer(2) })
     });
 
 AgentSession session = await agent.CreateSessionAsync();
@@ -36,7 +36,10 @@ AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session));
 
 // Get the chat history to see how many messages are stored.
-IList<ChatMessage>? chatHistory = session.GetService<IList<ChatMessage>>();
+// We can use the ChatHistoryProvider, that is also used by the agent, to read the
+// chat history from the session state, and see how the reducer is affecting the stored messages.
+var provider = agent.GetService<InMemoryChatHistoryProvider>();
+List<ChatMessage>? chatHistory = provider?.GetMessages(session);
 Console.WriteLine($"\nChat history has {chatHistory?.Count} messages.\n");
 
 // Invoke the agent a few more times.

@@ -12,7 +12,13 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 from .._agents import BaseAgent
-from .._sessions import AgentSession, BaseContextProvider, BaseHistoryProvider, SessionContext
+from .._sessions import (
+    AgentSession,
+    BaseContextProvider,
+    BaseHistoryProvider,
+    InMemoryHistoryProvider,
+    SessionContext,
+)
 from .._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -112,7 +118,17 @@ class WorkflowAgent(BaseAgent):
         if not any(is_type_compatible(list[Message], input_type) for input_type in start_executor.input_types):
             raise ValueError("Workflow's start executor cannot handle list[Message]")
 
-        super().__init__(id=id, name=name, description=description, context_providers=context_providers, **kwargs)
+        resolved_context_providers = list(context_providers) if context_providers is not None else []
+        if not resolved_context_providers:
+            resolved_context_providers.append(InMemoryHistoryProvider("memory"))
+
+        super().__init__(
+            id=id,
+            name=name,
+            description=description,
+            context_providers=resolved_context_providers,
+            **kwargs,
+        )
         self._workflow: Workflow = workflow
         self._pending_requests: dict[str, WorkflowEvent[Any]] = {}
 

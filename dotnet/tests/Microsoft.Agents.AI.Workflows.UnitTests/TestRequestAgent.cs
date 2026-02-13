@@ -330,7 +330,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
         }
     }
 
-    private sealed class TestRequestAgentSession<TRequest, TResponse> : InMemoryAgentSession
+    private sealed class TestRequestAgentSession<TRequest, TResponse> : AgentSession
         where TRequest : AIContent
         where TResponse : AIContent
     {
@@ -343,19 +343,13 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
         public HashSet<string> ServicedRequests { get; } = new();
         public HashSet<string> PairedRequests { get; } = new();
 
-        private static JsonElement DeserializeAndExtractState(JsonElement serializedState,
-                                                              out TestRequestAgentSessionState state,
-                                                              JsonSerializerOptions? jsonSerializerOptions = null)
+        public TestRequestAgentSession(JsonElement element, JsonSerializerOptions? jsonSerializerOptions = null)
         {
-            state = JsonSerializer.Deserialize<TestRequestAgentSessionState>(serializedState, jsonSerializerOptions)
+            var state = JsonSerializer.Deserialize<TestRequestAgentSessionState>(element, jsonSerializerOptions)
                  ?? throw new ArgumentException("Unable to deserialize session state.");
 
-            return state.SessionState;
-        }
+            this.StateBag = AgentSessionStateBag.Deserialize(state.SessionState);
 
-        public TestRequestAgentSession(JsonElement element, JsonSerializerOptions? jsonSerializerOptions = null)
-            : base(DeserializeAndExtractState(element, out TestRequestAgentSessionState state, jsonSerializerOptions))
-        {
             this.UnservicedRequests = state.UnservicedRequests.ToDictionary(
                 keySelector: item => item.Key,
                 elementSelector: item => item.Value.As<TRequest>()!);
@@ -364,9 +358,9 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             this.PairedRequests = state.PairedRequests;
         }
 
-        protected override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        internal JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
         {
-            JsonElement sessionState = base.Serialize(jsonSerializerOptions);
+            JsonElement sessionState = this.StateBag.Serialize();
 
             Dictionary<string, PortableValue> portableUnservicedRequests =
                 this.UnservicedRequests.ToDictionary(
