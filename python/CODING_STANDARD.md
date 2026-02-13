@@ -422,9 +422,9 @@ from ._types import (
     ResponseStream,
 )
 
-# ❌ Prohibited - wildcard/star imports
-from ._agents import *
-from ._types import *
+# ❌ Prohibited pattern: wildcard/star imports (do not use)
+# from ._agents import <all public symbols>
+# from ._types import <all public symbols>
 ```
 
 **Rationale:**
