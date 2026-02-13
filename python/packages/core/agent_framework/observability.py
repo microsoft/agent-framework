@@ -1448,7 +1448,7 @@ class AgentTelemetryLayer:
 # region Otel Helpers
 
 
-def get_function_span_attributes(function: FunctionTool[Any], tool_call_id: str | None = None) -> dict[str, str]:
+def get_function_span_attributes(function: FunctionTool, tool_call_id: str | None = None) -> dict[str, str]:
     """Get the span attributes for the given function.
 
     Args:

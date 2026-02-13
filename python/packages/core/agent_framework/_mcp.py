@@ -24,7 +24,6 @@ from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
-from pydantic import BaseModel, create_model
 
 from ._tools import (
     FunctionTool,
@@ -354,15 +353,14 @@ def _prepare_message_for_mcp(
     return messages
 
 
-def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any] | type[BaseModel]:
+def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any]:
     """Get the input model from an MCP prompt.
-    
-    For prompts with arguments, returns the schema as a dict.
-    For prompts without arguments, returns an empty Pydantic model.
+
+    Returns a JSON schema dictionary for prompt arguments.
     """
     # Check if 'arguments' is missing or empty
     if not prompt.arguments:
-        return create_model(f"{prompt.name}_input")
+        return {"type": "object", "properties": {}}
 
     # Convert prompt arguments to JSON schema format
     properties: dict[str, Any] = {}
@@ -377,16 +375,10 @@ def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any] | t
         if prompt_argument.required:
             required.append(prompt_argument.name)
 
-    schema = {"type": "object", "properties": properties, "required": required}
+    schema: dict[str, Any] = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
     return schema
-
-
-def _get_input_model_from_mcp_tool(tool: types.Tool) -> dict[str, Any]:
-    """Get the input schema from an MCP tool.
-    
-    Returns the schema as-is without conversion to Pydantic model.
-    """
-    return tool.inputSchema
 
 
 def _normalize_mcp_name(name: str) -> str:
@@ -473,7 +465,7 @@ class MCPTool:
         self.session = session
         self.request_timeout = request_timeout
         self.client = client
-        self._functions: list[FunctionTool[Any]] = []
+        self._functions: list[FunctionTool] = []
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
@@ -482,7 +474,7 @@ class MCPTool:
         return f"MCPTool(name={self.name}, description={self.description})"
 
     @property
-    def functions(self) -> list[FunctionTool[Any]]:
+    def functions(self) -> list[FunctionTool]:
         """Get the list of functions that are allowed."""
         if not self.allowed_tools:
             return self._functions
@@ -750,7 +742,7 @@ class MCPTool:
 
                 input_model = _get_input_model_from_mcp_prompt(prompt)
                 approval_mode = self._determine_approval_mode(local_name)
-                func: FunctionTool[BaseModel] = FunctionTool(
+                func: FunctionTool = FunctionTool(
                     func=partial(self.get_prompt, prompt.name),
                     name=local_name,
                     description=prompt.description or "",
@@ -791,15 +783,14 @@ class MCPTool:
                 if local_name in existing_names:
                     continue
 
-                input_model = _get_input_model_from_mcp_tool(tool)
                 approval_mode = self._determine_approval_mode(local_name)
                 # Create FunctionTools out of each tool
-                func: FunctionTool[BaseModel] = FunctionTool(
+                func: FunctionTool = FunctionTool(
                     func=partial(self.call_tool, tool.name),
                     name=local_name,
                     description=tool.description or "",
                     approval_mode=approval_mode,
-                    input_model=input_model,
+                    input_model=tool.inputSchema,
                 )
                 self._functions.append(func)
                 existing_names.add(local_name)

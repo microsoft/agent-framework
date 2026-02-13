@@ -89,8 +89,6 @@ DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 # region Helpers
 
-ArgsT = TypeVar("ArgsT", bound=BaseModel, default=BaseModel)
-
 
 def _parse_inputs(
     inputs: Content | dict[str, Any] | str | list[Content | dict[str, Any] | str] | None,
@@ -183,11 +181,7 @@ def _default_histogram() -> Histogram:
 ClassT = TypeVar("ClassT", bound="SerializationMixin")
 
 
-class EmptyInputModel(BaseModel):
-    """An empty input model for functions with no parameters."""
-
-
-class FunctionTool(SerializationMixin, Generic[ArgsT]):
+class FunctionTool(SerializationMixin):
     """A tool that wraps a Python function to make it callable by AI models.
 
     This class wraps a Python function to make it callable by AI models with automatic
@@ -244,6 +238,11 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
         "_schema_supplied",
     }
 
+    @classmethod
+    def __class_getitem__(cls, item: Any) -> type[FunctionTool]:
+        """Support legacy type annotations like FunctionTool[Any]."""
+        return cls
+
     def __init__(
         self,
         *,
@@ -254,7 +253,7 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
         max_invocation_exceptions: int | None = None,
         additional_properties: dict[str, Any] | None = None,
         func: Callable[..., Any] | None = None,
-        input_model: type[ArgsT] | Mapping[str, Any] | None = None,
+        input_model: type[BaseModel] | Mapping[str, Any] | None = None,
         result_parser: Callable[[Any], str] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -303,15 +302,13 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
         self._instance = None  # Store the instance for bound methods
 
         # Track if schema was supplied as JSON dict (for optimization)
-        self._schema_supplied = isinstance(input_model, Mapping) and not (
-            inspect.isclass(input_model) and issubclass(input_model, BaseModel)
-        )
-
-        # Store the original JSON schema if provided
-        self._input_schema: dict[str, Any] | None = dict(input_model) if self._schema_supplied else None
-
-        # Only create Pydantic model if schema wasn't supplied as dict
-        self.input_model = self._resolve_input_model(input_model)
+        self._schema_supplied = isinstance(input_model, Mapping)
+        if self._schema_supplied:
+            self._input_schema: dict[str, Any] = dict(input_model)
+            self.input_model: type[BaseModel] | None = None
+        else:
+            self.input_model = self._resolve_input_model(cast(type[BaseModel] | None, input_model))
+            self._input_schema = self.input_model.model_json_schema()
         self._cached_parameters: dict[str, Any] | None = None
         self.approval_mode = approval_mode or "never_require"
         if max_invocations is not None and max_invocations < 1:
@@ -347,7 +344,7 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
             return True
         return self.func is None
 
-    def __get__(self, obj: Any, objtype: type | None = None) -> FunctionTool[ArgsT]:
+    def __get__(self, obj: Any, objtype: type | None = None) -> FunctionTool:
         """Implement the descriptor protocol to support bound methods.
 
         When a FunctionTool is accessed as an attribute of a class instance,
@@ -378,34 +375,28 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
 
         return self
 
-    def _resolve_input_model(self, input_model: type[ArgsT] | Mapping[str, Any] | None) -> type[ArgsT]:
-        """Resolve the input model for the function.
+    def _resolve_input_model(self, input_model: type[BaseModel] | None) -> type[BaseModel]:
+        """Resolve the input model for the function."""
+        if input_model is not None:
+            if inspect.isclass(input_model) and issubclass(input_model, BaseModel):
+                return input_model
+            raise TypeError("input_model must be a Pydantic BaseModel subclass or a JSON schema dict.")
 
-        When a JSON schema is provided as a Mapping, we no longer convert it to a Pydantic model.
-        Instead, we store the schema as-is and use EmptyInputModel as a placeholder.
-        """
-        if input_model is None:
-            if self.func is None:
-                return cast(type[ArgsT], EmptyInputModel)
-            func = self.func.func if isinstance(self.func, FunctionTool) else self.func
-            sig = inspect.signature(func)
-            fields = {
-                pname: (
-                    _parse_annotation(param.annotation) if param.annotation is not inspect.Parameter.empty else str,
-                    param.default if param.default is not inspect.Parameter.empty else ...,
-                )
-                for pname, param in sig.parameters.items()
-                if pname not in {"self", "cls"}
-                and param.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
-            }
-            return cast(type[ArgsT], create_model(f"{self.name}_input", **fields))
-        if inspect.isclass(input_model) and issubclass(input_model, BaseModel):
-            return input_model
-        if isinstance(input_model, Mapping):
-            # Don't convert to Pydantic model - store schema as-is
-            # Use EmptyInputModel as placeholder since we won't use it for validation
-            return cast(type[ArgsT], EmptyInputModel)
-        raise TypeError("input_model must be a Pydantic BaseModel subclass or a JSON schema dict.")
+        if self.func is None:
+            return create_model(f"{self.name}_input")
+
+        func = self.func.func if isinstance(self.func, FunctionTool) else self.func
+        sig = inspect.signature(func)
+        fields = {
+            pname: (
+                _parse_annotation(param.annotation) if param.annotation is not inspect.Parameter.empty else str,
+                param.default if param.default is not inspect.Parameter.empty else ...,
+            )
+            for pname, param in sig.parameters.items()
+            if pname not in {"self", "cls"}
+            and param.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
+        }
+        return create_model(f"{self.name}_input", **fields)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Call the wrapped function with the provided arguments."""
@@ -436,7 +427,7 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
     async def invoke(
         self,
         *,
-        arguments: ArgsT | Mapping[str, Any] | None = None,
+        arguments: BaseModel | Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> str:
         """Run the AI function with the provided arguments as a Pydantic model.
@@ -446,14 +437,14 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
         ``result_parser`` if one was provided.
 
         Keyword Args:
-            arguments: A Pydantic model instance containing the arguments for the function.
+            arguments: A mapping or model instance containing the arguments for the function.
             kwargs: Keyword arguments to pass to the function, will not be used if ``arguments`` is provided.
 
         Returns:
             The parsed result as a string — either plain text or serialized JSON.
 
         Raises:
-            TypeError: If arguments is not an instance of the expected input model.
+            TypeError: If arguments is not mapping-like or fails schema checks.
         """
         if self.declaration_only:
             raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
@@ -465,30 +456,32 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
         original_kwargs = dict(kwargs)
         tool_call_id = original_kwargs.pop("tool_call_id", None)
         if arguments is not None:
-            # For schema-supplied tools, skip Pydantic validation and extract kwargs directly
-            if self._schema_supplied:
-                # Extract kwargs from arguments (could be dict or BaseModel)
+            try:
                 if isinstance(arguments, Mapping):
                     parsed_arguments = dict(arguments)
-                elif hasattr(arguments, "model_dump"):
+                    if self.input_model is not None and not self._schema_supplied:
+                        parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(
+                            exclude_none=True
+                        )
+                elif isinstance(arguments, BaseModel):
+                    if (
+                        self.input_model is not None
+                        and not self._schema_supplied
+                        and not isinstance(arguments, self.input_model)
+                    ):
+                        raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
                     parsed_arguments = arguments.model_dump(exclude_none=True)
-                elif hasattr(arguments, "__dict__"):
-                    parsed_arguments = {k: v for k, v in arguments.__dict__.items() if not k.startswith("_")}
                 else:
                     raise TypeError(
-                        f"Expected mapping-like arguments for schema tool '{self.name}', "
-                        f"got {type(arguments).__name__}"
+                        f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
                     )
-                kwargs = _validate_arguments_against_schema(
-                    arguments=parsed_arguments,
-                    schema=self._input_schema or {},
-                    tool_name=self.name,
-                )
-            else:
-                # For Pydantic models, do the normal validation
-                if not isinstance(arguments, self.input_model):
-                    raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-                kwargs = arguments.model_dump(exclude_none=True)
+            except ValidationError as exc:
+                raise TypeError(f"Invalid arguments for '{self.name}': {exc}") from exc
+            kwargs = _validate_arguments_against_schema(
+                arguments=parsed_arguments,
+                schema=self.parameters(),
+                tool_name=self.name,
+            )
             if getattr(self, "_forward_runtime_kwargs", False) and original_kwargs:
                 kwargs.update(original_kwargs)
         else:
@@ -577,12 +570,7 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
             The result is cached after the first call for performance.
         """
         if self._cached_parameters is None:
-            # If schema was supplied as JSON, return it directly
-            if self._schema_supplied and self._input_schema is not None:
-                self._cached_parameters = self._input_schema
-            else:
-                # Otherwise generate from Pydantic model
-                self._cached_parameters = self.input_model.model_json_schema()
+            self._cached_parameters = self._input_schema
         return self._cached_parameters
 
     @staticmethod
@@ -1058,7 +1046,7 @@ def tool(
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
     result_parser: Callable[[Any], str] | None = None,
-) -> FunctionTool[Any]: ...
+) -> FunctionTool: ...
 
 
 @overload
@@ -1073,7 +1061,7 @@ def tool(
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
     result_parser: Callable[[Any], str] | None = None,
-) -> Callable[[Callable[..., Any]], FunctionTool[Any]]: ...
+) -> Callable[[Callable[..., Any]], FunctionTool]: ...
 
 
 def tool(
@@ -1087,7 +1075,7 @@ def tool(
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
     result_parser: Callable[[Any], str] | None = None,
-) -> FunctionTool[Any] | Callable[[Callable[..., Any]], FunctionTool[Any]]:
+) -> FunctionTool | Callable[[Callable[..., Any]], FunctionTool]:
     """Decorate a function to turn it into a FunctionTool that can be passed to models and executed automatically.
 
     This decorator creates a Pydantic model from the function's signature,
@@ -1211,12 +1199,12 @@ def tool(
 
     """
 
-    def decorator(func: Callable[..., Any]) -> FunctionTool[Any]:
+    def decorator(func: Callable[..., Any]) -> FunctionTool:
         @wraps(func)
-        def wrapper(f: Callable[..., Any]) -> FunctionTool[Any]:
+        def wrapper(f: Callable[..., Any]) -> FunctionTool:
             tool_name: str = name or getattr(f, "__name__", "unknown_function")  # type: ignore[assignment]
             tool_desc: str = description or (f.__doc__ or "")
-            return FunctionTool[Any](
+            return FunctionTool(
                 name=tool_name,
                 description=tool_desc,
                 approval_mode=approval_mode,
@@ -1309,7 +1297,7 @@ async def _auto_invoke_function(
     custom_args: dict[str, Any] | None = None,
     *,
     config: FunctionInvocationConfiguration,
-    tool_map: dict[str, FunctionTool[BaseModel]],
+    tool_map: dict[str, FunctionTool],
     sequence_index: int | None = None,
     request_index: int | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,  # Optional MiddlewarePipeline
@@ -1341,7 +1329,7 @@ async def _auto_invoke_function(
     # this function is called. This function only handles the actual execution of approved,
     # non-declaration-only functions.
 
-    tool: FunctionTool[BaseModel] | None = None
+    tool: FunctionTool | None = None
     if function_call_content.type == "function_call":
         tool = tool_map.get(function_call_content.name)  # type: ignore[arg-type]
         # Tool should exist because _try_execute_function_calls validates this
@@ -1374,15 +1362,16 @@ async def _auto_invoke_function(
         if key not in {"_function_middleware_pipeline", "middleware", "conversation_id"}
     }
     try:
-        if tool._schema_supplied and tool._input_schema is not None:
-            args = _validate_arguments_against_schema(
-                arguments=parsed_args,
-                schema=tool._input_schema,
-                tool_name=tool.name,
-            )
+        if not tool._schema_supplied and tool.input_model is not None:
+            args = tool.input_model.model_validate(parsed_args).model_dump(exclude_none=True)
         else:
-            args = tool.input_model.model_validate(parsed_args)
-    except (ValidationError, TypeError) as exc:
+            args = dict(parsed_args)
+        args = _validate_arguments_against_schema(
+            arguments=args,
+            schema=tool.parameters(),
+            tool_name=tool.name,
+        )
+    except (TypeError, ValidationError) as exc:
         message = "Error: Argument parsing failed."
         if config["include_detailed_errors"]:
             message = f"{message} Exception: {exc}"
@@ -1463,8 +1452,8 @@ def _get_tool_map(
     | Callable[..., Any]
     | MutableMapping[str, Any]
     | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]],
-) -> dict[str, FunctionTool[Any]]:
-    tool_list: dict[str, FunctionTool[Any]] = {}
+) -> dict[str, FunctionTool]:
+    tool_list: dict[str, FunctionTool] = {}
     for tool_item in tools if isinstance(tools, list) else [tools]:
         if isinstance(tool_item, FunctionTool):
             tool_list[tool_item.name] = tool_item

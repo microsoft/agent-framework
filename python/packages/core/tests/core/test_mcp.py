@@ -10,7 +10,7 @@ import pytest
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.shared.exceptions import McpError
-from pydantic import AnyUrl, BaseModel, ValidationError
+from pydantic import AnyUrl, BaseModel
 
 from agent_framework import (
     Content,
@@ -22,7 +22,6 @@ from agent_framework import (
 from agent_framework._mcp import (
     MCPTool,
     _get_input_model_from_mcp_prompt,
-    _get_input_model_from_mcp_tool,
     _normalize_mcp_name,
     _parse_content_from_mcp,
     _parse_message_from_mcp,
@@ -602,7 +601,7 @@ def test_get_input_model_from_mcp_tool_parametrized(
     - validation_check: Not used in this test (kept for compatibility)
     """
     tool = types.Tool(name="test_tool", description="A test tool", inputSchema=input_schema)
-    schema = _get_input_model_from_mcp_tool(tool)
+    schema = tool.inputSchema
 
     # Verify schema is returned as-is (dict)
     assert isinstance(schema, dict), f"Expected dict, got {type(schema)}"
@@ -628,6 +627,15 @@ def test_get_input_model_from_mcp_prompt():
     assert "arg2" in result["properties"]
     assert "arg1" in result["required"]
     assert "arg2" not in result["required"]
+
+
+def test_get_input_model_from_mcp_prompt_without_arguments():
+    """Test prompt schema generation when no prompt arguments are defined."""
+    prompt = types.Prompt(name="empty_prompt", description="No args prompt", arguments=[])
+    result = _get_input_model_from_mcp_prompt(prompt)
+
+    assert isinstance(result, dict)
+    assert result == {"type": "object", "properties": {}}
 
 
 # MCPTool tests
