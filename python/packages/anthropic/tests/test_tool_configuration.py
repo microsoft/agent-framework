@@ -6,7 +6,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from agent_framework import Content, Message, tool
-from test_helpers import create_test_client
+from conftest import create_test_client
 
 from agent_framework_anthropic import AnthropicClient
 

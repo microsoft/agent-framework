@@ -6,7 +6,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from agent_framework import Content, Message
-from test_helpers import VALID_PNG_BASE64, create_test_client
+from conftest import VALID_PNG_BASE64, create_test_client
 
 # Message Preparation Tests
 
