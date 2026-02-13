@@ -2,7 +2,7 @@
 
 """Tests for ensuring instructions are not repeated in continued conversations."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -24,7 +24,7 @@ async def test_instructions_not_repeated_with_conversation_id() -> None:
     mock_response.metadata = {}
     mock_response.usage = None
     mock_response.finish_reason = None
-    
+
     mock_message_content = MagicMock()
     mock_message_content.type = "output_text"
     mock_message_content.text = "Hello! How can I help?"
@@ -46,7 +46,7 @@ async def test_instructions_not_repeated_with_conversation_id() -> None:
         # Check first call included instructions
         first_call_args = mock_create.call_args
         first_input_messages = first_call_args.kwargs["input"]
-        
+
         # Should have 2 messages: system (instructions) + user
         assert len(first_input_messages) == 2
         assert first_input_messages[0]["role"] == "system"
@@ -66,7 +66,7 @@ async def test_instructions_not_repeated_with_conversation_id() -> None:
         # Check second call
         second_call_args = mock_create.call_args
         second_input_messages = second_call_args.kwargs["input"]
-        
+
         # Should have only 1 message: user message (no system instructions)
         assert len(second_input_messages) == 1, (
             f"Expected 1 message (user only) when conversation_id is present, "
@@ -90,7 +90,7 @@ async def test_instructions_not_repeated_with_response_id() -> None:
     mock_response.metadata = {}
     mock_response.usage = None
     mock_response.finish_reason = None
-    
+
     mock_message_content = MagicMock()
     mock_message_content.type = "output_text"
     mock_message_content.text = "Response"
@@ -103,7 +103,7 @@ async def test_instructions_not_repeated_with_response_id() -> None:
     mock_response.output = [mock_message_item]
 
     with patch.object(client.client.responses, "create", return_value=mock_response) as mock_create:
-        # Call with response_id format (resp_) 
+        # Call with response_id format (resp_)
         await client.get_response(
             messages=[Message(role="user", text="Continue conversation")],
             options={
@@ -114,7 +114,7 @@ async def test_instructions_not_repeated_with_response_id() -> None:
 
         call_args = mock_create.call_args
         input_messages = call_args.kwargs["input"]
-        
+
         # Should only have user message, no system instructions
         assert len(input_messages) == 1
         assert input_messages[0]["role"] == "user"
@@ -134,7 +134,7 @@ async def test_instructions_not_repeated_with_conv_id() -> None:
     mock_response.metadata = {}
     mock_response.usage = None
     mock_response.finish_reason = None
-    
+
     mock_message_content = MagicMock()
     mock_message_content.type = "output_text"
     mock_message_content.text = "Response"
@@ -158,7 +158,7 @@ async def test_instructions_not_repeated_with_conv_id() -> None:
 
         call_args = mock_create.call_args
         input_messages = call_args.kwargs["input"]
-        
+
         # Should only have user message, no system instructions
         assert len(input_messages) == 1
         assert input_messages[0]["role"] == "user"
@@ -178,7 +178,7 @@ async def test_instructions_included_without_conversation_id() -> None:
     mock_response.metadata = {}
     mock_response.usage = None
     mock_response.finish_reason = None
-    
+
     mock_message_content = MagicMock()
     mock_message_content.type = "output_text"
     mock_message_content.text = "Response"
@@ -199,7 +199,7 @@ async def test_instructions_included_without_conversation_id() -> None:
 
         call_args = mock_create.call_args
         input_messages = call_args.kwargs["input"]
-        
+
         # Should have 2 messages: system (instructions) + user
         assert len(input_messages) == 2
         assert input_messages[0]["role"] == "system"
