@@ -301,15 +301,15 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
         # FunctionTool-specific attributes
         self.func = func
         self._instance = None  # Store the instance for bound methods
-        
+
         # Track if schema was supplied as JSON dict (for optimization)
         self._schema_supplied = isinstance(input_model, Mapping) and not (
             inspect.isclass(input_model) and issubclass(input_model, BaseModel)
         )
-        
+
         # Store the original JSON schema if provided
         self._input_schema: dict[str, Any] | None = dict(input_model) if self._schema_supplied else None
-        
+
         # Only create Pydantic model if schema wasn't supplied as dict
         self.input_model = self._resolve_input_model(input_model)
         self._cached_parameters: dict[str, Any] | None = None
@@ -380,14 +380,25 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
 
     def _resolve_input_model(self, input_model: type[ArgsT] | Mapping[str, Any] | None) -> type[ArgsT]:
         """Resolve the input model for the function.
-        
+
         When a JSON schema is provided as a Mapping, we no longer convert it to a Pydantic model.
         Instead, we store the schema as-is and use EmptyInputModel as a placeholder.
         """
         if input_model is None:
             if self.func is None:
                 return cast(type[ArgsT], EmptyInputModel)
-            return cast(type[ArgsT], _create_input_model_from_func(func=self.func, name=self.name))
+            func = self.func.func if isinstance(self.func, FunctionTool) else self.func
+            sig = inspect.signature(func)
+            fields = {
+                pname: (
+                    _parse_annotation(param.annotation) if param.annotation is not inspect.Parameter.empty else str,
+                    param.default if param.default is not inspect.Parameter.empty else ...,
+                )
+                for pname, param in sig.parameters.items()
+                if pname not in {"self", "cls"}
+                and param.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
+            }
+            return cast(type[ArgsT], create_model(f"{self.name}_input", **fields))
         if inspect.isclass(input_model) and issubclass(input_model, BaseModel):
             return input_model
         if isinstance(input_model, Mapping):
@@ -425,7 +436,7 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
     async def invoke(
         self,
         *,
-        arguments: ArgsT | None = None,
+        arguments: ArgsT | Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> str:
         """Run the AI function with the provided arguments as a Pydantic model.
@@ -457,14 +468,22 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
             # For schema-supplied tools, skip Pydantic validation and extract kwargs directly
             if self._schema_supplied:
                 # Extract kwargs from arguments (could be dict or BaseModel)
-                if isinstance(arguments, dict):
-                    kwargs = arguments
+                if isinstance(arguments, Mapping):
+                    parsed_arguments = dict(arguments)
                 elif hasattr(arguments, "model_dump"):
-                    kwargs = arguments.model_dump(exclude_none=True)
+                    parsed_arguments = arguments.model_dump(exclude_none=True)
                 elif hasattr(arguments, "__dict__"):
-                    kwargs = {k: v for k, v in arguments.__dict__.items() if not k.startswith("_")}
+                    parsed_arguments = {k: v for k, v in arguments.__dict__.items() if not k.startswith("_")}
                 else:
-                    kwargs = dict(arguments)
+                    raise TypeError(
+                        f"Expected mapping-like arguments for schema tool '{self.name}', "
+                        f"got {type(arguments).__name__}"
+                    )
+                kwargs = _validate_arguments_against_schema(
+                    arguments=parsed_arguments,
+                    schema=self._input_schema or {},
+                    tool_name=self.name,
+                )
             else:
                 # For Pydantic models, do the normal validation
                 if not isinstance(arguments, self.input_model):
@@ -717,23 +736,80 @@ def _parse_annotation(annotation: Any) -> Any:
     return annotation
 
 
-def _create_input_model_from_func(func: Callable[..., Any], name: str) -> type[BaseModel]:
-    """Create a Pydantic model from a function's signature."""
-    # Unwrap FunctionTool objects to get the underlying function
-    if isinstance(func, FunctionTool):
-        func = func.func  # type: ignore[assignment]
+def _matches_json_schema_type(value: Any, schema_type: str) -> bool:
+    """Check a value against a simple JSON schema primitive type."""
+    match schema_type:
+        case "string":
+            return isinstance(value, str)
+        case "integer":
+            return isinstance(value, int) and not isinstance(value, bool)
+        case "number":
+            return (isinstance(value, int | float)) and not isinstance(value, bool)
+        case "boolean":
+            return isinstance(value, bool)
+        case "array":
+            return isinstance(value, list)
+        case "object":
+            return isinstance(value, dict)
+        case "null":
+            return value is None
+        case _:
+            return True
 
-    sig = inspect.signature(func)
-    fields = {
-        pname: (
-            _parse_annotation(param.annotation) if param.annotation is not inspect.Parameter.empty else str,
-            param.default if param.default is not inspect.Parameter.empty else ...,
-        )
-        for pname, param in sig.parameters.items()
-        if pname not in {"self", "cls"}
-        and param.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
-    }
-    return create_model(f"{name}_input", **fields)  # type: ignore[call-overload, no-any-return]
+
+def _validate_arguments_against_schema(
+    *,
+    arguments: Mapping[str, Any],
+    schema: Mapping[str, Any],
+    tool_name: str,
+) -> dict[str, Any]:
+    """Run lightweight argument checks for schema-supplied tools."""
+    parsed_arguments = dict(arguments)
+
+    required_raw = schema.get("required", [])
+    required_fields = [field for field in required_raw if isinstance(field, str)]
+    missing_fields = [field for field in required_fields if field not in parsed_arguments]
+    if missing_fields:
+        raise TypeError(f"Missing required argument(s) for '{tool_name}': {', '.join(sorted(missing_fields))}")
+
+    properties_raw = schema.get("properties")
+    properties = properties_raw if isinstance(properties_raw, Mapping) else {}
+
+    if schema.get("additionalProperties") is False:
+        unexpected_fields = sorted(field for field in parsed_arguments if field not in properties)
+        if unexpected_fields:
+            raise TypeError(f"Unexpected argument(s) for '{tool_name}': {', '.join(unexpected_fields)}")
+
+    for field_name, field_value in parsed_arguments.items():
+        field_schema = properties.get(field_name)
+        if not isinstance(field_schema, Mapping):
+            continue
+
+        enum_values = field_schema.get("enum")
+        if isinstance(enum_values, list) and enum_values and field_value not in enum_values:
+            raise TypeError(
+                f"Invalid value for '{field_name}' in '{tool_name}': {field_value!r} "
+                f"is not in {enum_values!r}"
+            )
+
+        schema_type = field_schema.get("type")
+        if isinstance(schema_type, str):
+            if not _matches_json_schema_type(field_value, schema_type):
+                raise TypeError(
+                    f"Invalid type for '{field_name}' in '{tool_name}': "
+                    f"expected {schema_type}, got {type(field_value).__name__}"
+                )
+            continue
+
+        if isinstance(schema_type, list):
+            allowed_types = [item for item in schema_type if isinstance(item, str)]
+            if allowed_types and not any(_matches_json_schema_type(field_value, item) for item in allowed_types):
+                raise TypeError(
+                    f"Invalid type for '{field_name}' in '{tool_name}': expected one of "
+                    f"{allowed_types}, got {type(field_value).__name__}"
+                )
+
+    return parsed_arguments
 
 
 # Map JSON Schema types to Pydantic types
@@ -1298,8 +1374,15 @@ async def _auto_invoke_function(
         if key not in {"_function_middleware_pipeline", "middleware", "conversation_id"}
     }
     try:
-        args = tool.input_model.model_validate(parsed_args)
-    except ValidationError as exc:
+        if tool._schema_supplied and tool._input_schema is not None:
+            args = _validate_arguments_against_schema(
+                arguments=parsed_args,
+                schema=tool._input_schema,
+                tool_name=tool.name,
+            )
+        else:
+            args = tool.input_model.model_validate(parsed_args)
+    except (ValidationError, TypeError) as exc:
         message = "Error: Argument parsing failed."
         if config["include_detailed_errors"]:
             message = f"{message} Exception: {exc}"
