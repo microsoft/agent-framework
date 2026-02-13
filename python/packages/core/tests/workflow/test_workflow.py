@@ -13,7 +13,7 @@ from agent_framework import (
     AgentExecutor,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     Content,
     Executor,
@@ -838,7 +838,7 @@ class _StreamingTestAgent(BaseAgent):
         messages: str | Message | Sequence[str | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         if stream:

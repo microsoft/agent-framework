@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import azure.durable_functions as df
-from agent_framework import AgentThread, get_logger
+from agent_framework import AgentSession, get_logger
 from agent_framework_durabletask import (
     DurableAgentExecutor,
     RunRequest,
@@ -178,11 +178,11 @@ class AzureFunctionsAgentExecutor(DurableAgentExecutor[AgentTask]):
         self,
         agent_name: str,
         run_request: RunRequest,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
     ) -> AgentTask:
 
         # Resolve session
-        session_id = self._create_session_id(agent_name, thread)
+        session_id = self._create_session_id(agent_name, session)
 
         entity_id = df.EntityId(
             name=session_id.entity_name,

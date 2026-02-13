@@ -13,7 +13,7 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Generic, Literal, NoReturn, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NoReturn, TypedDict, cast
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
@@ -237,6 +237,8 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
         Use ``OpenAIResponsesClient`` instead for a fully-featured client with all layers applied.
     """
+
+    STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     FILE_SEARCH_MAX_RESULTS: int = 50
 
@@ -780,8 +782,12 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
         # messages
         # Handle instructions by prepending to messages as system message
-        if instructions := options.get("instructions"):
+        # Only prepend instructions for the first turn (when no conversation/response ID exists)
+        conversation_id = self._get_current_conversation_id(options, **kwargs)
+        if (instructions := options.get("instructions")) and not conversation_id:
+            # First turn: prepend instructions as system message
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
+        # Continuation turn: instructions already exist in conversation context, skip prepending
         request_input = self._prepare_messages_for_openai(messages)
         if not request_input:
             raise ServiceInvalidRequestError("Messages are required for chat completions")

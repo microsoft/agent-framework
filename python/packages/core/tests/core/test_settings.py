@@ -28,6 +28,12 @@ class SecretSettings(TypedDict, total=False):
     username: str | None
 
 
+class ExclusiveSettings(TypedDict, total=False):
+    source_a: str | None
+    source_b: str | None
+    other: str | None
+
+
 class TestLoadSettingsBasic:
     """Test basic load_settings functionality."""
 
@@ -236,3 +242,89 @@ class TestOverrideTypeValidation:
 
         assert isinstance(settings["api_key"], SecretString)
         assert settings["api_key"] == "plain-string"
+
+
+class TestMutuallyExclusive:
+    """Test mutually exclusive field validation via tuple entries in required_fields."""
+
+    def test_exactly_one_set_passes(self) -> None:
+        settings = load_settings(
+            ExclusiveSettings,
+            env_prefix="TEST_",
+            required_fields=[("source_a", "source_b")],
+            source_a="value-a",
+        )
+
+        assert settings["source_a"] == "value-a"
+        assert settings["source_b"] is None
+
+    def test_none_set_raises(self) -> None:
+        from agent_framework.exceptions import SettingNotFoundError
+
+        with pytest.raises(SettingNotFoundError, match="none was set"):
+            load_settings(
+                ExclusiveSettings,
+                env_prefix="TEST_",
+                required_fields=[("source_a", "source_b")],
+            )
+
+    def test_both_set_raises(self) -> None:
+        from agent_framework.exceptions import SettingNotFoundError
+
+        with pytest.raises(SettingNotFoundError, match="multiple were set"):
+            load_settings(
+                ExclusiveSettings,
+                env_prefix="TEST_",
+                required_fields=[("source_a", "source_b")],
+                source_a="a",
+                source_b="b",
+            )
+
+    def test_env_var_counts_as_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TEST_SOURCE_B", "env-b")
+
+        settings = load_settings(
+            ExclusiveSettings,
+            env_prefix="TEST_",
+            required_fields=[("source_a", "source_b")],
+        )
+
+        assert settings["source_b"] == "env-b"
+
+    def test_env_var_and_override_both_set_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_framework.exceptions import SettingNotFoundError
+
+        monkeypatch.setenv("TEST_SOURCE_B", "env-b")
+
+        with pytest.raises(SettingNotFoundError, match="multiple were set"):
+            load_settings(
+                ExclusiveSettings,
+                env_prefix="TEST_",
+                required_fields=[("source_a", "source_b")],
+                source_a="a",
+            )
+
+    def test_other_fields_unaffected(self) -> None:
+        settings = load_settings(
+            ExclusiveSettings,
+            env_prefix="TEST_",
+            required_fields=[("source_a", "source_b")],
+            source_a="a",
+            other="extra",
+        )
+
+        assert settings["source_a"] == "a"
+        assert settings["other"] == "extra"
+
+    def test_mixed_required_and_exclusive(self) -> None:
+        settings = load_settings(
+            ExclusiveSettings,
+            env_prefix="TEST_",
+            required_fields=["other", ("source_a", "source_b")],
+            source_b="b",
+            other="required-val",
+        )
+
+        assert settings["other"] == "required-val"
+        assert settings["source_b"] == "b"
+        assert settings["source_a"] is None

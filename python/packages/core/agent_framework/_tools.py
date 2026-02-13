@@ -468,16 +468,16 @@ class FunctionTool(SerializationMixin, Generic[ArgsT]):
                     "chat_options",
                     "tools",
                     "tool_choice",
-                    "thread",
+                    "session",
                     "conversation_id",
                     "options",
                     "response_format",
                 }
             }
             attributes.update({
-                OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json()
+                OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json(ensure_ascii=False)
                 if arguments
-                else json.dumps(serializable_kwargs, default=str)
+                else json.dumps(serializable_kwargs, default=str, ensure_ascii=False)
                 if serializable_kwargs
                 else "None"
             })
@@ -1897,7 +1897,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             config=self.function_invocation_configuration,
             middleware_pipeline=function_middleware_pipeline,
         )
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "session"}
         # Make options mutable so we can update conversation_id during function invocation loop
         mutable_options: dict[str, Any] = dict(options) if options else {}
         # Remove additional_function_arguments from options passed to underlying chat client

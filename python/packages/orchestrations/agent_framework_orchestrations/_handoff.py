@@ -38,7 +38,7 @@ from typing import Any, cast
 
 from agent_framework import Agent, SupportsAgentRun
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware
-from agent_framework._threads import AgentThread
+from agent_framework._sessions import AgentSession
 from agent_framework._tools import FunctionTool, tool
 from agent_framework._types import AgentResponse, AgentResponseUpdate, Message
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
@@ -196,7 +196,7 @@ class HandoffAgentExecutor(AgentExecutor):
         agent: SupportsAgentRun,
         handoffs: Sequence[HandoffConfiguration],
         *,
-        agent_thread: AgentThread | None = None,
+        agent_session: AgentSession | None = None,
         is_start_agent: bool = False,
         termination_condition: TerminationCondition | None = None,
         autonomous_mode: bool = False,
@@ -208,7 +208,7 @@ class HandoffAgentExecutor(AgentExecutor):
         Args:
             agent: The agent to execute
             handoffs: Sequence of handoff configurations defining target agents
-            agent_thread: Optional AgentThread that manages the agent's execution context
+            agent_session: Optional AgentSession that manages the agent's execution context
             is_start_agent: Whether this agent is the starting agent in the handoff workflow.
                             There can only be one starting agent in a handoff workflow.
             termination_condition: Optional callable that determines when to terminate the workflow
@@ -222,7 +222,7 @@ class HandoffAgentExecutor(AgentExecutor):
             autonomous_mode_turn_limit: Maximum number of autonomous turns before requesting user input.
         """
         cloned_agent = self._prepare_agent_with_handoffs(agent, handoffs)
-        super().__init__(cloned_agent, agent_thread=agent_thread)
+        super().__init__(cloned_agent, session=agent_session)
 
         self._handoff_targets = {handoff.target_id for handoff in handoffs}
         self._termination_condition = termination_condition
@@ -306,8 +306,7 @@ class HandoffAgentExecutor(AgentExecutor):
             id=agent.id,
             name=agent.name,
             description=agent.description,
-            chat_message_store_factory=agent.chat_message_store_factory,
-            context_provider=agent.context_provider,
+            context_providers=agent.context_providers,
             middleware=middleware,
             default_options=cloned_options,  # type: ignore[arg-type]
         )

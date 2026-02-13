@@ -36,31 +36,30 @@ async def main():
         instructions="Use the provided tools.",
         tools=[safe_divide],
     )
-    thread = agent.get_new_thread()
+    session = agent.create_session()
     print("=" * 60)
     print("Step 1: Call divide(10, 0) - tool raises exception")
-    response = await agent.run("Divide 10 by 0", thread=thread)
+    response = await agent.run("Divide 10 by 0", session=session)
     print(f"Response: {response.text}")
     print("=" * 60)
     print("Step 2: Call divide(100, 0) - will refuse to execute due to max_invocation_exceptions")
-    response = await agent.run("Divide 100 by 0", thread=thread)
+    response = await agent.run("Divide 100 by 0", session=session)
     print(f"Response: {response.text}")
     print("=" * 60)
     print(f"Number of tool calls attempted: {safe_divide.invocation_count}")
     print(f"Number of tool calls failed: {safe_divide.invocation_exception_count}")
-    print("Replay the conversation:")
-    assert thread.message_store
-    assert thread.message_store.list_messages
-    for idx, msg in enumerate(await thread.message_store.list_messages()):
-        if msg.text:
-            print(f"{idx + 1}  {msg.author_name or msg.role}: {msg.text} ")
-        for content in msg.contents:
-            if content.type == "function_call":
-                print(
-                    f"{idx + 1}  {msg.author_name}: calling function: {content.name} with arguments: {content.arguments}"
-                )
-            if content.type == "function_result":
-                print(f"{idx + 1}  {msg.role}: {content.result if content.result else content.exception}")
+    # TODO: Use history providers to replay the conversation
+    # print("Replay the conversation:")
+    # for idx, msg in enumerate(messages):
+    #     if msg.text:
+    #         print(f"{idx + 1}  {msg.author_name or msg.role}: {msg.text} ")
+    #     for content in msg.contents:
+    #         if content.type == "function_call":
+    #             print(
+    #                 f"{idx + 1}  {msg.author_name}: calling function: {content.name} with arguments: {content.arguments}"
+    #             )
+    #         if content.type == "function_result":
+    #             print(f"{idx + 1}  {msg.role}: {content.result if content.result else content.exception}")
 
 
 """

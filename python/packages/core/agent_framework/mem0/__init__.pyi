@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework_mem0 import (
-    Mem0Provider,
+    Mem0ContextProvider,
     __version__,
 )
 
 __all__ = [
-    "Mem0Provider",
+    "Mem0ContextProvider",
     "__version__",
 ]

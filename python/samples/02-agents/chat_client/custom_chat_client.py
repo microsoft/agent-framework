@@ -160,10 +160,10 @@ async def main() -> None:
             print(chunk.text, end="", flush=True)
     print()
 
-    # Example: Using with threads and conversation history
-    print("\n--- Using Custom Chat Client with Thread ---")
+    # Example: Using with sessions and conversation history
+    print("\n--- Using Custom Chat Client with Session ---")
 
-    thread = echo_agent.get_new_thread()
+    session = echo_agent.create_session()
 
     # Multiple messages in conversation
     messages = [
@@ -173,16 +173,17 @@ async def main() -> None:
     ]
 
     for msg in messages:
-        result = await echo_agent.run(msg, thread=thread)
+        result = await echo_agent.run(msg, session=session)
         print(f"User: {msg}")
         print(f"Agent: {result.messages[0].text}\n")
 
     # Check conversation history
-    if thread.message_store:
-        thread_messages = await thread.message_store.list_messages()
-        print(f"Thread contains {len(thread_messages)} messages")
+    memory_state = session.state.get("memory", {})
+    session_messages = memory_state.get("messages", [])
+    if session_messages:
+        print(f"Session contains {len(session_messages)} messages")
     else:
-        print("Thread has no message store configured")
+        print("Session has no messages stored")
 
 
 if __name__ == "__main__":

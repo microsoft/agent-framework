@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import AgentResponse, AgentThread, Message, SupportsAgentRun
+from agent_framework import AgentResponse, AgentSession, Message, SupportsAgentRun
 from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 
@@ -14,8 +14,8 @@ This sample demonstrates integrating hosted Model Context Protocol (MCP) tools w
 """
 
 
-async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun") -> AgentResponse:
-    """When we don't have a thread, we need to ensure we return with the input, approval request and approval."""
+async def handle_approvals_without_session(query: str, agent: "SupportsAgentRun") -> AgentResponse:
+    """When we don't have a session, we need to ensure we return with the input, approval request and approval."""
 
     result = await agent.run(query, store=False)
     while len(result.user_input_requests) > 0:
@@ -35,10 +35,10 @@ async def handle_approvals_without_thread(query: str, agent: "SupportsAgentRun")
     return result
 
 
-async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", thread: "AgentThread") -> AgentResponse:
-    """Here we let the thread deal with the previous responses, and we just rerun with the approval."""
+async def handle_approvals_with_session(query: str, agent: "SupportsAgentRun", session: "AgentSession") -> AgentResponse:
+    """Here we let the session deal with the previous responses, and we just rerun with the approval."""
 
-    result = await agent.run(query, thread=thread)
+    result = await agent.run(query, session=session)
     while len(result.user_input_requests) > 0:
         new_input: list[Any] = []
         for user_input_needed in result.user_input_requests:
@@ -53,7 +53,7 @@ async def handle_approvals_with_thread(query: str, agent: "SupportsAgentRun", th
                     contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
             )
-        result = await agent.run(new_input, thread=thread)
+        result = await agent.run(new_input, session=session)
     return result
 
 
@@ -82,13 +82,13 @@ async def run_hosted_mcp_without_approval() -> None:
 
         query = "How to create an Azure storage account using az cli?"
         print(f"User: {query}")
-        result = await handle_approvals_without_thread(query, agent)
+        result = await handle_approvals_without_session(query, agent)
         print(f"{agent.name}: {result}\n")
 
 
-async def run_hosted_mcp_with_approval_and_thread() -> None:
-    """Example showing MCP Tools with approvals using a thread."""
-    print("=== MCP with approvals and with thread ===")
+async def run_hosted_mcp_with_approval_and_session() -> None:
+    """Example showing MCP Tools with approvals using a session."""
+    print("=== MCP with approvals and with session ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
@@ -111,10 +111,10 @@ async def run_hosted_mcp_with_approval_and_thread() -> None:
             tools=[mcp_tool],
         )
 
-        thread = agent.get_new_thread()
+        session = agent.create_session()
         query = "Please summarize the Azure REST API specifications Readme"
         print(f"User: {query}")
-        result = await handle_approvals_with_thread(query, agent, thread)
+        result = await handle_approvals_with_session(query, agent, session)
         print(f"{agent.name}: {result}\n")
 
 
@@ -122,7 +122,7 @@ async def main() -> None:
     print("=== Azure AI Agent with Hosted MCP Tools Example ===\n")
 
     await run_hosted_mcp_without_approval()
-    await run_hosted_mcp_with_approval_and_thread()
+    await run_hosted_mcp_with_approval_and_session()
 
 
 if __name__ == "__main__":

@@ -83,8 +83,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        function_invocation_configuration: FunctionInvocationConfiguration
-        | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an Azure OpenAI Responses client.
@@ -190,9 +189,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             deployment_name = str(model_id)
 
         # Project client path: create OpenAI client from an Azure AI Foundry project
-        if async_client is None and (
-            project_client is not None or project_endpoint is not None
-        ):
+        if async_client is None and (project_client is not None or project_endpoint is not None):
             async_client = self._create_client_from_project(
                 project_client=project_client,
                 project_endpoint=project_endpoint,
@@ -221,9 +218,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             and (hostname := urlparse(str(azure_openai_settings["endpoint"])).hostname)
             and hostname.endswith(".openai.azure.com")
         ):
-            azure_openai_settings["base_url"] = urljoin(
-                str(azure_openai_settings["endpoint"]), "/openai/v1/"
-            )
+            azure_openai_settings["base_url"] = urljoin(str(azure_openai_settings["endpoint"]), "/openai/v1/")
 
         if not azure_openai_settings["responses_deployment_name"]:
             raise ServiceInitializationError(
@@ -236,9 +231,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             endpoint=azure_openai_settings["endpoint"],
             base_url=azure_openai_settings["base_url"],
             api_version=azure_openai_settings["api_version"],  # type: ignore
-            api_key=azure_openai_settings["api_key"].get_secret_value()
-            if azure_openai_settings["api_key"]
-            else None,
+            api_key=azure_openai_settings["api_key"].get_secret_value() if azure_openai_settings["api_key"] else None,
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
             token_endpoint=azure_openai_settings["token_endpoint"],

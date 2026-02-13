@@ -25,8 +25,8 @@ from agent_framework._mcp import (
     _get_input_model_from_mcp_tool,
     _normalize_mcp_name,
     _parse_content_from_mcp,
-    _parse_tool_result_from_mcp,
     _parse_message_from_mcp,
+    _parse_tool_result_from_mcp,
     _prepare_content_for_mcp,
     _prepare_message_for_mcp,
     logger,
@@ -97,9 +97,7 @@ def test_parse_tool_result_from_mcp():
 
 def test_parse_tool_result_from_mcp_single_text():
     """Test conversion from MCP tool result with a single text item."""
-    mcp_result = types.CallToolResult(
-        content=[types.TextContent(type="text", text="Simple result")]
-    )
+    mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="Simple result")])
     result = _parse_tool_result_from_mcp(mcp_result)
 
     # Single text item returns just the text
@@ -2590,7 +2588,7 @@ async def test_mcp_tool_filters_framework_kwargs():
             chat_options={"some": "option"},  # Should be filtered
             tools=[Mock()],  # Should be filtered
             tool_choice="auto",  # Should be filtered
-            thread=Mock(),  # Should be filtered
+            session=Mock(),  # Should be filtered
             conversation_id="conv-123",  # Should be filtered
             options={"metadata": "value"},  # Should be filtered
         )

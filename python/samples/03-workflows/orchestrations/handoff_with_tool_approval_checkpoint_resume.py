@@ -8,9 +8,11 @@ from typing import Any
 
 from agent_framework import (
     Agent,
+    AgentResponseUpdate,
     Content,
     FileCheckpointStorage,
     Workflow,
+    WorkflowEvent,
     tool,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
@@ -183,8 +185,16 @@ async def main() -> None:
     initial_request = "Hi, my order 12345 arrived damaged. I need a refund."
 
     # Phase 1: Initial run - workflow will pause when it needs user input
-    results = await workflow.run(message=initial_request)
-    request_events = results.get_request_info_events()
+    print("Running initial workflow...")
+    results = await workflow.run(message=initial_request, stream=True)
+
+    # Iterate through streamed events and collect request_info events
+    request_events: list[WorkflowEvent] = []
+    async for event in results:
+        event: WorkflowEvent
+        if event.type == "request_info":
+            request_events.append(event)
+
     if not request_events:
         print("Workflow completed without needing user input")
         return
@@ -224,8 +234,17 @@ async def main() -> None:
             raise RuntimeError("No checkpoints found.")
         checkpoint_id = checkpoint.checkpoint_id
 
-        results = await workflow.run(responses=responses, checkpoint_id=checkpoint_id)
-        request_events = results.get_request_info_events()
+        print("Resuming workflow from checkpoint...")
+        results = await workflow.run(responses=responses, checkpoint_id=checkpoint_id, stream=True)
+
+        # Iterate through streamed events and collect request_info events
+        request_events: list[WorkflowEvent] = []
+        async for event in results:
+            event: WorkflowEvent
+            if event.type == "request_info":
+                request_events.append(event)
+            elif event.type == "output" and isinstance(event.data, AgentResponseUpdate):
+                print(event.data.text, end="", flush=True)
 
     print("\n" + "=" * 60)
     print("DEMO COMPLETE")
