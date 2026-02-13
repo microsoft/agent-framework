@@ -68,7 +68,7 @@ public class CopilotStudioAgent : AIAgent
 
     /// <inheritdoc/>
     protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => new(new CopilotStudioAgentSession(serializedState, jsonSerializerOptions));
+        => new(CopilotStudioAgentSession.Deserialize(serializedState, jsonSerializerOptions));
 
     /// <inheritdoc/>
     protected override async Task<AgentResponse> RunCoreAsync(

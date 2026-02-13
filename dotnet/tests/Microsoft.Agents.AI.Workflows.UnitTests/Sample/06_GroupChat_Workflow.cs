@@ -90,4 +90,4 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     }
 }
 
-internal sealed class HelloAgentSession() : InMemoryAgentSession();
+internal sealed class HelloAgentSession() : AgentSession();

@@ -115,7 +115,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         JsonElement serializedState,
         JsonSerializerOptions? jsonSerializerOptions = null,
         CancellationToken cancellationToken = default)
-        => new(new GitHubCopilotAgentSession(serializedState, jsonSerializerOptions));
+        => new(GitHubCopilotAgentSession.Deserialize(serializedState, jsonSerializerOptions));
 
     /// <inheritdoc/>
     protected override Task<AgentResponse> RunCoreAsync(

@@ -19,8 +19,5 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 [JsonSerializable(typeof(Dictionary<string, object?>))]
 [JsonSerializable(typeof(string[]))]
 [JsonSerializable(typeof(int))]
-[JsonSerializable(typeof(InMemoryAgentSession.InMemoryAgentSessionState))]
-[JsonSerializable(typeof(ServiceIdAgentSession.ServiceIdAgentSessionState))]
-[JsonSerializable(typeof(ServiceIdAgentSessionTests.EmptyObject))]
 [JsonSerializable(typeof(InMemoryChatHistoryProviderTests.TestAIContent))]
 internal sealed partial class TestJsonSerializerContext : JsonSerializerContext;
