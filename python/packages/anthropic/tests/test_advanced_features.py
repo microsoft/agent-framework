@@ -5,7 +5,32 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from conftest import create_test_client
+from agent_framework._settings import load_settings
+
+from agent_framework_anthropic import AnthropicClient
+from agent_framework_anthropic._chat_client import AnthropicSettings
+
+
+def create_test_client(mock_client: MagicMock) -> AnthropicClient:
+    """Create a test AnthropicClient with a mock Anthropic client."""
+    settings = load_settings(
+        AnthropicSettings,
+        env_prefix="ANTHROPIC_",
+        api_key="test-api-key",
+        chat_model_id="claude-3-5-sonnet-20241022",
+        env_file_path="test.env",
+    )
+
+    client = object.__new__(AnthropicClient)
+    client.anthropic_client = mock_client
+    client.model_id = settings["chat_model_id"]
+    client._last_call_id_name = None
+    client.additional_properties = {}
+    client.middleware = None
+    client.additional_beta_flags = []
+
+    return client
+
 
 # Thinking Block Tests
 
@@ -51,7 +76,7 @@ def test_parse_citations_char_location(mock_anthropic_client: MagicMock) -> None
     mock_citation = MagicMock()
     mock_citation.type = "char_location"
     mock_citation.title = "Source Title"
-    mock_citation.snippet = "Citation snippet"
+    mock_citation.cited_text = "Citation snippet"
     mock_citation.start_char_index = 0
     mock_citation.end_char_index = 10
     mock_citation.file_id = None
@@ -74,6 +99,7 @@ def test_parse_citations_page_location(mock_anthropic_client: MagicMock) -> None
     mock_citation = MagicMock()
     mock_citation.type = "page_location"
     mock_citation.document_title = "Document Title"
+    mock_citation.cited_text = "Cited text from page"
     mock_citation.start_page_number = 1
     mock_citation.end_page_number = 3
     mock_citation.file_id = None
@@ -95,8 +121,10 @@ def test_parse_citations_content_block_location(mock_anthropic_client: MagicMock
     # Create mock citation with content block location
     mock_citation = MagicMock()
     mock_citation.type = "content_block_location"
-    mock_citation.start_content_block_index = 0
-    mock_citation.end_content_block_index = 2
+    mock_citation.document_title = "Document Title"
+    mock_citation.cited_text = "Cited text from content blocks"
+    mock_citation.start_block_index = 0
+    mock_citation.end_block_index = 2
     mock_citation.file_id = None
 
     mock_block = MagicMock()
@@ -116,6 +144,8 @@ def test_parse_citations_web_search_location(mock_anthropic_client: MagicMock) -
     # Create mock citation with web search location
     mock_citation = MagicMock()
     mock_citation.type = "web_search_result_location"
+    mock_citation.title = "Search Result"
+    mock_citation.cited_text = "Cited text from search"
     mock_citation.url = "https://example.com"
     mock_citation.file_id = None
 
@@ -136,9 +166,11 @@ def test_parse_citations_search_result_location(mock_anthropic_client: MagicMock
     # Create mock citation with search result location
     mock_citation = MagicMock()
     mock_citation.type = "search_result_location"
+    mock_citation.title = "Search Result"
+    mock_citation.cited_text = "Cited text"
     mock_citation.source = "https://source.com"
-    mock_citation.start_content_block_index = 0
-    mock_citation.end_content_block_index = 1
+    mock_citation.start_block_index = 0
+    mock_citation.end_block_index = 1
     mock_citation.file_id = None
 
     mock_block = MagicMock()

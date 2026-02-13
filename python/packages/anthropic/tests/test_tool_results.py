@@ -5,7 +5,32 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from conftest import create_test_client
+from agent_framework._settings import load_settings
+
+from agent_framework_anthropic import AnthropicClient
+from agent_framework_anthropic._chat_client import AnthropicSettings
+
+
+def create_test_client(mock_client: MagicMock) -> AnthropicClient:
+    """Create a test AnthropicClient with a mock Anthropic client."""
+    settings = load_settings(
+        AnthropicSettings,
+        env_prefix="ANTHROPIC_",
+        api_key="test-api-key",
+        chat_model_id="claude-3-5-sonnet-20241022",
+        env_file_path="test.env",
+    )
+
+    client = object.__new__(AnthropicClient)
+    client.anthropic_client = mock_client
+    client.model_id = settings["chat_model_id"]
+    client._last_call_id_name = None
+    client.additional_properties = {}
+    client.middleware = None
+    client.additional_beta_flags = []
+
+    return client
+
 
 # Code Execution Result Tests
 
@@ -16,12 +41,16 @@ def test_parse_code_execution_result_with_error(mock_anthropic_client: MagicMock
     client._last_call_id_name = ("call_code1", "code_execution_tool")
 
     # Create mock code execution result with error
+    from anthropic.types.beta.beta_code_execution_tool_result_error import (
+        BetaCodeExecutionToolResultError,
+    )
+
     mock_block = MagicMock()
     mock_block.type = "code_execution_tool_result"
     mock_block.tool_use_id = "call_code1"
-    mock_block.result = MagicMock()
-    mock_block.result.type = "error"
-    mock_block.result.error = "Syntax error"
+    mock_block.content = BetaCodeExecutionToolResultError(
+        type="code_execution_tool_result_error", error_code="execution_time_exceeded"
+    )
 
     result = client._parse_contents_from_anthropic([mock_block])
 
@@ -35,14 +64,15 @@ def test_parse_code_execution_result_with_stdout(mock_anthropic_client: MagicMoc
     client._last_call_id_name = ("call_code2", "code_execution_tool")
 
     # Create mock code execution result with stdout
+    mock_content = MagicMock()
+    mock_content.stdout = "Hello, world!"
+    mock_content.stderr = None
+    mock_content.content = []
+
     mock_block = MagicMock()
     mock_block.type = "code_execution_tool_result"
     mock_block.tool_use_id = "call_code2"
-    mock_block.result = MagicMock()
-    mock_block.result.type = "success"
-    mock_block.result.stdout = "Hello, world!"
-    mock_block.result.stderr = None
-    mock_block.result.file_outputs = []
+    mock_block.content = mock_content
 
     result = client._parse_contents_from_anthropic([mock_block])
 
@@ -56,14 +86,15 @@ def test_parse_code_execution_result_with_stderr(mock_anthropic_client: MagicMoc
     client._last_call_id_name = ("call_code3", "code_execution_tool")
 
     # Create mock code execution result with stderr
+    mock_content = MagicMock()
+    mock_content.stdout = None
+    mock_content.stderr = "Warning message"
+    mock_content.content = []
+
     mock_block = MagicMock()
     mock_block.type = "code_execution_tool_result"
     mock_block.tool_use_id = "call_code3"
-    mock_block.result = MagicMock()
-    mock_block.result.type = "success"
-    mock_block.result.stdout = None
-    mock_block.result.stderr = "Warning message"
-    mock_block.result.file_outputs = []
+    mock_block.content = mock_content
 
     result = client._parse_contents_from_anthropic([mock_block])
 
@@ -81,14 +112,15 @@ def test_parse_code_execution_result_with_files(mock_anthropic_client: MagicMock
     mock_file.file_id = "file_123"
 
     # Create mock code execution result with files
+    mock_content = MagicMock()
+    mock_content.stdout = None
+    mock_content.stderr = None
+    mock_content.content = [mock_file]
+
     mock_block = MagicMock()
     mock_block.type = "code_execution_tool_result"
     mock_block.tool_use_id = "call_code4"
-    mock_block.result = MagicMock()
-    mock_block.result.type = "success"
-    mock_block.result.stdout = None
-    mock_block.result.stderr = None
-    mock_block.result.file_outputs = [mock_file]
+    mock_block.content = mock_content
 
     result = client._parse_contents_from_anthropic([mock_block])
 
@@ -173,14 +205,11 @@ def test_parse_text_editor_result_view(mock_anthropic_client: MagicMock) -> None
     client._last_call_id_name = ("call_editor2", "text_editor_code_execution")
 
     # Create mock text editor view result
-    mock_annotation = MagicMock()
-    mock_annotation.start_line = 10
-    mock_annotation.num_lines = 5
-
     mock_content = MagicMock()
-    mock_content.type = "text_editor_code_execution_tool_result_view"
-    mock_content.view = "File content"
-    mock_content.annotations = [mock_annotation]
+    mock_content.type = "text_editor_code_execution_view_result"
+    mock_content.content = "File content"
+    mock_content.start_line = 10
+    mock_content.num_lines = 5
 
     mock_block = MagicMock()
     mock_block.type = "text_editor_code_execution_tool_result"
@@ -200,11 +229,12 @@ def test_parse_text_editor_result_str_replace(mock_anthropic_client: MagicMock) 
 
     # Create mock text editor str_replace result
     mock_content = MagicMock()
-    mock_content.type = "text_editor_code_execution_tool_result_str_replace"
-    mock_content.old_str = "old text"
-    mock_content.new_str = "new text"
-    mock_content.old_str_line_range = [5, 10]
-    mock_content.new_str_line_range = [5, 11]
+    mock_content.type = "text_editor_code_execution_str_replace_result"
+    mock_content.old_start = 5
+    mock_content.old_lines = 3
+    mock_content.new_start = 5
+    mock_content.new_lines = 4
+    mock_content.lines = ["line1", "line2", "line3", "line4"]
 
     mock_block = MagicMock()
     mock_block.type = "text_editor_code_execution_tool_result"
@@ -222,10 +252,10 @@ def test_parse_text_editor_result_file_create(mock_anthropic_client: MagicMock) 
     client = create_test_client(mock_anthropic_client)
     client._last_call_id_name = ("call_editor4", "text_editor_code_execution")
 
-    # Create mock text editor create/insert result
+    # Create mock text editor create result
     mock_content = MagicMock()
-    mock_content.type = "text_editor_code_execution_tool_result_create_or_insert"
-    mock_content.file_created = True
+    mock_content.type = "text_editor_code_execution_create_result"
+    mock_content.is_file_update = False
 
     mock_block = MagicMock()
     mock_block.type = "text_editor_code_execution_tool_result"
