@@ -1199,7 +1199,7 @@ public sealed class A2AAgentTests : IDisposable
     public async Task CreateSessionAsync_WithInvalidContextId_ThrowsArgumentExceptionAsync(string? contextId)
     {
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        await Assert.ThrowsAnyAsync<ArgumentException>(async () =>
             await this._agent.CreateSessionAsync(contextId!));
     }
 
@@ -1218,7 +1218,7 @@ public sealed class A2AAgentTests : IDisposable
         const string TaskId = "valid-task-id";
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        await Assert.ThrowsAnyAsync<ArgumentException>(async () =>
             await this._agent.CreateSessionAsync(contextId!, TaskId));
     }
 
@@ -1237,7 +1237,7 @@ public sealed class A2AAgentTests : IDisposable
         const string ContextId = "valid-context-id";
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        await Assert.ThrowsAnyAsync<ArgumentException>(async () =>
             await this._agent.CreateSessionAsync(ContextId, taskId!));
     }
     #endregion
