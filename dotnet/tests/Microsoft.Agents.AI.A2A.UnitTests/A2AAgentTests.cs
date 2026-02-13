@@ -1187,6 +1187,59 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal(TaskId, typedSession.TaskId);
     }
 
+    /// <summary>
+    /// Verify that CreateSessionAsync throws when contextId is null, empty, or whitespace.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    [InlineData("\r\n")]
+    public async Task CreateSessionAsync_WithInvalidContextId_ThrowsArgumentExceptionAsync(string? contextId)
+    {
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await this._agent.CreateSessionAsync(contextId!));
+    }
+
+    /// <summary>
+    /// Verify that CreateSessionAsync with both parameters throws when contextId is null, empty, or whitespace.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    [InlineData("\r\n")]
+    public async Task CreateSessionAsync_WithInvalidContextIdAndValidTaskId_ThrowsArgumentExceptionAsync(string? contextId)
+    {
+        // Arrange
+        const string TaskId = "valid-task-id";
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await this._agent.CreateSessionAsync(contextId!, TaskId));
+    }
+
+    /// <summary>
+    /// Verify that CreateSessionAsync with both parameters throws when taskId is null, empty, or whitespace.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    [InlineData("\r\n")]
+    public async Task CreateSessionAsync_WithValidContextIdAndInvalidTaskId_ThrowsArgumentExceptionAsync(string? taskId)
+    {
+        // Arrange
+        const string ContextId = "valid-context-id";
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await this._agent.CreateSessionAsync(ContextId, taskId!));
+    }
     #endregion
 
     public void Dispose()
