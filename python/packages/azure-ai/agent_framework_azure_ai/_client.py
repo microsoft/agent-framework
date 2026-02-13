@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast
+from typing import Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast, get_args
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -95,6 +96,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    _RUNTIME_OVERRIDE_WARNING: ClassVar[str] = (
+        "AzureAIClient does not support runtime tools or structured_output overrides after agent creation. "
+        "Use ResponsesClient instead."
+    )
 
     def __init__(
         self,
@@ -218,6 +223,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         self._is_application_endpoint = "/applications/" in project_client._config.endpoint  # type: ignore
         # Track whether we should close client connection
         self._should_close_client = should_close_client
+        # Track creation-time agent configuration for runtime mismatch warnings.
+        self._tracks_created_agent_configuration = False
+        self._created_agent_tool_names: set[str] = set()
+        self._created_agent_structured_output_signature: str | None = None
 
     async def configure_azure_monitor(
         self,
@@ -395,6 +404,11 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             )
 
             self.agent_version = created_agent.version
+            self._tracks_created_agent_configuration = True
+            self._created_agent_tool_names = self._extract_tool_names(run_options.get("tools"))
+            self._created_agent_structured_output_signature = self._get_structured_output_signature(chat_options)
+        else:
+            self._warn_if_runtime_overrides_changed(run_options, chat_options)
 
         return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
 
@@ -402,6 +416,103 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """Close project_client session if we created it."""
         if self._should_close_client:
             await self.project_client.close()
+
+    def _get_supported_option_keys(self) -> set[str]:
+        """Resolve option keys from the concrete client options TypedDict."""
+        option_type: Any = AzureAIProjectAgentOptions
+        original_type = getattr(self, "__orig_class__", None)
+        if original_type is not None:
+            type_args = get_args(original_type)
+            if type_args and hasattr(type_args[0], "__annotations__"):
+                option_type = type_args[0]
+        annotations = getattr(option_type, "__annotations__", {})
+        return set(annotations)
+
+    def _extract_tool_names(self, tools: Any) -> set[str]:
+        """Extract comparable tool names from runtime tool payloads."""
+        if not isinstance(tools, Sequence) or isinstance(tools, str | bytes):
+            return set()
+        return {self._get_tool_name(tool) for tool in tools}
+
+    def _get_tool_name(self, tool: Any) -> str:
+        """Get a stable name for a tool for runtime comparison."""
+        if isinstance(tool, FunctionTool):
+            return tool.name
+        if isinstance(tool, Mapping):
+            tool_type = tool.get("type")
+            if tool_type == "function":
+                if isinstance(function_data := tool.get("function"), Mapping) and function_data.get("name"):
+                    return str(function_data["name"])
+                if tool.get("name"):
+                    return str(tool["name"])
+            if tool.get("name"):
+                return str(tool["name"])
+            if tool.get("server_label"):
+                return f"mcp:{tool['server_label']}"
+            if tool_type:
+                return str(tool_type)
+        if getattr(tool, "name", None):
+            return str(tool.name)
+        if getattr(tool, "server_label", None):
+            return f"mcp:{tool.server_label}"
+        if getattr(tool, "type", None):
+            return str(tool.type)
+        return type(tool).__name__
+
+    def _get_structured_output_signature(self, chat_options: Mapping[str, Any] | None) -> str | None:
+        """Build a stable signature for structured_output/response_format values."""
+        if not chat_options:
+            return None
+        response_format = chat_options.get("response_format")
+        if response_format is None:
+            return None
+        if isinstance(response_format, type):
+            return f"{response_format.__module__}.{response_format.__qualname__}"
+        if isinstance(response_format, Mapping):
+            return json.dumps(response_format, sort_keys=True, default=str)
+        return str(response_format)
+
+    def _warn_if_runtime_overrides_changed(
+        self,
+        run_options: Mapping[str, Any],
+        chat_options: Mapping[str, Any] | None,
+    ) -> None:
+        """Warn when runtime tools or structured_output differ from creation-time configuration."""
+        if not self._tracks_created_agent_configuration:
+            return
+
+        runtime_tools = run_options.get("tools")
+        tools_changed = False
+        if runtime_tools is not None:
+            tools_changed = self._extract_tool_names(runtime_tools) != self._created_agent_tool_names
+
+        runtime_structured_output = self._get_structured_output_signature(chat_options)
+        structured_output_changed = (
+            runtime_structured_output is not None
+            and runtime_structured_output != self._created_agent_structured_output_signature
+        )
+
+        if tools_changed or structured_output_changed:
+            logger.warning(self._RUNTIME_OVERRIDE_WARNING)
+
+    def _remove_agent_level_run_options(self, run_options: dict[str, Any]) -> None:
+        """Remove request-level options that Azure AI only supports at agent creation time."""
+        supported_option_keys = self._get_supported_option_keys()
+        agent_level_option_to_run_keys = {
+            "model_id": ("model",),
+            "tools": ("tools",),
+            "response_format": ("response_format", "text", "text_format"),
+            "rai_config": ("rai_config",),
+            "temperature": ("temperature",),
+            "top_p": ("top_p",),
+            "reasoning": ("reasoning",),
+        }
+
+        for option_key, run_keys in agent_level_option_to_run_keys.items():
+            if option_key not in supported_option_keys:
+                continue
+            for run_key in run_keys:
+                run_options.pop(run_key, None)
 
     @override
     async def _prepare_options(
@@ -427,22 +538,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             agent_reference = await self._get_agent_reference_or_create(run_options, instructions, options)
             run_options["extra_body"] = {"agent": agent_reference}
 
-        # Remove properties that are not supported on request level
-        # but were configured on agent level
-        exclude = [
-            "model",
-            "tools",
-            "response_format",
-            "rai_config",
-            "temperature",
-            "top_p",
-            "text",
-            "text_format",
-            "reasoning",
-        ]
-
-        for property in exclude:
-            run_options.pop(property, None)
+        # Remove only keys that map to this client's declared options TypedDict.
+        self._remove_agent_level_run_options(run_options)
 
         return run_options
 
