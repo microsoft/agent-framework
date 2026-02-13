@@ -41,9 +41,9 @@ from ._tools import (
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunMessagesOrNone,
     ChatResponse,
     ChatResponseUpdate,
-    Content,
     Message,
     ResponseStream,
     map_chat_to_agent_update,
@@ -77,8 +77,6 @@ OptionsCoT = TypeVar(
     default="ChatOptions[None]",
     covariant=True,
 )
-AgentRunMessages = str | Content | Message | Sequence[str | Content | Message]
-AgentRunMessagesOrNone = AgentRunMessages | None
 
 
 def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

@@ -14,9 +14,9 @@ from ._clients import SupportsChatGetResponse
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunMessagesOrNone,
     ChatResponse,
     ChatResponseUpdate,
-    Content,
     Message,
     ResponseStream,
     prepare_messages,
@@ -68,8 +68,6 @@ __all__ = [
 AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
 ContextT = TypeVar("ContextT")
 UpdateT = TypeVar("UpdateT")
-AgentRunMessages = str | Content | Message | Sequence[str | Content | Message]
-AgentRunMessagesOrNone = AgentRunMessages | None
 
 
 class _EmptyAsyncIterator(Generic[UpdateT]):

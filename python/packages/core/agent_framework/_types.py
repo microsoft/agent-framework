@@ -30,6 +30,8 @@ else:
 __all__ = [
     "AgentResponse",
     "AgentResponseUpdate",
+    "AgentRunMessages",
+    "AgentRunMessagesOrNone",
     "Annotation",
     "ChatOptions",
     "ChatResponse",
@@ -1536,8 +1538,12 @@ class Message(SerializationMixin):
         return " ".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
 
 
+AgentRunMessages = str | Content | Message | Sequence[str | Content | Message]
+AgentRunMessagesOrNone = AgentRunMessages | None
+
+
 def prepare_messages(
-    messages: str | Content | Message | Sequence[str | Content | Message],
+    messages: AgentRunMessages,
     system_instructions: str | Sequence[str] | None = None,
 ) -> list[Message]:
     """Convert various message input formats into a list of Message objects.
@@ -1576,7 +1582,7 @@ def prepare_messages(
 
 
 def normalize_messages(
-    messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+    messages: AgentRunMessagesOrNone = None,
 ) -> list[Message]:
     """Normalize message inputs to a list of Message objects.
 
