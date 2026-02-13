@@ -62,6 +62,34 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
             throw new InvalidOperationException($"Durable Task client binding is missing for the invocation {context.InvocationId}.");
         }
 
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RunWorkflowOrchestrationHttpFunctionEntryPoint)
+        {
+            if (httpRequestData == null)
+            {
+                throw new InvalidOperationException($"HTTP request data binding is missing for the invocation {context.InvocationId}.");
+            }
+            context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowOrchestrationHttpTriggerAsync(
+                httpRequestData,
+                durableTaskClient,
+                context);
+
+            return;
+        }
+
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint)
+        {
+            if (encodedEntityRequest is null)
+            {
+                throw new InvalidOperationException($"Activity trigger input binding is missing for the invocation {context.InvocationId}.");
+            }
+
+            context.GetInvocationResult().Value = await BuiltInFunctions.InvokeWorkflowActivityAsync(
+                encodedEntityRequest,
+                durableTaskClient,
+                context);
+            return;
+        }
+
         if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RunAgentHttpFunctionEntryPoint)
         {
             if (httpRequestData == null)

@@ -1,0 +1,14 @@
+# Default endpoint address for local testing
+@authority=http://localhost:7071
+
+### Cancel an order
+POST {{authority}}/api/workflows/CancelOrder/run
+Content-Type: text/plain
+
+12345
+
+### Get order status (shares OrderLookup executor with CancelOrder)
+POST {{authority}}/api/workflows/OrderStatus/run
+Content-Type: text/plain
+
+12345

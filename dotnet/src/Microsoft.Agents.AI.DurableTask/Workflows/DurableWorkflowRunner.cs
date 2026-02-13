@@ -75,7 +75,7 @@ internal sealed class DurableWorkflowRunner
     /// Initializes a new instance of the <see cref="DurableWorkflowRunner"/> class.
     /// </summary>
     /// <param name="durableOptions">The durable options containing workflow configurations.</param>
-    internal DurableWorkflowRunner(DurableOptions durableOptions)
+    public DurableWorkflowRunner(DurableOptions durableOptions)
     {
         ArgumentNullException.ThrowIfNull(durableOptions);
 

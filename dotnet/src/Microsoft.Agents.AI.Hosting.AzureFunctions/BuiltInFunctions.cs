@@ -3,6 +3,7 @@
 using System.Net;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.DurableTask;
+using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -21,6 +22,65 @@ internal static class BuiltInFunctions
     internal static readonly string RunAgentHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunAgentHttpAsync)}";
     internal static readonly string RunAgentEntityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeAgentAsync)}";
     internal static readonly string RunAgentMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunMcpToolAsync)}";
+    internal static readonly string RunWorkflowOrchestrationHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowOrchestrationHttpTriggerAsync)}";
+    internal static readonly string InvokeWorkflowActivityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeWorkflowActivityAsync)}";
+
+#pragma warning disable IL3000 // Avoid accessing Assembly file path when publishing as a single file - Azure Functions does not use single-file publishing
+    internal static readonly string ScriptFile = Path.GetFileName(typeof(BuiltInFunctions).Assembly.Location);
+#pragma warning restore IL3000
+
+    /// <summary>
+    /// Starts a workflow orchestration in response to an HTTP request.
+    /// The workflow name is derived from the function name by stripping the <see cref="HttpPrefix"/>.
+    /// </summary>
+    public static async Task<HttpResponseData> RunWorkflowOrchestrationHttpTriggerAsync(
+        [HttpTrigger] HttpRequestData req,
+        [DurableClient] DurableTaskClient client,
+        FunctionContext context)
+    {
+        string workflowName = context.FunctionDefinition.Name.Replace(HttpPrefix, string.Empty);
+        string orchestrationFunctionName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflowName);
+        string? inputMessage = await req.ReadAsStringAsync();
+
+        if (string.IsNullOrEmpty(inputMessage))
+        {
+            HttpResponseData errorResponse = req.CreateResponse(HttpStatusCode.BadRequest);
+            await errorResponse.WriteStringAsync("Workflow input cannot be empty.");
+            return errorResponse;
+        }
+
+        DurableWorkflowInput<string> orchestrationInput = new() { Input = inputMessage };
+        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, orchestrationInput);
+
+        HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
+        await response.WriteStringAsync($"Workflow orchestration started for {workflowName}. Orchestration instanceId: {instanceId}");
+        return response;
+    }
+
+    /// <summary>
+    /// Executes a workflow activity by looking up the registered executor and delegating to it.
+    /// The executor name is derived from the activity function name via <see cref="WorkflowNamingHelper"/>.
+    /// </summary>
+    public static Task<string> InvokeWorkflowActivityAsync(
+        [ActivityTrigger] string input,
+        [DurableClient] DurableTaskClient durableTaskClient,
+        FunctionContext functionContext)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(durableTaskClient);
+        ArgumentNullException.ThrowIfNull(functionContext);
+
+        string activityFunctionName = functionContext.FunctionDefinition.Name;
+        string executorName = WorkflowNamingHelper.ToWorkflowName(activityFunctionName);
+
+        DurableOptions durableOptions = functionContext.InstanceServices.GetRequiredService<DurableOptions>();
+        if (!durableOptions.Workflows.Executors.TryGetExecutor(executorName, out ExecutorRegistration? registration))
+        {
+            throw new InvalidOperationException($"Executor '{executorName}' not found in workflow options.");
+        }
+
+        return DurableActivityExecutor.ExecuteAsync(registration.Binding, input, functionContext.CancellationToken);
+    }
 
     // Exposed as an entity trigger via AgentFunctionsProvider
     public static Task<string> InvokeAgentAsync(
