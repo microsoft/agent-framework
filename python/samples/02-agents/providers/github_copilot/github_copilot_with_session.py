@@ -17,7 +17,7 @@ from agent_framework.github import GitHubCopilotAgent
 from pydantic import Field
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -61,31 +61,31 @@ async def example_with_session_persistence() -> None:
     )
 
     async with agent:
-        # Create a thread to maintain conversation context
-        thread = agent.get_new_thread()
+        # Create a session to maintain conversation context
+        session = agent.create_session()
 
         # First query
         query1 = "What's the weather like in Tokyo?"
         print(f"User: {query1}")
-        result1 = await agent.run(query1, thread=thread)
+        result1 = await agent.run(query1, session=session)
         print(f"Agent: {result1}")
 
         # Second query - using same thread maintains context
         query2 = "How about London?"
         print(f"\nUser: {query2}")
-        result2 = await agent.run(query2, thread=thread)
+        result2 = await agent.run(query2, session=session)
         print(f"Agent: {result2}")
 
         # Third query - agent should remember both previous cities
         query3 = "Which of the cities I asked about has better weather?"
         print(f"\nUser: {query3}")
-        result3 = await agent.run(query3, thread=thread)
+        result3 = await agent.run(query3, session=session)
         print(f"Agent: {result3}")
         print("Note: The agent remembers context from previous messages in the same session.\n")
 
 
 async def example_with_existing_session_id() -> None:
-    """Resume session in new agent instance using service_thread_id."""
+    """Resume session in new agent instance using service_session_id."""
     print("=== Existing Session ID Example ===")
 
     existing_session_id = None
@@ -97,15 +97,15 @@ async def example_with_existing_session_id() -> None:
     )
 
     async with agent1:
-        thread = agent1.get_new_thread()
+        session = agent1.create_session()
 
         query1 = "What's the weather in Paris?"
         print(f"User: {query1}")
-        result1 = await agent1.run(query1, thread=thread)
+        result1 = await agent1.run(query1, session=session)
         print(f"Agent: {result1}")
 
         # Capture the session ID for later use
-        existing_session_id = thread.service_thread_id
+        existing_session_id = session.service_session_id
         print(f"Session ID: {existing_session_id}")
 
     if existing_session_id:
@@ -118,12 +118,12 @@ async def example_with_existing_session_id() -> None:
         )
 
         async with agent2:
-            # Create thread with existing session ID
-            thread = agent2.get_new_thread(service_thread_id=existing_session_id)
+            # Create session with existing session ID
+            session = agent2.create_session(service_session_id=existing_session_id)
 
             query2 = "What was the last city I asked about?"
             print(f"User: {query2}")
-            result2 = await agent2.run(query2, thread=thread)
+            result2 = await agent2.run(query2, session=session)
             print(f"Agent: {result2}")
             print("Note: The agent continues the conversation using the session ID.\n")
 

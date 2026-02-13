@@ -1791,7 +1791,7 @@ class ContinuationToken(TypedDict):
             # Restore and resume
             token = json.loads(token_json)
             response = await agent.run(
-                thread=thread,
+                session=session,
                 options={"continuation_token": token},
             )
     """

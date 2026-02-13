@@ -6,6 +6,7 @@ import json
 
 import pytest
 from agent_framework import Agent, ChatResponseUpdate, Content
+from agent_framework.orchestrations import SequentialBuilder
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.params import Depends
 from fastapi.testclient import TestClient
@@ -163,6 +164,28 @@ async def test_endpoint_event_streaming(build_chat_client):
     assert found_run_started
     assert found_text_content
     assert found_run_finished
+
+
+async def test_endpoint_with_workflow_as_agent_stream_output(build_chat_client):
+    """Test endpoint handles workflow-as-agent stream outputs."""
+    app = FastAPI()
+    brainstorm_agent = Agent(name="brainstorm", instructions="Brainstorm ideas", client=build_chat_client("Idea"))
+    reviewer_agent = Agent(name="reviewer", instructions="Review ideas", client=build_chat_client("Review"))
+    agent = SequentialBuilder(participants=[brainstorm_agent, reviewer_agent]).build().as_agent()
+
+    add_agent_framework_fastapi_endpoint(app, agent, path="/workflow-like")
+
+    client = TestClient(app)
+    response = client.post("/workflow-like", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 200
+    content = response.content.decode("utf-8")
+    lines = [line for line in content.split("\n") if line.startswith("data: ")]
+    event_types = [json.loads(line[6:]).get("type") for line in lines]
+
+    assert "RUN_STARTED" in event_types
+    assert "TEXT_MESSAGE_CONTENT" in event_types
+    assert "RUN_FINISHED" in event_types
 
 
 async def test_endpoint_error_handling(build_chat_client):

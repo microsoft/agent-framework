@@ -239,7 +239,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         AdaptiveDialog dialog = dialogBuilder.Build();
 
         WorkflowFormulaState state = new(RecalcEngineFactory.Create());
-        Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider("1");
+        Mock<ResponseAgentProvider> mockAgentProvider = CreateMockProvider("1");
         DeclarativeWorkflowOptions options = new(mockAgentProvider.Object);
         WorkflowActionVisitor visitor = new(new DeclarativeWorkflowExecutor<string>(WorkflowActionVisitor.Steps.Root("anything"), options, state, (message) => DeclarativeWorkflowBuilder.DefaultTransform(message)), state, options);
         WorkflowElementWalker walker = new(visitor);
@@ -374,14 +374,14 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     private Workflow CreateWorkflow<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
     {
         using StreamReader yamlReader = File.OpenText(Path.Combine("Workflows", workflowPath));
-        Mock<WorkflowAgentProvider> mockAgentProvider = CreateMockProvider($"{workflowInput}");
+        Mock<ResponseAgentProvider> mockAgentProvider = CreateMockProvider($"{workflowInput}");
         DeclarativeWorkflowOptions workflowContext = new(mockAgentProvider.Object) { LoggerFactory = this.Output };
         return DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
     }
 
-    private static Mock<WorkflowAgentProvider> CreateMockProvider(string input)
+    private static Mock<ResponseAgentProvider> CreateMockProvider(string input)
     {
-        Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
+        Mock<ResponseAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
         mockAgentProvider.Setup(provider => provider.CreateConversationAsync(It.IsAny<CancellationToken>())).Returns(() => Task.FromResult(Guid.NewGuid().ToString("N")));
         mockAgentProvider.Setup(provider => provider.CreateMessageAsync(It.IsAny<string>(), It.IsAny<ChatMessage>(), It.IsAny<CancellationToken>())).Returns(Task.FromResult(new ChatMessage(ChatRole.Assistant, input)));
         return mockAgentProvider;

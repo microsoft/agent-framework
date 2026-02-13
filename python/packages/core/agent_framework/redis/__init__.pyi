@@ -1,13 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework_redis import (
-    RedisChatMessageStore,
-    RedisProvider,
+    RedisContextProvider,
+    RedisHistoryProvider,
     __version__,
 )
 
 __all__ = [
-    "RedisChatMessageStore",
-    "RedisProvider",
+    "RedisContextProvider",
+    "RedisHistoryProvider",
     "__version__",
 ]

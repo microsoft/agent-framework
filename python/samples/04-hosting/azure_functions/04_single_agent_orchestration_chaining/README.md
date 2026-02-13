@@ -4,8 +4,8 @@ This sample shows how to chain two invocations of the same agent inside a Durabl
 preserving the conversation state between runs.
 
 ## Key Concepts
-- Deterministic orchestrations that make sequential agent calls on a shared thread
-- Reusing an agent thread to carry conversation history across invocations
+- Deterministic orchestrations that make sequential agent calls on a shared session
+- Reusing an agent session to carry conversation history across invocations
 - HTTP endpoints for starting the orchestration and polling for status/output
 
 ## Prerequisites

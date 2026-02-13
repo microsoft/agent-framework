@@ -195,5 +195,5 @@ public class InProcessExecutionTests
     /// <summary>
     /// Simple session implementation for SimpleTestAgent.
     /// </summary>
-    private sealed class SimpleTestAgentSession : InMemoryAgentSession;
+    private sealed class SimpleTestAgentSession : AgentSession;
 }

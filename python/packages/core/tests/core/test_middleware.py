@@ -56,17 +56,17 @@ class TestAgentContext:
         assert context.stream is True
         assert context.metadata == metadata
 
-    def test_init_with_thread(self, mock_agent: SupportsAgentRun) -> None:
-        """Test AgentContext initialization with thread parameter."""
-        from agent_framework import AgentThread
+    def test_init_with_session(self, mock_agent: SupportsAgentRun) -> None:
+        """Test AgentContext initialization with session parameter."""
+        from agent_framework import AgentSession
 
         messages = [Message(role="user", text="test")]
-        thread = AgentThread()
-        context = AgentContext(agent=mock_agent, messages=messages, thread=thread)
+        session = AgentSession()
+        context = AgentContext(agent=mock_agent, messages=messages, session=session)
 
         assert context.agent is mock_agent
         assert context.messages == messages
-        assert context.thread is thread
+        assert context.session is session
         assert context.stream is False
         assert context.metadata == {}
 
@@ -356,23 +356,23 @@ class TestAgentMiddlewarePipeline:
         assert updates[1].text == "chunk2"
         assert execution_order == ["handler_start", "handler_end"]
 
-    async def test_execute_with_thread_in_context(self, mock_agent: SupportsAgentRun) -> None:
-        """Test pipeline execution properly passes thread to middleware."""
-        from agent_framework import AgentThread
+    async def test_execute_with_session_in_context(self, mock_agent: SupportsAgentRun) -> None:
+        """Test pipeline execution properly passes session to middleware."""
+        from agent_framework import AgentSession
 
-        captured_thread = None
+        captured_session = None
 
-        class ThreadCapturingMiddleware(AgentMiddleware):
+        class SessionCapturingMiddleware(AgentMiddleware):
             async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-                nonlocal captured_thread
-                captured_thread = context.thread
+                nonlocal captured_session
+                captured_session = context.session
                 await call_next()
 
-        middleware = ThreadCapturingMiddleware()
+        middleware = SessionCapturingMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
         messages = [Message(role="user", text="test")]
-        thread = AgentThread()
-        context = AgentContext(agent=mock_agent, messages=messages, thread=thread)
+        session = AgentSession()
+        context = AgentContext(agent=mock_agent, messages=messages, session=session)
 
         expected_response = AgentResponse(messages=[Message(role="assistant", text="response")])
 
@@ -381,22 +381,22 @@ class TestAgentMiddlewarePipeline:
 
         result = await pipeline.execute(context, final_handler)
         assert result == expected_response
-        assert captured_thread is thread
+        assert captured_session is session
 
-    async def test_execute_with_no_thread_in_context(self, mock_agent: SupportsAgentRun) -> None:
-        """Test pipeline execution when no thread is provided."""
-        captured_thread = "not_none"  # Use string to distinguish from None
+    async def test_execute_with_no_session_in_context(self, mock_agent: SupportsAgentRun) -> None:
+        """Test pipeline execution when no session is provided."""
+        captured_session = "not_none"  # Use string to distinguish from None
 
-        class ThreadCapturingMiddleware(AgentMiddleware):
+        class SessionCapturingMiddleware(AgentMiddleware):
             async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-                nonlocal captured_thread
-                captured_thread = context.thread
+                nonlocal captured_session
+                captured_session = context.session
                 await call_next()
 
-        middleware = ThreadCapturingMiddleware()
+        middleware = SessionCapturingMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
         messages = [Message(role="user", text="test")]
-        context = AgentContext(agent=mock_agent, messages=messages, thread=None)
+        context = AgentContext(agent=mock_agent, messages=messages, session=None)
 
         expected_response = AgentResponse(messages=[Message(role="assistant", text="response")])
 
@@ -405,7 +405,7 @@ class TestAgentMiddlewarePipeline:
 
         result = await pipeline.execute(context, final_handler)
         assert result == expected_response
-        assert captured_thread is None
+        assert captured_session is None
 
 
 class TestFunctionMiddlewarePipeline:
