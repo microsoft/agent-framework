@@ -275,317 +275,318 @@ def test_prepare_message_for_mcp():
 
 
 @pytest.mark.parametrize(
-    "test_id,input_schema,valid_data,expected_values,invalid_data,validation_check",
+    "test_id,input_schema",
     [
-        # Basic types with required/optional fields
-        (
-            "basic_types",
-            {
-                "type": "object",
-                "properties": {"param1": {"type": "string"}, "param2": {"type": "number"}},
-                "required": ["param1"],
-            },
-            {"param1": "test", "param2": 42},
-            {"param1": "test", "param2": 42},
-            {"param2": 42},  # Missing required param1
-            None,
-        ),
-        # Nested object
-        (
-            "nested_object",
-            {
-                "type": "object",
-                "properties": {
-                    "params": {
-                        "type": "object",
-                        "properties": {"customer_id": {"type": "integer"}},
-                        "required": ["customer_id"],
-                    }
+        (test_id, input_schema)
+        for test_id, input_schema, _, _, _, _ in [
+            # Basic types with required/optional fields
+            (
+                "basic_types",
+                {
+                    "type": "object",
+                    "properties": {"param1": {"type": "string"}, "param2": {"type": "number"}},
+                    "required": ["param1"],
                 },
-                "required": ["params"],
-            },
-            {"params": {"customer_id": 251}},
-            {"params.customer_id": 251},
-            {"params": {}},  # Missing required customer_id
-            lambda instance: isinstance(instance.params, BaseModel),
-        ),
-        # $ref resolution
-        (
-            "ref_schema",
-            {
-                "type": "object",
-                "properties": {"params": {"$ref": "#/$defs/CustomerIdParam"}},
-                "required": ["params"],
-                "$defs": {
-                    "CustomerIdParam": {
-                        "type": "object",
-                        "properties": {"customer_id": {"type": "integer"}},
-                        "required": ["customer_id"],
-                    }
-                },
-            },
-            {"params": {"customer_id": 251}},
-            {"params.customer_id": 251},
-            {"params": {}},  # Missing required customer_id
-            lambda instance: isinstance(instance.params, BaseModel),
-        ),
-        # Array of strings (typed)
-        (
-            "array_of_strings",
-            {
-                "type": "object",
-                "properties": {
-                    "tags": {
-                        "type": "array",
-                        "description": "List of tags",
-                        "items": {"type": "string"},
-                    }
-                },
-                "required": ["tags"],
-            },
-            {"tags": ["tag1", "tag2", "tag3"]},
-            {"tags": ["tag1", "tag2", "tag3"]},
-            None,  # No validation error test for this case
-            None,
-        ),
-        # Array of integers (typed)
-        (
-            "array_of_integers",
-            {
-                "type": "object",
-                "properties": {
-                    "numbers": {
-                        "type": "array",
-                        "description": "List of integers",
-                        "items": {"type": "integer"},
-                    }
-                },
-                "required": ["numbers"],
-            },
-            {"numbers": [1, 2, 3]},
-            {"numbers": [1, 2, 3]},
-            None,
-            None,
-        ),
-        # Array of objects (complex nested)
-        (
-            "array_of_objects",
-            {
-                "type": "object",
-                "properties": {
-                    "users": {
-                        "type": "array",
-                        "description": "List of users",
-                        "items": {
+                {"param1": "test", "param2": 42},
+                {"param1": "test", "param2": 42},
+                {"param2": 42},  # Missing required param1
+                None,
+            ),
+            # Nested object
+            (
+                "nested_object",
+                {
+                    "type": "object",
+                    "properties": {
+                        "params": {
                             "type": "object",
-                            "properties": {
-                                "id": {"type": "integer", "description": "User ID"},
-                                "name": {"type": "string", "description": "User name"},
-                            },
-                            "required": ["id", "name"],
-                        },
-                    }
+                            "properties": {"customer_id": {"type": "integer"}},
+                            "required": ["customer_id"],
+                        }
+                    },
+                    "required": ["params"],
                 },
-                "required": ["users"],
-            },
-            {"users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]},
-            {"users[0].id": 1, "users[0].name": "Alice", "users[1].id": 2, "users[1].name": "Bob"},
-            {"users": [{"id": 1}]},  # Missing required 'name'
-            lambda instance: all(isinstance(user, BaseModel) for user in instance.users),
-        ),
-        # Deeply nested objects (3+ levels)
-        (
-            "deeply_nested",
-            {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "object",
-                        "properties": {
-                            "filters": {
+                {"params": {"customer_id": 251}},
+                {"params.customer_id": 251},
+                {"params": {}},  # Missing required customer_id
+                lambda instance: isinstance(instance.params, BaseModel),
+            ),
+            # $ref resolution
+            (
+                "ref_schema",
+                {
+                    "type": "object",
+                    "properties": {"params": {"$ref": "#/$defs/CustomerIdParam"}},
+                    "required": ["params"],
+                    "$defs": {
+                        "CustomerIdParam": {
+                            "type": "object",
+                            "properties": {"customer_id": {"type": "integer"}},
+                            "required": ["customer_id"],
+                        }
+                    },
+                },
+                {"params": {"customer_id": 251}},
+                {"params.customer_id": 251},
+                {"params": {}},  # Missing required customer_id
+                lambda instance: isinstance(instance.params, BaseModel),
+            ),
+            # Array of strings (typed)
+            (
+                "array_of_strings",
+                {
+                    "type": "object",
+                    "properties": {
+                        "tags": {
+                            "type": "array",
+                            "description": "List of tags",
+                            "items": {"type": "string"},
+                        }
+                    },
+                    "required": ["tags"],
+                },
+                {"tags": ["tag1", "tag2", "tag3"]},
+                {"tags": ["tag1", "tag2", "tag3"]},
+                None,  # No validation error test for this case
+                None,
+            ),
+            # Array of integers (typed)
+            (
+                "array_of_integers",
+                {
+                    "type": "object",
+                    "properties": {
+                        "numbers": {
+                            "type": "array",
+                            "description": "List of integers",
+                            "items": {"type": "integer"},
+                        }
+                    },
+                    "required": ["numbers"],
+                },
+                {"numbers": [1, 2, 3]},
+                {"numbers": [1, 2, 3]},
+                None,
+                None,
+            ),
+            # Array of objects (complex nested)
+            (
+                "array_of_objects",
+                {
+                    "type": "object",
+                    "properties": {
+                        "users": {
+                            "type": "array",
+                            "description": "List of users",
+                            "items": {
                                 "type": "object",
                                 "properties": {
-                                    "date_range": {
-                                        "type": "object",
-                                        "properties": {
-                                            "start": {"type": "string"},
-                                            "end": {"type": "string"},
-                                        },
-                                        "required": ["start", "end"],
-                                    },
-                                    "categories": {"type": "array", "items": {"type": "string"}},
+                                    "id": {"type": "integer", "description": "User ID"},
+                                    "name": {"type": "string", "description": "User name"},
                                 },
-                                "required": ["date_range"],
-                            }
-                        },
-                        "required": ["filters"],
+                                "required": ["id", "name"],
+                            },
+                        }
+                    },
+                    "required": ["users"],
+                },
+                {"users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]},
+                {"users[0].id": 1, "users[0].name": "Alice", "users[1].id": 2, "users[1].name": "Bob"},
+                {"users": [{"id": 1}]},  # Missing required 'name'
+                lambda instance: all(isinstance(user, BaseModel) for user in instance.users),
+            ),
+            # Deeply nested objects (3+ levels)
+            (
+                "deeply_nested",
+                {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "object",
+                            "properties": {
+                                "filters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "date_range": {
+                                            "type": "object",
+                                            "properties": {
+                                                "start": {"type": "string"},
+                                                "end": {"type": "string"},
+                                            },
+                                            "required": ["start", "end"],
+                                        },
+                                        "categories": {"type": "array", "items": {"type": "string"}},
+                                    },
+                                    "required": ["date_range"],
+                                }
+                            },
+                            "required": ["filters"],
+                        }
+                    },
+                    "required": ["query"],
+                },
+                {
+                    "query": {
+                        "filters": {
+                            "date_range": {"start": "2024-01-01", "end": "2024-12-31"},
+                            "categories": ["tech", "science"],
+                        }
                     }
                 },
-                "required": ["query"],
-            },
-            {
-                "query": {
-                    "filters": {
-                        "date_range": {"start": "2024-01-01", "end": "2024-12-31"},
-                        "categories": ["tech", "science"],
+                {
+                    "query.filters.date_range.start": "2024-01-01",
+                    "query.filters.date_range.end": "2024-12-31",
+                    "query.filters.categories": ["tech", "science"],
+                },
+                {"query": {"filters": {"date_range": {}}}},  # Missing required start and end
+                None,
+            ),
+            # Complex $ref with nested structure
+            (
+                "ref_nested_structure",
+                {
+                    "type": "object",
+                    "properties": {"order": {"$ref": "#/$defs/OrderParams"}},
+                    "required": ["order"],
+                    "$defs": {
+                        "OrderParams": {
+                            "type": "object",
+                            "properties": {
+                                "customer": {"$ref": "#/$defs/Customer"},
+                                "items": {"type": "array", "items": {"$ref": "#/$defs/OrderItem"}},
+                            },
+                            "required": ["customer", "items"],
+                        },
+                        "Customer": {
+                            "type": "object",
+                            "properties": {"id": {"type": "integer"}, "email": {"type": "string"}},
+                            "required": ["id", "email"],
+                        },
+                        "OrderItem": {
+                            "type": "object",
+                            "properties": {"product_id": {"type": "string"}, "quantity": {"type": "integer"}},
+                            "required": ["product_id", "quantity"],
+                        },
+                    },
+                },
+                {
+                    "order": {
+                        "customer": {"id": 123, "email": "test@example.com"},
+                        "items": [{"product_id": "prod1", "quantity": 2}],
                     }
-                }
-            },
-            {
-                "query.filters.date_range.start": "2024-01-01",
-                "query.filters.date_range.end": "2024-12-31",
-                "query.filters.categories": ["tech", "science"],
-            },
-            {"query": {"filters": {"date_range": {}}}},  # Missing required start and end
-            None,
-        ),
-        # Complex $ref with nested structure
-        (
-            "ref_nested_structure",
-            {
-                "type": "object",
-                "properties": {"order": {"$ref": "#/$defs/OrderParams"}},
-                "required": ["order"],
-                "$defs": {
-                    "OrderParams": {
-                        "type": "object",
-                        "properties": {
-                            "customer": {"$ref": "#/$defs/Customer"},
-                            "items": {"type": "array", "items": {"$ref": "#/$defs/OrderItem"}},
+                },
+                {
+                    "order.customer.id": 123,
+                    "order.customer.email": "test@example.com",
+                    "order.items[0].product_id": "prod1",
+                    "order.items[0].quantity": 2,
+                },
+                {"order": {"customer": {"id": 123}, "items": []}},  # Missing email
+                lambda instance: isinstance(instance.order.customer, BaseModel),
+            ),
+            # Mixed types (primitives, arrays, nested objects)
+            (
+                "mixed_types",
+                {
+                    "type": "object",
+                    "properties": {
+                        "simple_string": {"type": "string"},
+                        "simple_number": {"type": "integer"},
+                        "string_array": {"type": "array", "items": {"type": "string"}},
+                        "nested_config": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {"type": "boolean"},
+                                "options": {"type": "array", "items": {"type": "string"}},
+                            },
+                            "required": ["enabled"],
                         },
-                        "required": ["customer", "items"],
                     },
-                    "Customer": {
-                        "type": "object",
-                        "properties": {"id": {"type": "integer"}, "email": {"type": "string"}},
-                        "required": ["id", "email"],
-                    },
-                    "OrderItem": {
-                        "type": "object",
-                        "properties": {"product_id": {"type": "string"}, "quantity": {"type": "integer"}},
-                        "required": ["product_id", "quantity"],
+                    "required": ["simple_string", "nested_config"],
+                },
+                {
+                    "simple_string": "test",
+                    "simple_number": 42,
+                    "string_array": ["a", "b"],
+                    "nested_config": {"enabled": True, "options": ["opt1", "opt2"]},
+                },
+                {
+                    "simple_string": "test",
+                    "simple_number": 42,
+                    "string_array": ["a", "b"],
+                    "nested_config.enabled": True,
+                    "nested_config.options": ["opt1", "opt2"],
+                },
+                None,
+                None,
+            ),
+            # Empty schema (no properties)
+            (
+                "empty_schema",
+                {"type": "object", "properties": {}},
+                {},
+                {},
+                None,
+                None,
+            ),
+            # All primitive types
+            (
+                "all_primitives",
+                {
+                    "type": "object",
+                    "properties": {
+                        "string_field": {"type": "string"},
+                        "integer_field": {"type": "integer"},
+                        "number_field": {"type": "number"},
+                        "boolean_field": {"type": "boolean"},
                     },
                 },
-            },
-            {
-                "order": {
-                    "customer": {"id": 123, "email": "test@example.com"},
-                    "items": [{"product_id": "prod1", "quantity": 2}],
-                }
-            },
-            {
-                "order.customer.id": 123,
-                "order.customer.email": "test@example.com",
-                "order.items[0].product_id": "prod1",
-                "order.items[0].quantity": 2,
-            },
-            {"order": {"customer": {"id": 123}, "items": []}},  # Missing email
-            lambda instance: isinstance(instance.order.customer, BaseModel),
-        ),
-        # Mixed types (primitives, arrays, nested objects)
-        (
-            "mixed_types",
-            {
-                "type": "object",
-                "properties": {
-                    "simple_string": {"type": "string"},
-                    "simple_number": {"type": "integer"},
-                    "string_array": {"type": "array", "items": {"type": "string"}},
-                    "nested_config": {
-                        "type": "object",
-                        "properties": {
-                            "enabled": {"type": "boolean"},
-                            "options": {"type": "array", "items": {"type": "string"}},
-                        },
-                        "required": ["enabled"],
-                    },
+                {"string_field": "test", "integer_field": 42, "number_field": 3.14, "boolean_field": True},
+                {"string_field": "test", "integer_field": 42, "number_field": 3.14, "boolean_field": True},
+                None,
+                None,
+            ),
+            # Edge case: unresolvable $ref (fallback to dict)
+            (
+                "unresolvable_ref",
+                {
+                    "type": "object",
+                    "properties": {"data": {"$ref": "#/$defs/NonExistent"}},
+                    "$defs": {},
                 },
-                "required": ["simple_string", "nested_config"],
-            },
-            {
-                "simple_string": "test",
-                "simple_number": 42,
-                "string_array": ["a", "b"],
-                "nested_config": {"enabled": True, "options": ["opt1", "opt2"]},
-            },
-            {
-                "simple_string": "test",
-                "simple_number": 42,
-                "string_array": ["a", "b"],
-                "nested_config.enabled": True,
-                "nested_config.options": ["opt1", "opt2"],
-            },
-            None,
-            None,
-        ),
-        # Empty schema (no properties)
-        (
-            "empty_schema",
-            {"type": "object", "properties": {}},
-            {},
-            {},
-            None,
-            None,
-        ),
-        # All primitive types
-        (
-            "all_primitives",
-            {
-                "type": "object",
-                "properties": {
-                    "string_field": {"type": "string"},
-                    "integer_field": {"type": "integer"},
-                    "number_field": {"type": "number"},
-                    "boolean_field": {"type": "boolean"},
+                {"data": {"key": "value"}},
+                {"data": {"key": "value"}},
+                None,
+                None,
+            ),
+            # Edge case: array without items schema (fallback to bare list)
+            (
+                "array_no_items",
+                {
+                    "type": "object",
+                    "properties": {"items": {"type": "array"}},
                 },
-            },
-            {"string_field": "test", "integer_field": 42, "number_field": 3.14, "boolean_field": True},
-            {"string_field": "test", "integer_field": 42, "number_field": 3.14, "boolean_field": True},
-            None,
-            None,
-        ),
-        # Edge case: unresolvable $ref (fallback to dict)
-        (
-            "unresolvable_ref",
-            {
-                "type": "object",
-                "properties": {"data": {"$ref": "#/$defs/NonExistent"}},
-                "$defs": {},
-            },
-            {"data": {"key": "value"}},
-            {"data": {"key": "value"}},
-            None,
-            None,
-        ),
-        # Edge case: array without items schema (fallback to bare list)
-        (
-            "array_no_items",
-            {
-                "type": "object",
-                "properties": {"items": {"type": "array"}},
-            },
-            {"items": [1, "two", 3.0]},
-            {"items": [1, "two", 3.0]},
-            None,
-            None,
-        ),
-        # Edge case: object without properties (fallback to dict)
-        (
-            "object_no_properties",
-            {
-                "type": "object",
-                "properties": {"config": {"type": "object"}},
-            },
-            {"config": {"arbitrary": "data", "nested": {"key": "value"}}},
-            {"config": {"arbitrary": "data", "nested": {"key": "value"}}},
-            None,
-            None,
-        ),
+                {"items": [1, "two", 3.0]},
+                {"items": [1, "two", 3.0]},
+                None,
+                None,
+            ),
+            # Edge case: object without properties (fallback to dict)
+            (
+                "object_no_properties",
+                {
+                    "type": "object",
+                    "properties": {"config": {"type": "object"}},
+                },
+                {"config": {"arbitrary": "data", "nested": {"key": "value"}}},
+                {"config": {"arbitrary": "data", "nested": {"key": "value"}}},
+                None,
+                None,
+            ),
+        ]
     ],
 )
-def test_get_input_model_from_mcp_tool_parametrized(
-    test_id, input_schema, valid_data, expected_values, invalid_data, validation_check
-):
+def test_get_input_model_from_mcp_tool_parametrized(test_id: str, input_schema: dict[str, Any]) -> None:
     """Parametrized test for MCP tool input schema passthrough.
 
     This test verifies that MCP tool schemas are passed through as-is
@@ -595,10 +596,6 @@ def test_get_input_model_from_mcp_tool_parametrized(
     To add a new test case, add a tuple to the parametrize decorator with:
     - test_id: A descriptive name for the test case
     - input_schema: The JSON schema (inputSchema dict)
-    - valid_data: Valid data (used to verify FunctionTool works with the schema)
-    - expected_values: Not used in this test (kept for compatibility)
-    - invalid_data: Not used in this test (kept for compatibility)
-    - validation_check: Not used in this test (kept for compatibility)
     """
     tool = types.Tool(name="test_tool", description="A test tool", inputSchema=input_schema)
     schema = tool.inputSchema

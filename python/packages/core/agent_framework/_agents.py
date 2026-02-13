@@ -1258,17 +1258,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         @server.list_tools()  # type: ignore
         async def _list_tools() -> list[types.Tool]:  # type: ignore
             """List all tools in the agent."""
-            # Get the JSON schema from the Pydantic model
-            schema = agent_tool.input_model.model_json_schema()
+            schema = agent_tool.parameters()
 
             tool = types.Tool(
                 name=agent_tool.name,
                 description=agent_tool.description,
-                inputSchema={
-                    "type": "object",
-                    "properties": schema.get("properties", {}),
-                    "required": schema.get("required", []),
-                },
+                inputSchema=schema,
             )
 
             await _log(level="debug", data=f"Agent tool: {agent_tool}")
@@ -1291,7 +1286,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
             # Create an instance of the input model with the arguments
             try:
-                args_instance = agent_tool.input_model(**arguments)
+                args_instance: BaseModel | dict[str, Any] = (
+                    agent_tool.input_model(**arguments) if agent_tool.input_model is not None else arguments
+                )
                 result = await agent_tool.invoke(arguments=args_instance)
             except Exception as e:
                 raise McpError(

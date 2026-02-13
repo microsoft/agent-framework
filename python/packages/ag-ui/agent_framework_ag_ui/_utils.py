@@ -162,7 +162,7 @@ def make_json_safe(obj: Any) -> Any:  # noqa: ANN401
 
 def convert_agui_tools_to_agent_framework(
     agui_tools: list[dict[str, Any]] | None,
-) -> list[FunctionTool[Any]] | None:
+) -> list[FunctionTool] | None:
     """Convert AG-UI tool definitions to Agent Framework FunctionTool declarations.
 
     Creates declaration-only FunctionTool instances (no executable implementation).
@@ -181,13 +181,13 @@ def convert_agui_tools_to_agent_framework(
     if not agui_tools:
         return None
 
-    result: list[FunctionTool[Any]] = []
+    result: list[FunctionTool] = []
     for tool_def in agui_tools:
         # Create declaration-only FunctionTool (func=None means no implementation)
         # When func=None, the declaration_only property returns True,
         # which tells the function invocation mixin to return the function call
         # without executing it (so it can be sent back to the client)
-        func: FunctionTool[Any] = FunctionTool(
+        func: FunctionTool = FunctionTool(
             name=tool_def.get("name", ""),
             description=tool_def.get("description", ""),
             func=None,  # CRITICAL: Makes declaration_only=True

@@ -26,7 +26,6 @@ from typing import (
     Literal,
     TypedDict,
     Union,
-    cast,
     get_args,
     get_origin,
     overload,
@@ -302,12 +301,13 @@ class FunctionTool(SerializationMixin):
         self._instance = None  # Store the instance for bound methods
 
         # Track if schema was supplied as JSON dict (for optimization)
-        self._schema_supplied = isinstance(input_model, Mapping)
-        if self._schema_supplied:
+        if isinstance(input_model, Mapping):
+            self._schema_supplied = True
             self._input_schema: dict[str, Any] = dict(input_model)
             self.input_model: type[BaseModel] | None = None
         else:
-            self.input_model = self._resolve_input_model(cast(type[BaseModel] | None, input_model))
+            self._schema_supplied = False
+            self.input_model = self._resolve_input_model(input_model)
             self._input_schema = self.input_model.model_json_schema()
         self._cached_parameters: dict[str, Any] | None = None
         self.approval_mode = approval_mode or "never_require"
@@ -386,8 +386,10 @@ class FunctionTool(SerializationMixin):
             return create_model(f"{self.name}_input")
 
         func = self.func.func if isinstance(self.func, FunctionTool) else self.func
+        if func is None:
+            return create_model(f"{self.name}_input")
         sig = inspect.signature(func)
-        fields = {
+        fields: dict[str, Any] = {
             pname: (
                 _parse_annotation(param.annotation) if param.annotation is not inspect.Parameter.empty else str,
                 param.default if param.default is not inspect.Parameter.empty else ...,
@@ -776,8 +778,7 @@ def _validate_arguments_against_schema(
         enum_values = field_schema.get("enum")
         if isinstance(enum_values, list) and enum_values and field_value not in enum_values:
             raise TypeError(
-                f"Invalid value for '{field_name}' in '{tool_name}': {field_value!r} "
-                f"is not in {enum_values!r}"
+                f"Invalid value for '{field_name}' in '{tool_name}': {field_value!r} is not in {enum_values!r}"
             )
 
         schema_type = field_schema.get("type")
