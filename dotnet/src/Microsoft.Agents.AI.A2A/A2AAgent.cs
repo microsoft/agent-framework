@@ -63,10 +63,7 @@ public sealed class A2AAgent : AIAgent
     /// <param name="contextId">The context id to continue.</param>
     /// <returns>A value task representing the asynchronous operation. The task result contains a new <see cref="AgentSession"/> instance.</returns>
     public ValueTask<AgentSession> CreateSessionAsync(string contextId)
-    {
-        _ = Throw.IfNullOrWhitespace(contextId);
-        return new(new A2AAgentSession() { ContextId = contextId });
-    }
+        => new(new A2AAgentSession() { ContextId = Throw.IfNullOrWhitespace(contextId) });
 
     /// <summary>
     /// Get a new <see cref="AgentSession"/> instance using an existing context id and task id, to resume that conversation from a specific task.
@@ -75,11 +72,7 @@ public sealed class A2AAgent : AIAgent
     /// <param name="taskId">The task id to resume from.</param>
     /// <returns>A value task representing the asynchronous operation. The task result contains a new <see cref="AgentSession"/> instance.</returns>
     public ValueTask<AgentSession> CreateSessionAsync(string contextId, string taskId)
-    {
-        _ = Throw.IfNullOrWhitespace(contextId);
-        _ = Throw.IfNullOrWhitespace(taskId);
-        return new(new A2AAgentSession() { ContextId = contextId, TaskId = taskId });
-    }
+        => new(new A2AAgentSession() { ContextId = Throw.IfNullOrWhitespace(contextId), TaskId = Throw.IfNullOrWhitespace(taskId) });
 
     /// <inheritdoc/>
     protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
