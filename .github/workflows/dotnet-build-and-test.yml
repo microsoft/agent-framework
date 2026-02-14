@@ -89,10 +89,127 @@ jobs:
         if: ${{ runner.os == 'Windows' && (needs.paths-filter.outputs.cosmosDbChanges == 'true' || (github.event_name != 'pull_request' && matrix.integration-tests)) }}
         shell: pwsh
         run: |
-          Write-Host "Launching Azure Cosmos DB Emulator"
+          $ErrorActionPreference = "Stop"
+          $emulatorPath = "$env:ProgramFiles\Azure Cosmos DB Emulator\Microsoft.Azure.Cosmos.Emulator.exe"
+          $emulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
+          $maxRetries = 3
+          $timeout = 600  # 10 minutes instead of default 4 minutes
+          $retryCount = 0
+          $started = $false
+          
+          Write-Host "======================================" -ForegroundColor Cyan
+          Write-Host "Starting Azure Cosmos DB Emulator" -ForegroundColor Cyan
+          Write-Host "Timeout: $timeout seconds, Max retries: $maxRetries" -ForegroundColor Cyan
+          Write-Host "======================================" -ForegroundColor Cyan
+          
           Import-Module "$env:ProgramFiles\Azure Cosmos DB Emulator\PSModules\Microsoft.Azure.CosmosDB.Emulator"
-          Start-CosmosDbEmulator -NoUI -Key "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
-          echo "COSMOS_EMULATOR_AVAILABLE=true" >> $env:GITHUB_ENV
+          
+          while (-not $started -and $retryCount -lt $maxRetries) {
+            $retryCount++
+            
+            if ($retryCount -gt 1) {
+              Write-Host "`n--- Retry attempt $retryCount of $maxRetries ---" -ForegroundColor Yellow
+              
+              # Stop and cleanup before retry
+              Write-Host "Stopping existing emulator instances..." -ForegroundColor Yellow
+              Stop-CosmosDbEmulator -ErrorAction SilentlyContinue
+              Start-Sleep -Seconds 5
+              
+              # Force kill if still running
+              Get-Process -Name "Microsoft.Azure.Cosmos.Emulator" -ErrorAction SilentlyContinue | Stop-Process -Force
+              Start-Sleep -Seconds 3
+              
+              # Cleanup old data
+              $dataPath = Join-Path $env:LOCALAPPDATA "CosmosDbEmulator"
+              if (Test-Path $dataPath) {
+                Write-Host "Cleaning up emulator data..." -ForegroundColor Yellow
+                Remove-Item -Recurse -Force $dataPath -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 2
+              }
+            }
+            
+            try {
+              Write-Host "`nStarting emulator (attempt $retryCount)..." -ForegroundColor Cyan
+              Start-CosmosDbEmulator -NoUI -Key $emulatorKey -AllowNetworkAccess -NoFirewall
+              
+              # Wait for emulator to be ready with extended timeout
+              $startTime = [DateTimeOffset]::Now
+              $stopTime = $startTime.AddSeconds($timeout)
+              $lastStatus = -1
+              
+              Write-Host "Waiting for emulator to be ready..." -ForegroundColor Yellow
+              
+              do {
+                Start-Sleep -Seconds 5
+                $elapsed = [int](([DateTimeOffset]::Now - $startTime).TotalSeconds)
+                
+                # Check status
+                $statusProcess = Start-Process $emulatorPath -ArgumentList "/getstatus" -PassThru -Wait -NoNewWindow -ErrorAction SilentlyContinue
+                $statusCode = if ($statusProcess) { $statusProcess.ExitCode } else { -1 }
+                
+                # Log status changes
+                if ($statusCode -ne $lastStatus) {
+                  $statusMsg = switch ($statusCode) {
+                    1 { "Emulator is starting..." }
+                    2 { "Emulator is running!"; $started = $true }
+                    3 { "Emulator is stopped" }
+                    default { "Unknown status (code: $statusCode)" }
+                  }
+                  Write-Host "[${elapsed}s] $statusMsg" -ForegroundColor $(if ($statusCode -eq 2) { "Green" } else { "Yellow" })
+                  $lastStatus = $statusCode
+                }
+                
+                if ($started) { break }
+                
+                # Check if process crashed
+                $processRunning = Get-Process -Name "Microsoft.Azure.Cosmos.Emulator" -ErrorAction SilentlyContinue
+                if (-not $processRunning -and $statusCode -ne 2) {
+                  Write-Warning "Emulator process is not running"
+                  break
+                }
+                
+              } while ([DateTimeOffset]::Now -lt $stopTime)
+              
+              if (-not $started) {
+                Write-Error "Emulator failed to start within $timeout seconds"
+              }
+            }
+            catch {
+              Write-Warning "Error on attempt ${retryCount}: $_"
+              if ($retryCount -ge $maxRetries) { throw }
+            }
+          }
+          
+          if ($started) {
+            Write-Host "`n======================================" -ForegroundColor Green
+            Write-Host "Cosmos DB Emulator started successfully!" -ForegroundColor Green
+            Write-Host "======================================`n" -ForegroundColor Green
+            
+            # Verify connectivity
+            try {
+              $response = Invoke-WebRequest -Uri "https://localhost:8081/" -UseBasicParsing -SkipCertificateCheck -TimeoutSec 10 -ErrorAction Stop
+              Write-Host "Emulator is responding (Status: $($response.StatusCode))" -ForegroundColor Green
+            }
+            catch {
+              Write-Warning "Emulator may not be fully ready: $_"
+            }
+            
+            echo "COSMOS_EMULATOR_AVAILABLE=true" >> $env:GITHUB_ENV
+          }
+          else {
+            Write-Host "`n======================================" -ForegroundColor Red
+            Write-Host "Failed to start emulator after $maxRetries attempts" -ForegroundColor Red
+            Write-Host "======================================" -ForegroundColor Red
+            
+            # Show diagnostic info
+            $logPath = Join-Path $env:LOCALAPPDATA "CosmosDbEmulator\cosmosdb.log"
+            if (Test-Path $logPath) {
+              Write-Host "`nLast 30 lines of emulator log:" -ForegroundColor Yellow
+              Get-Content $logPath -Tail 30
+            }
+            
+            throw "Failed to start Cosmos DB Emulator"
+          }
 
       - name: Setup dotnet
         uses: actions/setup-dotnet@v5.1.0
