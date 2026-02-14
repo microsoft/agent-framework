@@ -16,6 +16,7 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 /// For each workflow, this transformer registers:
 /// <list type="bullet">
 ///   <item><description>An HTTP trigger function to start the workflow orchestration via HTTP.</description></item>
+///   <item><description>An orchestration trigger function to run the workflow orchestration.</description></item>
 ///   <item><description>An activity trigger function for each non-agent executor in the workflow.</description></item>
 ///   <item><description>An entity trigger function for each AI agent executor in the workflow.</description></item>
 /// </list>
@@ -44,7 +45,8 @@ internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMet
     /// <inheritdoc />
     public void Transform(IList<IFunctionMetadata> original)
     {
-        this._logger.LogTransformingFunctionMetadata(original.Count);
+        int initialCount = original.Count;
+        this._logger.LogTransformingFunctionMetadata(initialCount);
 
         // Track registered function names to avoid duplicates when workflows share executors.
         HashSet<string> registeredFunctions = [];
@@ -58,15 +60,24 @@ internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMet
                 this._logger.LogInformation("Registering durable workflow functions for workflow '{WorkflowKey}' with HTTP trigger function name '{HttpFunctionName}'", workflow.Key, httpFunctionName);
             }
 
-            // NOTE: Per-workflow orchestration function metadata is not registered here. The
-            // TaskOrchestrationContext binding happens inside the DurableExecutor rather than
-            // through an input converter or middleware, so a single shared orchestration
-            // function is used for all workflows instead.
+            // Register an orchestration function for the workflow.
+            string orchestrationFunctionName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflow.Key);
+            if (registeredFunctions.Add(orchestrationFunctionName))
+            {
+                this._logger.LogRegisteringWorkflowTrigger(workflow.Key, orchestrationFunctionName, "orchestration");
+                original.Add(FunctionMetadataFactory.CreateOrchestrationTrigger(
+                    orchestrationFunctionName,
+                    BuiltInFunctions.RunWorkflowOrchestrationFunctionEntryPoint));
+            }
 
             // Register an HTTP trigger so users can start this workflow via HTTP.
             if (registeredFunctions.Add(httpFunctionName))
             {
-                original.Add(FunctionMetadataFactory.CreateHttpTrigger(workflow.Key, $"workflows/{workflow.Key}/run", BuiltInFunctions.RunWorkflowOrchestrationHttpFunctionEntryPoint));
+                this._logger.LogRegisteringWorkflowTrigger(workflow.Key, httpFunctionName, "http");
+                original.Add(FunctionMetadataFactory.CreateHttpTrigger(
+                    workflow.Key,
+                    $"workflows/{workflow.Key}/run",
+                    BuiltInFunctions.RunWorkflowOrchestrationHttpFunctionEntryPoint));
             }
 
             // Register activity or entity functions for each executor in the workflow.
@@ -87,6 +98,7 @@ internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMet
                     string entityName = AgentSessionId.ToEntityName(executorName);
                     if (registeredFunctions.Add(entityName))
                     {
+                        this._logger.LogRegisteringWorkflowTrigger(workflow.Key, entityName, "entity");
                         original.Add(FunctionMetadataFactory.CreateEntityTrigger(executorName));
                     }
                 }
@@ -95,10 +107,13 @@ internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMet
                     string functionName = WorkflowNamingHelper.ToOrchestrationFunctionName(executorName);
                     if (registeredFunctions.Add(functionName))
                     {
+                        this._logger.LogRegisteringWorkflowTrigger(workflow.Key, functionName, "activity");
                         original.Add(FunctionMetadataFactory.CreateActivityTrigger(functionName));
                     }
                 }
             }
         }
+
+        this._logger.LogTransformationComplete(original.Count - initialCount, original.Count);
     }
 }

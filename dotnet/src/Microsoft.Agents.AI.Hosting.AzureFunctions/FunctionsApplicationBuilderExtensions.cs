@@ -2,15 +2,11 @@
 
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.DurableTask.Workflows;
-using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Azure.Functions.Worker.Core.FunctionMetadata;
-using Microsoft.DurableTask;
-using Microsoft.DurableTask.Worker;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 
@@ -73,8 +69,6 @@ public static class FunctionsApplicationBuilderExtensions
 
         if (sharedOptions.Workflows.Workflows.Count > 0)
         {
-            ConfigureWorkflowOrchestrations(builder, sharedOptions.Workflows);
-
             builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IFunctionMetadataTransformer, DurableWorkflowsFunctionMetadataTransformer>());
         }
 
@@ -110,35 +104,10 @@ public static class FunctionsApplicationBuilderExtensions
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentHttpFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentEntityFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrchestrationHttpFunctionEntryPoint, StringComparison.Ordinal) ||
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrchestrationFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint, StringComparison.Ordinal)
         );
         builder.Services.TryAddSingleton<BuiltInFunctionExecutor>();
-    }
-
-    private static void ConfigureWorkflowOrchestrations(FunctionsApplicationBuilder builder, DurableWorkflowOptions workflowOptions)
-    {
-        builder.ConfigureDurableWorker().AddTasks(tasks =>
-        {
-            foreach (var workflow in workflowOptions.Workflows)
-            {
-                string orchestrationFunctionName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflow.Key);
-
-                tasks.AddOrchestratorFunc<DurableWorkflowInput<object>, string>(
-                    orchestrationFunctionName,
-                    async (orchestrationContext, input) =>
-                    {
-                        FunctionContext functionContext = orchestrationContext.GetFunctionContext()
-                            ?? throw new InvalidOperationException("FunctionContext is not available in the orchestration context.");
-
-                        DurableWorkflowRunner runner = functionContext.InstanceServices.GetRequiredService<DurableWorkflowRunner>();
-                        ILogger logger = orchestrationContext.CreateReplaySafeLogger(orchestrationFunctionName);
-
-                        // ConfigureAwait(true) is required to preserve the orchestration context
-                        // across awaits, which the Durable Task framework uses for replay.
-                        return await runner.RunWorkflowOrchestrationAsync(orchestrationContext, input, logger).ConfigureAwait(true);
-                    });
-            }
-        });
     }
 
     /// <summary>

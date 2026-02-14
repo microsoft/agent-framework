@@ -24,6 +24,7 @@ internal static class BuiltInFunctions
     internal static readonly string RunAgentEntityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeAgentAsync)}";
     internal static readonly string RunAgentMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunMcpToolAsync)}";
     internal static readonly string RunWorkflowOrchestrationHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowOrchestrationHttpTriggerAsync)}";
+    internal static readonly string RunWorkflowOrchestrationFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowOrchestration)}";
     internal static readonly string InvokeWorkflowActivityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeWorkflowActivityAsync)}";
 
 #pragma warning disable IL3000 // Avoid accessing Assembly file path when publishing as a single file - Azure Functions does not use single-file publishing
@@ -87,6 +88,21 @@ internal static class BuiltInFunctions
         }
 
         return DurableActivityExecutor.ExecuteAsync(registration.Binding, input, functionContext.CancellationToken);
+    }
+
+    /// <summary>
+    /// Runs a workflow orchestration by delegating to <see cref="WorkflowOrchestrator"/>
+    /// via <see cref="GrpcOrchestrationRunner"/>.
+    /// </summary>
+    public static string RunWorkflowOrchestration(
+        string encodedOrchestratorRequest,
+        FunctionContext functionContext)
+    {
+        ArgumentNullException.ThrowIfNull(encodedOrchestratorRequest);
+        ArgumentNullException.ThrowIfNull(functionContext);
+
+        WorkflowOrchestrator orchestrator = new(functionContext.InstanceServices);
+        return GrpcOrchestrationRunner.LoadAndRun(encodedOrchestratorRequest, orchestrator, functionContext.InstanceServices);
     }
 
     // Exposed as an entity trigger via AgentFunctionsProvider

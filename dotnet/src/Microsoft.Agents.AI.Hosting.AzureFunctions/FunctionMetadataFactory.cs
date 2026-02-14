@@ -76,4 +76,25 @@ internal static class FunctionMetadataFactory
             ScriptFile = BuiltInFunctions.ScriptFile,
         };
     }
+
+    /// <summary>
+    /// Creates function metadata for an orchestration trigger function.
+    /// </summary>
+    /// <param name="functionName">The name of the orchestration function.</param>
+    /// <param name="entryPoint">The entry point method for the orchestration trigger.</param>
+    /// <returns>A <see cref="DefaultFunctionMetadata"/> configured for an orchestration trigger.</returns>
+    internal static DefaultFunctionMetadata CreateOrchestrationTrigger(string functionName, string entryPoint)
+    {
+        return new DefaultFunctionMetadata()
+        {
+            Name = functionName,
+            Language = "dotnet-isolated",
+            RawBindings =
+            [
+                """{"name":"context","type":"orchestrationTrigger","direction":"In"}"""
+            ],
+            EntryPoint = entryPoint,
+            ScriptFile = BuiltInFunctions.ScriptFile,
+        };
+    }
 }
