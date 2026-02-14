@@ -7,8 +7,8 @@ Content-Type: text/plain
 
 What is temperature?
 
-### Start with a custom instance ID
-POST {{authority}}/api/workflows/ExpertReview/run?instanceId=my-review-123
+### Start with a custom run ID
+POST {{authority}}/api/workflows/ExpertReview/run?runId=my-review-123
 Content-Type: text/plain
 
 What is gravity?

@@ -57,8 +57,18 @@ Invoke-RestMethod -Method Post `
 The response will confirm the workflow orchestration has started:
 
 ```text
-Workflow orchestration started for ExpertReview. Orchestration instanceId: abc123def456
+Workflow orchestration started for ExpertReview. Orchestration runId: abc123def456
 ```
+
+> **Tip:** You can provide a custom run ID by appending a `runId` query parameter:
+>
+> ```bash
+> curl -X POST "http://localhost:7071/api/workflows/ExpertReview/run?runId=my-review-123" \
+>     -H "Content-Type: text/plain" \
+>     -d "What is temperature?"
+> ```
+>
+> If not provided, a unique run ID is auto-generated.
 
 In the function app logs, you will see the fan-out/fan-in execution pattern:
 

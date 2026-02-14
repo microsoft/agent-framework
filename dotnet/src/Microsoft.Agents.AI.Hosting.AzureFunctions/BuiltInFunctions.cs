@@ -33,6 +33,8 @@ internal static class BuiltInFunctions
     /// <summary>
     /// Starts a workflow orchestration in response to an HTTP request.
     /// The workflow name is derived from the function name by stripping the <see cref="HttpPrefix"/>.
+    /// Callers can optionally provide a custom run ID via the <c>runId</c> query string parameter
+    /// (e.g., <c>/api/workflows/MyWorkflow/run?runId=my-id</c>). If not provided, one is auto-generated.
     /// </summary>
     public static async Task<HttpResponseData> RunWorkflowOrchestrationHttpTriggerAsync(
         [HttpTrigger] HttpRequestData req,
@@ -52,13 +54,13 @@ internal static class BuiltInFunctions
 
         DurableWorkflowInput<string> orchestrationInput = new() { Input = inputMessage };
 
-        // Allow users to provide a custom instance ID via query string; otherwise, auto-generate one.
-        string? instanceId = req.Query["instanceId"];
+        // Allow users to provide a custom run ID via query string; otherwise, auto-generate one.
+        string? instanceId = req.Query["runId"];
         StartOrchestrationOptions? options = instanceId is not null ? new StartOrchestrationOptions(instanceId) : null;
         string resolvedInstanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, orchestrationInput, options);
 
         HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
-        await response.WriteStringAsync($"Workflow orchestration started for {workflowName}. Orchestration instanceId: {resolvedInstanceId}");
+        await response.WriteStringAsync($"Workflow orchestration started for {workflowName}. Orchestration runId: {resolvedInstanceId}");
         return response;
     }
 

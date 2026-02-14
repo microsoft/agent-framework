@@ -7,8 +7,8 @@ Content-Type: text/plain
 
 12345
 
-### Cancel an order with a custom instance ID
-POST {{authority}}/api/workflows/CancelOrder/run?instanceId=my-custom-id-123
+### Cancel an order with a custom run ID
+POST {{authority}}/api/workflows/CancelOrder/run?runId=my-custom-id-123
 Content-Type: text/plain
 
 99999

@@ -52,8 +52,18 @@ Invoke-RestMethod -Method Post `
 The response will confirm the workflow orchestration has started:
 
 ```text
-Workflow orchestration started for CancelOrder. Orchestration instanceId: abc123def456
+Workflow orchestration started for CancelOrder. Orchestration runId: abc123def456
 ```
+
+> **Tip:** You can provide a custom run ID by appending a `runId` query parameter:
+>
+> ```bash
+> curl -X POST "http://localhost:7071/api/workflows/CancelOrder/run?runId=my-order-123" \
+>     -H "Content-Type: text/plain" \
+>     -d "12345"
+> ```
+>
+> If not provided, a unique run ID is auto-generated.
 
 In the function app logs, you will see the sequential execution of each executor:
 
