@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Sdk Name="Aspire.AppHost.Sdk" Version="$(AspireAppHostSdkVersion)" />
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" />
+    <PackageReference Include="Aspire.Hosting.Azure.AIFoundry" />
+    <PackageReference Include="OpenAI" />
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.DevUI\Microsoft.Agents.AI.DevUI.csproj" IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\..\aspire-integration\Aspire.Hosting.AgentFramework.DevUI\Aspire.Hosting.AgentFramework.DevUI.csproj" IsAspireProjectResource="false" />
+    <ProjectReference Include="..\WriterAgent\WriterAgent.csproj" />
+    <ProjectReference Include="..\EditorAgent\EditorAgent.csproj" />
+  </ItemGroup>
+
+</Project>

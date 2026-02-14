@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <IsPackable>true</IsPackable>
+    <PackageTags>aspire integration hosting agent-framework devui ai agents</PackageTags>
+    <Description>Microsoft Agent Framework DevUI support for Aspire.</Description>
+    <!-- Suppress analyzer warnings for Aspire integration code -->
+    <!-- IL2026/IL3050: Suppress trimming/AOT warnings - DevUI is a dev-only tool not intended for AOT -->
+    <NoWarn>$(NoWarn);CA1873;RCS1061;VSTHRD002;IL2026;IL3050</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Aspire.Hosting.AgentFramework.DevUI.UnitTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting" />
+  </ItemGroup>
+
+</Project>
