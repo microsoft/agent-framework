@@ -274,12 +274,279 @@ public class ChatHistoryProviderTests
 
     #endregion
 
+    #region InvokingAsync / InvokedAsync Null Check Tests
+
+    [Fact]
+    public async Task InvokingAsync_NullContext_ThrowsArgumentNullExceptionAsync()
+    {
+        // Arrange
+        var provider = new TestChatHistoryProvider();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentNullException>(() => provider.InvokingAsync(null!).AsTask());
+    }
+
+    [Fact]
+    public async Task InvokedAsync_NullContext_ThrowsArgumentNullExceptionAsync()
+    {
+        // Arrange
+        var provider = new TestChatHistoryProvider();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentNullException>(() => provider.InvokedAsync(null!).AsTask());
+    }
+
+    #endregion
+
+    #region InvokingCoreAsync Tests
+
+    [Fact]
+    public async Task InvokingCoreAsync_CallsProvideChatHistoryAndReturnsMessagesAsync()
+    {
+        // Arrange
+        var historyMessages = new[] { new ChatMessage(ChatRole.User, "History message") };
+        var provider = new TestChatHistoryProvider(provideMessages: historyMessages);
+        var requestMessages = new[] { new ChatMessage(ChatRole.User, "Request message") };
+        var context = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, requestMessages);
+
+        // Act
+        var result = (await provider.InvokingAsync(context)).ToList();
+
+        // Assert
+        Assert.Equal(2, result.Count);
+        Assert.Equal("History message", result[0].Text);
+        Assert.Equal("Request message", result[1].Text);
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_HistoryAppearsBeforeRequestMessagesAsync()
+    {
+        // Arrange
+        var historyMessages = new[]
+        {
+            new ChatMessage(ChatRole.User, "Hist1"),
+            new ChatMessage(ChatRole.Assistant, "Hist2")
+        };
+        var provider = new TestChatHistoryProvider(provideMessages: historyMessages);
+        var requestMessages = new[] { new ChatMessage(ChatRole.User, "Req1") };
+        var context = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, requestMessages);
+
+        // Act
+        var result = (await provider.InvokingAsync(context)).ToList();
+
+        // Assert
+        Assert.Equal(3, result.Count);
+        Assert.Equal("Hist1", result[0].Text);
+        Assert.Equal("Hist2", result[1].Text);
+        Assert.Equal("Req1", result[2].Text);
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_StampsHistoryMessagesWithChatHistorySourceAsync()
+    {
+        // Arrange
+        var historyMessages = new[] { new ChatMessage(ChatRole.User, "History") };
+        var provider = new TestChatHistoryProvider(provideMessages: historyMessages);
+        var context = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
+
+        // Act
+        var result = (await provider.InvokingAsync(context)).ToList();
+
+        // Assert
+        Assert.Single(result);
+        Assert.Equal(AgentRequestMessageSourceType.ChatHistory, result[0].GetAgentRequestMessageSourceType());
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_NoFilterAppliedWhenProvideOutputFilterIsNullAsync()
+    {
+        // Arrange
+        var historyMessages = new[]
+        {
+            new ChatMessage(ChatRole.User, "User msg"),
+            new ChatMessage(ChatRole.System, "System msg"),
+            new ChatMessage(ChatRole.Assistant, "Assistant msg")
+        };
+        var provider = new TestChatHistoryProvider(provideMessages: historyMessages);
+        var context = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
+
+        // Act
+        var result = (await provider.InvokingAsync(context)).ToList();
+
+        // Assert - all 3 history messages returned (no filter)
+        Assert.Equal(3, result.Count);
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_AppliesProvideOutputFilterWhenProvidedAsync()
+    {
+        // Arrange
+        var historyMessages = new[]
+        {
+            new ChatMessage(ChatRole.User, "User msg"),
+            new ChatMessage(ChatRole.System, "System msg"),
+            new ChatMessage(ChatRole.Assistant, "Assistant msg")
+        };
+        var provider = new TestChatHistoryProvider(
+            provideMessages: historyMessages,
+            provideOutputMessageFilter: msgs => msgs.Where(m => m.Role == ChatRole.User));
+        var context = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, []);
+
+        // Act
+        var result = (await provider.InvokingAsync(context)).ToList();
+
+        // Assert - only User messages remain after filter
+        Assert.Single(result);
+        Assert.Equal("User msg", result[0].Text);
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_ReturnsEmptyHistoryByDefaultAsync()
+    {
+        // Arrange - provider that doesn't override ProvideChatHistoryAsync (uses base default)
+        var provider = new DefaultChatHistoryProvider();
+        var requestMessages = new[] { new ChatMessage(ChatRole.User, "Hello") };
+        var context = new ChatHistoryProvider.InvokingContext(s_mockAgent, s_mockSession, requestMessages);
+
+        // Act
+        var result = (await provider.InvokingAsync(context)).ToList();
+
+        // Assert - only the request message (no history)
+        Assert.Single(result);
+        Assert.Equal("Hello", result[0].Text);
+    }
+
+    #endregion
+
+    #region InvokedCoreAsync Tests
+
+    [Fact]
+    public async Task InvokedCoreAsync_CallsStoreChatHistoryWithFilteredMessagesAsync()
+    {
+        // Arrange
+        var provider = new TestChatHistoryProvider();
+        var externalMessage = new ChatMessage(ChatRole.User, "External");
+        var chatHistoryMessage = new ChatMessage(ChatRole.User, "From history")
+            .WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, "source");
+        var responseMessages = new[] { new ChatMessage(ChatRole.Assistant, "Response") };
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, new[] { externalMessage, chatHistoryMessage }, responseMessages);
+
+        // Act
+        await provider.InvokedAsync(context);
+
+        // Assert - default filter excludes ChatHistory-sourced messages
+        Assert.NotNull(provider.LastStoredContext);
+        var storedRequest = provider.LastStoredContext!.RequestMessages.ToList();
+        Assert.Single(storedRequest);
+        Assert.Equal("External", storedRequest[0].Text);
+        Assert.Same(responseMessages, provider.LastStoredContext.ResponseMessages);
+    }
+
+    [Fact]
+    public async Task InvokedCoreAsync_SkipsStorageWhenInvokeExceptionIsNotNullAsync()
+    {
+        // Arrange
+        var provider = new TestChatHistoryProvider();
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "msg")], new InvalidOperationException("Failed"));
+
+        // Act
+        await provider.InvokedAsync(context);
+
+        // Assert - StoreChatHistoryAsync was NOT called
+        Assert.Null(provider.LastStoredContext);
+    }
+
+    [Fact]
+    public async Task InvokedCoreAsync_UsesCustomStoreInputFilterAsync()
+    {
+        // Arrange - filter that only keeps System messages
+        var provider = new TestChatHistoryProvider(
+            storeInputMessageFilter: msgs => msgs.Where(m => m.Role == ChatRole.System));
+        var messages = new[]
+        {
+            new ChatMessage(ChatRole.User, "User msg"),
+            new ChatMessage(ChatRole.System, "System msg")
+        };
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, messages, [new ChatMessage(ChatRole.Assistant, "Response")]);
+
+        // Act
+        await provider.InvokedAsync(context);
+
+        // Assert - only System messages were passed to store
+        Assert.NotNull(provider.LastStoredContext);
+        var storedRequest = provider.LastStoredContext!.RequestMessages.ToList();
+        Assert.Single(storedRequest);
+        Assert.Equal("System msg", storedRequest[0].Text);
+    }
+
+    [Fact]
+    public async Task InvokedCoreAsync_DefaultFilterExcludesChatHistorySourcedMessagesAsync()
+    {
+        // Arrange
+        var provider = new TestChatHistoryProvider();
+        var external = new ChatMessage(ChatRole.User, "External");
+        var fromHistory = new ChatMessage(ChatRole.User, "History")
+            .WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, "src");
+        var fromContext = new ChatMessage(ChatRole.User, "Context")
+            .WithAgentRequestMessageSource(AgentRequestMessageSourceType.AIContextProvider, "src");
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, [external, fromHistory, fromContext], []);
+
+        // Act
+        await provider.InvokedAsync(context);
+
+        // Assert - External and AIContextProvider messages kept, ChatHistory excluded
+        Assert.NotNull(provider.LastStoredContext);
+        var storedRequest = provider.LastStoredContext!.RequestMessages.ToList();
+        Assert.Equal(2, storedRequest.Count);
+        Assert.Equal("External", storedRequest[0].Text);
+        Assert.Equal("Context", storedRequest[1].Text);
+    }
+
+    [Fact]
+    public async Task InvokedCoreAsync_PassesResponseMessagesToStoreAsync()
+    {
+        // Arrange
+        var provider = new TestChatHistoryProvider();
+        var responseMessages = new[] { new ChatMessage(ChatRole.Assistant, "Resp1"), new ChatMessage(ChatRole.Assistant, "Resp2") };
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "msg")], responseMessages);
+
+        // Act
+        await provider.InvokedAsync(context);
+
+        // Assert
+        Assert.NotNull(provider.LastStoredContext);
+        Assert.Same(responseMessages, provider.LastStoredContext!.ResponseMessages);
+    }
+
+    #endregion
+
     private sealed class TestChatHistoryProvider : ChatHistoryProvider
     {
-        protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
-            => new(new ChatMessage[] { new(ChatRole.User, "Test Message") }.Concat(context.RequestMessages));
+        private readonly IEnumerable<ChatMessage>? _provideMessages;
 
-        protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
-            => default;
+        public InvokedContext? LastStoredContext { get; private set; }
+
+        public TestChatHistoryProvider(
+            IEnumerable<ChatMessage>? provideMessages = null,
+            Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
+            Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputMessageFilter = null)
+            : base(provideOutputMessageFilter, storeInputMessageFilter)
+        {
+            this._provideMessages = provideMessages;
+        }
+
+        protected override ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
+            => new(this._provideMessages ?? []);
+
+        protected override ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        {
+            this.LastStoredContext = context;
+            return default;
+        }
     }
+
+    /// <summary>
+    /// A provider that uses only base class defaults (no overrides of ProvideChatHistoryAsync/StoreChatHistoryAsync).
+    /// </summary>
+    private sealed class DefaultChatHistoryProvider : ChatHistoryProvider;
 }

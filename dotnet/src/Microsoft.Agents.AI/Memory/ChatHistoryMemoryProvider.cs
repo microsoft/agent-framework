@@ -24,8 +24,8 @@ namespace Microsoft.Agents.AI;
 /// abstractions to work with any compatible vector store implementation.
 /// </para>
 /// <para>
-/// Messages are stored during the <see cref="InvokedCoreAsync"/> method and retrieved during the
-/// <see cref="InvokingCoreAsync"/> method using semantic similarity search.
+/// Messages are stored during the <see cref="StoreAIContextAsync"/> method and retrieved during the
+/// <see cref="ProvideAIContextAsync"/> method using semantic similarity search.
 /// </para>
 /// <para>
 /// Behavior is configurable through <see cref="ChatHistoryMemoryProviderOptions"/>. When
@@ -34,15 +34,12 @@ namespace Microsoft.Agents.AI;
 /// injecting them automatically on each invocation.
 /// </para>
 /// </remarks>
-public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
+public sealed class ChatHistoryMemoryProvider : AIContextProvider<ChatHistoryMemoryProvider.State>, IDisposable
 {
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
     private const int DefaultMaxResults = 3;
     private const string DefaultFunctionToolName = "Search";
     private const string DefaultFunctionToolDescription = "Allows searching for related previous chat history to help answer the user question.";
-
-    private static IEnumerable<ChatMessage> DefaultExternalOnlyFilter(IEnumerable<ChatMessage> messages)
-        => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External);
 
 #pragma warning disable CA2213 // VectorStore is not owned by this class - caller is responsible for disposal
     private readonly VectorStore _vectorStore;
@@ -55,10 +52,6 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
     private readonly string _toolName;
     private readonly string _toolDescription;
     private readonly ILogger<ChatHistoryMemoryProvider>? _logger;
-    private readonly string _stateKey;
-    private readonly Func<AgentSession?, State> _stateInitializer;
-    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> _searchInputMessageFilter;
-    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> _storageInputMessageFilter;
 
     private bool _collectionInitialized;
     private readonly SemaphoreSlim _initializationLock = new(1, 1);
@@ -81,21 +74,18 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         Func<AgentSession?, State> stateInitializer,
         ChatHistoryMemoryProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
+        : base(Throw.IfNull(stateInitializer), options?.StateKey, AgentJsonUtilities.DefaultOptions, options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
     {
         this._vectorStore = Throw.IfNull(vectorStore);
-        this._stateInitializer = Throw.IfNull(stateInitializer);
 
         options ??= new ChatHistoryMemoryProviderOptions();
         this._maxResults = options.MaxResults.HasValue ? Throw.IfLessThanOrEqual(options.MaxResults.Value, 0) : DefaultMaxResults;
         this._contextPrompt = options.ContextPrompt ?? DefaultContextPrompt;
         this._enableSensitiveTelemetryData = options.EnableSensitiveTelemetryData;
         this._searchTime = options.SearchTime;
-        this._stateKey = options.StateKey ?? base.StateKey;
         this._logger = loggerFactory?.CreateLogger<ChatHistoryMemoryProvider>();
         this._toolName = options.FunctionToolName ?? DefaultFunctionToolName;
         this._toolDescription = options.FunctionToolDescription ?? DefaultFunctionToolDescription;
-        this._searchInputMessageFilter = options.SearchInputMessageFilter ?? DefaultExternalOnlyFilter;
-        this._storageInputMessageFilter = options.StorageInputMessageFilter ?? DefaultExternalOnlyFilter;
 
         // Create a definition so that we can use the dimensions provided at runtime.
         var definition = new VectorStoreCollectionDefinition
@@ -120,37 +110,12 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._stateKey;
-
-    /// <summary>
-    /// Gets the state from the session's StateBag, or initializes it using the StateInitializer if not present.
-    /// </summary>
-    /// <param name="session">The agent session containing the StateBag.</param>
-    /// <returns>The provider state, or null if no session is available.</returns>
-    private State? GetOrInitializeState(AgentSession? session)
-    {
-        if (session?.StateBag.TryGetValue<State>(this._stateKey, out var state, AgentJsonUtilities.DefaultOptions) is true && state is not null)
-        {
-            return state;
-        }
-
-        state = this._stateInitializer(session);
-        if (state is not null && session is not null)
-        {
-            session.StateBag.SetValue(this._stateKey, state, AgentJsonUtilities.DefaultOptions);
-        }
-
-        return state;
-    }
-
-    /// <inheritdoc />
-    protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(context);
 
-        var inputContext = context.AIContext;
         var state = this.GetOrInitializeState(context.Session);
-        var searchScope = state?.SearchScope ?? new ChatHistoryMemoryProviderScope();
+        var searchScope = state.SearchScope;
 
         if (this._searchTime == ChatHistoryMemoryProviderOptions.SearchBehavior.OnDemandFunctionCalling)
         {
@@ -166,12 +131,10 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                     description: this._toolDescription)
             ];
 
-            // Expose search tool for on-demand invocation by the model, accumulated with the input context
+            // Expose search tool for on-demand invocation by the model
             return new AIContext
             {
-                Instructions = inputContext.Instructions,
-                Messages = inputContext.Messages,
-                Tools = (inputContext.Tools ?? []).Concat(tools)
+                Tools = tools
             };
         }
 
@@ -179,13 +142,13 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         {
             // Get the text from the current request messages
             var requestText = string.Join("\n",
-                this._searchInputMessageFilter(inputContext.Messages ?? [])
+                (context.AIContext.Messages ?? [])
                 .Where(m => m != null && !string.IsNullOrWhiteSpace(m.Text))
                 .Select(m => m.Text));
 
             if (string.IsNullOrWhiteSpace(requestText))
             {
-                return inputContext;
+                return new AIContext();
             }
 
             // Search for relevant chat history
@@ -193,19 +156,12 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
 
             if (string.IsNullOrWhiteSpace(contextText))
             {
-                return inputContext;
+                return new AIContext();
             }
 
             return new AIContext
             {
-                Instructions = inputContext.Instructions,
-                Messages =
-                    (inputContext.Messages ?? [])
-                    .Concat(
-                    [
-                        new ChatMessage(ChatRole.User, contextText).WithAgentRequestMessageSource(AgentRequestMessageSourceType.AIContextProvider, this.GetType().FullName!)
-                    ]),
-                Tools = inputContext.Tools
+                Messages = [new ChatMessage(ChatRole.User, contextText)]
             };
         }
         catch (Exception ex)
@@ -221,30 +177,24 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                     this.SanitizeLogData(searchScope.UserId));
             }
 
-            return inputContext;
+            return new AIContext();
         }
     }
 
     /// <inheritdoc />
-    protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(context);
 
-        // Only store if invocation was successful
-        if (context.InvokeException != null)
-        {
-            return;
-        }
-
         var state = this.GetOrInitializeState(context.Session);
-        var storageScope = state?.StorageScope ?? new ChatHistoryMemoryProviderScope();
+        var storageScope = state.StorageScope;
 
         try
         {
             // Ensure the collection is initialized
             var collection = await this.EnsureCollectionExistsAsync(cancellationToken).ConfigureAwait(false);
 
-            List<Dictionary<string, object?>> itemsToStore = this._storageInputMessageFilter(context.RequestMessages)
+            List<Dictionary<string, object?>> itemsToStore = context.RequestMessages
                 .Concat(context.ResponseMessages ?? [])
                 .Select(message => new Dictionary<string, object?>
                 {

@@ -22,19 +22,12 @@ namespace Microsoft.Agents.AI.Mem0;
 /// for new invocations using a semantic search endpoint. Retrieved memories are injected as user messages
 /// to the model, prefixed by a configurable context prompt.
 /// </remarks>
-public sealed class Mem0Provider : AIContextProvider
+public sealed class Mem0Provider : AIContextProvider<Mem0Provider.State>
 {
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
 
-    private static IEnumerable<ChatMessage> DefaultExternalOnlyFilter(IEnumerable<ChatMessage> messages)
-        => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External);
-
     private readonly string _contextPrompt;
     private readonly bool _enableSensitiveTelemetryData;
-    private readonly string _stateKey;
-    private readonly Func<AgentSession?, State> _stateInitializer;
-    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> _searchInputMessageFilter;
-    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> _storageInputMessageFilter;
 
     private readonly Mem0Client _client;
     private readonly ILogger<Mem0Provider>? _logger;
@@ -58,6 +51,7 @@ public sealed class Mem0Provider : AIContextProvider
     /// </code>
     /// </remarks>
     public Mem0Provider(HttpClient httpClient, Func<AgentSession?, State> stateInitializer, Mem0ProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
+        : base(ValidateStateInitializer(Throw.IfNull(stateInitializer)), options?.StateKey, Mem0JsonUtilities.DefaultOptions, options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
     {
         Throw.IfNull(httpClient);
         if (string.IsNullOrWhiteSpace(httpClient.BaseAddress?.AbsoluteUri))
@@ -65,63 +59,41 @@ public sealed class Mem0Provider : AIContextProvider
             throw new ArgumentException("The HttpClient BaseAddress must be set for Mem0 operations.", nameof(httpClient));
         }
 
-        this._stateInitializer = Throw.IfNull(stateInitializer);
         this._logger = loggerFactory?.CreateLogger<Mem0Provider>();
         this._client = new Mem0Client(httpClient);
 
         this._contextPrompt = options?.ContextPrompt ?? DefaultContextPrompt;
         this._enableSensitiveTelemetryData = options?.EnableSensitiveTelemetryData ?? false;
-        this._stateKey = options?.StateKey ?? base.StateKey;
-        this._searchInputMessageFilter = options?.SearchInputMessageFilter ?? DefaultExternalOnlyFilter;
-        this._storageInputMessageFilter = options?.StorageInputMessageFilter ?? DefaultExternalOnlyFilter;
     }
 
-    /// <inheritdoc />
-    public override string StateKey => this._stateKey;
-
-    /// <summary>
-    /// Gets the state from the session's StateBag, or initializes it using the StateInitializer if not present.
-    /// </summary>
-    /// <param name="session">The agent session containing the StateBag.</param>
-    /// <returns>The provider state, or null if no session is available.</returns>
-    private State? GetOrInitializeState(AgentSession? session)
-    {
-        if (session?.StateBag.TryGetValue<State>(this._stateKey, out var state, Mem0JsonUtilities.DefaultOptions) is true && state is not null)
+    private static Func<AgentSession?, State> ValidateStateInitializer(Func<AgentSession?, State> stateInitializer) =>
+        session =>
         {
+            var state = stateInitializer(session);
+
+            if (state is null
+                || state.StorageScope is null
+                || (state.StorageScope.AgentId is null && state.StorageScope.ThreadId is null && state.StorageScope.UserId is null && state.StorageScope.ApplicationId is null)
+                || state.SearchScope is null
+                || (state.SearchScope.AgentId is null && state.SearchScope.ThreadId is null && state.SearchScope.UserId is null && state.SearchScope.ApplicationId is null))
+            {
+                throw new InvalidOperationException("State initializer must return a non-null state with valid storage and search scopes, where at least one scoping parameter is set for each.");
+            }
+
             return state;
-        }
-
-        state = this._stateInitializer(session);
-
-        if (state is null
-            || state.StorageScope is null
-            || (state.StorageScope.AgentId is null && state.StorageScope.ThreadId is null && state.StorageScope.UserId is null && state.StorageScope.ApplicationId is null)
-            || state.SearchScope is null
-            || (state.SearchScope.AgentId is null && state.SearchScope.ThreadId is null && state.SearchScope.UserId is null && state.SearchScope.ApplicationId is null))
-        {
-            throw new InvalidOperationException("State initializer must return a non-null state with valid storage and search scopes, where at lest one scoping parameter is set for each.");
-        }
-
-        if (session is not null)
-        {
-            session.StateBag.SetValue(this._stateKey, state, Mem0JsonUtilities.DefaultOptions);
-        }
-
-        return state;
-    }
+        };
 
     /// <inheritdoc />
-    protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(context);
 
-        var inputContext = context.AIContext;
         var state = this.GetOrInitializeState(context.Session);
-        var searchScope = state?.SearchScope ?? new Mem0ProviderScope();
+        var searchScope = state.SearchScope;
 
         string queryText = string.Join(
             Environment.NewLine,
-                this._searchInputMessageFilter(inputContext.Messages ?? [])
+                (context.AIContext.Messages ?? [])
                 .Where(m => !string.IsNullOrWhiteSpace(m.Text))
                 .Select(m => m.Text));
 
@@ -138,9 +110,6 @@ public sealed class Mem0Provider : AIContextProvider
             var outputMessageText = memories.Count == 0
                 ? null
                 : $"{this._contextPrompt}\n{string.Join(Environment.NewLine, memories)}";
-            var outputMessage = memories.Count == 0
-                ? null
-                : new ChatMessage(ChatRole.User, outputMessageText!).WithAgentRequestMessageSource(AgentRequestMessageSourceType.AIContextProvider, this.GetType().FullName!);
 
             if (this._logger?.IsEnabled(LogLevel.Information) is true)
             {
@@ -167,11 +136,9 @@ public sealed class Mem0Provider : AIContextProvider
 
             return new AIContext
             {
-                Instructions = inputContext.Instructions,
-                Messages =
-                    (inputContext.Messages ?? [])
-                    .Concat(outputMessage is not null ? [outputMessage] : []),
-                Tools = inputContext.Tools
+                Messages = outputMessageText is not null
+                    ? [new ChatMessage(ChatRole.User, outputMessageText)]
+                    : null
             };
         }
         catch (ArgumentException)
@@ -190,27 +157,23 @@ public sealed class Mem0Provider : AIContextProvider
                     searchScope.ThreadId,
                     this.SanitizeLogData(searchScope.UserId));
             }
-            return inputContext;
+
+            return new AIContext();
         }
     }
 
     /// <inheritdoc />
-    protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        if (context.InvokeException is not null)
-        {
-            return; // Do not update memory on failed invocations.
-        }
-
         var state = this.GetOrInitializeState(context.Session);
-        var storageScope = state?.StorageScope ?? new Mem0ProviderScope();
+        var storageScope = state.StorageScope;
 
         try
         {
             // Persist request and response messages after invocation.
             await this.PersistMessagesAsync(
                 storageScope,
-                this._storageInputMessageFilter(context.RequestMessages)
+                context.RequestMessages
                     .Concat(context.ResponseMessages ?? []),
                 cancellationToken).ConfigureAwait(false);
         }
@@ -238,12 +201,7 @@ public sealed class Mem0Provider : AIContextProvider
     {
         Throw.IfNull(session);
         var state = this.GetOrInitializeState(session);
-        var storageScope = state?.StorageScope;
-
-        if (storageScope is null)
-        {
-            return Task.CompletedTask; // Nothing to clear if there is no state.
-        }
+        var storageScope = state.StorageScope;
 
         return this._client.ClearMemoryAsync(
             storageScope.ApplicationId,

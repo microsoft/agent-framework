@@ -446,7 +446,7 @@ public class InMemoryChatHistoryProviderTests
         var session = CreateMockSession();
         var provider = new InMemoryChatHistoryProvider(new InMemoryChatHistoryProviderOptions
         {
-            RetrievalOutputMessageFilter = messages => messages.Where(m => m.Role == ChatRole.User)
+            ProvideOutputMessageFilter = messages => messages.Where(m => m.Role == ChatRole.User)
         });
         provider.SetMessages(session,
         [
