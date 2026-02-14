@@ -33,9 +33,9 @@ ENFORCED_MODULES: set[str] = {
     "packages.core.agent_framework",
     "packages.core.agent_framework._workflows",
     "packages.purview.agent_framework_purview",
+    "packages.anthropic.agent_framework_anthropic",
     # Add more modules here as coverage improves:
     # "packages.azure-ai-search.agent_framework_azure_ai_search",
-    # "packages.anthropic.agent_framework_anthropic",
 }
 
 
@@ -62,7 +62,9 @@ class PackageCoverage:
         return self.branch_rate * 100
 
 
-def parse_coverage_xml(xml_path: str) -> tuple[dict[str, PackageCoverage], float, float]:
+def parse_coverage_xml(
+    xml_path: str,
+) -> tuple[dict[str, PackageCoverage], float, float]:
     """Parse Cobertura XML and extract per-package coverage data.
 
     Args:
@@ -103,7 +105,9 @@ def parse_coverage_xml(xml_path: str) -> tuple[dict[str, PackageCoverage], float
                     if condition_coverage:
                         # Parse "X% (covered/total)" format
                         try:
-                            coverage_parts = condition_coverage.split("(")[1].rstrip(")").split("/")
+                            coverage_parts = (
+                                condition_coverage.split("(")[1].rstrip(")").split("/")
+                            )
                             branches_covered += int(coverage_parts[0])
                             branches_valid += int(coverage_parts[1])
                         except (IndexError, ValueError):
@@ -114,7 +118,9 @@ def parse_coverage_xml(xml_path: str) -> tuple[dict[str, PackageCoverage], float
         packages[package_path] = PackageCoverage(
             name=package_path,
             line_rate=line_rate if lines_valid == 0 else lines_covered / lines_valid,
-            branch_rate=branch_rate if branches_valid == 0 else branches_covered / branches_valid,
+            branch_rate=branch_rate
+            if branches_valid == 0
+            else branches_covered / branches_valid,
             lines_valid=lines_valid,
             lines_covered=lines_covered,
             branches_valid=branches_valid,
@@ -179,7 +185,9 @@ def print_coverage_table(
     for pkg in sorted_packages:
         is_enforced = pkg.name in ENFORCED_MODULES
         enforced_marker = "[ENFORCED] " if is_enforced else ""
-        line_cov = format_coverage_value(pkg.line_coverage_percent, threshold, is_enforced)
+        line_cov = format_coverage_value(
+            pkg.line_coverage_percent, threshold, is_enforced
+        )
         lines_info = f"{pkg.lines_covered}/{pkg.lines_valid}"
         package_label = f"{enforced_marker}{pkg.name}"
 
@@ -217,11 +225,15 @@ def check_coverage(xml_path: str, threshold: float) -> bool:
 
     # Report results
     if missing_modules:
-        print(f"\n❌ FAILED: Enforced modules not found in coverage report: {', '.join(missing_modules)}")
+        print(
+            f"\n❌ FAILED: Enforced modules not found in coverage report: {', '.join(missing_modules)}"
+        )
         return False
 
     if failed_modules:
-        print(f"\n❌ FAILED: The following enforced modules are below {threshold}% coverage threshold:")
+        print(
+            f"\n❌ FAILED: The following enforced modules are below {threshold}% coverage threshold:"
+        )
         for module in failed_modules:
             print(f"   - {module}")
         print("\nTo fix: Add more tests to improve coverage for the failing modules.")
@@ -230,7 +242,9 @@ def check_coverage(xml_path: str, threshold: float) -> bool:
     if ENFORCED_MODULES:
         found_enforced = [m for m in ENFORCED_MODULES if m in packages]
         if found_enforced:
-            print(f"\n✅ PASSED: All enforced modules meet the {threshold}% coverage threshold.")
+            print(
+                f"\n✅ PASSED: All enforced modules meet the {threshold}% coverage threshold."
+            )
 
     return True
 
