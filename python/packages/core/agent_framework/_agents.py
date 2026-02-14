@@ -618,9 +618,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         description: str | None = None,
         tools: FunctionTool
         | Callable[..., Any]
-        | MutableMapping[str, Any]
+        | Mapping[str, Any]
         | Any
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
+        | Sequence[FunctionTool | Callable[..., Any] | Mapping[str, Any] | Any]
         | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
@@ -670,8 +670,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         tools_ = cast(
             FunctionTool
             | Callable[..., Any]
-            | MutableMapping[str, Any]
-            | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
+            | Mapping[str, Any]
+            | list[FunctionTool | Callable[..., Any] | Mapping[str, Any]]
             | None,
             tools_,
         )
@@ -681,7 +681,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         # We ignore the MCP Servers here and store them separately,
         # we add their functions to the tools list at runtime
-        normalized_tools: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
+        normalized_tools: list[FunctionTool | Callable[..., Any] | Mapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
             [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]  # type: ignore[list-item]
         )
         self.mcp_tools: list[MCPTool] = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]  # type: ignore[misc]
@@ -769,9 +769,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         session: AgentSession | None = None,
         tools: FunctionTool
         | Callable[..., Any]
-        | MutableMapping[str, Any]
+        | Mapping[str, Any]
         | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
+        | list[FunctionTool | Callable[..., Any] | Mapping[str, Any] | Any]
         | None = None,
         options: ChatOptions[ResponseModelBoundT],
         **kwargs: Any,
@@ -786,9 +786,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         session: AgentSession | None = None,
         tools: FunctionTool
         | Callable[..., Any]
-        | MutableMapping[str, Any]
+        | Mapping[str, Any]
         | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
+        | list[FunctionTool | Callable[..., Any] | Mapping[str, Any] | Any]
         | None = None,
         options: OptionsCoT | ChatOptions[None] | None = None,
         **kwargs: Any,
@@ -803,9 +803,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         session: AgentSession | None = None,
         tools: FunctionTool
         | Callable[..., Any]
-        | MutableMapping[str, Any]
+        | Mapping[str, Any]
         | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
+        | list[FunctionTool | Callable[..., Any] | Mapping[str, Any] | Any]
         | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
@@ -819,9 +819,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         session: AgentSession | None = None,
         tools: FunctionTool
         | Callable[..., Any]
-        | MutableMapping[str, Any]
+        | Mapping[str, Any]
         | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
+        | list[FunctionTool | Callable[..., Any] | Mapping[str, Any] | Any]
         | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
@@ -1004,9 +1004,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         session: AgentSession | None,
         tools: FunctionTool
         | Callable[..., Any]
-        | MutableMapping[str, Any]
+        | Mapping[str, Any]
         | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
+        | list[FunctionTool | Callable[..., Any] | Mapping[str, Any] | Any]
         | None,
         options: Mapping[str, Any] | None,
         kwargs: dict[str, Any],
@@ -1037,7 +1037,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         )
 
         # Normalize tools
-        normalized_tools: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any] = (
+        normalized_tools: list[FunctionTool | Callable[..., Any] | Mapping[str, Any] | Any] = (
             [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]
         )
         agent_name = self._get_agent_name()
@@ -1347,9 +1347,9 @@ class Agent(
         description: str | None = None,
         tools: FunctionTool
         | Callable[..., Any]
-        | MutableMapping[str, Any]
+        | Mapping[str, Any]
         | Any
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
+        | Sequence[FunctionTool | Callable[..., Any] | Mapping[str, Any] | Any]
         | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
