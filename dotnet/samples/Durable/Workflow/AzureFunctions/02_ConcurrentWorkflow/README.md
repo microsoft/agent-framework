@@ -9,6 +9,7 @@ This sample demonstrates how to use the Microsoft Agent Framework to create an A
 - Concurrent execution of multiple AI agents (physics and chemistry experts)
 - Response aggregation from parallel branches into a unified result
 - Durable orchestration with automatic checkpointing and resumption from failures
+- Viewing workflow execution history and status in the Durable Task Scheduler (DTS) dashboard
 
 ## Workflow
 
@@ -71,3 +72,9 @@ In the function app logs, you will see the fan-out/fan-in execution pattern:
 ```
 
 The Physicist and Chemist AI agents execute concurrently, and the Aggregator combines their responses into a formatted expert panel result.
+
+### Viewing Workflows in the DTS Dashboard
+
+After running a workflow, you can navigate to the Durable Task Scheduler (DTS) dashboard to visualize the completed orchestration, inspect inputs/outputs for each step, and view execution history.
+
+If you are using the DTS emulator, the dashboard is available at `http://localhost:8082`.

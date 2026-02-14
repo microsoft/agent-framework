@@ -133,6 +133,8 @@ public static class FunctionsApplicationBuilderExtensions
                         DurableWorkflowRunner runner = functionContext.InstanceServices.GetRequiredService<DurableWorkflowRunner>();
                         ILogger logger = orchestrationContext.CreateReplaySafeLogger(orchestrationFunctionName);
 
+                        // ConfigureAwait(true) is required to preserve the orchestration context
+                        // across awaits, which the Durable Task framework uses for replay.
                         return await runner.RunWorkflowOrchestrationAsync(orchestrationContext, input, logger).ConfigureAwait(true);
                     });
             }

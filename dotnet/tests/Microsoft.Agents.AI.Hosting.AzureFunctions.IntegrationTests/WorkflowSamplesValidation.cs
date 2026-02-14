@@ -339,6 +339,8 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
             string openAiDeployment = s_configuration["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"] ??
                 throw new InvalidOperationException("The required AZURE_OPENAI_CHAT_DEPLOYMENT_NAME env variable is not set.");
 
+            this._outputHelper.WriteLine($"Using Azure OpenAI endpoint: {openAiEndpoint}, deployment: {openAiDeployment}");
+
             startInfo.EnvironmentVariables["AZURE_OPENAI_ENDPOINT"] = openAiEndpoint;
             startInfo.EnvironmentVariables["AZURE_OPENAI_DEPLOYMENT"] = openAiDeployment;
         }

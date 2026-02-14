@@ -7,7 +7,9 @@ This sample demonstrates how to use the Microsoft Agent Framework to create an A
 - Defining workflows with sequential executor chains using `WorkflowBuilder`
 - Sharing executors across multiple workflows (the `OrderLookup` executor is used by both workflows)
 - Registering workflows with the Function app using `ConfigureDurableWorkflows`
+- Durable orchestration ensuring workflows survive process restarts and failures
 - Starting workflows via HTTP requests
+- Viewing workflow execution history and status in the Durable Task Scheduler (DTS) dashboard
 
 ## Workflows
 
@@ -80,3 +82,9 @@ The `OrderStatus` workflow reuses the same `OrderLookup` executor and then gener
 │ [Activity] StatusReport: Generating report for order '12345'
 │ [Activity] StatusReport: ✓ Order 12345 for Jerry: Status=Active, Date=2025-01-01
 ```
+
+### Viewing Workflows in the DTS Dashboard
+
+After running a workflow, you can navigate to the Durable Task Scheduler (DTS) dashboard to visualize the completed orchestration, inspect inputs/outputs for each step, and view execution history.
+
+If you are using the DTS emulator, the dashboard is available at `http://localhost:8082`.

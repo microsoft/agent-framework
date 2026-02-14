@@ -212,8 +212,7 @@ public static class ServiceCollectionExtensions
         if (clientBuilder is not null)
         {
             services.AddDurableTaskClient(clientBuilder);
-            services.TryAddSingleton<DurableWorkflowClient>();
-            services.TryAddSingleton<IWorkflowClient>(sp => sp.GetRequiredService<DurableWorkflowClient>());
+            services.TryAddSingleton<IWorkflowClient, DurableWorkflowClient>();
             services.TryAddSingleton<IDurableAgentClient, DefaultDurableAgentClient>();
         }
 

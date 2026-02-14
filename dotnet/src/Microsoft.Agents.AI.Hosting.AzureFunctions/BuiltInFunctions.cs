@@ -7,6 +7,7 @@ using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
 using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Worker.Grpc;
 using Microsoft.Extensions.AI;
@@ -50,10 +51,14 @@ internal static class BuiltInFunctions
         }
 
         DurableWorkflowInput<string> orchestrationInput = new() { Input = inputMessage };
-        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, orchestrationInput);
+
+        // Allow users to provide a custom instance ID via query string; otherwise, auto-generate one.
+        string? instanceId = req.Query["instanceId"];
+        StartOrchestrationOptions? options = instanceId is not null ? new StartOrchestrationOptions(instanceId) : null;
+        string resolvedInstanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, orchestrationInput, options);
 
         HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
-        await response.WriteStringAsync($"Workflow orchestration started for {workflowName}. Orchestration instanceId: {instanceId}");
+        await response.WriteStringAsync($"Workflow orchestration started for {workflowName}. Orchestration instanceId: {resolvedInstanceId}");
         return response;
     }
 

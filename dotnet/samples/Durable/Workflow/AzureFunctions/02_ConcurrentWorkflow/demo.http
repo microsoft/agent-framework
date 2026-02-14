@@ -6,3 +6,9 @@ POST {{authority}}/api/workflows/ExpertReview/run
 Content-Type: text/plain
 
 What is temperature?
+
+### Start with a custom instance ID
+POST {{authority}}/api/workflows/ExpertReview/run?instanceId=my-review-123
+Content-Type: text/plain
+
+What is gravity?
