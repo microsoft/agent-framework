@@ -356,3 +356,31 @@ class TestAGUIChatClient:
         response = await client.inner_get_response(messages=messages, options=chat_options)
 
         assert response is not None
+
+    async def test_interrupt_options_transmission(self, monkeypatch: MonkeyPatch) -> None:
+        """Interrupt option fields are forwarded to the HTTP service."""
+        available_interrupts = [{"id": "req_1", "type": "request_info"}]
+        resume_payload = {"interrupts": [{"id": "req_1", "value": "approved"}]}
+
+        mock_events = [
+            {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+            {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+        ]
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            assert kwargs.get("available_interrupts") == available_interrupts
+            assert kwargs.get("resume") == resume_payload
+            for event in mock_events:
+                yield event
+
+        client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        messages = [Message(role="user", text="continue")]
+        options = {
+            "available_interrupts": available_interrupts,
+            "resume": resume_payload,
+        }
+
+        response = await client.inner_get_response(messages=messages, options=options)
+        assert response is not None
