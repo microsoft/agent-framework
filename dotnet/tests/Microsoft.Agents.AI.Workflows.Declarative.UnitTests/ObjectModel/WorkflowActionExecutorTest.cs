@@ -113,6 +113,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     internal sealed class TestWorkflowExecutor() : Executor<WorkflowFormulaState>("test_workflow")
     {
+        [SendsMessage(typeof(ActionExecutorResult))]
         public override async ValueTask HandleAsync(WorkflowFormulaState message, IWorkflowContext context, CancellationToken cancellationToken) =>
             await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
     }

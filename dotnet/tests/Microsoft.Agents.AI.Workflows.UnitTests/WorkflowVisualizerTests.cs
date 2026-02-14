@@ -9,14 +9,16 @@ public class WorkflowVisualizerTests
 {
     private sealed class MockExecutor(string id) : Executor(id)
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder.AddHandler<string>((msg, ctx) => ctx.SendMessageAsync(msg));
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+            => protocolBuilder.ConfigureRoutes(routeBuilder =>
+                                               routeBuilder.AddHandler<string>((msg, ctx) => ctx.SendMessageAsync(msg)));
     }
 
     private sealed class ListStrTargetExecutor(string id) : Executor(id)
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder.AddHandler<string[]>((msgs, ctx) => ctx.SendMessageAsync(string.Join(",", msgs)));
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+            => protocolBuilder.ConfigureRoutes(routeBuilder =>
+                                               routeBuilder.AddHandler<string[]>((msgs, ctx) => ctx.SendMessageAsync(string.Join(",", msgs))));
     }
 
     [Fact]

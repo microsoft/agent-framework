@@ -12,22 +12,25 @@ internal sealed class DynamicPortsExecutor<TRequest, TResponse>(string id, param
 
     public ConcurrentDictionary<string, ConcurrentQueue<TResponse>> ReceivedResponses { get; } = new();
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        foreach (string portId in ports)
+        return protocolBuilder.ConfigureRoutes(ConfigureRoutes);
+
+        void ConfigureRoutes(RouteBuilder routeBuilder)
         {
-            routeBuilder = routeBuilder
-                .AddPortHandler<TRequest, TResponse>(portId,
-                    (response, context, cancellationToken) =>
-                    {
-                        this.ReceivedResponses.GetOrAdd(portId, _ => new()).Enqueue(response);
-                        return default;
-                    }, out PortBinding? binding);
+            foreach (string portId in ports)
+            {
+                routeBuilder = routeBuilder
+                    .AddPortHandler<TRequest, TResponse>(portId,
+                        (response, context, cancellationToken) =>
+                        {
+                            this.ReceivedResponses.GetOrAdd(portId, _ => new()).Enqueue(response);
+                            return default;
+                        }, out PortBinding? binding);
 
-            this.PortBindings[portId] = binding;
+                this.PortBindings[portId] = binding;
+            }
         }
-
-        return routeBuilder;
     }
 
     public ValueTask PostRequestAsync(string portId, TRequest request, TestRunContext testContext, string? requestId = null)

@@ -19,7 +19,7 @@ public class RepresentationTests
 {
     private sealed class TestExecutor() : Executor("TestExecutor")
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) => routeBuilder;
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) => protocolBuilder;
     }
 
     private sealed class TestAgent : AIAgent

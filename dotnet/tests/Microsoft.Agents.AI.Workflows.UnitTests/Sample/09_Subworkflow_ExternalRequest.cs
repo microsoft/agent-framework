@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -256,6 +257,22 @@ internal static class Step9EntryPoint
 
         await workflowRun.ResumeAsync(responses: responses).ConfigureAwait(false);
         runStatus = await workflowRun.GetStatusAsync();
+        List<Exception?> errors = workflowRun.OutgoingEvents.OfType<WorkflowErrorEvent>()
+                                                            .Select(errorEvent => errorEvent.Exception)
+                                                            .Where(e => e is not null).ToList();
+        if (errors.Count > 0)
+        {
+            StringBuilder errorBuilder = new();
+            errorBuilder.AppendLine($"Workflow execution failed. ({errors.Count} errors.):");
+
+            foreach (Exception? error in errors)
+            {
+                errorBuilder.Append('\t').AppendLine(error!.ToString());
+            }
+
+            Assert.Fail(errorBuilder.ToString());
+        }
+
         runStatus.Should().Be(RunStatus.Idle);
 
         results = finishedRequests;
@@ -277,18 +294,26 @@ internal static class Step9EntryPoint
 
 internal sealed class ResourceRequestor() : Executor(nameof(ResourceRequestor), declareCrossRunShareable: true)
 {
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        return routeBuilder.AddHandler<List<UserRequest>>(this.RequestResourcesAsync)
-                           .AddHandler<UserRequest>(InvokeResourceRequestAsync)
-                           .AddHandler<ResourceResponse>(this.HandleResponseAsync)
-                           .AddHandler<PolicyResponse>(this.HandleResponseAsync);
+        return protocolBuilder.ConfigureRoutes(ConfigureRoutes)
+                              .SendsMessage<ResourceRequest>()
+                              .SendsMessage<PolicyCheckRequest>()
+                              .YieldsOutput<RequestFinished>();
 
-        // For some reason, using a lambda here causes the analyzer to generate a spurious
-        // VSTHRD110: "Observe the awaitable result of this method call by awaiting it, assigning
-        // to a variable, or passing it to another method"
-        ValueTask InvokeResourceRequestAsync(UserRequest request, IWorkflowContext context)
-            => this.RequestResourcesAsync([request], context);
+        void ConfigureRoutes(RouteBuilder routeBuilder)
+        {
+            routeBuilder.AddHandler<List<UserRequest>>(this.RequestResourcesAsync)
+                        .AddHandler<UserRequest>(InvokeResourceRequestAsync)
+                        .AddHandler<ResourceResponse>(this.HandleResponseAsync)
+                        .AddHandler<PolicyResponse>(this.HandleResponseAsync);
+
+            // For some reason, using a lambda here causes the analyzer to generate a spurious
+            // VSTHRD110: "Observe the awaitable result of this method call by awaiting it, assigning
+            // to a variable, or passing it to another method"
+            ValueTask InvokeResourceRequestAsync(UserRequest request, IWorkflowContext context)
+                => this.RequestResourcesAsync([request], context);
+        }
     }
 
     private async ValueTask RequestResourcesAsync(List<UserRequest> requests, IWorkflowContext context)
@@ -332,12 +357,17 @@ internal sealed class ResourceCache()
             ["disk"] = 100,
         };
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        // Note the disbalance here - we could also handle ExternalResponse here instead, but we would have
-        // to do the exact same type check on it, so we might as well handle
-        return routeBuilder.AddHandler<ExternalRequest>(this.UnwrapAndHandleRequestAsync)
-                           .AddHandler<ExternalResponse>(this.CollectResultAsync);
+        return protocolBuilder.ConfigureRoutes(ConfigureRoutes);
+
+        void ConfigureRoutes(RouteBuilder routeBuilder)
+        {
+            // Note the disbalance here - we could also handle ExternalResponse here instead, but we would have
+            // to do the exact same type check on it, so we might as well handle
+            routeBuilder.AddHandler<ExternalRequest>(this.UnwrapAndHandleRequestAsync)
+                        .AddHandler<ExternalResponse>(this.CollectResultAsync);
+        }
     }
 
     private async ValueTask UnwrapAndHandleRequestAsync(ExternalRequest request, IWorkflowContext context, CancellationToken cancellationToken = default)
@@ -414,10 +444,17 @@ internal sealed class QuotaPolicyEngine()
             ["disk"] = 1000,
         };
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        return routeBuilder.AddHandler<ExternalRequest>(this.UnwrapAndHandleRequestAsync)
-                           .AddHandler<ExternalResponse>(this.CollectAndForwardAsync);
+        return protocolBuilder.ConfigureRoutes(ConfigureRoutes);
+
+        void ConfigureRoutes(RouteBuilder routeBuilder)
+        {
+            // Note the disbalance here - we could also handle ExternalResponse here instead, but we would have
+            // to do the exact same type check on it, so we might as well handle
+            routeBuilder.AddHandler<ExternalRequest>(this.UnwrapAndHandleRequestAsync)
+                        .AddHandler<ExternalResponse>(this.CollectAndForwardAsync);
+        }
     }
 
     private async ValueTask UnwrapAndHandleRequestAsync(ExternalRequest request, IWorkflowContext context)
@@ -483,17 +520,24 @@ internal sealed class Coordinator() : Executor(nameof(Coordinator), declareCross
 {
     private const string StateKey = nameof(StateKey);
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        return routeBuilder.AddHandler<List<UserRequest>>(this.StartAsync)
-                           .AddHandler<UserRequest>(InvokeStartAsync)
-                           .AddHandler<RequestFinished>(this.HandleFinishedRequestAsync);
+        return protocolBuilder.ConfigureRoutes(ConfigureRoutes)
+                              .SendsMessage<UserRequest>()
+                              .YieldsOutput<RequestFinished>();
 
-        // For some reason, using a lambda here causes the analyzer to generate a spurious
-        // VSTHRD110: "Observe the awaitable result of this method call by awaiting it, assigning
-        // to a variable, or passing it to another method"
-        ValueTask InvokeStartAsync(UserRequest request, IWorkflowContext context, CancellationToken cancellationToken)
-            => this.StartAsync([request], context, cancellationToken);
+        void ConfigureRoutes(RouteBuilder routeBuilder)
+        {
+            routeBuilder.AddHandler<List<UserRequest>>(this.StartAsync)
+                        .AddHandler<UserRequest>(InvokeStartAsync)
+                        .AddHandler<RequestFinished>(this.HandleFinishedRequestAsync);
+
+            // For some reason, using a lambda here causes the analyzer to generate a spurious
+            // VSTHRD110: "Observe the awaitable result of this method call by awaiting it, assigning
+            // to a variable, or passing it to another method"
+            ValueTask InvokeStartAsync(UserRequest request, IWorkflowContext context, CancellationToken cancellationToken)
+                => this.StartAsync([request], context, cancellationToken);
+        }
     }
 
     private ValueTask HandleFinishedRequestAsync(RequestFinished finished, IWorkflowContext context, CancellationToken cancellationToken)

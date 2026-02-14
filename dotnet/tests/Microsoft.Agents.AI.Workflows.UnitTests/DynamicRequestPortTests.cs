@@ -21,7 +21,7 @@ public class DynamicRequestPortTests
         public RequestPortTestContext()
         {
             this.Executor = new(ExecutorId, PortId);
-            this.Executor.Configure(this.ExternalRequestContext);
+            this.Executor.AttachRequestContext(this.ExternalRequestContext);
         }
 
         public TestRunContext RunContext { get; } = new();
