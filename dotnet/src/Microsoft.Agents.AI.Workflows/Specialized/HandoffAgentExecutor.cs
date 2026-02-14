@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -69,7 +70,15 @@ internal sealed class HandoffAgentExecutor(
 
             List<ChatMessage>? roleChanges = allMessages.ChangeAssistantToUserForOtherParticipants(this._agent.Name ?? this._agent.Id);
 
-            await foreach (var update in this._agent.RunStreamingAsync(allMessages,
+            // If a handoff was invoked by a previous agent, filter out the handoff function
+            // call and tool result messages before sending to the underlying agent. These
+            // are internal workflow mechanics that confuse the target model into ignoring the
+            // original user question.
+            List<ChatMessage> messagesForAgent = handoffState.InvokedHandoff is not null
+                ? FilterHandoffMessages(allMessages)
+                : allMessages;
+
+            await foreach (var update in this._agent.RunStreamingAsync(messagesForAgent,
                                                                        options: this._agentOptions,
                                                                        cancellationToken: cancellationToken)
                                                      .ConfigureAwait(false))
@@ -113,6 +122,40 @@ internal sealed class HandoffAgentExecutor(
                 }
             }
         });
+
+    /// <summary>
+    /// Creates a filtered copy of the message list with handoff function call contents and
+    /// tool result messages removed, preserving any non-handoff content in mixed messages.
+    /// </summary>
+    private static List<ChatMessage> FilterHandoffMessages(List<ChatMessage> messages)
+    {
+        List<ChatMessage> filtered = [];
+        foreach (ChatMessage m in messages)
+        {
+            if (m.Role == ChatRole.Tool && m.Contents.Any(c => c is FunctionResultContent))
+            {
+                continue;
+            }
+
+            if (m.Role == ChatRole.Assistant && m.Contents.Any(c => c is FunctionCallContent))
+            {
+                List<AIContent> filteredContents = m.Contents
+                    .Where(c => c is not FunctionCallContent)
+                    .ToList();
+
+                if (filteredContents.Count > 0)
+                {
+                    filtered.Add(new ChatMessage(m.Role, filteredContents) { AuthorName = m.AuthorName });
+                }
+
+                continue;
+            }
+
+            filtered.Add(m);
+        }
+
+        return filtered;
+    }
 
     public ValueTask ResetAsync() => default;
 }
