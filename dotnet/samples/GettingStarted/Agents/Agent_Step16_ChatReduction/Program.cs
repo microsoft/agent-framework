@@ -38,18 +38,29 @@ Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session
 // Get the chat history to see how many messages are stored.
 // We can use the ChatHistoryProvider, that is also used by the agent, to read the
 // chat history from the session state, and see how the reducer is affecting the stored messages.
+// Here we expect to see 2 messages, the original user message and the agent response message.
 var provider = agent.GetService<InMemoryChatHistoryProvider>();
 List<ChatMessage>? chatHistory = provider?.GetMessages(session);
 Console.WriteLine($"\nChat history has {chatHistory?.Count} messages.\n");
 
 // Invoke the agent a few more times.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a robot.", session));
+
+// Now we expect to see 4 messages in the chat history, 2 input and 2 output.
+// While the target number of messages is 2, the default time for the InMemoryChatHistoryProvider
+// to trigger the reducer is just before messages are contributed to a new agent run.
+// So at this time, we have not yet triggered the reducer for the most recently added messages,
+// and they are still in the chat history.
+chatHistory = provider?.GetMessages(session);
 Console.WriteLine($"\nChat history has {chatHistory?.Count} messages.\n");
+
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a lemur.", session));
+chatHistory = provider?.GetMessages(session);
 Console.WriteLine($"\nChat history has {chatHistory?.Count} messages.\n");
 
 // At this point, the chat history has exceeded the limit and the original message will not exist anymore,
-// so asking a follow up question about it will not work as expected.
-Console.WriteLine(await agent.RunAsync("Tell me the joke about the pirate again, but add emojis and use the voice of a parrot.", session));
+// so asking a follow up question about it may not work as expected.
+Console.WriteLine(await agent.RunAsync("What was the first joke I asked you to tell again?", session));
 
+chatHistory = provider?.GetMessages(session);
 Console.WriteLine($"\nChat history has {chatHistory?.Count} messages.\n");
