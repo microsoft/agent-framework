@@ -486,7 +486,7 @@ class AnthropicClient(
 
         # Start with a copy of options, excluding keys we handle separately
         run_options: dict[str, Any] = {
-            k: v for k, v in options.items() if v is not None and k not in {"instructions", "response_format"}
+            k: v for k, v in options.items() if v is not None and k not in {"instructions", "response_format","allow_multiple_tool_calls"}
         }
 
         # Translation between options keys and Anthropic Messages API
