@@ -245,6 +245,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
     }
 
     private WorkflowInfo? _workflowInfoCache;
+    private CheckpointInfo? _lastCheckpointInfo;
     private readonly List<CheckpointInfo> _checkpoints = [];
     internal async ValueTask CheckpointAsync(CancellationToken cancellationToken = default)
     {
@@ -270,10 +271,10 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         RunnerStateData runnerData = await this.RunContext.ExportStateAsync().ConfigureAwait(false);
         Dictionary<ScopeKey, PortableValue> stateData = await this.RunContext.StateManager.ExportStateAsync().ConfigureAwait(false);
 
-        Checkpoint checkpoint = new(this.StepTracer.StepNumber, this._workflowInfoCache, runnerData, stateData, edgeData);
-        CheckpointInfo checkpointInfo = await this.CheckpointManager.CommitCheckpointAsync(this.RunId, checkpoint).ConfigureAwait(false);
-        this.StepTracer.TraceCheckpointCreated(checkpointInfo);
-        this._checkpoints.Add(checkpointInfo);
+        Checkpoint checkpoint = new(this.StepTracer.StepNumber, this._workflowInfoCache, runnerData, stateData, edgeData, this._lastCheckpointInfo);
+        this._lastCheckpointInfo = await this.CheckpointManager.CommitCheckpointAsync(this.RunId, checkpoint).ConfigureAwait(false);
+        this.StepTracer.TraceCheckpointCreated(this._lastCheckpointInfo);
+        this._checkpoints.Add(this._lastCheckpointInfo);
     }
 
     public async ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellationToken = default)
@@ -304,6 +305,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         await this.EdgeMap.ImportStateAsync(checkpoint).ConfigureAwait(false);
         await Task.WhenAll(executorNotifyTask, republishRequestsTask.AsTask()).ConfigureAwait(false);
 
+        this._lastCheckpointInfo = checkpointInfo;
         this.StepTracer.Reload(this.StepTracer.StepNumber);
     }
 
