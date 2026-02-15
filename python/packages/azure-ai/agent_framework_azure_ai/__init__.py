@@ -5,6 +5,7 @@ import importlib.metadata
 from ._agent_provider import AzureAIAgentsProvider
 from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions
 from ._client import AzureAIClient, AzureAIProjectAgentOptions, RawAzureAIClient
+from ._foundry_memory_provider import FoundryMemoryProvider
 from ._project_provider import AzureAIProjectAgentProvider
 from ._shared import AzureAISettings
 
@@ -21,6 +22,7 @@ __all__ = [
     "AzureAIProjectAgentOptions",
     "AzureAIProjectAgentProvider",
     "AzureAISettings",
+    "FoundryMemoryProvider",
     "RawAzureAIClient",
     "__version__",
 ]
