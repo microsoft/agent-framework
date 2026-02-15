@@ -1505,45 +1505,6 @@ class Message(SerializationMixin):
 AgentRunInputs = str | Content | Message | Sequence[str | Content | Message]
 
 
-def prepare_messages(
-    messages: AgentRunInputs,
-    system_instructions: str | Sequence[str] | None = None,
-) -> list[Message]:
-    """Convert various message input formats into a list of Message objects.
-
-    Args:
-        messages: The input messages in various supported formats. Can be:
-            - A string (converted to a user message)
-            - A Content object (wrapped in a user Message)
-            - A Message object
-            - A sequence containing any mix of the above
-        system_instructions: The system instructions. They will be inserted to the start of the messages list.
-
-    Returns:
-        A list of Message objects.
-    """
-    if system_instructions is not None:
-        if isinstance(system_instructions, str):
-            system_instructions = [system_instructions]
-        system_instruction_messages = [Message("system", [instr]) for instr in system_instructions]
-    else:
-        system_instruction_messages = []
-
-    if isinstance(messages, str):
-        return [*system_instruction_messages, Message("user", [messages])]
-    if isinstance(messages, Content):
-        return [*system_instruction_messages, Message("user", [messages])]
-    if isinstance(messages, Message):
-        return [*system_instruction_messages, messages]
-
-    return_messages: list[Message] = system_instruction_messages
-    for msg in messages:
-        if isinstance(msg, (str, Content)):
-            msg = Message("user", [msg])
-        return_messages.append(msg)
-    return return_messages
-
-
 def normalize_messages(
     messages: AgentRunInputs | None = None,
 ) -> list[Message]:

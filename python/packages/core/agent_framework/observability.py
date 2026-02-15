@@ -1619,9 +1619,9 @@ def _capture_messages(
     finish_reason: FinishReason | None = None,
 ) -> None:
     """Log messages with extra information."""
-    from ._types import prepare_messages
+    from ._types import normalize_messages, prepend_instructions_to_messages
 
-    prepped = prepare_messages(messages, system_instructions=system_instructions)
+    prepped = prepend_instructions_to_messages(normalize_messages(messages), system_instructions)
     otel_messages: list[dict[str, Any]] = []
     for index, message in enumerate(prepped):
         # Reuse the otel message representation for logging instead of calling to_dict()
