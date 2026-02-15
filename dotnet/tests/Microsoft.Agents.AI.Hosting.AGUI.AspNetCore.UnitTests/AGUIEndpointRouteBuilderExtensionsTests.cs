@@ -192,6 +192,165 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     }
 
     [Fact]
+    public async Task MapAGUIAgent_ReordersToolMessages_ToFollowAssistantToolCallsAsync()
+    {
+        // Arrange
+        List<ChatMessage>? capturedMessages = null;
+        AIAgent factory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement props)
+        {
+            capturedMessages = messages.ToList();
+            return new TestAgent();
+        }
+
+        AGUIAssistantMessage assistant1 = new() { Id = "a1", Content = "assistant 1", ToolCalls = [new AGUIToolCall { Id = "call_1" }] };
+        AGUIToolMessage tool1 = new() { Id = "t1", Content = "tool 1", ToolCallId = "call_1" };
+        AGUIAssistantMessage assistant2 = new() { Id = "a2", Content = "assistant 2", ToolCalls = [new AGUIToolCall { Id = "call_2" }] };
+        AGUIToolMessage tool2 = new() { Id = "t2", Content = "tool 2", ToolCallId = "call_2" };
+
+        DefaultHttpContext httpContext = new();
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread1",
+            RunId = "run1",
+            Messages = [assistant1, assistant2, tool1, tool2]
+        };
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        httpContext.Response.Body = new MemoryStream();
+
+        RequestDelegate handler = this.CreateRequestDelegate(factory);
+
+        // Act
+        await handler(httpContext);
+
+        // Assert
+        Assert.NotNull(capturedMessages);
+        // Expect order: assistant1, tool1, assistant2, tool2
+        Assert.Equal(ChatRole.Assistant, capturedMessages![0].Role);
+        Assert.Equal(ChatRole.Tool, capturedMessages![1].Role);
+        Assert.Equal(ChatRole.Assistant, capturedMessages![2].Role);
+        Assert.Equal(ChatRole.Tool, capturedMessages![3].Role);
+    }
+
+    [Fact]
+    public async Task MapAGUIAgent_HandlesMultipleToolCalls_InSingleAssistantMessageAsync()
+    {
+        // Arrange
+        List<ChatMessage>? capturedMessages = null;
+        AIAgent factory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement props)
+        {
+            capturedMessages = messages.ToList();
+            return new TestAgent();
+        }
+
+        AGUIAssistantMessage assistant = new()
+        {
+            Id = "a1",
+            Content = "assistant",
+            ToolCalls = [
+                new AGUIToolCall { Id = "call_1" },
+                new AGUIToolCall { Id = "call_2" }
+            ]
+        };
+        AGUIToolMessage tool1 = new() { Id = "t1", Content = "tool 1", ToolCallId = "call_1" };
+        AGUIToolMessage tool2 = new() { Id = "t2", Content = "tool 2", ToolCallId = "call_2" };
+
+        DefaultHttpContext httpContext = new();
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread1",
+            RunId = "run1",
+            Messages = [assistant, tool2, tool1]
+        };
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        httpContext.Response.Body = new MemoryStream();
+
+        RequestDelegate handler = this.CreateRequestDelegate(factory);
+
+        // Act
+        await handler(httpContext);
+
+        // Assert
+        Assert.NotNull(capturedMessages);
+        // Expect order: assistant, tool1, tool2
+        Assert.Equal(ChatRole.Assistant, capturedMessages![0].Role);
+        Assert.Equal(ChatRole.Tool, capturedMessages![1].Role);
+        Assert.Equal(ChatRole.Tool, capturedMessages![2].Role);
+    }
+
+    [Fact]
+    public async Task MapAGUIAgent_ToolMessagesWithoutMatchingIds_AreAppendedAtEndAsync()
+    {
+        // Arrange
+        List<ChatMessage>? capturedMessages = null;
+        AIAgent factory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement props)
+        {
+            capturedMessages = messages.ToList();
+            return new TestAgent();
+        }
+
+        AGUIAssistantMessage assistant = new() { Id = "a1", Content = "assistant", ToolCalls = [new AGUIToolCall { Id = "call_1" }] };
+        AGUIToolMessage toolMatched = new() { Id = "tm", Content = "tool matched", ToolCallId = "call_1" };
+        AGUIToolMessage toolUnmatched = new() { Id = "tu", Content = "tool unmatched", ToolCallId = "missing" };
+
+        DefaultHttpContext httpContext = new();
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread1",
+            RunId = "run1",
+            Messages = [assistant, toolUnmatched, toolMatched]
+        };
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        httpContext.Response.Body = new MemoryStream();
+
+        RequestDelegate handler = this.CreateRequestDelegate(factory);
+
+        // Act
+        await handler(httpContext);
+
+        // Assert
+        Assert.NotNull(capturedMessages);
+        // Expect order: assistant, toolMatched, toolUnmatched (at end)
+        Assert.Equal(ChatRole.Assistant, capturedMessages![0].Role);
+        Assert.Equal(ChatRole.Tool, capturedMessages![1].Role);
+        Assert.Equal(ChatRole.Tool, capturedMessages![2].Role);
+    }
+
+    [Fact]
+    public async Task MapAGUIAgent_FixToolMessageOrdering_HandlesNullOrEmptyMessagesAsync()
+    {
+        // Arrange
+        List<ChatMessage>? capturedMessages = null;
+        AIAgent factory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement props)
+        {
+            capturedMessages = messages.ToList();
+            return new TestAgent();
+        }
+
+        DefaultHttpContext httpContext = new();
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread1",
+            RunId = "run1",
+            Messages = []
+        };
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        httpContext.Response.Body = new MemoryStream();
+
+        RequestDelegate handler = this.CreateRequestDelegate(factory);
+
+        // Act
+        await handler(httpContext);
+
+        // Assert
+        Assert.NotNull(capturedMessages);
+        Assert.Empty(capturedMessages);
+    }
+
+    [Fact]
     public async Task MapAGUIAgent_ProducesValidAGUIEventStream_WithRunStartAndFinishAsync()
     {
         // Arrange
@@ -487,7 +646,11 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
                 return;
             }
 
-            IEnumerable<ChatMessage> messages = input.Messages.AsChatMessages(AGUIJsonSerializerContext.Default.Options);
+            // Use shared reorder helper to mirror production MapAGUI behavior
+            List<AGUIMessage> aguiMessages = input.Messages?.ToList() ?? new List<AGUIMessage>();
+            AGUIEndpointRouteBuilderExtensions.FixToolMessageOrdering(aguiMessages);
+
+            IEnumerable<ChatMessage> messages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options);
             IEnumerable<KeyValuePair<string, string>> contextValues = input.Context.Select(c => new KeyValuePair<string, string>(c.Description, c.Value));
             JsonElement forwardedProps = input.ForwardedProperties;
             AIAgent agent = factory(messages, [], contextValues, forwardedProps);
