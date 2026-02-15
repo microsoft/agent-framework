@@ -111,7 +111,7 @@ class FoundryMemoryProvider(BaseContextProvider):
         3. Combines and injects memories into the context
         """
         # On first run, retrieve static memories (user profile memories)
-        if not self._static_memories and "foundry_memory_initialized" not in state:
+        if "foundry_memory_initialized" not in state:
             try:
                 static_search_result = await self.project_client.memory_stores.search_memories(
                     name=self.memory_store_name,
@@ -122,17 +122,20 @@ class FoundryMemoryProvider(BaseContextProvider):
                     for memory in getattr(static_search_result, "memories", [])
                     if memory.get("content")
                 ]
-                state["foundry_memory_initialized"] = True
             except Exception as e:
                 # Log but don't fail - memory retrieval is non-critical
                 from agent_framework import get_logger
 
                 logger = get_logger("agent_framework.azure")
                 logger.warning(f"Failed to retrieve static memories: {e}")
+            finally:
+                # Mark as initialized regardless of success to avoid repeated attempts
+                state["foundry_memory_initialized"] = True
 
         # Search for contextual memories based on input messages
-        input_text = "\n".join(msg.text for msg in context.input_messages if msg and msg.text and msg.text.strip())
-        if not input_text.strip():
+        # Check if there are any non-empty input messages
+        has_input = any(msg and msg.text and msg.text.strip() for msg in context.input_messages)
+        if not has_input:
             return
 
         # Convert input messages to ItemParam format for search
