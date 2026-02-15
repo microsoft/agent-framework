@@ -75,7 +75,7 @@ internal sealed class DurableWorkflowRunner
     /// Initializes a new instance of the <see cref="DurableWorkflowRunner"/> class.
     /// </summary>
     /// <param name="durableOptions">The durable options containing workflow configurations.</param>
-    internal DurableWorkflowRunner(DurableOptions durableOptions)
+    public DurableWorkflowRunner(DurableOptions durableOptions)
     {
         ArgumentNullException.ThrowIfNull(durableOptions);
 
@@ -144,8 +144,16 @@ internal sealed class DurableWorkflowRunner
     {
         SuperstepState state = new(workflow, edgeMap);
 
-        // Convert input to string for the message queue - serialize if not already a string
-        string inputString = initialInput is string s ? s : JsonSerializer.Serialize(initialInput);
+        // Convert input to string for the message queue.
+        // When DurableWorkflowInput<string> is deserialized as DurableWorkflowInput<object>,
+        // the Input property becomes a JsonElement instead of a string.
+        // We must extract the raw string value to avoid double-serialization.
+        string inputString = initialInput switch
+        {
+            string s => s,
+            JsonElement je when je.ValueKind == JsonValueKind.String => je.GetString() ?? string.Empty,
+            _ => JsonSerializer.Serialize(initialInput)
+        };
 
         edgeMap.EnqueueInitialInput(inputString, state.MessageQueues);
 

@@ -1,0 +1,26 @@
+# Default endpoint address for local testing
+@authority=http://localhost:7071
+
+### Cancel an order
+POST {{authority}}/api/workflows/CancelOrder/run
+Content-Type: text/plain
+
+12345
+
+### Cancel an order with a custom run ID
+POST {{authority}}/api/workflows/CancelOrder/run?runId=my-custom-id-123
+Content-Type: text/plain
+
+99999
+
+### Get order status (shares OrderLookup executor with CancelOrder)
+POST {{authority}}/api/workflows/OrderStatus/run
+Content-Type: text/plain
+
+12345
+
+### Batch cancel orders with a complex JSON input
+POST {{authority}}/api/workflows/BatchCancelOrders/run
+Content-Type: application/json
+
+{"orderIds": ["1001", "1002", "1003"], "reason": "Customer requested cancellation", "notifyCustomers": true}

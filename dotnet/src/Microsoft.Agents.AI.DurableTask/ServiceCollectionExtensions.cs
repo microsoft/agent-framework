@@ -197,24 +197,27 @@ public static class ServiceCollectionExtensions
 
         // Configure Durable Task Worker - capture sharedOptions reference in closure.
         // The options object is populated by all Configure* calls before the worker starts.
-        services.AddDurableTaskWorker(builder =>
-        {
-            workerBuilder?.Invoke(builder);
 
-            builder.AddTasks(registry => RegisterTasksFromOptions(registry, sharedOptions));
-        });
+        if (workerBuilder is not null)
+        {
+            services.AddDurableTaskWorker(builder =>
+            {
+                workerBuilder?.Invoke(builder);
+
+                builder.AddTasks(registry => RegisterTasksFromOptions(registry, sharedOptions));
+            });
+        }
 
         // Configure Durable Task Client
         if (clientBuilder is not null)
         {
             services.AddDurableTaskClient(clientBuilder);
+            services.TryAddSingleton<IWorkflowClient, DurableWorkflowClient>();
+            services.TryAddSingleton<IDurableAgentClient, DefaultDurableAgentClient>();
         }
 
         // Register workflow and agent services
-        services.TryAddSingleton<DurableWorkflowClient>();
-        services.TryAddSingleton<IWorkflowClient>(sp => sp.GetRequiredService<DurableWorkflowClient>());
         services.TryAddSingleton<DataConverter, DurableDataConverter>();
-        services.TryAddSingleton<IDurableAgentClient, DefaultDurableAgentClient>();
 
         // Register agent factories resolver - returns factories from the shared options
         services.TryAddSingleton(
