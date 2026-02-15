@@ -23,7 +23,6 @@ from .._types import (
     AgentResponse,
     AgentResponseUpdate,
     AgentRunInputs,
-    AgentRunInputsOrNone,
     Content,
     Message,
     ResponseStream,
@@ -147,7 +146,7 @@ class WorkflowAgent(BaseAgent):
     @overload
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -159,7 +158,7 @@ class WorkflowAgent(BaseAgent):
     @overload
     async def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -170,7 +169,7 @@ class WorkflowAgent(BaseAgent):
 
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,

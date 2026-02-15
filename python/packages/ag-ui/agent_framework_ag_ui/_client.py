@@ -277,7 +277,6 @@ class AGUIChatClient(
         registered: set[str] = getattr(self, "_registered_server_tools", set())
         registered.add(tool_name)
         self._registered_server_tools = registered  # type: ignore[attr-defined]
-        logger = logging.getLogger("agent_framework.ag_ui")
         logger.debug(f"[AGUIChatClient] Registered server placeholder: {tool_name}")
 
     def _extract_state_from_messages(self, messages: Sequence[Message]) -> tuple[list[Message], dict[str, Any] | None]:
@@ -308,7 +307,6 @@ class AGUIChatClient(
                         messages_without_state = list(messages[:-1]) if len(messages) > 1 else []
                         return messages_without_state, state
                 except (json.JSONDecodeError, ValueError, KeyError) as e:
-                    logger = logging.getLogger("agent_framework.ag_ui")
                     logger.warning(f"Failed to extract state from message: {e}")
 
         return list(messages), None

@@ -44,7 +44,6 @@ if TYPE_CHECKING:  # pragma: no cover
         AgentResponse,
         AgentResponseUpdate,
         AgentRunInputs,
-        AgentRunInputsOrNone,
         ChatOptions,
         ChatResponse,
         ChatResponseUpdate,
@@ -748,7 +747,6 @@ class ObservabilitySettings:
             for log_exporter in log_exporters:
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
             # Attach a handler with the provider to the root logger
-            logger = logging.getLogger("agent_framework")
             handler = LoggingHandler(logger_provider=logger_provider)
             logger.addHandler(handler)
             set_logger_provider(logger_provider)
@@ -1278,7 +1276,7 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -1288,7 +1286,7 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -1297,7 +1295,7 @@ class AgentTelemetryLayer:
 
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
