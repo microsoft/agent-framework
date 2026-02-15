@@ -19,7 +19,7 @@ from ._types import (
     ChatResponseUpdate,
     Message,
     ResponseStream,
-    prepare_messages,
+    normalize_messages,
 )
 from .exceptions import MiddlewareException
 
@@ -1141,7 +1141,7 @@ class AgentMiddlewareLayer:
 
         context = AgentContext(
             agent=self,  # type: ignore[arg-type]
-            messages=prepare_messages(messages) if messages is not None else [],
+            messages=normalize_messages(messages),
             session=session,
             options=options,
             stream=stream,
