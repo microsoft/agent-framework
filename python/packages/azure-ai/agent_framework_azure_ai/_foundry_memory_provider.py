@@ -1,0 +1,231 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+"""Foundry Memory Context Provider using BaseContextProvider.
+
+This module provides ``FoundryMemoryProvider``, built on the new
+:class:`BaseContextProvider` hooks pattern.
+"""
+
+from __future__ import annotations
+
+import sys
+from contextlib import AbstractAsyncContextManager
+from typing import TYPE_CHECKING, Any
+
+from agent_framework import Message
+from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
+from agent_framework.exceptions import ServiceInitializationError
+from azure.ai.projects.aio import AIProjectClient
+from azure.ai.projects.models import ItemParam
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
+
+if TYPE_CHECKING:
+    from agent_framework._agents import SupportsAgentRun
+
+
+class FoundryMemoryProvider(BaseContextProvider):
+    """Foundry Memory context provider using the new BaseContextProvider hooks pattern.
+
+    Integrates Azure AI Foundry Memory Store for persistent semantic memory,
+    searching and storing memories via the Azure AI Projects SDK.
+
+    Args:
+        source_id: Unique identifier for this provider instance.
+        project_client: Azure AI Project client for memory operations.
+        memory_store_name: The name of the memory store to use.
+        scope: The namespace that logically groups and isolates memories (e.g., user ID).
+        context_prompt: The prompt to prepend to retrieved memories.
+        update_delay: Timeout period before processing memory update in seconds.
+            Defaults to 300 (5 minutes). Set to 0 to immediately trigger updates.
+    """
+
+    DEFAULT_CONTEXT_PROMPT = "## Memories\nConsider the following memories when answering user questions:"
+
+    def __init__(
+        self,
+        source_id: str,
+        project_client: AIProjectClient,
+        memory_store_name: str,
+        scope: str,
+        *,
+        context_prompt: str | None = None,
+        update_delay: int = 300,
+    ) -> None:
+        """Initialize the Foundry Memory context provider.
+
+        Args:
+            source_id: Unique identifier for this provider instance.
+            project_client: Azure AI Project client for memory operations.
+            memory_store_name: The name of the memory store to use.
+            scope: The namespace that logically groups and isolates memories (e.g., user ID).
+            context_prompt: The prompt to prepend to retrieved memories.
+            update_delay: Timeout period before processing memory update in seconds.
+        """
+        super().__init__(source_id)
+        if not project_client:
+            raise ServiceInitializationError("project_client is required")
+        if not memory_store_name:
+            raise ServiceInitializationError("memory_store_name is required")
+        if not scope:
+            raise ServiceInitializationError("scope is required")
+
+        self.project_client = project_client
+        self.memory_store_name = memory_store_name
+        self.scope = scope
+        self.context_prompt = context_prompt or self.DEFAULT_CONTEXT_PROMPT
+        self.update_delay = update_delay
+        self._previous_update_id: str | None = None
+        self._previous_search_id: str | None = None
+        self._static_memories: list[dict[str, Any]] = []
+
+    async def __aenter__(self) -> Self:
+        """Async context manager entry."""
+        if self.project_client and isinstance(self.project_client, AbstractAsyncContextManager):
+            await self.project_client.__aenter__()
+        return self
+
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        """Async context manager exit."""
+        if self.project_client and isinstance(self.project_client, AbstractAsyncContextManager):
+            await self.project_client.__aexit__(exc_type, exc_val, exc_tb)
+
+    # -- Hooks pattern ---------------------------------------------------------
+
+    async def before_run(
+        self,
+        *,
+        agent: SupportsAgentRun,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Search Foundry Memory for relevant memories and add to the session context.
+
+        This method:
+        1. Retrieves static memories (user profile) on first call per session
+        2. Searches for contextual memories based on input messages
+        3. Combines and injects memories into the context
+        """
+        # On first run, retrieve static memories (user profile memories)
+        if not self._static_memories and "foundry_memory_initialized" not in state:
+            try:
+                static_search_result = await self.project_client.memory_stores.search_memories(
+                    name=self.memory_store_name,
+                    scope=self.scope,
+                )
+                self._static_memories = [
+                    {"content": memory.get("content", "")}
+                    for memory in getattr(static_search_result, "memories", [])
+                    if memory.get("content")
+                ]
+                state["foundry_memory_initialized"] = True
+            except Exception as e:
+                # Log but don't fail - memory retrieval is non-critical
+                from agent_framework import get_logger
+
+                logger = get_logger("agent_framework.azure")
+                logger.warning(f"Failed to retrieve static memories: {e}")
+
+        # Search for contextual memories based on input messages
+        input_text = "\n".join(msg.text for msg in context.input_messages if msg and msg.text and msg.text.strip())
+        if not input_text.strip():
+            return
+
+        # Convert input messages to ItemParam format for search
+        items = [
+            ItemParam(content=msg.text, content_type="text/plain")
+            for msg in context.input_messages
+            if msg and msg.text and msg.text.strip()
+        ]
+
+        try:
+            search_result = await self.project_client.memory_stores.search_memories(
+                name=self.memory_store_name,
+                scope=self.scope,
+                items=items,
+                previous_search_id=self._previous_search_id,
+            )
+
+            # Extract search_id for next incremental search
+            if hasattr(search_result, "search_id"):
+                self._previous_search_id = getattr(search_result, "search_id", None)
+
+            # Combine static and contextual memories
+            contextual_memories = [
+                {"content": memory.get("content", "")}
+                for memory in getattr(search_result, "memories", [])
+                if memory.get("content")
+            ]
+
+            all_memories = self._static_memories + contextual_memories
+
+            # Inject memories into context
+            if all_memories:
+                line_separated_memories = "\n".join(
+                    str(memory.get("content", "")) for memory in all_memories if memory.get("content")
+                )
+                if line_separated_memories:
+                    context.extend_messages(
+                        self.source_id,
+                        [Message(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")],
+                    )
+        except Exception as e:
+            # Log but don't fail - memory retrieval is non-critical
+            from agent_framework import get_logger
+
+            logger = get_logger("agent_framework.azure")
+            logger.warning(f"Failed to search contextual memories: {e}")
+
+    async def after_run(
+        self,
+        *,
+        agent: SupportsAgentRun,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Store request/response messages to Foundry Memory for future retrieval.
+
+        This method updates the memory store with conversation messages.
+        The update is debounced by the configured update_delay.
+        """
+        messages_to_store: list[Message] = list(context.input_messages)
+        if context.response and context.response.messages:
+            messages_to_store.extend(context.response.messages)
+
+        # Filter and convert messages to ItemParam format
+        items: list[ItemParam] = []
+        for message in messages_to_store:
+            if message.role in {"user", "assistant", "system"} and message.text and message.text.strip():
+                items.append(ItemParam(content=message.text, content_type="text/plain"))
+
+        if not items:
+            return
+
+        try:
+            # Fire and forget - don't wait for the update to complete
+            update_poller = await self.project_client.memory_stores.begin_update_memories(
+                name=self.memory_store_name,
+                scope=self.scope,
+                items=items,
+                previous_update_id=self._previous_update_id,
+                update_delay=self.update_delay,
+            )
+
+            # Store the update_id for next incremental update
+            if hasattr(update_poller, "update_id"):
+                self._previous_update_id = getattr(update_poller, "update_id", None)
+
+        except Exception as e:
+            # Log but don't fail - memory storage is non-critical
+            from agent_framework import get_logger
+
+            logger = get_logger("agent_framework.azure")
+            logger.warning(f"Failed to update memories: {e}")
+
+
+__all__ = ["FoundryMemoryProvider"]
