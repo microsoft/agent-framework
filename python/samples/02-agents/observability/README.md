@@ -118,7 +118,7 @@ else:
 enable_instrumentation(enable_sensitive_data=False)
 ```
 
-Or with [Comet Opik](https://www.comet.com/docs/opik/):
+Or with [Comet Opik](https://www.comet.com/docs/opik/integrations/microsoft-agent-framework):
 
 ```python
 import os
