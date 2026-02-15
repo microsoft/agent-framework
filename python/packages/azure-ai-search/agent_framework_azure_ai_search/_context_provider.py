@@ -8,12 +8,12 @@ This module provides ``AzureAISearchContextProvider``, built on the new
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict
 
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message
-from agent_framework._logging import get_logger
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework._settings import SecretString, load_settings
 from agent_framework.exceptions import ServiceInitializationError
@@ -103,7 +103,7 @@ try:
 except ImportError:
     _agentic_retrieval_available = False
 
-logger = get_logger(__name__)
+logger = logging.getLogger("agent_framework.azure_ai_search")
 
 _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT = 10
 

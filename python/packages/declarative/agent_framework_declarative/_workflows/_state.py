@@ -11,10 +11,9 @@ This module provides state management for declarative workflows, handling:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any, cast
-
-from agent_framework import get_logger
 
 try:
     from powerfx import Engine
@@ -25,7 +24,7 @@ except (ImportError, RuntimeError):
     # RuntimeError: .NET runtime not available or misconfigured
     _powerfx_engine = None
 
-logger = get_logger("agent_framework.declarative.workflows")
+logger = logging.getLogger("agent_framework.declarative")
 
 
 class WorkflowState:

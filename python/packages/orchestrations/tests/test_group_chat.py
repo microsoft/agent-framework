@@ -38,7 +38,7 @@ class StubAgent(BaseAgent):
 
     def run(  # type: ignore[override]
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -76,7 +76,7 @@ class StubManagerAgent(Agent):
 
     async def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         session: AgentSession | None = None,
         **kwargs: Any,
@@ -130,7 +130,7 @@ class ConcatenatedJsonManagerAgent(Agent):
 
     async def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         session: AgentSession | None = None,
         **kwargs: Any,
@@ -896,7 +896,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
 
         async def run(
             self,
-            messages: str | Message | Sequence[str | Message] | None = None,
+            messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
             *,
             session: AgentSession | None = None,
             **kwargs: Any,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -34,7 +35,6 @@ from typing import (
 from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import BaseModel, Field, ValidationError, create_model
 
-from ._logging import get_logger
 from ._serialization import SerializationMixin
 from .exceptions import ToolException
 from .observability import (
@@ -71,18 +71,8 @@ if TYPE_CHECKING:
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 
 
-logger = get_logger()
+logger = logging.getLogger("agent_framework")
 
-__all__ = [
-    "FunctionInvocationConfiguration",
-    "FunctionInvocationLayer",
-    "FunctionTool",
-    "normalize_function_invocation_configuration",
-    "tool",
-]
-
-
-logger = get_logger()
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
@@ -1941,7 +1931,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -1951,7 +1941,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
@@ -1961,7 +1951,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1970,7 +1960,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1982,7 +1972,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             ChatResponse,
             ChatResponseUpdate,
             ResponseStream,
-            prepare_messages,
         )
 
         super_get_response = super().get_response  # type: ignore[misc]
@@ -2014,7 +2003,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 nonlocal mutable_options
                 nonlocal filtered_kwargs
                 errors_in_a_row: int = 0
-                prepped_messages = prepare_messages(messages)
+                prepped_messages = list(messages)
                 fcc_messages: list[Message] = []
                 response: ChatResponse | None = None
 
@@ -2108,7 +2097,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             nonlocal mutable_options
             nonlocal stream_result_hooks
             errors_in_a_row: int = 0
-            prepped_messages = prepare_messages(messages)
+            prepped_messages = list(messages)
             fcc_messages: list[Message] = []
             response: ChatResponse | None = None
 

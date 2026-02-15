@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
@@ -26,7 +27,6 @@ from agent_framework import (
     Message,
     ResponseStream,
     UsageDetails,
-    get_logger,
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
@@ -50,7 +50,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-logger = get_logger("agent_framework.bedrock")
+logger = logging.getLogger("agent_framework.bedrock")
 
 
 __all__ = [

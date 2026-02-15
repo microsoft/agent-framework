@@ -1,12 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import MutableMapping
 from contextvars import ContextVar
 from typing import Any, Literal, TypeVar, Union
 
-from agent_framework import get_logger
 from agent_framework._serialization import SerializationMixin
 
 try:
@@ -20,7 +20,7 @@ except (ImportError, RuntimeError):
 
 from typing import overload
 
-logger = get_logger("agent_framework.declarative")
+logger = logging.getLogger("agent_framework.declarative")
 
 # Context variable for safe_mode setting.
 # When True (default), environment variables are NOT accessible in PowerFx expressions.

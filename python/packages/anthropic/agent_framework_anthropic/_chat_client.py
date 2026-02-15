@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
@@ -24,7 +25,6 @@ from agent_framework import (
     ResponseStream,
     TextSpanRegion,
     UsageDetails,
-    get_logger,
 )
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
@@ -68,7 +68,7 @@ __all__ = [
     "ThinkingConfig",
 ]
 
-logger = get_logger("agent_framework.anthropic")
+logger = logging.getLogger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]

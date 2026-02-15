@@ -14,11 +14,12 @@ from ._clients import SupportsChatGetResponse
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
     Message,
     ResponseStream,
-    prepare_messages,
+    normalize_messages,
 )
 from .exceptions import MiddlewareException
 
@@ -42,27 +43,6 @@ if TYPE_CHECKING:
 
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 
-__all__ = [
-    "AgentContext",
-    "AgentMiddleware",
-    "AgentMiddlewareLayer",
-    "AgentMiddlewareTypes",
-    "ChatAndFunctionMiddlewareTypes",
-    "ChatContext",
-    "ChatMiddleware",
-    "ChatMiddlewareLayer",
-    "ChatMiddlewareTypes",
-    "FunctionInvocationContext",
-    "FunctionMiddleware",
-    "FunctionMiddlewareTypes",
-    "MiddlewareException",
-    "MiddlewareTermination",
-    "MiddlewareType",
-    "MiddlewareTypes",
-    "agent_middleware",
-    "chat_middleware",
-    "function_middleware",
-]
 
 AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
 ContextT = TypeVar("ContextT")
@@ -978,7 +958,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -988,7 +968,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
@@ -998,7 +978,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1007,7 +987,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1034,7 +1014,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
 
         context = ChatContext(
             client=self,  # type: ignore[arg-type]
-            messages=prepare_messages(messages),
+            messages=list(messages),
             options=options,
             stream=stream,
             kwargs=kwargs,
@@ -1095,7 +1075,7 @@ class AgentMiddlewareLayer:
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -1107,7 +1087,7 @@ class AgentMiddlewareLayer:
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -1119,7 +1099,7 @@ class AgentMiddlewareLayer:
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -1130,7 +1110,7 @@ class AgentMiddlewareLayer:
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -1161,7 +1141,7 @@ class AgentMiddlewareLayer:
 
         context = AgentContext(
             agent=self,  # type: ignore[arg-type]
-            messages=prepare_messages(messages),  # type: ignore[arg-type]
+            messages=normalize_messages(messages),
             session=session,
             options=options,
             stream=stream,

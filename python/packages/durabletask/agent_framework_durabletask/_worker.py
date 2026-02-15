@@ -9,15 +9,16 @@ and enables registration of agents as durable entities.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
-from agent_framework import SupportsAgentRun, get_logger
+from agent_framework import SupportsAgentRun
 from durabletask.worker import TaskHubGrpcWorker
 
 from ._callbacks import AgentResponseCallbackProtocol
 from ._entities import AgentEntity, DurableTaskEntityStateProvider
 
-logger = get_logger("agent_framework.durabletask.worker")
+logger = logging.getLogger("agent_framework.durabletask")
 
 
 class DurableAIAgentWorker:

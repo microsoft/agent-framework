@@ -39,7 +39,7 @@ class _ToolCallingAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,

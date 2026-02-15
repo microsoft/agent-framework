@@ -2,12 +2,13 @@
 
 """Shared utilities for handling AgentResponse parsing and validation."""
 
+import logging
 from typing import Any
 
-from agent_framework import AgentResponse, get_logger
+from agent_framework import AgentResponse
 from pydantic import BaseModel
 
-logger = get_logger("agent_framework.durabletask.response_utils")
+logger = logging.getLogger("agent_framework.durabletask")
 
 
 def load_agent_response(agent_response: AgentResponse | dict[str, Any] | None) -> AgentResponse:

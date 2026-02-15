@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -36,7 +37,6 @@ from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel
 
 from .._clients import BaseChatClient
-from .._logging import get_logger
 from .._middleware import ChatMiddlewareLayer
 from .._settings import load_settings
 from .._tools import (
@@ -90,10 +90,7 @@ if TYPE_CHECKING:
         FunctionMiddlewareCallable,
     )
 
-logger = get_logger("agent_framework.openai")
-
-
-__all__ = ["OpenAIContinuationToken", "OpenAIResponsesClient", "OpenAIResponsesOptions", "RawOpenAIResponsesClient"]
+logger = logging.getLogger("agent_framework.openai")
 
 
 class OpenAIContinuationToken(ContinuationToken):

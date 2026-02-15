@@ -20,7 +20,6 @@ from opentelemetry.semconv.attributes import service_attributes
 from opentelemetry.semconv_ai import Meters, SpanAttributes
 
 from . import __version__ as version_info
-from ._logging import get_logger
 from ._settings import load_settings
 
 if sys.version_info >= (3, 13):
@@ -44,6 +43,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from ._types import (
         AgentResponse,
         AgentResponseUpdate,
+        AgentRunInputs,
         ChatOptions,
         ChatResponse,
         ChatResponseUpdate,
@@ -73,7 +73,7 @@ AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 
 
-logger = get_logger()
+logger = logging.getLogger("agent_framework")
 
 
 OTEL_METRICS: Final[str] = "__otel_metrics__"
@@ -747,7 +747,6 @@ class ObservabilitySettings:
             for log_exporter in log_exporters:
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
             # Attach a handler with the provider to the root logger
-            logger = logging.getLogger()
             handler = LoggingHandler(logger_provider=logger_provider)
             logger.addHandler(handler)
             set_logger_provider(logger_provider)
@@ -1084,7 +1083,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -1094,7 +1093,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
@@ -1104,7 +1103,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1113,7 +1112,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1277,7 +1276,7 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -1287,7 +1286,7 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -1296,7 +1295,7 @@ class AgentTelemetryLayer:
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -1614,15 +1613,15 @@ def capture_exception(span: trace.Span, exception: Exception, timestamp: int | N
 def _capture_messages(
     span: trace.Span,
     provider_name: str,
-    messages: str | Message | Sequence[str | Message],
+    messages: AgentRunInputs,
     system_instructions: str | list[str] | None = None,
     output: bool = False,
     finish_reason: FinishReason | None = None,
 ) -> None:
     """Log messages with extra information."""
-    from ._types import prepare_messages
+    from ._types import normalize_messages, prepend_instructions_to_messages
 
-    prepped = prepare_messages(messages, system_instructions=system_instructions)
+    prepped = prepend_instructions_to_messages(normalize_messages(messages), system_instructions)
     otel_messages: list[dict[str, Any]] = []
     for index, message in enumerate(prepped):
         # Reuse the otel message representation for logging instead of calling to_dict()
