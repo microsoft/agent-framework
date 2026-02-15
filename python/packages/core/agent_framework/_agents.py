@@ -33,7 +33,14 @@ from ._logging import get_logger
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._middleware import AgentMiddlewareLayer, MiddlewareTypes
 from ._serialization import SerializationMixin
-from ._sessions import AgentSession, BaseContextProvider, BaseHistoryProvider, InMemoryHistoryProvider, SessionContext
+from ._sessions import (
+    DEFAULT_HISTORY_SOURCE_ID,
+    AgentSession,
+    BaseContextProvider,
+    BaseHistoryProvider,
+    InMemoryHistoryProvider,
+    SessionContext,
+)
 from ._tools import (
     FunctionInvocationLayer,
     FunctionTool,
@@ -1028,7 +1035,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             and not opts.get("store")
             and not (getattr(self.client, "STORES_BY_DEFAULT", False) and opts.get("store") is not False)
         ):
-            self.context_providers.append(InMemoryHistoryProvider("memory"))
+            self.context_providers.append(InMemoryHistoryProvider(DEFAULT_HISTORY_SOURCE_ID))
 
         session_context, chat_options = await self._prepare_session_and_messages(
             session=session,

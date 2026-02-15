@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "DEFAULT_HISTORY_SOURCE_ID",
     "AgentSession",
     "BaseContextProvider",
     "BaseHistoryProvider",
@@ -33,6 +34,9 @@ __all__ = [
     "register_state_type",
 ]
 
+
+# Default source_id for the auto-injected InMemoryHistoryProvider
+DEFAULT_HISTORY_SOURCE_ID = "memory"
 
 # Registry of known types for state deserialization
 _STATE_TYPE_REGISTRY: dict[str, type] = {}
