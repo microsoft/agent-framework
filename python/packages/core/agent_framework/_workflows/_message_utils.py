@@ -3,11 +3,11 @@
 """Shared helpers for normalizing workflow message inputs."""
 
 from agent_framework import Content, Message
-from agent_framework._types import AgentRunInputsOrNone
+from agent_framework._types import AgentRunInputs
 
 
 def normalize_messages_input(
-    messages: AgentRunInputsOrNone = None,
+    messages: AgentRunInputs | None = None,
 ) -> list[Message]:
     """Normalize heterogeneous message inputs to a list of Message objects.
 

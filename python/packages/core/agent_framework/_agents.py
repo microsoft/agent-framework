@@ -41,7 +41,7 @@ from ._tools import (
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentRunInputsOrNone,
+    AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
     Message,
@@ -228,7 +228,7 @@ class SupportsAgentRun(Protocol):
     @overload
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -240,7 +240,7 @@ class SupportsAgentRun(Protocol):
     @overload
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -251,7 +251,7 @@ class SupportsAgentRun(Protocol):
 
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -761,7 +761,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -778,7 +778,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -795,7 +795,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -811,7 +811,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -998,7 +998,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     async def _prepare_run_context(
         self,
         *,
-        messages: AgentRunInputsOrNone,
+        messages: AgentRunInputs | None,
         session: AgentSession | None,
         tools: FunctionTool
         | Callable[..., Any]

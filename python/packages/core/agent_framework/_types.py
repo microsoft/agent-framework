@@ -1503,7 +1503,6 @@ class Message(SerializationMixin):
 
 
 AgentRunInputs = str | Content | Message | Sequence[str | Content | Message]
-AgentRunInputsOrNone = AgentRunInputs | None
 
 
 def prepare_messages(
@@ -1546,7 +1545,7 @@ def prepare_messages(
 
 
 def normalize_messages(
-    messages: AgentRunInputsOrNone = None,
+    messages: AgentRunInputs | None = None,
 ) -> list[Message]:
     """Normalize message inputs to a list of Message objects.
 

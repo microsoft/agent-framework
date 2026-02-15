@@ -14,7 +14,7 @@ from ._clients import SupportsChatGetResponse
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentRunInputsOrNone,
+    AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
     Message,
@@ -1075,7 +1075,7 @@ class AgentMiddlewareLayer:
     @overload
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -1087,7 +1087,7 @@ class AgentMiddlewareLayer:
     @overload
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -1099,7 +1099,7 @@ class AgentMiddlewareLayer:
     @overload
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -1110,7 +1110,7 @@ class AgentMiddlewareLayer:
 
     def run(
         self,
-        messages: AgentRunInputsOrNone = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
