@@ -474,7 +474,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     def _prepare_tools(
         self,
-        tools: Sequence[ToolTypes],
+        tools: Sequence[ToolTypes | CopilotTool],
     ) -> list[CopilotTool]:
         """Convert Agent Framework tools to Copilot SDK tools.
 
@@ -487,7 +487,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         copilot_tools: list[CopilotTool] = []
 
         for tool in tools:
-            if isinstance(tool, FunctionTool):
+            if isinstance(tool, CopilotTool):
+                copilot_tools.append(tool)
+            elif isinstance(tool, FunctionTool):
                 copilot_tools.append(self._tool_to_copilot_tool(tool))  # type: ignore
             elif isinstance(tool, MutableMapping):
                 copilot_tools.append(tool)  # type: ignore[arg-type]
