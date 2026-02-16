@@ -786,19 +786,70 @@ async def test_runtime_tools_override_logs_warning(
     mock_agent.name = "test-agent"
     mock_agent.version = "1.0"
     mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
-    await client._get_agent_reference_or_create(
-        {"model": "test-model", "tools": [{"type": "function", "name": "tool_one"}]},
-        None,
-    )
+    with patch(
+        "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+        return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_one"}]},
+    ):
+        await client._prepare_options(messages, {})
 
-    with patch("agent_framework_azure_ai._client.logger.warning") as mock_warning:
-        await client._get_agent_reference_or_create(
-            {"model": "test-model", "tools": [{"type": "function", "name": "tool_two"}]},
-            None,
-        )
+    with (
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_two"}]},
+        ),
+        patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
+    ):
+        await client._prepare_options(messages, {})
     mock_warning.assert_called_once()
     assert "Use AzureOpenAIResponsesClient instead." in mock_warning.call_args[0][0]
+
+
+async def test_prepare_options_logs_warning_for_tools_with_existing_agent_version(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test warning is logged when tools are supplied against an existing agent version."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+
+    with (
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_one"}]},
+        ),
+        patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
+    ):
+        run_options = await client._prepare_options(messages, {})
+
+    mock_warning.assert_called_once()
+    assert "Use AzureOpenAIResponsesClient instead." in mock_warning.call_args[0][0]
+    assert "tools" not in run_options
+
+
+async def test_prepare_options_logs_warning_for_tools_on_application_endpoint(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test warning is logged when runtime tools are removed for application endpoints."""
+    client = create_test_azure_ai_client(mock_project_client)
+    client._is_application_endpoint = True  # type: ignore
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+
+    with (
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_one"}]},
+        ),
+        patch.object(client, "_get_agent_reference_or_create", new_callable=AsyncMock) as mock_get_agent_reference,
+        patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
+    ):
+        run_options = await client._prepare_options(messages, {})
+
+    mock_get_agent_reference.assert_not_called()
+    mock_warning.assert_called_once()
+    assert "Use AzureOpenAIResponsesClient instead." in mock_warning.call_args[0][0]
+    assert "tools" not in run_options
+    assert "extra_body" not in run_options
 
 
 async def test_use_latest_version_existing_agent(
@@ -1009,19 +1060,22 @@ async def test_runtime_structured_output_override_logs_warning(
     mock_agent.name = "test-agent"
     mock_agent.version = "1.0"
     mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
-    await client._get_agent_reference_or_create(
-        {"model": "test-model"},
-        None,
-        {"response_format": ResponseFormatModel},
-    )
+    with patch(
+        "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+        return_value={"model": "test-model"},
+    ):
+        await client._prepare_options(messages, {"response_format": ResponseFormatModel})
 
-    with patch("agent_framework_azure_ai._client.logger.warning") as mock_warning:
-        await client._get_agent_reference_or_create(
-            {"model": "test-model"},
-            None,
-            {"response_format": AlternateResponseFormatModel},
-        )
+    with (
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model"},
+        ),
+        patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
+    ):
+        await client._prepare_options(messages, {"response_format": AlternateResponseFormatModel})
     mock_warning.assert_called_once()
     assert "Use AzureOpenAIResponsesClient instead." in mock_warning.call_args[0][0]
 

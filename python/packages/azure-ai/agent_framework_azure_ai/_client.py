@@ -404,24 +404,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             self.warn_runtime_tools_and_structure_changed = True
             self._created_agent_tool_names = self._extract_tool_names(run_options.get("tools"))
             self._created_agent_structured_output_signature = self._get_structured_output_signature(chat_options)
-        else:
-            runtime_tools = run_options.get("tools")
-            tools_changed = False
-            if runtime_tools is not None:
-                tools_changed = self._extract_tool_names(runtime_tools) != self._created_agent_tool_names
-
-            runtime_structured_output = self._get_structured_output_signature(chat_options)
-            structured_output_changed = (
-                runtime_structured_output is not None
-                and runtime_structured_output != self._created_agent_structured_output_signature
-            )
-
-            if tools_changed or structured_output_changed:
-                logger.warning(
-                    "AzureAIClient does not support runtime tools or structured_output overrides after agent creation. "
-                    "Use AzureOpenAIResponsesClient instead."
-                )
-
         return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
 
     async def _close_client_if_needed(self) -> None:
@@ -473,8 +455,33 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             return json.dumps(response_format, sort_keys=True, default=str)
         return str(response_format)
 
-    def _remove_agent_level_run_options(self, run_options: dict[str, Any]) -> None:
+    def _remove_agent_level_run_options(
+        self,
+        run_options: dict[str, Any],
+        chat_options: Mapping[str, Any] | None = None,
+    ) -> None:
         """Remove request-level options that Azure AI only supports at agent creation time."""
+        runtime_tools = run_options.get("tools")
+        runtime_structured_output = self._get_structured_output_signature(chat_options)
+
+        if runtime_tools is not None or runtime_structured_output is not None:
+            tools_changed = runtime_tools is not None
+            structured_output_changed = runtime_structured_output is not None
+
+            if self.warn_runtime_tools_and_structure_changed:
+                if runtime_tools is not None:
+                    tools_changed = self._extract_tool_names(runtime_tools) != self._created_agent_tool_names
+                if runtime_structured_output is not None:
+                    structured_output_changed = (
+                        runtime_structured_output != self._created_agent_structured_output_signature
+                    )
+
+            if tools_changed or structured_output_changed:
+                logger.warning(
+                    "AzureAIClient does not support runtime tools or structured_output overrides after agent creation. "
+                    "Use AzureOpenAIResponsesClient instead."
+                )
+
         agent_level_option_to_run_keys = {
             "model_id": ("model",),
             "tools": ("tools",),
@@ -514,7 +521,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             run_options["extra_body"] = {"agent": agent_reference}
 
         # Remove only keys that map to this client's declared options TypedDict.
-        self._remove_agent_level_run_options(run_options)
+        self._remove_agent_level_run_options(run_options, options)
 
         return run_options
 
