@@ -35,6 +35,9 @@ Console.WriteLine("=" + new string('=', 79));
 Console.WriteLine();
 
 // Initialize Azure credentials and client
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 DefaultAzureCredential credential = new();
 AIProjectClient aiProjectClient = new(new Uri(endpoint), credential);
 
@@ -115,7 +118,6 @@ static async Task RunSelfReflectionWithGroundedness(
 
     const int MaxReflections = 3;
     double bestScore = 0;
-    string? bestResponse = null;
 
     string currentPrompt = $"Context: {context}\n\nQuestion: {question}";
 
@@ -124,6 +126,9 @@ static async Task RunSelfReflectionWithGroundedness(
         Console.WriteLine($"Iteration {i + 1}/{MaxReflections}:");
         Console.WriteLine(new string('-', 40));
 
+        // Create a new session for each reflection iteration so that
+        // conversation context does not carry over between runs. This keeps
+        // each evaluation independent and avoids biasing groundedness scores.
         AgentSession session = await agent.CreateSessionAsync();
         AgentResponse agentResponse = await agent.RunAsync(currentPrompt, session);
         string responseText = agentResponse.Text;
@@ -152,7 +157,6 @@ static async Task RunSelfReflectionWithGroundedness(
         if (score > bestScore)
         {
             bestScore = score;
-            bestResponse = responseText;
         }
 
         if (score >= 4.0 || i == MaxReflections - 1)

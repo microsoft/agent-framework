@@ -46,7 +46,7 @@ $env:AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME="gpt-4o-mini"                   # Mod
 
 ## Run the sample
 
-Navigate to the FoundryAgents/Evaluation directory and run:
+Navigate to the sample directory and run:
 
 ```powershell
 cd dotnet/samples/GettingStarted/FoundryAgents/FoundryAgents_Evaluations_Step02_SelfReflection

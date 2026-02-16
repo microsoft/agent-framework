@@ -66,10 +66,10 @@ Evaluation is critical for building trustworthy and high-quality AI applications
 
 |Sample|Description|
 |---|---|
-|[Red Team Evaluation](./FoundryAgents_Evaluations_Step01_RedTeaming/)|This sample demonstrates how to use Azure AI's RedTeam functionality to assess agent safety and resilience against adversarial attacks|
+|[Red Team Evaluation](./FoundryAgents_Evaluations_Step01_RedTeaming/)|This sample demonstrates how to use Azure AI Foundry's Red Teaming service to assess model safety against adversarial attacks|
 |[Self-Reflection with Groundedness](./FoundryAgents_Evaluations_Step02_SelfReflection/)|This sample demonstrates the self-reflection pattern where agents iteratively improve responses based on groundedness evaluation|
 
-For a comprehensive overview of evaluation capabilities, see the [Evaluation README](./FoundryAgents_Evaluations_Step01_RedTeaming/README.md).
+For details on safety evaluation, see the [Red Team Evaluation README](./FoundryAgents_Evaluations_Step01_RedTeaming/README.md).
 
 ## Running the samples from the console
 
