@@ -267,7 +267,7 @@ class AGUIChatClient(
         if any(getattr(tool, "name", None) == tool_name for tool in additional_tools):
             return
 
-        placeholder: FunctionTool[Any] = FunctionTool(
+        placeholder: FunctionTool = FunctionTool(
             name=tool_name,
             description="Server-managed tool placeholder (AG-UI)",
             func=None,

@@ -499,7 +499,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         return copilot_tools
 
-    def _tool_to_copilot_tool(self, ai_func: FunctionTool[Any]) -> CopilotTool:
+    def _tool_to_copilot_tool(self, ai_func: FunctionTool) -> CopilotTool:
         """Convert an FunctionTool to a Copilot SDK tool."""
 
         async def handler(invocation: ToolInvocation) -> ToolResult:

@@ -234,8 +234,8 @@ class FunctionInvocationContext:
 
     def __init__(
         self,
-        function: FunctionTool[Any],
-        arguments: BaseModel,
+        function: FunctionTool,
+        arguments: BaseModel | Mapping[str, Any],
         metadata: Mapping[str, Any] | None = None,
         result: Any = None,
         kwargs: Mapping[str, Any] | None = None,

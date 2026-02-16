@@ -15,6 +15,7 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 [JsonSerializable(typeof(AgentResponseUpdate))]
 [JsonSerializable(typeof(AgentRunOptions))]
 [JsonSerializable(typeof(Animal))]
+[JsonSerializable(typeof(Species))]
 [JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(Dictionary<string, object?>))]
 [JsonSerializable(typeof(string[]))]
