@@ -21,9 +21,6 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 /// </summary>
 public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowActionExecutorTest(output)
 {
-    private const string TestConversationId = "test-conversation-id";
-    private const string TestVariableName = "TestVariable";
-
     [Fact]
     public void QuestionNamingConvention()
     {
@@ -41,95 +38,101 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
         Assert.Equal($"{testId}_{nameof(QuestionExecutor.Steps.Capture)}", captureStep);
     }
 
-    [Fact]
-    public void QuestionIsComplete()
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData("anything", false)]
+    [InlineData(null, true)]
+    public void QuestionIsComplete(object? result, bool expectIsComplete)
     {
-        // Arrange
-        ActionExecutorResult resultWithNull = new("test", result: null);
-        ActionExecutorResult resultWithValue = new("test", result: true);
+        // Arrange - "Complete" result corresponds to null value
+        ActionExecutorResult executorResult = new(nameof(QuestionIsComplete), result);
 
-        // Act & Assert
-        Assert.True(QuestionExecutor.IsComplete(resultWithNull));
-        Assert.False(QuestionExecutor.IsComplete(resultWithValue));
+        // Act
+        bool isComplete = QuestionExecutor.IsComplete(executorResult);
+
+        // Assert
+        Assert.Equal(expectIsComplete, isComplete);
     }
 
     [Fact]
-    public async Task QuestionExecuteWithAlwaysPromptTrueAsync()
+    public async Task QuestionExecuteWithResultUndefinedAsync()
     {
         // Arrange
-        this.SetVariableState(TestVariableName);
         Question model = this.CreateModel(
-            displayName: nameof(QuestionExecuteWithAlwaysPromptTrueAsync),
-            alwaysPrompt: true,
-            skipMode: SkipQuestionMode.AlwaysAsk);
+            displayName: nameof(QuestionExecuteWithResultUndefinedAsync),
+            "TestVariable");
 
         // Act & Assert
         await this.ExecuteTestAsync(model, expectPrompt: true);
     }
 
     [Fact]
-    public async Task QuestionExecuteWithAlwaysPromptFalseAndVariableHasValueAsync()
+    public async Task QuestionExecuteWithAlwaysPromptAsync()
     {
         // Arrange
-        this.SetVariableState(TestVariableName, FormulaValue.New("existing-value"));
+        this.State.Set("TestVariable", FormulaValue.New("existing-value"));
         Question model = this.CreateModel(
-            displayName: nameof(QuestionExecuteWithAlwaysPromptFalseAndVariableHasValueAsync),
-            alwaysPrompt: false,
-            skipMode: SkipQuestionMode.AlwaysSkipIfVariableHasValue);
-
-        // Act & Assert
-        await this.ExecuteTestAsync(model, expectPrompt: false);
-    }
-
-    [Fact]
-    public async Task QuestionExecuteWithSkipOnFirstExecutionIfVariableHasValueAsync()
-    {
-        // Arrange
-        this.SetVariableState(TestVariableName, FormulaValue.New("existing-value"));
-        Question model = this.CreateModel(
-            displayName: nameof(QuestionExecuteWithSkipOnFirstExecutionIfVariableHasValueAsync),
-            alwaysPrompt: false,
-            skipMode: SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue);
-
-        // Act & Assert
-        await this.ExecuteTestAsync(model, expectPrompt: false);
-    }
-
-    [Fact]
-    public async Task QuestionExecuteWithAlwaysAskAsync()
-    {
-        // Arrange
-        this.SetVariableState(TestVariableName, FormulaValue.New("existing-value"));
-        Question model = this.CreateModel(
-            displayName: nameof(QuestionExecuteWithAlwaysAskAsync),
-            alwaysPrompt: false,
-            skipMode: SkipQuestionMode.AlwaysAsk);
+            displayName: nameof(QuestionExecuteWithAlwaysPromptAsync),
+            "TestVariable",
+            alwaysPrompt: true);
 
         // Act & Assert
         await this.ExecuteTestAsync(model, expectPrompt: true);
     }
 
-    [Fact]
-    public async Task QuestionPrepareResponseIncreasesPromptCountAsync()
+    [Theory]
+    [InlineData(SkipQuestionMode.AlwaysSkipIfVariableHasValue)]
+    [InlineData(SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue)]
+    [InlineData(SkipQuestionMode.AlwaysAsk)]
+    public async Task QuestionExecuteWithSkipModeAsyncWithResultUndefinedAsync(SkipQuestionMode skipMode)
     {
         // Arrange
-        this.SetVariableState(TestVariableName);
         Question model = this.CreateModel(
-            displayName: nameof(QuestionPrepareResponseIncreasesPromptCountAsync),
-            alwaysPrompt: true,
-            skipMode: SkipQuestionMode.AlwaysAsk);
+            displayName: nameof(QuestionExecuteWithSkipModeAsyncWithResultUndefinedAsync),
+            variableName: "TestVariable",
+            skipMode: skipMode);
 
         // Act & Assert
-        await this.PrepareResponseTestAsync(model);
+        await this.ExecuteTestAsync(model, expectPrompt: true);
+    }
+
+    [Theory]
+    [InlineData(SkipQuestionMode.AlwaysSkipIfVariableHasValue, false)]
+    [InlineData(SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue, false)]
+    [InlineData(SkipQuestionMode.AlwaysAsk, true)]
+    public async Task QuestionExecuteWithSkipModeAsyncWithResultDefinedAsync(SkipQuestionMode skipMode, bool expectPrompt)
+    {
+        // Arrange
+        this.State.Set("TestVariable", FormulaValue.New("existing-value"));
+        Question model = this.CreateModel(
+            displayName: nameof(QuestionExecuteWithSkipModeAsyncWithResultDefinedAsync),
+            variableName: "TestVariable",
+            skipMode: skipMode);
+
+        // Act & Assert
+        await this.ExecuteTestAsync(model, expectPrompt);
+    }
+
+    [Fact]
+    public async Task QuestionPrepareResponseAsync()
+    {
+        // Arrange
+        Question model = this.CreateModel(
+            displayName: nameof(QuestionPrepareResponseAsync),
+            variableName: "TestVariable",
+            promptText: "Provide input:");
+
+        // Act & Assert
+        await this.PrepareResponseTestAsync(model, expectedPrompt: "Provide input:");
     }
 
     [Fact]
     public async Task QuestionCaptureResponseWithValidEntityAsync()
     {
         // Arrange
-        this.SetVariableState(TestVariableName);
         Question model = this.CreateModel(
             displayName: nameof(QuestionCaptureResponseWithValidEntityAsync),
+            variableName: "TestVariable",
             alwaysPrompt: true,
             skipMode: SkipQuestionMode.AlwaysAsk,
             entity: new NumberPrebuiltEntity());
@@ -137,291 +140,287 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
         // Act & Assert
         await this.CaptureResponseTestAsync(
             model,
+            variableName: "TestVariable",
             responseText: "42",
-            expectValid: true);
+            expectAutoSend: true);
     }
 
-    [Fact]
-    public async Task QuestionCaptureResponseWithInvalidEntityAsync()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Invalid input, please try again.")]
+    public async Task QuestionCaptureResponseWithInvalidEntityAsync(string? invalidResponse)
     {
         // Arrange
-        this.SetVariableState(TestVariableName);
         Question model = this.CreateModel(
             displayName: nameof(QuestionCaptureResponseWithInvalidEntityAsync),
-            alwaysPrompt: true,
-            skipMode: SkipQuestionMode.AlwaysAsk,
+            variableName: "TestVariable",
+            invalidResponseText: invalidResponse,
             entity: new NumberPrebuiltEntity());
 
         // Act & Assert
         await this.CaptureResponseTestAsync(
             model,
+            variableName: "TestVariable",
             responseText: "not-a-number",
-            expectValid: false);
+            expectResponse: false);
     }
 
-    [Fact]
-    public async Task QuestionCaptureResponseWithUnrecognizedResponseAsync()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Invalid input, please try again.")]
+    public async Task QuestionCaptureResponseWithUnrecognizedResponseAsync(string? unrecognizedResponse)
     {
         // Arrange
-        this.SetVariableState(TestVariableName);
         Question model = this.CreateModel(
             displayName: nameof(QuestionCaptureResponseWithUnrecognizedResponseAsync),
-            alwaysPrompt: true,
-            skipMode: SkipQuestionMode.AlwaysAsk);
+            variableName: "TestVariable",
+            unrecognizedResponseText: unrecognizedResponse);
 
         // Act & Assert
         await this.CaptureResponseTestAsync(
             model,
+            variableName: "TestVariable",
             responseText: null,
-            expectValid: false);
+            expectResponse: false);
     }
 
     [Fact]
-    public async Task QuestionCaptureResponseExceedingRepeatCountAsync()
+    public async Task QuestionCaptureResponseWithUnsupportedPromptAsync()
     {
         // Arrange
-        this.SetVariableState(TestVariableName);
-        Question model = this.CreateModel(
-            displayName: nameof(QuestionCaptureResponseExceedingRepeatCountAsync),
-            alwaysPrompt: true,
-            skipMode: SkipQuestionMode.AlwaysAsk,
-            repeatCount: 1,
-            entity: new NumberPrebuiltEntity());
-
-        // Act & Assert
-        await this.CaptureResponseWithRepeatCountTestAsync(model);
-    }
-
-    [Fact]
-    public async Task QuestionExecuteWithEmptyPromptAsync()
-    {
-        // Arrange
-        this.SetVariableState(TestVariableName);
-
-        MessageActivityTemplate.Builder emptyPromptBuilder = new();
-
         Question.Builder actionBuilder = new()
         {
             Id = this.CreateActionId(),
-            DisplayName = this.FormatDisplayName(nameof(QuestionExecuteWithEmptyPromptAsync)),
-            AlwaysPrompt = BoolExpression.Literal(true),
-            SkipQuestionMode = EnumExpression<SkipQuestionModeWrapper>.Literal(SkipQuestionModeWrapper.Get(SkipQuestionMode.AlwaysAsk)),
-            Variable = PropertyPath.Create(FormatVariablePath(TestVariableName)),
-            Prompt = emptyPromptBuilder.Build(),
-            UnrecognizedPrompt = emptyPromptBuilder.Build(),
-            DefaultValue = ValueExpression.Literal(new StringDataValue("default-value")),
-            DefaultValueResponse = emptyPromptBuilder.Build(),
-            RepeatCount = IntExpression.Literal(0),  // Exceed repeat count immediately
+            DisplayName = this.FormatDisplayName(nameof(QuestionCaptureResponseWithUnsupportedPromptAsync)),
+            Variable = PropertyPath.Create(FormatVariablePath("TestVariable")),
+            Prompt = new UnknownActivityTemplateBase.Builder(),
+            UnrecognizedPrompt = new UnknownActivityTemplateBase.Builder(),
             Entity = new StringPrebuiltEntity(),
         };
 
-        Question model = AssignParent<Question>(actionBuilder);
-
-        // Act
-        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Loose);
-        QuestionExecutor action = new(model, mockProvider.Object, this.State);
-
-        // Execute should complete immediately using default value when repeatCount=0
-        WorkflowEvent[] events = await this.ExecuteAsync(action, isDiscrete: false);
-
-        // Assert
-        VerifyModel(model, action);
-        // Should have sent the default value response message
-        Assert.Contains(events, e => e is MessageActivityEvent);
-    }
-
-    [Fact]
-    public async Task QuestionCompleteAsync()
-    {
-        // Arrange
-        this.SetVariableState(TestVariableName);
-        Question model = this.CreateModel(
-            displayName: nameof(QuestionCompleteAsync),
-            alwaysPrompt: true,
-            skipMode: SkipQuestionMode.AlwaysAsk);
+        Question model = actionBuilder.Build();
 
         // Act & Assert
-        await this.CompleteTestAsync(model);
+        await this.CaptureResponseTestAsync(
+            model,
+            variableName: "TestVariable",
+            responseText: null,
+            expectResponse: false);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task QuestionCaptureResponseExceedingRepeatCountAsync(bool hasDefault)
+    {
+        // Arrange
+        Question model = this.CreateModel(
+            displayName: nameof(QuestionCaptureResponseExceedingRepeatCountAsync),
+            variableName: "TestVariable",
+            repeatCount: 0,
+            defaultValue: hasDefault ? new NumberDataValue(0) : null,
+            entity: new NumberPrebuiltEntity());
+
+        // Act & Assert
+        await this.CaptureResponseTestAsync(
+            model,
+            variableName: "TestVariable",
+            responseText: "not-a-number",
+            expectResponse: false);
     }
 
     [Fact]
     public async Task QuestionCaptureResponseWithAutoSendFalseAsync()
     {
         // Arrange
-        this.SetVariableState(TestVariableName);
         Question model = this.CreateModel(
             displayName: nameof(QuestionCaptureResponseWithAutoSendFalseAsync),
-            alwaysPrompt: true,
-            skipMode: SkipQuestionMode.AlwaysAsk,
-            entity: new StringPrebuiltEntity(),
-            autoSend: false);
+            variableName: "TestVariable",
+            autoSend: new BooleanDataValue(false));
 
         // Act & Assert
         await this.CaptureResponseTestAsync(
             model,
-            responseText: "test response",
-            expectValid: true,
-            conversationId: TestConversationId);
+            variableName: "TestVariable",
+            responseText: "test response");
     }
 
     [Fact]
     public async Task QuestionCaptureResponseWithAutoSendTrueAsync()
     {
         // Arrange
-        this.SetVariableState(TestVariableName);
         Question model = this.CreateModel(
             displayName: nameof(QuestionCaptureResponseWithAutoSendTrueAsync),
-            alwaysPrompt: true,
-            skipMode: SkipQuestionMode.AlwaysAsk,
-            entity: new StringPrebuiltEntity(),
-            autoSend: true);
+            variableName: "TestVariable",
+            autoSend: new BooleanDataValue(true));
 
         // Act & Assert
         await this.CaptureResponseTestAsync(
             model,
+            variableName: "TestVariable",
             responseText: "test response",
-            expectValid: true,
-            conversationId: TestConversationId);
+            expectAutoSend: true);
     }
 
-    private void SetVariableState(string variableName, FormulaValue? valueState = null)
+    [Fact]
+    public async Task QuestionCaptureResponseWithAutoSendInvalidAsync()
     {
-        this.State.Set(variableName, valueState ?? FormulaValue.NewBlank());
+        // Arrange
+        Question model = this.CreateModel(
+            displayName: nameof(QuestionCaptureResponseWithAutoSendInvalidAsync),
+            variableName: "TestVariable",
+            autoSend: new NumberDataValue(33));
+
+        // Act & Assert
+        await this.CaptureResponseTestAsync(
+            model,
+            variableName: "TestVariable",
+            responseText: "test response");
+    }
+
+    [Fact]
+    public async Task QuestionCompleteAsync()
+    {
+        // Arrange
+        Question model =
+            this.CreateModel(
+                displayName: nameof(QuestionCompleteAsync),
+                variableName: "TestVariable");
+
+        // Act & Assert
+        await this.CompleteTestAsync(model);
     }
 
     private async Task ExecuteTestAsync(Question model, bool expectPrompt)
     {
         // Arrange
-        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Loose);
+        bool? sentMessage = null;
+        Mock<ResponseAgentProvider> mockProvider = new(MockBehavior.Loose);
         QuestionExecutor action = new(model, mockProvider.Object, this.State);
 
         // Act
-        WorkflowEvent[] events = await this.ExecuteAsync(action, isDiscrete: false);
+        WorkflowEvent[] events =
+            await this.ExecuteAsync(
+                action,
+                QuestionExecutor.Steps.Capture(action.Id),
+                CaptureResultAsync);
 
         // Assert
         VerifyModel(model, action);
-        // ExecuteAsync completes successfully - specific behavior varies based on configuration
+        VerifyInvocationEvent(events);
+        Assert.NotNull(sentMessage);
+        Assert.Equal(expectPrompt, sentMessage);
+
+        ValueTask CaptureResultAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
+        {
+            Assert.Null(sentMessage); // Should only be called once
+            sentMessage = message.Result is not null;
+            return default;
+        }
     }
 
-    private async Task PrepareResponseTestAsync(Question model)
+    private async Task PrepareResponseTestAsync(
+        Question model,
+        string expectedPrompt)
     {
         // Arrange
-        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Loose);
+        Mock<ResponseAgentProvider> mockProvider = new(MockBehavior.Loose);
         QuestionExecutor action = new(model, mockProvider.Object, this.State);
+        string? capturedPrompt = null;
 
-        // Act - Execute first to initialize state
-        await this.ExecuteAsync(action, isDiscrete: false);
-
-        // Then call PrepareResponseAsync
-        WorkflowEvent[] events = await this.ExecuteAsync(
-            action,
-            QuestionExecutor.Steps.Prepare(action.Id),
-            (IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken) =>
-                action.PrepareResponseAsync(context, message, cancellationToken));
+        // Act
+        await this.ExecuteAsync(
+            [
+                action,
+                new DelegateActionExecutor(
+                    QuestionExecutor.Steps.Prepare(action.Id),
+                    this.State,
+                    action.PrepareResponseAsync),
+                new DelegateActionExecutor<ExternalInputRequest>(
+                    QuestionExecutor.Steps.Capture(action.Id),
+                    this.State,
+                    CaptureExternalRequestAsync)
+            ],
+            isDiscrete: false);
 
         // Assert
         VerifyModel(model, action);
-        // PrepareResponseAsync completes successfully and sends an ExternalInputRequest message
+        Assert.NotNull(capturedPrompt);
+        Assert.Equal(expectedPrompt, capturedPrompt);
+
+        ValueTask CaptureExternalRequestAsync(IWorkflowContext context, ExternalInputRequest request, CancellationToken cancellationToken)
+        {
+            Assert.Null(capturedPrompt);
+            capturedPrompt = request.AgentResponse.Text;
+            return default;
+        }
     }
 
     private async Task CaptureResponseTestAsync(
         Question model,
+        string variableName,
         string? responseText,
-        bool expectValid,
-        string? conversationId = null)
+        bool expectResponse = true,
+        bool expectAutoSend = false)
     {
         // Arrange
-        if (conversationId is not null)
-        {
-            this.State.Set(SystemScope.Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System);
-        }
+        this.State.Set(SystemScope.Names.ConversationId, FormulaValue.New("ExternalConversationId"), VariableScopeNames.System);
 
-        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Loose);
-
-        if (conversationId is not null && expectValid && responseText is not null)
-        {
-            mockProvider
-                .Setup(p => p.CreateMessageAsync(
-                    It.IsAny<string>(),
-                    It.IsAny<ChatMessage>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync((string cid, ChatMessage msg, CancellationToken ct) => msg);
-        }
+        Mock<ResponseAgentProvider> mockProvider = new(MockBehavior.Loose);
+        mockProvider
+            .Setup(p => p.CreateMessageAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatMessage>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string cid, ChatMessage msg, CancellationToken ct) => msg);
 
         QuestionExecutor action = new(model, mockProvider.Object, this.State);
         ExternalInputResponse response = responseText is not null
             ? new ExternalInputResponse(new ChatMessage(ChatRole.User, responseText))
             : new ExternalInputResponse([]);
 
-        // Act - Execute first to initialize state
-        await this.ExecuteAsync(action, isDiscrete: false);
-
-        // Then call CaptureResponseAsync
+        // Act
         WorkflowEvent[] events = await this.ExecuteAsync(
             action,
             QuestionExecutor.Steps.Capture(action.Id),
-            (IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken) =>
+            (context, message, cancellationToken) =>
                 action.CaptureResponseAsync(context, response, cancellationToken));
+
         // Assert
         VerifyModel(model, action);
 
-        if (expectValid && responseText is not null)
+        if (expectResponse)
         {
             // Variable should be set with the extracted value
-            FormulaValue actualValue = this.State.Get(TestVariableName);
+            FormulaValue actualValue = this.State.Get(variableName);
             Assert.Equal(responseText, actualValue.Format());
         }
         else
         {
             // Should have prompted again or sent unrecognized/invalid message
-            if (responseText is null)
-            {
-                Assert.Contains(events, e => e is MessageActivityEvent);
-            }
+            Assert.Contains(events, e => e is MessageActivityEvent);
         }
-    }
 
-    private async Task CaptureResponseWithRepeatCountTestAsync(Question model)
-    {
-        // Arrange
-        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Loose);
-        QuestionExecutor action = new(model, mockProvider.Object, this.State);
-        ExternalInputResponse response = new(new ChatMessage(ChatRole.User, "not-a-number"));
-
-        // Act - First execute to initialize state, then prepare to increment prompt count,
-        // then capture with invalid response to trigger default value - all in one workflow execution
-        WorkflowEvent[] events = await this.ExecuteAsync([
-            action,
-            new DelegateActionExecutor(
-                QuestionExecutor.Steps.Prepare(action.Id),
-                this.State,
-                (IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken) =>
-                    action.PrepareResponseAsync(context, message, cancellationToken)),
-            new DelegateActionExecutor(
-                QuestionExecutor.Steps.Capture(action.Id),
-                this.State,
-                (IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken) =>
-                    action.CaptureResponseAsync(context, response, cancellationToken))
-        ], isDiscrete: false);
-
-        // Assert
-        VerifyModel(model, action);
-
-        // Should have sent the default value response message when repeat count exceeded
-        Assert.Contains(events, e => e is MessageActivityEvent);
+        if (expectAutoSend)
+        {
+            this.VerifyState(SystemScope.Names.LastMessageText, VariableScopeNames.System, FormulaValue.New(responseText ?? string.Empty));
+        }
+        else
+        {
+            this.VerifyUndefined(SystemScope.Names.LastMessageText, VariableScopeNames.System);
+        }
     }
 
     private async Task CompleteTestAsync(Question model)
     {
         // Arrange
-        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Loose);
+        Mock<ResponseAgentProvider> mockProvider = new(MockBehavior.Loose);
         QuestionExecutor action = new(model, mockProvider.Object, this.State);
 
         // Act
         WorkflowEvent[] events = await this.ExecuteAsync(
             QuestionExecutor.Steps.Input(action.Id),
-            (IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken) =>
-                action.CompleteAsync(context, message, cancellationToken));
+            action.CompleteAsync);
 
         // Assert
         VerifyModel(model, action);
@@ -430,55 +429,74 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
 
     private Question CreateModel(
         string displayName,
-        bool alwaysPrompt,
-        SkipQuestionMode skipMode,
+        string variableName,
+        string promptText = "Please provide a value",
+        string? invalidResponseText = null,
+        string? unrecognizedResponseText = null,
+        string? defaultValueResponseText = null,
+        DataValue? defaultValue = null,
+        bool? alwaysPrompt = null,
+        SkipQuestionMode? skipMode = null,
+        int? repeatCount = null,
         EntityReference? entity = null,
-        int repeatCount = 3,
-        bool? autoSend = null)
+        DataValue? autoSend = null)
     {
-        MessageActivityTemplate.Builder promptBuilder = new()
+        BoolExpression.Builder? alwaysPromptExpression = null;
+        if (alwaysPrompt is not null)
         {
-            Text = { TemplateLine.Parse("Please provide a value") },
-        };
+            alwaysPromptExpression = BoolExpression.Literal(alwaysPrompt.Value).ToBuilder();
+        }
 
-        MessageActivityTemplate.Builder invalidPromptBuilder = new()
+        IntExpression.Builder? repeatCountExpression = null;
+        if (repeatCount is not null)
         {
-            Text = { TemplateLine.Parse("Invalid response, please try again") },
-        };
+            repeatCountExpression = IntExpression.Literal(repeatCount.Value).ToBuilder();
+        }
 
-        MessageActivityTemplate.Builder unrecognizedPromptBuilder = new()
+        ValueExpression.Builder? defaultValueExpression = null;
+        if (defaultValue is not null)
         {
-            Text = { TemplateLine.Parse("I didn't recognize that") },
-        };
+            defaultValueExpression = ValueExpression.Literal(defaultValue).ToBuilder();
+        }
 
-        MessageActivityTemplate.Builder defaultValueResponseBuilder = new()
+        EnumExpression<SkipQuestionModeWrapper>.Builder? skipModeExpression = null;
+        if (skipMode is not null)
         {
-            Text = { TemplateLine.Parse("Using default value") },
-        };
+            skipModeExpression = EnumExpression<SkipQuestionModeWrapper>.Literal(skipMode).ToBuilder();
+        }
 
         Question.Builder actionBuilder = new()
         {
             Id = this.CreateActionId(),
             DisplayName = this.FormatDisplayName(displayName),
-            AlwaysPrompt = BoolExpression.Literal(alwaysPrompt),
-            SkipQuestionMode = EnumExpression<SkipQuestionModeWrapper>.Literal(SkipQuestionModeWrapper.Get(skipMode)),
-            Variable = PropertyPath.Create(FormatVariablePath(TestVariableName)),
-            Prompt = promptBuilder.Build(),
-            InvalidPrompt = invalidPromptBuilder.Build(),
-            UnrecognizedPrompt = unrecognizedPromptBuilder.Build(),
-            DefaultValue = ValueExpression.Literal(new StringDataValue("default-value")),
-            DefaultValueResponse = defaultValueResponseBuilder.Build(),
-            RepeatCount = IntExpression.Literal(repeatCount),
+            AlwaysPrompt = alwaysPromptExpression,
+            SkipQuestionMode = skipModeExpression,
+            Variable = PropertyPath.Create(FormatVariablePath(variableName)),
+            Prompt = CreateMessageActivity(promptText),
+            InvalidPrompt = CreateOptionalMessageActivity(invalidResponseText),
+            UnrecognizedPrompt = CreateOptionalMessageActivity(unrecognizedResponseText),
+            DefaultValue = defaultValueExpression,
+            DefaultValueResponse = CreateOptionalMessageActivity(defaultValueResponseText),
+            RepeatCount = repeatCountExpression,
             Entity = entity ?? new StringPrebuiltEntity(),
         };
 
-        if (autoSend.HasValue)
+        if (autoSend is not null)
         {
             RecordDataValue.Builder extensionDataBuilder = new();
-            extensionDataBuilder.Properties.Add("autoSend", new BooleanDataValue(autoSend.Value));
+            extensionDataBuilder.Properties.Add("autoSend", autoSend);
             actionBuilder.ExtensionData = extensionDataBuilder.Build();
         }
 
         return AssignParent<Question>(actionBuilder);
     }
+
+    private static MessageActivityTemplate.Builder? CreateOptionalMessageActivity(string? text) =>
+        text is null ? null : CreateMessageActivity(text);
+
+    private static MessageActivityTemplate.Builder CreateMessageActivity(string text) =>
+        new()
+        {
+            Text = { TemplateLine.Parse(text) },
+        };
 }
