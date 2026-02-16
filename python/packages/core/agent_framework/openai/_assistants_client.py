@@ -68,12 +68,6 @@ else:
 if TYPE_CHECKING:
     from .._middleware import MiddlewareTypes
 
-__all__ = [
-    "AssistantToolResources",
-    "OpenAIAssistantsClient",
-    "OpenAIAssistantsOptions",
-]
-
 
 # region OpenAI Assistants Options TypedDict
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import re
 import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
@@ -29,7 +30,6 @@ from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, Field, create_model
 
 from ._clients import BaseChatClient, SupportsChatGetResponse
-from ._logging import get_logger
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._middleware import AgentMiddlewareLayer, MiddlewareTypes
 from ._serialization import SerializationMixin
@@ -41,6 +41,7 @@ from ._tools import (
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
     Message,
@@ -67,7 +68,7 @@ else:
 if TYPE_CHECKING:
     from ._types import ChatOptions
 
-logger = get_logger("agent_framework")
+logger = logging.getLogger("agent_framework")
 
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 OptionsCoT = TypeVar(
@@ -159,9 +160,6 @@ class _RunContext(TypedDict):
     finalize_kwargs: dict[str, Any]
 
 
-__all__ = ["Agent", "BaseAgent", "RawAgent", "SupportsAgentRun"]
-
-
 # region Agent Protocol
 
 
@@ -230,7 +228,7 @@ class SupportsAgentRun(Protocol):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -242,7 +240,7 @@ class SupportsAgentRun(Protocol):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -253,7 +251,7 @@ class SupportsAgentRun(Protocol):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -763,7 +761,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -780,7 +778,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -797,7 +795,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -813,7 +811,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -1000,7 +998,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     async def _prepare_run_context(
         self,
         *,
-        messages: str | Message | Sequence[str | Message] | None,
+        messages: AgentRunInputs | None,
         session: AgentSession | None,
         tools: FunctionTool
         | Callable[..., Any]

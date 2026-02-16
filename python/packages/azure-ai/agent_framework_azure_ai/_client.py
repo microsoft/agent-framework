@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from contextlib import suppress
@@ -19,7 +20,6 @@ from agent_framework import (
     FunctionTool,
     Message,
     MiddlewareTypes,
-    get_logger,
 )
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError
@@ -59,7 +59,7 @@ else:
     from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
-logger = get_logger("agent_framework.azure")
+logger = logging.getLogger("agent_framework.azure")
 
 
 class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):

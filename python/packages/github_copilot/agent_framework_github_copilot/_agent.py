@@ -23,7 +23,7 @@ from agent_framework import (
 )
 from agent_framework._settings import load_settings
 from agent_framework._tools import FunctionTool
-from agent_framework._types import normalize_tools
+from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import ServiceException
 from copilot import CopilotClient, CopilotSession
 from copilot.generated.session_events import SessionEvent, SessionEventType
@@ -277,7 +277,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = False,
         session: AgentSession | None = None,
@@ -288,7 +288,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -298,7 +298,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -340,7 +340,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     async def _run_impl(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
@@ -388,7 +388,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     async def _stream_updates(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,

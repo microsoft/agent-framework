@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from pathlib import Path
@@ -19,11 +20,10 @@ from agent_framework import (
     FunctionTool,
     Message,
     ResponseStream,
-    get_logger,
     normalize_messages,
 )
 from agent_framework._settings import load_settings
-from agent_framework._types import normalize_tools
+from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import ServiceException
 from claude_agent_sdk import (
     AssistantMessage,
@@ -61,7 +61,7 @@ if TYPE_CHECKING:
 
 __all__ = ["ClaudeAgent", "ClaudeAgentOptions"]
 
-logger = get_logger("agent_framework.claude")
+logger = logging.getLogger("agent_framework.claude")
 
 # Name of the in-process MCP server that hosts Agent Framework tools.
 # FunctionTool instances are converted to SDK MCP tools and served
@@ -557,7 +557,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -568,7 +568,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
     @overload
     async def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -578,7 +578,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -612,7 +612,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     async def _get_stream(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
         options: OptionsT | MutableMapping[str, Any] | None = None,

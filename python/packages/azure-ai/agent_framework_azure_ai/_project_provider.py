@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import Callable, MutableMapping, Sequence
 from typing import Any, Generic
@@ -12,7 +13,6 @@ from agent_framework import (
     BaseContextProvider,
     FunctionTool,
     MiddlewareTypes,
-    get_logger,
     normalize_tools,
 )
 from agent_framework._mcp import MCPTool
@@ -43,7 +43,7 @@ else:
     from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
-logger = get_logger("agent_framework.azure")
+logger = logging.getLogger("agent_framework.azure")
 
 
 # Type variable for options - allows typed Agent[OptionsT] returns

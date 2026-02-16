@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
 from collections.abc import Awaitable, Callable
 
 from agent_framework import AgentContext, AgentMiddleware, ChatContext, ChatMiddleware, MiddlewareTermination
-from agent_framework._logging import get_logger
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
@@ -14,7 +14,7 @@ from ._models import Activity
 from ._processor import ScopedContentProcessor
 from ._settings import PurviewSettings
 
-logger = get_logger("agent_framework.purview")
+logger = logging.getLogger("agent_framework.purview")
 
 
 class PurviewPolicyMiddleware(AgentMiddleware):
