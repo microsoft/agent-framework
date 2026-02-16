@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 from .._agents import BaseAgent
 from .._sessions import (
-    DEFAULT_HISTORY_SOURCE_ID,
     AgentSession,
     BaseContextProvider,
     BaseHistoryProvider,
@@ -121,7 +120,7 @@ class WorkflowAgent(BaseAgent):
 
         resolved_context_providers = list(context_providers) if context_providers is not None else []
         if not resolved_context_providers:
-            resolved_context_providers.append(InMemoryHistoryProvider(DEFAULT_HISTORY_SOURCE_ID))
+            resolved_context_providers.append(InMemoryHistoryProvider())
 
         super().__init__(
             id=id,

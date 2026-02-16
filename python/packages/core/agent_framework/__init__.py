@@ -43,7 +43,6 @@ from ._middleware import (
     function_middleware,
 )
 from ._sessions import (
-    DEFAULT_HISTORY_SOURCE_ID,
     AgentSession,
     BaseContextProvider,
     BaseHistoryProvider,
@@ -157,7 +156,6 @@ from ._workflows import (
 __all__ = [
     "AGENT_FRAMEWORK_USER_AGENT",
     "APP_INFO",
-    "DEFAULT_HISTORY_SOURCE_ID",
     "DEFAULT_MAX_ITERATIONS",
     "USER_AGENT_KEY",
     "USER_AGENT_TELEMETRY_DISABLED_ENV_VAR",

@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "DEFAULT_HISTORY_SOURCE_ID",
     "AgentSession",
     "BaseContextProvider",
     "BaseHistoryProvider",
@@ -34,9 +33,6 @@ __all__ = [
     "register_state_type",
 ]
 
-
-# Default source_id for the auto-injected InMemoryHistoryProvider
-DEFAULT_HISTORY_SOURCE_ID = "memory"
 
 # Registry of known types for state deserialization
 _STATE_TYPE_REGISTRY: dict[str, type] = {}
@@ -543,7 +539,42 @@ class InMemoryHistoryProvider(BaseHistoryProvider):
 
     This is the default provider auto-added by the agent when no providers
     are configured and ``conversation_id`` or ``store=True`` is set.
+
+    Attributes:
+        DEFAULT_SOURCE_ID: Default source_id used when none is provided ("in-memory").
     """
+
+    DEFAULT_SOURCE_ID = "in-memory"
+
+    def __init__(
+        self,
+        source_id: str | None = None,
+        *,
+        load_messages: bool = True,
+        store_inputs: bool = True,
+        store_context_messages: bool = False,
+        store_context_from: set[str] | None = None,
+        store_outputs: bool = True,
+    ):
+        """Initialize the in-memory history provider.
+
+        Args:
+            source_id: Unique identifier for this provider instance.
+                Defaults to DEFAULT_SOURCE_ID ("in-memory") if not provided.
+            load_messages: Whether to load messages before invocation.
+            store_inputs: Whether to store input messages.
+            store_context_messages: Whether to store context from other providers.
+            store_context_from: If set, only store context from these source_ids.
+            store_outputs: Whether to store response messages.
+        """
+        super().__init__(
+            source_id=source_id or self.DEFAULT_SOURCE_ID,
+            load_messages=load_messages,
+            store_inputs=store_inputs,
+            store_context_messages=store_context_messages,
+            store_context_from=store_context_from,
+            store_outputs=store_outputs,
+        )
 
     async def get_messages(
         self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any

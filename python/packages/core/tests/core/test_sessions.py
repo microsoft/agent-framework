@@ -3,7 +3,7 @@
 import json
 from collections.abc import Sequence
 
-from agent_framework import DEFAULT_HISTORY_SOURCE_ID, Message
+from agent_framework import Message
 from agent_framework._sessions import (
     AgentSession,
     BaseContextProvider,
@@ -420,39 +420,35 @@ class TestInMemoryHistoryProvider:
         ctx.extend_messages("custom-source", [Message(role="user", contents=["test"])])
         assert "custom-source" in ctx.context_messages
 
+    async def test_default_source_id(self) -> None:
+        """Test that InMemoryHistoryProvider uses default source_id when none provided."""
+        provider = InMemoryHistoryProvider()
+        assert provider.source_id == InMemoryHistoryProvider.DEFAULT_SOURCE_ID
+        assert provider.source_id == "in-memory"
 
-# ---------------------------------------------------------------------------
-# DEFAULT_HISTORY_SOURCE_ID tests
-# ---------------------------------------------------------------------------
+    async def test_default_source_id_class_attribute(self) -> None:
+        """Test that DEFAULT_SOURCE_ID is accessible as a class attribute."""
+        assert InMemoryHistoryProvider.DEFAULT_SOURCE_ID == "in-memory"
+        # Can be used to access session state
+        session = AgentSession()
+        session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID] = {"messages": []}
+        assert InMemoryHistoryProvider.DEFAULT_SOURCE_ID in session.state
 
-
-class TestDefaultHistorySourceId:
-    def test_constant_value(self) -> None:
-        """Verify DEFAULT_HISTORY_SOURCE_ID has expected value."""
-        assert DEFAULT_HISTORY_SOURCE_ID == "memory"
-
-    def test_constant_is_exported(self) -> None:
-        """Verify DEFAULT_HISTORY_SOURCE_ID is accessible from public API."""
-        from agent_framework import DEFAULT_HISTORY_SOURCE_ID as exported_constant
-
-        assert exported_constant == "memory"
-
-    async def test_provider_uses_constant(self) -> None:
-        """Verify InMemoryHistoryProvider can be instantiated with constant."""
+    async def test_default_source_id_works_with_session(self) -> None:
+        """Test that default provider works with session state."""
         from agent_framework import AgentResponse
 
-        provider = InMemoryHistoryProvider(DEFAULT_HISTORY_SOURCE_ID)
-        assert provider.source_id == DEFAULT_HISTORY_SOURCE_ID
-
-        # Verify it works with session state
+        provider = InMemoryHistoryProvider()  # Use default source_id
         session = AgentSession()
+
+        # First run: store messages
         input_msg = Message(role="user", contents=["test"])
         ctx = SessionContext(session_id="s1", input_messages=[input_msg])
         await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["reply"])])
         await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
-        # Verify messages are stored under the constant key
-        assert DEFAULT_HISTORY_SOURCE_ID in session.state
-        assert "messages" in session.state[DEFAULT_HISTORY_SOURCE_ID]
-        assert len(session.state[DEFAULT_HISTORY_SOURCE_ID]["messages"]) == 2
+        # Verify messages are stored under the default key
+        assert InMemoryHistoryProvider.DEFAULT_SOURCE_ID in session.state
+        assert "messages" in session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID]
+        assert len(session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID]["messages"]) == 2
