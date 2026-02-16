@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -36,7 +38,7 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// To support conversations that may need to survive application restarts or separate service requests, an <see cref="AgentSession"/> can be serialized
 /// and deserialized, so that it can be saved in a persistent store.
-/// The <see cref="AIAgent"/> provides the <see cref="AIAgent.SerializeSession(AgentSession, JsonSerializerOptions?)"/> method to serialize the session to a
+/// The <see cref="AIAgent"/> provides the <see cref="AIAgent.SerializeSessionAsync(AgentSession, JsonSerializerOptions?, System.Threading.CancellationToken)"/> method to serialize the session to a
 /// <see cref="JsonElement"/> and the <see cref="AIAgent.DeserializeSessionAsync(JsonElement, JsonSerializerOptions?, System.Threading.CancellationToken)"/> method
 /// can be used to deserialize the session.
 /// </para>
@@ -44,6 +46,7 @@ namespace Microsoft.Agents.AI;
 /// <seealso cref="AIAgent"/>
 /// <seealso cref="AIAgent.CreateSessionAsync(System.Threading.CancellationToken)"/>
 /// <seealso cref="AIAgent.DeserializeSessionAsync(JsonElement, JsonSerializerOptions?, System.Threading.CancellationToken)"/>
+[DebuggerDisplay("{DebuggerDisplay,nq}")]
 public abstract class AgentSession
 {
     /// <summary>
@@ -52,6 +55,20 @@ public abstract class AgentSession
     protected AgentSession()
     {
     }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentSession"/> class.
+    /// </summary>
+    protected AgentSession(AgentSessionStateBag stateBag)
+    {
+        this.StateBag = Throw.IfNull(stateBag);
+    }
+
+    /// <summary>
+    /// Gets any arbitrary state associated with this session.
+    /// </summary>
+    [JsonPropertyName("stateBag")]
+    public AgentSessionStateBag StateBag { get; protected set; } = new();
 
     /// <summary>Asks the <see cref="AgentSession"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>
@@ -82,4 +99,7 @@ public abstract class AgentSession
     /// </remarks>
     public TService? GetService<TService>(object? serviceKey = null)
         => this.GetService(typeof(TService), serviceKey) is TService service ? service : default;
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private string DebuggerDisplay => $"StateBag Count = {this.StateBag.Count}";
 }

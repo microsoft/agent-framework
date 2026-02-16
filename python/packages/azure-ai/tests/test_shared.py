@@ -1,31 +1,29 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from unittest.mock import MagicMock
+import os
+from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_framework import (
-    Content,
     FunctionTool,
-    HostedCodeInterpreterTool,
-    HostedFileSearchTool,
-    HostedImageGenerationTool,
-    HostedMCPTool,
-    HostedWebSearchTool,
 )
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
+from agent_framework.exceptions import ServiceInvalidRequestError
 from azure.ai.agents.models import CodeInterpreterToolDefinition
 from pydantic import BaseModel
 
+from agent_framework_azure_ai import AzureAIAgentClient
 from agent_framework_azure_ai._shared import (
     _convert_response_format,  # type: ignore
     _convert_sdk_tool,  # type: ignore
     _extract_project_connection_id,  # type: ignore
-    _prepare_mcp_tool_for_azure_ai,  # type: ignore
     create_text_format_config,
     from_azure_ai_agent_tools,
     from_azure_ai_tools,
     to_azure_ai_agent_tools,
     to_azure_ai_tools,
+)
+from agent_framework_azure_ai._shared import (
+    _prepare_mcp_tool_dict_for_azure_ai as _prepare_mcp_tool_for_azure_ai,  # type: ignore
 )
 
 
@@ -68,18 +66,34 @@ def test_to_azure_ai_agent_tools_function_tool() -> None:
 
 
 def test_to_azure_ai_agent_tools_code_interpreter() -> None:
-    """Test converting HostedCodeInterpreterTool."""
-    tool = HostedCodeInterpreterTool()
+    """Test converting code_interpreter dict tool."""
+    tool = AzureAIAgentClient.get_code_interpreter_tool()
     result = to_azure_ai_agent_tools([tool])
     assert len(result) == 1
     assert isinstance(result[0], CodeInterpreterToolDefinition)
 
 
 def test_to_azure_ai_agent_tools_web_search_missing_connection() -> None:
-    """Test HostedWebSearchTool raises without connection info."""
-    tool = HostedWebSearchTool()
-    with pytest.raises(ServiceInitializationError, match="Bing search tool requires"):
-        to_azure_ai_agent_tools([tool])
+    """Test web search tool raises without connection info."""
+    # Clear any environment variables that could provide connection info
+    with patch.dict(
+        os.environ,
+        {"BING_CONNECTION_ID": "", "BING_CUSTOM_CONNECTION_ID": "", "BING_CUSTOM_INSTANCE_NAME": ""},
+        clear=False,
+    ):
+        # Also need to unset the keys if they exist
+        env_backup = {}
+        for key in ["BING_CONNECTION_ID", "BING_CUSTOM_CONNECTION_ID", "BING_CUSTOM_INSTANCE_NAME"]:
+            env_backup[key] = os.environ.pop(key, None)
+        try:
+            # get_web_search_tool now raises ValueError when no connection info is available
+            with pytest.raises(ValueError, match="Azure AI Agents requires a Bing connection"):
+                AzureAIAgentClient.get_web_search_tool()
+        finally:
+            # Restore environment
+            for key, value in env_backup.items():
+                if value is not None:
+                    os.environ[key] = value
 
 
 def test_to_azure_ai_agent_tools_dict_passthrough() -> None:
@@ -90,13 +104,15 @@ def test_to_azure_ai_agent_tools_dict_passthrough() -> None:
 
 
 def test_to_azure_ai_agent_tools_unsupported_type() -> None:
-    """Test unsupported tool type raises error."""
+    """Test unsupported tool type passes through unchanged."""
 
     class UnsupportedTool:
         pass
 
-    with pytest.raises(ServiceInitializationError, match="Unsupported tool type"):
-        to_azure_ai_agent_tools([UnsupportedTool()])  # type: ignore
+    unsupported = UnsupportedTool()
+    result = to_azure_ai_agent_tools([unsupported])  # type: ignore
+    assert len(result) == 1
+    assert result[0] is unsupported  # Passed through unchanged
 
 
 def test_from_azure_ai_agent_tools_empty() -> None:
@@ -110,7 +126,7 @@ def test_from_azure_ai_agent_tools_code_interpreter() -> None:
     tool = CodeInterpreterToolDefinition()
     result = from_azure_ai_agent_tools([tool])
     assert len(result) == 1
-    assert isinstance(result[0], HostedCodeInterpreterTool)
+    assert result[0] == {"type": "code_interpreter"}
 
 
 def test_convert_sdk_tool_code_interpreter() -> None:
@@ -118,7 +134,7 @@ def test_convert_sdk_tool_code_interpreter() -> None:
     tool = MagicMock()
     tool.type = "code_interpreter"
     result = _convert_sdk_tool(tool)
-    assert isinstance(result, HostedCodeInterpreterTool)
+    assert result == {"type": "code_interpreter"}
 
 
 def test_convert_sdk_tool_function_returns_none() -> None:
@@ -144,8 +160,8 @@ def test_convert_sdk_tool_file_search() -> None:
     tool.file_search = MagicMock()
     tool.file_search.vector_store_ids = ["vs-1", "vs-2"]
     result = _convert_sdk_tool(tool)
-    assert isinstance(result, HostedFileSearchTool)
-    assert len(result.inputs) == 2  # type: ignore
+    assert result["type"] == "file_search"
+    assert result["vector_store_ids"] == ["vs-1", "vs-2"]
 
 
 def test_convert_sdk_tool_bing_grounding() -> None:
@@ -155,8 +171,8 @@ def test_convert_sdk_tool_bing_grounding() -> None:
     tool.bing_grounding = MagicMock()
     tool.bing_grounding.connection_id = "conn-123"
     result = _convert_sdk_tool(tool)
-    assert isinstance(result, HostedWebSearchTool)
-    assert result.additional_properties["connection_id"] == "conn-123"  # type: ignore
+    assert result["type"] == "bing_grounding"
+    assert result["connection_id"] == "conn-123"
 
 
 def test_convert_sdk_tool_bing_custom_search() -> None:
@@ -167,9 +183,9 @@ def test_convert_sdk_tool_bing_custom_search() -> None:
     tool.bing_custom_search.connection_id = "conn-123"
     tool.bing_custom_search.instance_name = "my-instance"
     result = _convert_sdk_tool(tool)
-    assert isinstance(result, HostedWebSearchTool)
-    assert result.additional_properties["custom_connection_id"] == "conn-123"  # type: ignore
-    assert result.additional_properties["custom_instance_name"] == "my-instance"  # type: ignore
+    assert result["type"] == "bing_custom_search"
+    assert result["connection_id"] == "conn-123"
+    assert result["instance_name"] == "my-instance"
 
 
 def test_to_azure_ai_tools_empty() -> None:
@@ -179,14 +195,14 @@ def test_to_azure_ai_tools_empty() -> None:
 
 
 def test_to_azure_ai_tools_code_interpreter_with_file_ids() -> None:
-    """Test converting HostedCodeInterpreterTool with file inputs."""
-    tool = HostedCodeInterpreterTool(
-        inputs=[Content.from_hosted_file(file_id="file-123")]  # type: ignore
-    )
+    """Test converting code_interpreter dict tool with file inputs."""
+    tool = {
+        "type": "code_interpreter",
+        "file_ids": ["file-123"],
+    }
     result = to_azure_ai_tools([tool])
     assert len(result) == 1
     assert result[0]["type"] == "code_interpreter"
-    assert result[0]["container"]["file_ids"] == ["file-123"]
 
 
 def test_to_azure_ai_tools_function_tool() -> None:
@@ -204,11 +220,12 @@ def test_to_azure_ai_tools_function_tool() -> None:
 
 
 def test_to_azure_ai_tools_file_search() -> None:
-    """Test converting HostedFileSearchTool."""
-    tool = HostedFileSearchTool(
-        inputs=[Content.from_hosted_vector_store(vector_store_id="vs-123")],  # type: ignore
-        max_results=10,
-    )
+    """Test converting file_search dict tool."""
+    tool = {
+        "type": "file_search",
+        "vector_store_ids": ["vs-123"],
+        "max_num_results": 10,
+    }
     result = to_azure_ai_tools([tool])
     assert len(result) == 1
     assert result[0]["type"] == "file_search"
@@ -217,28 +234,29 @@ def test_to_azure_ai_tools_file_search() -> None:
 
 
 def test_to_azure_ai_tools_web_search_with_location() -> None:
-    """Test converting HostedWebSearchTool with user location."""
-    tool = HostedWebSearchTool(
-        additional_properties={
-            "user_location": {
-                "city": "Seattle",
-                "country": "US",
-                "region": "WA",
-                "timezone": "PST",
-            }
-        }
-    )
+    """Test converting web_search dict tool with user location."""
+    tool = {
+        "type": "web_search_preview",
+        "user_location": {
+            "city": "Seattle",
+            "country": "US",
+            "region": "WA",
+            "timezone": "PST",
+        },
+    }
     result = to_azure_ai_tools([tool])
     assert len(result) == 1
     assert result[0]["type"] == "web_search_preview"
 
 
 def test_to_azure_ai_tools_image_generation() -> None:
-    """Test converting HostedImageGenerationTool."""
-    tool = HostedImageGenerationTool(
-        options={"model_id": "gpt-image-1", "image_size": "1024x1024"},
-        additional_properties={"quality": "high"},
-    )
+    """Test converting image_generation dict tool."""
+    tool = {
+        "type": "image_generation",
+        "model": "gpt-image-1",
+        "size": "1024x1024",
+        "quality": "high",
+    }
     result = to_azure_ai_tools([tool])
     assert len(result) == 1
     assert result[0]["type"] == "image_generation"
@@ -247,7 +265,7 @@ def test_to_azure_ai_tools_image_generation() -> None:
 
 def test_prepare_mcp_tool_basic() -> None:
     """Test basic MCP tool conversion."""
-    tool = HostedMCPTool(name="my tool", url="http://localhost:8080")
+    tool = {"type": "mcp", "server_label": "my_tool", "server_url": "http://localhost:8080"}
     result = _prepare_mcp_tool_for_azure_ai(tool)
     assert result["server_label"] == "my_tool"
     assert "http://localhost:8080" in result["server_url"]
@@ -255,26 +273,37 @@ def test_prepare_mcp_tool_basic() -> None:
 
 def test_prepare_mcp_tool_with_description() -> None:
     """Test MCP tool with description."""
-    tool = HostedMCPTool(name="my tool", url="http://localhost:8080", description="My MCP server")
+    tool = {
+        "type": "mcp",
+        "server_label": "my_tool",
+        "server_url": "http://localhost:8080",
+        "server_description": "My MCP server",
+    }
     result = _prepare_mcp_tool_for_azure_ai(tool)
     assert result["server_description"] == "My MCP server"
 
 
 def test_prepare_mcp_tool_with_headers() -> None:
     """Test MCP tool with headers (no project_connection_id)."""
-    tool = HostedMCPTool(name="my tool", url="http://localhost:8080", headers={"X-Api-Key": "secret"})
+    tool = {
+        "type": "mcp",
+        "server_label": "my_tool",
+        "server_url": "http://localhost:8080",
+        "headers": {"X-Api-Key": "secret"},
+    }
     result = _prepare_mcp_tool_for_azure_ai(tool)
     assert result["headers"] == {"X-Api-Key": "secret"}
 
 
 def test_prepare_mcp_tool_project_connection_takes_precedence() -> None:
     """Test project_connection_id takes precedence over headers."""
-    tool = HostedMCPTool(
-        name="my tool",
-        url="http://localhost:8080",
-        headers={"X-Api-Key": "secret"},
-        additional_properties={"project_connection_id": "my-conn"},
-    )
+    tool = {
+        "type": "mcp",
+        "server_label": "my_tool",
+        "server_url": "http://localhost:8080",
+        "headers": {"X-Api-Key": "secret"},
+        "project_connection_id": "my-conn",
+    }
     result = _prepare_mcp_tool_for_azure_ai(tool)
     assert result["project_connection_id"] == "my-conn"
     assert "headers" not in result
@@ -282,30 +311,38 @@ def test_prepare_mcp_tool_project_connection_takes_precedence() -> None:
 
 def test_prepare_mcp_tool_approval_mode_always() -> None:
     """Test MCP tool with always_require approval mode."""
-    tool = HostedMCPTool(name="my tool", url="http://localhost:8080", approval_mode="always_require")
+    tool = {
+        "type": "mcp",
+        "server_label": "my_tool",
+        "server_url": "http://localhost:8080",
+        "require_approval": "always",
+    }
     result = _prepare_mcp_tool_for_azure_ai(tool)
     assert result["require_approval"] == "always"
 
 
 def test_prepare_mcp_tool_approval_mode_never() -> None:
     """Test MCP tool with never_require approval mode."""
-    tool = HostedMCPTool(name="my tool", url="http://localhost:8080", approval_mode="never_require")
+    tool = {
+        "type": "mcp",
+        "server_label": "my_tool",
+        "server_url": "http://localhost:8080",
+        "require_approval": "never",
+    }
     result = _prepare_mcp_tool_for_azure_ai(tool)
     assert result["require_approval"] == "never"
 
 
 def test_prepare_mcp_tool_approval_mode_dict() -> None:
     """Test MCP tool with dict approval mode."""
-    tool = HostedMCPTool(
-        name="my tool",
-        url="http://localhost:8080",
-        approval_mode={
-            "always_require_approval": {"sensitive_tool"},
-            "never_require_approval": {"safe_tool"},
-        },
-    )
+    tool = {
+        "type": "mcp",
+        "server_label": "my_tool",
+        "server_url": "http://localhost:8080",
+        "require_approval": {"always": {"tool_names": ["sensitive_tool", "dangerous_tool"]}},
+    }
     result = _prepare_mcp_tool_for_azure_ai(tool)
-    # The last assignment wins in the current implementation
+    # The approval mode is passed through
     assert "require_approval" in result
 
 
@@ -368,7 +405,7 @@ def test_convert_response_format_json_schema_missing_schema_raises() -> None:
 
 
 def test_from_azure_ai_tools_mcp_approval_mode_always() -> None:
-    """Test from_azure_ai_tools converts MCP require_approval='always' to approval_mode."""
+    """Test from_azure_ai_tools converts MCP require_approval='always' to dict."""
     tools = [
         {
             "type": "mcp",
@@ -379,12 +416,12 @@ def test_from_azure_ai_tools_mcp_approval_mode_always() -> None:
     ]
     result = from_azure_ai_tools(tools)
     assert len(result) == 1
-    assert isinstance(result[0], HostedMCPTool)
-    assert result[0].approval_mode == "always_require"
+    assert result[0]["type"] == "mcp"
+    assert result[0]["require_approval"] == "always"
 
 
 def test_from_azure_ai_tools_mcp_approval_mode_never() -> None:
-    """Test from_azure_ai_tools converts MCP require_approval='never' to approval_mode."""
+    """Test from_azure_ai_tools converts MCP require_approval='never' to dict."""
     tools = [
         {
             "type": "mcp",
@@ -395,8 +432,8 @@ def test_from_azure_ai_tools_mcp_approval_mode_never() -> None:
     ]
     result = from_azure_ai_tools(tools)
     assert len(result) == 1
-    assert isinstance(result[0], HostedMCPTool)
-    assert result[0].approval_mode == "never_require"
+    assert result[0]["type"] == "mcp"
+    assert result[0]["require_approval"] == "never"
 
 
 def test_from_azure_ai_tools_mcp_approval_mode_dict_always() -> None:
@@ -411,8 +448,8 @@ def test_from_azure_ai_tools_mcp_approval_mode_dict_always() -> None:
     ]
     result = from_azure_ai_tools(tools)
     assert len(result) == 1
-    assert isinstance(result[0], HostedMCPTool)
-    assert result[0].approval_mode == {"always_require_approval": {"sensitive_tool", "dangerous_tool"}}
+    assert result[0]["type"] == "mcp"
+    assert result[0]["require_approval"] == {"always": {"tool_names": ["sensitive_tool", "dangerous_tool"]}}
 
 
 def test_from_azure_ai_tools_mcp_approval_mode_dict_never() -> None:
@@ -427,5 +464,5 @@ def test_from_azure_ai_tools_mcp_approval_mode_dict_never() -> None:
     ]
     result = from_azure_ai_tools(tools)
     assert len(result) == 1
-    assert isinstance(result[0], HostedMCPTool)
-    assert result[0].approval_mode == {"never_require_approval": {"safe_tool"}}
+    assert result[0]["type"] == "mcp"
+    assert result[0]["require_approval"] == {"never": {"tool_names": ["safe_tool"]}}

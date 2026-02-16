@@ -14,7 +14,10 @@ internal static class HostAgentFactory
 {
     internal static async Task<(AIAgent, AgentCard)> CreateFoundryHostAgentAsync(string agentType, string model, string endpoint, string assistantId, IList<AITool>? tools = null)
     {
-        var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
+        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+        var persistentAgentsClient = new PersistentAgentsClient(endpoint, new DefaultAzureCredential());
         PersistentAgent persistentAgent = await persistentAgentsClient.Administration.GetAgentAsync(assistantId);
 
         AIAgent agent = await persistentAgentsClient

@@ -7,8 +7,10 @@ workflow actions defined in YAML. Each action type (InvokeAzureAgent, Foreach, e
 has a corresponding handler registered via the @action_handler decorator.
 """
 
+from __future__ import annotations
+
 from collections.abc import AsyncGenerator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from agent_framework import get_logger
@@ -27,13 +29,13 @@ class ActionContext:
     for executing nested actions (for control flow constructs like Foreach).
     """
 
-    state: "WorkflowState"
+    state: WorkflowState
     """The current workflow state with variables and agent results."""
 
     action: dict[str, Any]
     """The action definition from the YAML."""
 
-    execute_actions: "ExecuteActionsFn"
+    execute_actions: ExecuteActionsFn
     """Function to execute a list of nested actions (for Foreach, If, etc.)."""
 
     agents: dict[str, Any]
@@ -41,6 +43,9 @@ class ActionContext:
 
     bindings: dict[str, Any]
     """Function bindings for tool calls."""
+
+    run_kwargs: dict[str, Any] = field(default_factory=dict)
+    """Kwargs from workflow.run() to forward to agent invocations."""
 
     @property
     def action_id(self) -> str | None:
@@ -150,7 +155,7 @@ class ActionHandler(Protocol):
     def __call__(
         self,
         ctx: ActionContext,
-    ) -> AsyncGenerator[WorkflowEvent, None]:
+    ) -> AsyncGenerator[WorkflowEvent]:
         """Execute the action and yield events.
 
         Args:

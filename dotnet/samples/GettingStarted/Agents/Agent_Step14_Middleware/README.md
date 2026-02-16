@@ -7,7 +7,7 @@ This sample demonstrates how to add middleware to intercept:
 
 ## What This Sample Shows
 
-1. Azure OpenAI integration via `AzureOpenAIClient` and `AzureCliCredential`
+1. Azure OpenAI integration via `AzureOpenAIClient` and `DefaultAzureCredential`
 2. Chat client middleware using `ChatClientBuilder.Use(...)`
 3. Agent run middleware (PII redaction and wording guardrails)
 4. Function invocation middleware (logging and overriding a tool result)

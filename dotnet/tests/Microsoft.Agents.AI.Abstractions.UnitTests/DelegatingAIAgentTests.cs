@@ -27,7 +27,7 @@ public class DelegatingAIAgentTests
     /// </summary>
     public DelegatingAIAgentTests()
     {
-        this._innerAgentMock = new Mock<AIAgent>();
+        this._innerAgentMock = new Mock<AIAgent> { CallBase = true };
         this._testResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
         this._testStreamingResponses = [new AgentResponseUpdate(ChatRole.Assistant, "Test streaming response")];
         this._testSession = new TestAgentSession();
@@ -36,7 +36,10 @@ public class DelegatingAIAgentTests
         this._innerAgentMock.Protected().SetupGet<string>("IdCore").Returns("test-agent-id");
         this._innerAgentMock.Setup(x => x.Name).Returns("Test Agent");
         this._innerAgentMock.Setup(x => x.Description).Returns("Test Description");
-        this._innerAgentMock.Setup(x => x.CreateSessionAsync()).ReturnsAsync(this._testSession);
+        this._innerAgentMock
+            .Protected()
+            .Setup<ValueTask<AgentSession>>("CreateSessionCoreAsync", ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(this._testSession);
 
         this._innerAgentMock
             .Protected()
@@ -143,7 +146,9 @@ public class DelegatingAIAgentTests
 
         // Assert
         Assert.Same(this._testSession, session);
-        this._innerAgentMock.Verify(x => x.CreateSessionAsync(), Times.Once);
+        this._innerAgentMock
+            .Protected()
+            .Verify<ValueTask<AgentSession>>("CreateSessionCoreAsync", Times.Once(), ItExpr.IsAny<CancellationToken>());
     }
 
     /// <summary>
@@ -155,7 +160,8 @@ public class DelegatingAIAgentTests
         // Arrange
         var serializedSession = JsonSerializer.SerializeToElement("test-session-id", TestJsonSerializerContext.Default.String);
         this._innerAgentMock
-            .Setup(x => x.DeserializeSessionAsync(It.IsAny<JsonElement>(), null, It.IsAny<CancellationToken>()))
+            .Protected()
+            .Setup<ValueTask<AgentSession>>("DeserializeSessionCoreAsync", ItExpr.IsAny<JsonElement>(), ItExpr.IsAny<JsonSerializerOptions?>(), ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(this._testSession);
 
         // Act
@@ -163,7 +169,9 @@ public class DelegatingAIAgentTests
 
         // Assert
         Assert.Same(this._testSession, session);
-        this._innerAgentMock.Verify(x => x.DeserializeSessionAsync(It.IsAny<JsonElement>(), null, It.IsAny<CancellationToken>()), Times.Once);
+        this._innerAgentMock
+            .Protected()
+            .Verify<ValueTask<AgentSession>>("DeserializeSessionCoreAsync", Times.Once(), ItExpr.IsAny<JsonElement>(), ItExpr.IsAny<JsonSerializerOptions?>(), ItExpr.IsAny<CancellationToken>());
     }
 
     /// <summary>

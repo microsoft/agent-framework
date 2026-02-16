@@ -186,7 +186,7 @@ def gaia_scorer(model_answer: str, ground_truth: str) -> bool:
 
     if is_float(ground_truth):
         # numeric exact match after normalization
-        return _normalize_number_str(model_answer) == float(ground_truth)
+        return abs(_normalize_number_str(model_answer) - float(ground_truth)) < 1e-6
     if any(ch in ground_truth for ch in [",", ";"]):
         # list with per-element compare (number or string)
         gt_elems = _split_string(ground_truth)
@@ -196,7 +196,7 @@ def gaia_scorer(model_answer: str, ground_truth: str) -> bool:
         comparisons = []
         for ma, gt in zip(ma_elems, gt_elems, strict=False):
             if is_float(gt):
-                comparisons.append(_normalize_number_str(ma) == float(gt))
+                comparisons.append(abs(_normalize_number_str(ma) - float(gt)) < 1e-6)
             else:
                 comparisons.append(_normalize_str(ma, remove_punct=False) == _normalize_str(gt, remove_punct=False))
         return all(comparisons)
@@ -371,6 +371,7 @@ class GAIA:
         local_dir = snapshot_download(  # type: ignore
             repo_id="gaia-benchmark/GAIA",
             repo_type="dataset",
+            revision="682dd723ee1e1697e00360edccf2366dc8418dd9",
             token=token,
             local_dir=str(self.data_dir),
             force_download=False,

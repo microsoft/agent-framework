@@ -2,27 +2,28 @@
 
 import os
 from collections.abc import AsyncIterable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
     BaseChatClient,
-    ChatMessage,
     ChatResponseUpdate,
     Content,
-    HostedWebSearchTool,
+    Message,
     chat_middleware,
     tool,
 )
 from agent_framework.exceptions import (
-    ServiceInitializationError,
     ServiceInvalidRequestError,
     ServiceResponseException,
+    SettingNotFoundError,
 )
 from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
 from openai import AsyncStream
+from pytest import fixture
 
 from agent_framework_ollama import OllamaChatClient
 
@@ -37,7 +38,49 @@ skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
+# region: Connector Settings fixtures
+@fixture
+def exclude_list(request: Any) -> list[str]:
+    """Fixture that returns a list of environment variables to exclude."""
+    return request.param if hasattr(request, "param") else []
+
+
+@fixture
+def override_env_param_dict(request: Any) -> dict[str, str]:
+    """Fixture that returns a dict of environment variables to override."""
+    return request.param if hasattr(request, "param") else {}
+
+
+# These two fixtures are used for multiple things, also non-connector tests
+@fixture()
+def ollama_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  # type: ignore
+    """Fixture to set environment variables for OllamaSettings."""
+
+    if exclude_list is None:
+        exclude_list = []
+
+    if override_env_param_dict is None:
+        override_env_param_dict = {}
+
+    env_vars = {"OLLAMA_HOST": "http://localhost:12345", "OLLAMA_MODEL_ID": "test"}
+
+    env_vars.update(override_env_param_dict)  # type: ignore
+
+    for key, value in env_vars.items():
+        if key in exclude_list:
+            monkeypatch.delenv(key, raising=False)  # type: ignore
+            continue
+        monkeypatch.setenv(key, value)  # type: ignore
+
+    return env_vars
+
+
+@fixture
+def chat_history() -> list[Message]:
+    return []
+
+
+@fixture
 def mock_streaming_chat_completion_response() -> AsyncStream[OllamaChatResponse]:
     response = OllamaChatResponse(
         message=OllamaMessage(content="test", role="assistant"),
@@ -48,7 +91,7 @@ def mock_streaming_chat_completion_response() -> AsyncStream[OllamaChatResponse]
     return stream
 
 
-@pytest.fixture
+@fixture
 def mock_streaming_chat_completion_response_reasoning() -> AsyncStream[OllamaChatResponse]:
     response = OllamaChatResponse(
         message=OllamaMessage(thinking="test", role="assistant"),
@@ -59,7 +102,7 @@ def mock_streaming_chat_completion_response_reasoning() -> AsyncStream[OllamaCha
     return stream
 
 
-@pytest.fixture
+@fixture
 def mock_chat_completion_response() -> OllamaChatResponse:
     return OllamaChatResponse(
         message=OllamaMessage(content="test", role="assistant"),
@@ -70,7 +113,7 @@ def mock_chat_completion_response() -> OllamaChatResponse:
     )
 
 
-@pytest.fixture
+@fixture
 def mock_chat_completion_response_reasoning() -> OllamaChatResponse:
     return OllamaChatResponse(
         message=OllamaMessage(thinking="test", role="assistant"),
@@ -81,7 +124,7 @@ def mock_chat_completion_response_reasoning() -> OllamaChatResponse:
     )
 
 
-@pytest.fixture
+@fixture
 def mock_streaming_chat_completion_tool_call() -> AsyncStream[OllamaChatResponse]:
     ollama_tool_call = OllamaChatResponse(
         message=OllamaMessage(
@@ -96,7 +139,7 @@ def mock_streaming_chat_completion_tool_call() -> AsyncStream[OllamaChatResponse
     return stream
 
 
-@pytest.fixture
+@fixture
 def mock_chat_completion_tool_call() -> OllamaChatResponse:
     return OllamaChatResponse(
         message=OllamaMessage(
@@ -139,7 +182,7 @@ def test_init_client(ollama_unit_test_env: dict[str, str]) -> None:
 
 @pytest.mark.parametrize("exclude_list", [["OLLAMA_MODEL_ID"]], indirect=True)
 def test_with_invalid_settings(ollama_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(SettingNotFoundError, match="Required setting 'model_id'"):
         OllamaChatClient(
             host="http://localhost:12345",
             model_id=None,
@@ -163,8 +206,8 @@ def test_serialize(ollama_unit_test_env: dict[str, str]) -> None:
 
 def test_chat_middleware(ollama_unit_test_env: dict[str, str]) -> None:
     @chat_middleware
-    async def sample_middleware(context, next):
-        await next(context)
+    async def sample_middleware(context, call_next):
+        await call_next()
 
     ollama_chat_client = OllamaChatClient(middleware=[sample_middleware])
     assert len(ollama_chat_client.middleware) == 1
@@ -200,12 +243,12 @@ async def test_empty_messages() -> None:
 async def test_cmc(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
     mock_chat.return_value = mock_chat_completion_response
-    chat_history.append(ChatMessage(text="hello world", role="system"))
-    chat_history.append(ChatMessage(text="hello world", role="user"))
+    chat_history.append(Message(text="hello world", role="system"))
+    chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history)
@@ -217,11 +260,11 @@ async def test_cmc(
 async def test_cmc_reasoning(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_chat_completion_response_reasoning: AsyncStream[OllamaChatResponse],
 ) -> None:
     mock_chat.return_value = mock_chat_completion_response_reasoning
-    chat_history.append(ChatMessage(text="hello world", role="user"))
+    chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history)
@@ -234,11 +277,11 @@ async def test_cmc_reasoning(
 async def test_cmc_chat_failure(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
 ) -> None:
     # Simulate a failure in the Ollama client
     mock_chat.side_effect = Exception("Connection error")
-    chat_history.append(ChatMessage(text="hello world", role="user"))
+    chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
 
@@ -253,15 +296,15 @@ async def test_cmc_chat_failure(
 async def test_cmc_streaming(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_streaming_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
     mock_chat.return_value = mock_streaming_chat_completion_response
-    chat_history.append(ChatMessage(text="hello world", role="system"))
-    chat_history.append(ChatMessage(text="hello world", role="user"))
+    chat_history.append(Message(text="hello world", role="system"))
+    chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
-    result = ollama_client.get_streaming_response(messages=chat_history)
+    result = ollama_client.get_response(messages=chat_history, stream=True)
 
     async for chunk in result:
         assert chunk.text == "test"
@@ -271,14 +314,14 @@ async def test_cmc_streaming(
 async def test_cmc_streaming_reasoning(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_streaming_chat_completion_response_reasoning: AsyncStream[OllamaChatResponse],
 ) -> None:
     mock_chat.return_value = mock_streaming_chat_completion_response_reasoning
-    chat_history.append(ChatMessage(text="hello world", role="user"))
+    chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
-    result = ollama_client.get_streaming_response(messages=chat_history)
+    result = ollama_client.get_response(messages=chat_history, stream=True)
 
     async for chunk in result:
         reasoning = "".join(c.text for c in chunk.contents if c.type == "text_reasoning")
@@ -289,16 +332,16 @@ async def test_cmc_streaming_reasoning(
 async def test_cmc_streaming_chat_failure(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
 ) -> None:
     # Simulate a failure in the Ollama client for streaming
     mock_chat.side_effect = Exception("Streaming connection error")
-    chat_history.append(ChatMessage(text="hello world", role="user"))
+    chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
 
     with pytest.raises(ServiceResponseException) as exc_info:
-        async for _ in ollama_client.get_streaming_response(messages=chat_history):
+        async for _ in ollama_client.get_response(messages=chat_history, stream=True):
             pass
 
     assert "Ollama streaming chat request failed" in str(exc_info.value)
@@ -309,7 +352,7 @@ async def test_cmc_streaming_chat_failure(
 async def test_cmc_streaming_with_tool_call(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_streaming_chat_completion_response: AsyncStream[OllamaChatResponse],
     mock_streaming_chat_completion_tool_call: AsyncStream[OllamaChatResponse],
 ) -> None:
@@ -318,10 +361,10 @@ async def test_cmc_streaming_with_tool_call(
         mock_streaming_chat_completion_response,
     ]
 
-    chat_history.append(ChatMessage(text="hello world", role="user"))
+    chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
-    result = ollama_client.get_streaming_response(messages=chat_history, options={"tools": [hello_world]})
+    result = ollama_client.get_response(messages=chat_history, stream=True, options={"tools": [hello_world]})
 
     chunks: list[ChatResponseUpdate] = []
     async for chunk in result:
@@ -340,39 +383,42 @@ async def test_cmc_streaming_with_tool_call(
     assert text_result.text == "test"
 
 
-async def test_cmc_with_hosted_tool_call(
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_with_dict_tool_passthrough(
+    mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
+    mock_chat_completion_response: OllamaChatResponse,
 ) -> None:
-    with pytest.raises(ServiceInvalidRequestError):
-        additional_properties = {
-            "user_location": {
-                "country": "US",
-                "city": "Seattle",
-            }
-        }
+    """Test that dict-based tools are passed through to Ollama."""
+    mock_chat.return_value = mock_chat_completion_response
+    chat_history.append(Message(text="hello world", role="user"))
 
-        chat_history.append(ChatMessage(text="hello world", role="user"))
+    ollama_client = OllamaChatClient()
+    await ollama_client.get_response(
+        messages=chat_history,
+        options={
+            "tools": [{"type": "function", "function": {"name": "custom_tool", "parameters": {}}}],
+        },
+    )
 
-        ollama_client = OllamaChatClient()
-        await ollama_client.get_response(
-            messages=chat_history,
-            options={
-                "tools": HostedWebSearchTool(additional_properties=additional_properties),
-            },
-        )
+    # Verify the tool was passed through to the Ollama client
+    mock_chat.assert_called_once()
+    call_kwargs = mock_chat.call_args.kwargs
+    assert "tools" in call_kwargs
+    assert call_kwargs["tools"] == [{"type": "function", "function": {"name": "custom_tool", "parameters": {}}}]
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
 async def test_cmc_with_data_content_type(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_chat_completion_response: OllamaChatResponse,
 ) -> None:
     mock_chat.return_value = mock_chat_completion_response
     chat_history.append(
-        ChatMessage(
+        Message(
             contents=[Content.from_uri(uri="data:image/png;base64,xyz", media_type="image/png")],
             role="user",
         )
@@ -388,14 +434,14 @@ async def test_cmc_with_data_content_type(
 async def test_cmc_with_invalid_data_content_media_type(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_streaming_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
     with pytest.raises(ServiceInvalidRequestError):
         mock_chat.return_value = mock_streaming_chat_completion_response
         # Remote Uris are not supported by Ollama client
         chat_history.append(
-            ChatMessage(
+            Message(
                 contents=[Content.from_uri(uri="data:audio/mp3;base64,xyz", media_type="audio/mp3")],
                 role="user",
             )
@@ -411,14 +457,14 @@ async def test_cmc_with_invalid_data_content_media_type(
 async def test_cmc_with_invalid_content_type(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
     mock_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
     with pytest.raises(ServiceInvalidRequestError):
         mock_chat.return_value = mock_chat_completion_response
         # Remote Uris are not supported by Ollama client
         chat_history.append(
-            ChatMessage(
+            Message(
                 contents=[Content.from_uri(uri="http://example.com/image.png", media_type="image/png")],
                 role="user",
             )
@@ -431,9 +477,9 @@ async def test_cmc_with_invalid_content_type(
 
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_integration_with_tool_call(
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
 ) -> None:
-    chat_history.append(ChatMessage(text="Call the hello world function and repeat what it says", role="user"))
+    chat_history.append(Message(text="Call the hello world function and repeat what it says", role="user"))
 
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history, options={"tools": [hello_world]})
@@ -446,9 +492,9 @@ async def test_cmc_integration_with_tool_call(
 
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_integration_with_chat_completion(
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
 ) -> None:
-    chat_history.append(ChatMessage(text="Say Hello World", role="user"))
+    chat_history.append(Message(text="Say Hello World", role="user"))
 
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history)
@@ -458,13 +504,13 @@ async def test_cmc_integration_with_chat_completion(
 
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_streaming_integration_with_tool_call(
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
 ) -> None:
-    chat_history.append(ChatMessage(text="Call the hello world function and repeat what it says", role="user"))
+    chat_history.append(Message(text="Call the hello world function and repeat what it says", role="user"))
 
     ollama_client = OllamaChatClient()
-    result: AsyncIterable[ChatResponseUpdate] = ollama_client.get_streaming_response(
-        messages=chat_history, options={"tools": [hello_world]}
+    result: AsyncIterable[ChatResponseUpdate] = ollama_client.get_response(
+        messages=chat_history, stream=True, options={"tools": [hello_world]}
     )
 
     chunks: list[ChatResponseUpdate] = []
@@ -483,12 +529,12 @@ async def test_cmc_streaming_integration_with_tool_call(
 
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_streaming_integration_with_chat_completion(
-    chat_history: list[ChatMessage],
+    chat_history: list[Message],
 ) -> None:
-    chat_history.append(ChatMessage(text="Say Hello World", role="user"))
+    chat_history.append(Message(text="Say Hello World", role="user"))
 
     ollama_client = OllamaChatClient()
-    result: AsyncIterable[ChatResponseUpdate] = ollama_client.get_streaming_response(messages=chat_history)
+    result: AsyncIterable[ChatResponseUpdate] = ollama_client.get_response(messages=chat_history, stream=True)
 
     full_text = ""
     async for chunk in result:

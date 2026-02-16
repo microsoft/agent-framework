@@ -9,11 +9,10 @@ agent_framework/
 ├── __init__.py          # Public API exports
 ├── _agents.py           # Agent implementations
 ├── _clients.py          # Chat client base classes and protocols
-├── _types.py            # Core types (ChatMessage, ChatResponse, Content, etc.)
+├── _types.py            # Core types (Message, ChatResponse, Content, etc.)
 ├── _tools.py            # Tool definitions and function invocation
 ├── _middleware.py       # Middleware system for request/response interception
-├── _threads.py          # AgentThread and message store abstractions
-├── _memory.py           # Context providers for memory/RAG
+├── _sessions.py         # AgentSession and context provider abstractions
 ├── _mcp.py              # Model Context Protocol support
 ├── _workflows/          # Workflow orchestration (sequential, concurrent, handoff, etc.)
 ├── openai/              # Built-in OpenAI client
@@ -25,18 +24,18 @@ agent_framework/
 
 ### Agents (`_agents.py`)
 
-- **`AgentProtocol`** - Protocol defining the agent interface
+- **`SupportsAgentRun`** - Protocol defining the agent interface
 - **`BaseAgent`** - Abstract base class for agents
-- **`ChatAgent`** - Main agent class wrapping a chat client with tools, instructions, and middleware
+- **`Agent`** - Main agent class wrapping a chat client with tools, instructions, and middleware
 
 ### Chat Clients (`_clients.py`)
 
-- **`ChatClientProtocol`** - Protocol for chat client implementations
+- **`SupportsChatGetResponse`** - Protocol for chat client implementations
 - **`BaseChatClient`** - Abstract base class with middleware support; subclasses implement `_inner_get_response()` and `_inner_get_streaming_response()`
 
 ### Types (`_types.py`)
 
-- **`ChatMessage`** - Represents a chat message with role, content, and metadata
+- **`Message`** - Represents a chat message with role, content, and metadata
 - **`ChatResponse`** - Response from a chat client containing messages and usage
 - **`ChatResponseUpdate`** - Streaming response update
 - **`AgentResponse`** / **`AgentResponseUpdate`** - Agent-level response wrappers
@@ -55,18 +54,14 @@ agent_framework/
 - **`AgentMiddleware`** - Intercepts agent `run()` calls
 - **`ChatMiddleware`** - Intercepts chat client `get_response()` calls
 - **`FunctionMiddleware`** - Intercepts function/tool invocations
-- **`AgentRunContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware
+- **`AgentContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware
 
-### Threads (`_threads.py`)
+### Sessions (`_sessions.py`)
 
-- **`AgentThread`** - Manages conversation history for an agent
-- **`ChatMessageStoreProtocol`** - Protocol for persistent message storage
-- **`ChatMessageStore`** - Default in-memory implementation
-
-### Memory (`_memory.py`)
-
-- **`ContextProvider`** - Protocol for providing additional context to agents (RAG, memory systems)
-- **`Context`** - Container for context data
+- **`AgentSession`** - Manages conversation state and session metadata
+- **`SessionContext`** - Context object for session-scoped data during agent runs
+- **`BaseContextProvider`** - Base class for context providers (RAG, memory systems)
+- **`BaseHistoryProvider`** - Base class for conversation history storage
 
 ### Workflows (`_workflows/`)
 
@@ -91,11 +86,11 @@ agent_framework/
 ### Creating an Agent
 
 ```python
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 
-agent = ChatAgent(
-    chat_client=OpenAIChatClient(),
+agent = Agent(
+    client=OpenAIChatClient(),
     instructions="You are helpful.",
     tools=[my_function],
 )
@@ -114,27 +109,26 @@ agent = OpenAIChatClient().as_agent(
 ### Middleware Pipeline
 
 ```python
-from agent_framework import ChatAgent, AgentMiddleware, AgentRunContext
+from agent_framework import Agent, AgentMiddleware, AgentContext
 
 class LoggingMiddleware(AgentMiddleware):
-    async def invoke(self, context: AgentRunContext, next) -> AgentResponse:
+    async def process(self, context: AgentContext, call_next) -> None:
         print(f"Input: {context.messages}")
-        response = await next(context)
-        print(f"Output: {response}")
-        return response
+        await call_next()
+        print(f"Output: {context.result}")
 
-agent = ChatAgent(..., middleware=[LoggingMiddleware()])
+agent = Agent(..., middleware=[LoggingMiddleware()])
 ```
 
 ### Custom Chat Client
 
 ```python
-from agent_framework import BaseChatClient, ChatResponse, ChatMessage
+from agent_framework import BaseChatClient, ChatResponse, Message
 
 class MyClient(BaseChatClient):
     async def _inner_get_response(self, *, messages, options, **kwargs) -> ChatResponse:
         # Call your LLM here
-        return ChatResponse(messages=[ChatMessage(role="assistant", text="Hi!")])
+        return ChatResponse(messages=[Message(role="assistant", text="Hi!")])
 
     async def _inner_get_streaming_response(self, *, messages, options, **kwargs):
         yield ChatResponseUpdate(...)

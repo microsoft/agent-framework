@@ -1,13 +1,22 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import sys
-from typing import Any, ClassVar, Generic
+from __future__ import annotations
 
-from agent_framework import ChatOptions, use_chat_middleware, use_function_invocation
-from agent_framework._pydantic import AFBaseSettings
+import sys
+from collections.abc import Sequence
+from typing import Any, Generic
+
+from agent_framework import (
+    ChatAndFunctionMiddlewareTypes,
+    ChatMiddlewareLayer,
+    ChatOptions,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
+)
+from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.observability import use_instrumentation
-from agent_framework.openai._chat_client import OpenAIBaseChatClient
+from agent_framework.observability import ChatTelemetryLayer
+from agent_framework.openai._chat_client import RawOpenAIChatClient
 from foundry_local import FoundryLocalManager
 from foundry_local.models import DeviceType
 from openai import AsyncOpenAI
@@ -22,19 +31,20 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
+
 __all__ = [
     "FoundryLocalChatOptions",
     "FoundryLocalClient",
     "FoundryLocalSettings",
 ]
 
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 # region Foundry Local Chat Options TypedDict
 
 
-class FoundryLocalChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class FoundryLocalChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """Azure Foundry Local (local model deployment) chat options dict.
 
     Extends base ChatOptions for local model inference via Foundry Local.
@@ -94,8 +104,8 @@ FOUNDRY_LOCAL_OPTION_TRANSLATIONS: dict[str, str] = {
 }
 """Maps ChatOptions keys to OpenAI API parameter names (for compatibility)."""
 
-TFoundryLocalChatOptions = TypeVar(
-    "TFoundryLocalChatOptions",
+FoundryLocalChatOptionsT = TypeVar(
+    "FoundryLocalChatOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="FoundryLocalChatOptions",
     covariant=True,
@@ -105,32 +115,29 @@ TFoundryLocalChatOptions = TypeVar(
 # endregion
 
 
-class FoundryLocalSettings(AFBaseSettings):
+class FoundryLocalSettings(TypedDict, total=False):
     """Foundry local model settings.
 
     The settings are first loaded from environment variables with the prefix 'FOUNDRY_LOCAL_'.
     If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
-    are ignored; however, validation will fail alerting that the settings are missing.
+    with the encoding 'utf-8'.
 
-    Attributes:
+    Keys:
         model_id: The name of the model deployment to use.
             (Env var FOUNDRY_LOCAL_MODEL_ID)
-    Parameters:
-        env_file_path: If provided, the .env settings are read from this file path location.
-        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
     """
 
-    env_prefix: ClassVar[str] = "FOUNDRY_LOCAL_"
-
-    model_id: str
+    model_id: str | None
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class FoundryLocalClient(OpenAIBaseChatClient[TFoundryLocalChatOptions], Generic[TFoundryLocalChatOptions]):
-    """Foundry Local Chat completion class."""
+class FoundryLocalClient(
+    ChatMiddlewareLayer[FoundryLocalChatOptionsT],
+    FunctionInvocationLayer[FoundryLocalChatOptionsT],
+    ChatTelemetryLayer[FoundryLocalChatOptionsT],
+    RawOpenAIChatClient[FoundryLocalChatOptionsT],
+    Generic[FoundryLocalChatOptionsT],
+):
+    """Foundry Local Chat completion class with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
@@ -140,6 +147,8 @@ class FoundryLocalClient(OpenAIBaseChatClient[TFoundryLocalChatOptions], Generic
         timeout: float | None = None,
         prepare_model: bool = True,
         device: DeviceType | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str = "utf-8",
         **kwargs: Any,
@@ -161,9 +170,11 @@ class FoundryLocalClient(OpenAIBaseChatClient[TFoundryLocalChatOptions], Generic
                 The device is used to select the appropriate model variant.
                 If not provided, the default device for your system will be used.
                 The values are in the foundry_local.models.DeviceType enum.
+            middleware: Optional sequence of ChatAndFunctionMiddlewareTypes to apply to requests.
+            function_invocation_configuration: Optional configuration for function invocation support.
             env_file_path: If provided, the .env settings are read from this file path location.
             env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
-            kwargs: Additional keyword arguments, are passed to the OpenAIBaseChatClient.
+            kwargs: Additional keyword arguments, are passed to the RawOpenAIChatClient.
                 This can include middleware and additional properties.
 
         Examples:
@@ -230,21 +241,27 @@ class FoundryLocalClient(OpenAIBaseChatClient[TFoundryLocalChatOptions], Generic
                 type that is not supported by the model, it will not be found.
 
         """
-        settings = FoundryLocalSettings(
-            model_id=model_id,  # type: ignore
+        settings = load_settings(
+            FoundryLocalSettings,
+            env_prefix="FOUNDRY_LOCAL_",
+            required_fields=["model_id"],
+            model_id=model_id,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
         manager = FoundryLocalManager(bootstrap=bootstrap, timeout=timeout)
         model_info = manager.get_model_info(
-            alias_or_model_id=settings.model_id,
+            alias_or_model_id=settings["model_id"],
             device=device,
         )
         if model_info is None:
             message = (
-                f"Model with ID or alias '{settings.model_id}:{device.value}' not found in Foundry Local."
+                f"Model with ID or alias '{settings['model_id']}:{device.value}' not found in Foundry Local."
                 if device
-                else f"Model with ID or alias '{settings.model_id}' for your current device not found in Foundry Local."
+                else (
+                    f"Model with ID or alias '{settings['model_id']}' for your current device "
+                    "not found in Foundry Local."
+                )
             )
             raise ServiceInitializationError(message)
         if prepare_model:
@@ -254,6 +271,8 @@ class FoundryLocalClient(OpenAIBaseChatClient[TFoundryLocalChatOptions], Generic
         super().__init__(
             model_id=model_info.id,
             client=AsyncOpenAI(base_url=manager.endpoint, api_key=manager.api_key),
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
             **kwargs,
         )
         self.manager = manager

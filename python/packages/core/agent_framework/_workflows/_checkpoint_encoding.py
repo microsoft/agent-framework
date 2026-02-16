@@ -1,268 +1,170 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import contextlib
-import importlib
-import logging
-import sys
-from dataclasses import fields, is_dataclass
-from typing import Any, cast
+from __future__ import annotations
 
-# Checkpoint serialization helpers
-MODEL_MARKER = "__af_model__"
-DATACLASS_MARKER = "__af_dataclass__"
+import base64
+import pickle  # nosec  # noqa: S403
+from typing import Any
 
-# Guards to prevent runaway recursion while encoding arbitrary user data
-_MAX_ENCODE_DEPTH = 100
-_CYCLE_SENTINEL = "<cycle>"
+from agent_framework import get_logger
 
-logger = logging.getLogger(__name__)
+"""Checkpoint encoding using JSON structure with pickle+base64 for arbitrary data.
+
+This hybrid approach provides:
+- Human-readable JSON structure for debugging and inspection of primitives and collections
+- Full Python object fidelity via pickle for data values (non-JSON-native types)
+- Base64 encoding to embed binary pickle data in JSON strings
+
+SECURITY WARNING: Checkpoints use pickle for data serialization. Only load checkpoints
+from trusted sources. Loading a malicious checkpoint file can execute arbitrary code.
+"""
+
+
+logger = get_logger(__name__)
+
+# Marker to identify pickled values in serialized JSON
+_PICKLE_MARKER = "__pickled__"
+_TYPE_MARKER = "__type__"
+
+# Types that are natively JSON-serializable and don't need pickling
+_JSON_NATIVE_TYPES = (str, int, float, bool, type(None))
+
+
+class CheckpointDecodingError(Exception):
+    """Raised when checkpoint decoding fails due to type mismatch or corruption."""
 
 
 def encode_checkpoint_value(value: Any) -> Any:
-    """Recursively encode values into JSON-serializable structures.
+    """Encode a Python value for checkpoint storage.
 
-    - Objects exposing to_dict/to_json -> { MODEL_MARKER: "module:Class", value: encoded }
-    - dataclass instances -> { DATACLASS_MARKER: "module:Class", value: {field: encoded} }
-    - dict -> encode keys as str and values recursively
-    - list/tuple/set -> list of encoded items
-    - other -> returned as-is if already JSON-serializable
+    JSON-native types (str, int, float, bool, None) pass through unchanged.
+    Collections (dict, list) are recursed with their values encoded.
+    All other types (dataclasses, custom objects, datetime, etc.) are pickled
+    and stored as base64-encoded strings.
 
-    Includes cycle and depth protection to avoid infinite recursion.
+    Args:
+        value: Any Python value to encode.
+
+    Returns:
+        A JSON-serializable representation of the value.
     """
-
-    def _enc(v: Any, stack: set[int], depth: int) -> Any:
-        # Depth guard
-        if depth > _MAX_ENCODE_DEPTH:
-            logger.debug(f"Max encode depth reached at depth={depth} for type={type(v)}")
-            return "<max_depth>"
-
-        # Structured model handling (objects exposing to_dict/to_json)
-        if _supports_model_protocol(v):
-            cls = cast(type[Any], type(v))  # type: ignore
-            try:
-                if hasattr(v, "to_dict") and callable(getattr(v, "to_dict", None)):
-                    raw = v.to_dict()  # type: ignore[attr-defined]
-                    strategy = "to_dict"
-                elif hasattr(v, "to_json") and callable(getattr(v, "to_json", None)):
-                    serialized = v.to_json()  # type: ignore[attr-defined]
-                    if isinstance(serialized, (bytes, bytearray)):
-                        try:
-                            serialized = serialized.decode()
-                        except Exception:
-                            serialized = serialized.decode(errors="replace")
-                    raw = serialized
-                    strategy = "to_json"
-                else:
-                    raise AttributeError("Structured model lacks serialization hooks")
-                return {
-                    MODEL_MARKER: f"{cls.__module__}:{cls.__name__}",
-                    "strategy": strategy,
-                    "value": _enc(raw, stack, depth + 1),
-                }
-            except Exception as exc:  # best-effort fallback
-                logger.debug(f"Structured model serialization failed for {cls}: {exc}")
-                return str(v)
-
-        # Dataclasses (instances only)
-        if is_dataclass(v) and not isinstance(v, type):
-            oid = id(v)
-            if oid in stack:
-                logger.debug("Cycle detected while encoding dataclass instance")
-                return _CYCLE_SENTINEL
-            stack.add(oid)
-            try:
-                # type(v) already narrows sufficiently; cast was redundant
-                dc_cls: type[Any] = type(v)
-                field_values: dict[str, Any] = {}
-                for f in fields(v):
-                    field_values[f.name] = _enc(getattr(v, f.name), stack, depth + 1)
-                return {
-                    DATACLASS_MARKER: f"{dc_cls.__module__}:{dc_cls.__name__}",
-                    "value": field_values,
-                }
-            finally:
-                stack.remove(oid)
-
-        # Collections
-        if isinstance(v, dict):
-            v_dict = cast("dict[object, object]", v)
-            oid = id(v_dict)
-            if oid in stack:
-                logger.debug("Cycle detected while encoding dict")
-                return _CYCLE_SENTINEL
-            stack.add(oid)
-            try:
-                json_dict: dict[str, Any] = {}
-                for k_any, val_any in v_dict.items():  # type: ignore[assignment]
-                    k_str: str = str(k_any)
-                    json_dict[k_str] = _enc(val_any, stack, depth + 1)
-                return json_dict
-            finally:
-                stack.remove(oid)
-
-        if isinstance(v, (list, tuple, set)):
-            iterable_v = cast("list[object] | tuple[object, ...] | set[object]", v)
-            oid = id(iterable_v)
-            if oid in stack:
-                logger.debug("Cycle detected while encoding iterable")
-                return _CYCLE_SENTINEL
-            stack.add(oid)
-            try:
-                seq: list[object] = list(iterable_v)
-                encoded_list: list[Any] = []
-                for item in seq:
-                    encoded_list.append(_enc(item, stack, depth + 1))
-                return encoded_list
-            finally:
-                stack.remove(oid)
-
-        # Primitives (or unknown objects): ensure JSON-serializable
-        if isinstance(v, (str, int, float, bool)) or v is None:
-            return v
-        # Fallback: stringify unknown objects to avoid JSON serialization errors
-        try:
-            return str(v)
-        except Exception:
-            return f"<{type(v).__name__}>"
-
-    return _enc(value, set(), 0)
+    return _encode(value)
 
 
 def decode_checkpoint_value(value: Any) -> Any:
-    """Recursively decode values previously encoded by encode_checkpoint_value."""
+    """Decode a value from checkpoint storage.
+
+    Reverses the encoding performed by encode_checkpoint_value.
+    Pickled values (identified by _PICKLE_MARKER) are decoded and unpickled.
+
+    WARNING: Only call this with trusted data. Pickle can execute
+    arbitrary code during deserialization. The post-unpickle type verification
+    detects accidental corruption or type mismatches, but cannot prevent
+    arbitrary code execution from malicious pickle payloads.
+
+    Args:
+        value: A JSON-deserialized value from checkpoint storage.
+
+    Returns:
+        The original Python value.
+
+    Raises:
+        CheckpointDecodingError: If the unpickled object's type doesn't match
+            the recorded type, indicating corruption, or if the base64/pickle
+            data is malformed.
+    """
+    return _decode(value)
+
+
+def _encode(value: Any) -> Any:
+    """Recursively encode a value for JSON storage."""
+    # JSON-native types pass through
+    if isinstance(value, _JSON_NATIVE_TYPES):
+        return value
+
+    # Recursively encode dict values (keys become strings)
     if isinstance(value, dict):
-        value_dict = cast(dict[str, Any], value)  # encoded form always uses string keys
-        # Structured model marker handling
-        if MODEL_MARKER in value_dict and "value" in value_dict:
-            type_key: str | None = value_dict.get(MODEL_MARKER)  # type: ignore[assignment]
-            strategy: str | None = value_dict.get("strategy")  # type: ignore[assignment]
-            raw_encoded: Any = value_dict.get("value")
-            decoded_payload = decode_checkpoint_value(raw_encoded)
-            if isinstance(type_key, str):
-                try:
-                    cls = _import_qualified_name(type_key)
-                except Exception as exc:
-                    logger.debug(f"Failed to import structured model {type_key}: {exc}")
-                    cls = None
+        return {str(k): _encode(v) for k, v in value.items()}  # type: ignore
 
-                if cls is not None:
-                    # Verify the class actually supports the model protocol
-                    if not _class_supports_model_protocol(cls):
-                        logger.debug(f"Class {type_key} does not support model protocol; returning raw value")
-                        return decoded_payload
-                    if strategy == "to_dict" and hasattr(cls, "from_dict"):
-                        with contextlib.suppress(Exception):
-                            return cls.from_dict(decoded_payload)
-                    if strategy == "to_json" and hasattr(cls, "from_json"):
-                        if isinstance(decoded_payload, (str, bytes, bytearray)):
-                            with contextlib.suppress(Exception):
-                                return cls.from_json(decoded_payload)
-                        if isinstance(decoded_payload, dict) and hasattr(cls, "from_dict"):
-                            with contextlib.suppress(Exception):
-                                return cls.from_dict(decoded_payload)
-            return decoded_payload
-        # Dataclass marker handling
-        if DATACLASS_MARKER in value_dict and "value" in value_dict:
-            type_key_dc: str | None = value_dict.get(DATACLASS_MARKER)  # type: ignore[assignment]
-            raw_dc: Any = value_dict.get("value")
-            decoded_raw = decode_checkpoint_value(raw_dc)
-            if isinstance(type_key_dc, str):
-                try:
-                    module_name, class_name = type_key_dc.split(":", 1)
-                    module = sys.modules.get(module_name)
-                    if module is None:
-                        module = importlib.import_module(module_name)
-                    cls_dc: Any = getattr(module, class_name)
-                    # Verify the class is actually a dataclass type (not an instance)
-                    if not isinstance(cls_dc, type) or not is_dataclass(cls_dc):
-                        logger.debug(f"Class {type_key_dc} is not a dataclass type; returning raw value")
-                        return decoded_raw
-                    constructed = _instantiate_checkpoint_dataclass(cls_dc, decoded_raw)
-                    if constructed is not None:
-                        return constructed
-                except Exception as exc:
-                    logger.debug(f"Failed to decode dataclass {type_key_dc}: {exc}; returning raw value")
-            return decoded_raw
-
-        # Regular dict: decode recursively
-        decoded: dict[str, Any] = {}
-        for k_any, v_any in value_dict.items():
-            decoded[k_any] = decode_checkpoint_value(v_any)
-        return decoded
+    # Recursively encode list items (lists are JSON-native collections)
     if isinstance(value, list):
-        # After isinstance check, treat value as list[Any] for decoding
-        value_list: list[Any] = value  # type: ignore[assignment]
-        return [decode_checkpoint_value(v_any) for v_any in value_list]
+        return [_encode(item) for item in value]  # type: ignore
+
+    # Everything else (tuples, sets, dataclasses, custom objects, etc.): pickle and base64 encode
+    return {
+        _PICKLE_MARKER: _pickle_to_base64(value),
+        _TYPE_MARKER: _type_to_key(type(value)),  # type: ignore
+    }
+
+
+def _decode(value: Any) -> Any:
+    """Recursively decode a value from JSON storage."""
+    # JSON-native types pass through
+    if isinstance(value, _JSON_NATIVE_TYPES):
+        return value
+
+    # Handle encoded dicts
+    if isinstance(value, dict):
+        # Pickled value: decode, unpickle, and verify type
+        if _PICKLE_MARKER in value and _TYPE_MARKER in value:
+            obj = _base64_to_unpickle(value[_PICKLE_MARKER])  # type: ignore
+            _verify_type(obj, value.get(_TYPE_MARKER))  # type: ignore
+            return obj
+
+        # Regular dict: decode values recursively
+        return {k: _decode(v) for k, v in value.items()}  # type: ignore
+
+    # Handle encoded lists
+    if isinstance(value, list):
+        return [_decode(item) for item in value]  # type: ignore
+
     return value
 
 
-def _class_supports_model_protocol(cls: type[Any]) -> bool:
-    """Check if a class type supports the model serialization protocol.
+def _verify_type(obj: Any, expected_type_key: str) -> None:
+    """Verify that an unpickled object matches its recorded type.
 
-    Checks for pairs of serialization/deserialization methods:
-    - to_dict/from_dict
-    - to_json/from_json
+    This is a post-deserialization integrity check that detects accidental
+    corruption or type mismatches. It does not prevent arbitrary code execution
+    from malicious pickle payloads, since ``pickle.loads()`` has already
+    executed by the time this function is called.
+
+    Args:
+        obj: The unpickled object.
+        expected_type_key: The recorded type key (module:qualname format).
+
+    Raises:
+        CheckpointDecodingError: If the types don't match.
     """
-    has_to_dict = hasattr(cls, "to_dict") and callable(getattr(cls, "to_dict", None))
-    has_from_dict = hasattr(cls, "from_dict") and callable(getattr(cls, "from_dict", None))
+    actual_type_key = _type_to_key(type(obj))  # type: ignore
+    if actual_type_key != expected_type_key:
+        raise CheckpointDecodingError(
+            f"Type mismatch during checkpoint decoding: "
+            f"expected '{expected_type_key}', got '{actual_type_key}'. "
+            f"The checkpoint may be corrupted or tampered with."
+        )
 
-    has_to_json = hasattr(cls, "to_json") and callable(getattr(cls, "to_json", None))
-    has_from_json = hasattr(cls, "from_json") and callable(getattr(cls, "from_json", None))
 
-    return (has_to_dict and has_from_dict) or (has_to_json and has_from_json)
+def _pickle_to_base64(value: Any) -> str:
+    """Pickle a value and encode as base64 string."""
+    pickled = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+    return base64.b64encode(pickled).decode("ascii")
 
 
-def _supports_model_protocol(obj: object) -> bool:
-    """Detect objects that expose dictionary serialization hooks."""
+def _base64_to_unpickle(encoded: str) -> Any:
+    """Decode base64 string and unpickle.
+
+    Raises:
+        CheckpointDecodingError: If the base64 data is corrupted or the pickle
+            format is incompatible.
+    """
     try:
-        obj_type: type[Any] = type(obj)
-    except Exception:
-        return False
-
-    return _class_supports_model_protocol(obj_type)
-
-
-def _import_qualified_name(qualname: str) -> type[Any] | None:
-    if ":" not in qualname:
-        return None
-    module_name, class_name = qualname.split(":", 1)
-    module = sys.modules.get(module_name)
-    if module is None:
-        module = importlib.import_module(module_name)
-    attr: Any = module
-    for part in class_name.split("."):
-        attr = getattr(attr, part)
-    return attr if isinstance(attr, type) else None
-
-
-def _instantiate_checkpoint_dataclass(cls: type[Any], payload: Any) -> Any | None:
-    if not isinstance(cls, type):
-        logger.debug(f"Checkpoint decoder received non-type dataclass reference: {cls!r}")
-        return None
-
-    if isinstance(payload, dict):
-        try:
-            return cls(**payload)  # type: ignore[arg-type]
-        except TypeError as exc:
-            logger.debug(f"Checkpoint decoder could not call {cls.__name__}(**payload): {exc}")
-        except Exception as exc:
-            logger.warning(f"Checkpoint decoder encountered unexpected error calling {cls.__name__}(**payload): {exc}")
-        try:
-            instance = object.__new__(cls)
-        except Exception as exc:
-            logger.debug(f"Checkpoint decoder could not allocate {cls.__name__} without __init__: {exc}")
-            return None
-        for key, val in payload.items():  # type: ignore[attr-defined]
-            try:
-                setattr(instance, key, val)  # type: ignore[arg-type]
-            except Exception as exc:
-                logger.debug(f"Checkpoint decoder could not set attribute {key} on {cls.__name__}: {exc}")
-        return instance
-
-    try:
-        return cls(payload)  # type: ignore[call-arg]
-    except TypeError as exc:
-        logger.debug(f"Checkpoint decoder could not call {cls.__name__}({payload!r}): {exc}")
+        pickled = base64.b64decode(encoded.encode("ascii"))
+        return pickle.loads(pickled)  # nosec  # noqa: S301
     except Exception as exc:
-        logger.warning(f"Checkpoint decoder encountered unexpected error calling {cls.__name__}({payload!r}): {exc}")
-    return None
+        raise CheckpointDecodingError(f"Failed to decode pickled checkpoint data: {exc}") from exc
+
+
+def _type_to_key(t: type) -> str:
+    """Convert a type to a module:qualname string."""
+    return f"{t.__module__}:{t.__qualname__}"

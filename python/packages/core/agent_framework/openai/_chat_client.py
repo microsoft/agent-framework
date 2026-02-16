@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import json
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from datetime import datetime, timezone
 from itertools import chain
 from typing import Any, Generic, Literal
@@ -14,27 +16,34 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
-from pydantic import BaseModel, ValidationError
+from openai.types.chat.completion_create_params import WebSearchOptions
+from pydantic import BaseModel
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
-from .._middleware import use_chat_middleware
-from .._tools import FunctionTool, HostedWebSearchTool, ToolProtocol, use_function_invocation
+from .._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
+from .._settings import load_settings
+from .._tools import (
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
+    FunctionTool,
+)
 from .._types import (
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
+    Message,
+    ResponseStream,
     UsageDetails,
-    prepare_function_call_results,
 )
 from ..exceptions import (
     ServiceInitializationError,
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from ..observability import use_instrumentation
+from ..observability import ChatTelemetryLayer
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
@@ -55,7 +64,7 @@ __all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
 
 logger = get_logger("agent_framework.openai")
 
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 # region OpenAI Chat Options TypedDict
@@ -75,7 +84,7 @@ class Prediction(TypedDict, total=False):
     content: str | list[PredictionTextContent]
 
 
-class OpenAIChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class OpenAIChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """OpenAI-specific chat options dict.
 
     Extends ChatOptions with options specific to OpenAI's Chat Completions API.
@@ -114,7 +123,7 @@ class OpenAIChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], to
     prediction: Prediction
 
 
-TOpenAIChatOptions = TypeVar("TOpenAIChatOptions", bound=TypedDict, default="OpenAIChatOptions", covariant=True)  # type: ignore[valid-type]
+OpenAIChatOptionsT = TypeVar("OpenAIChatOptionsT", bound=TypedDict, default="OpenAIChatOptions", covariant=True)  # type: ignore[valid-type]
 
 OPTION_TRANSLATIONS: dict[str, str] = {
     "model_id": "model",
@@ -124,108 +133,177 @@ OPTION_TRANSLATIONS: dict[str, str] = {
 
 
 # region Base Client
-class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Generic[TOpenAIChatOptions]):
-    """OpenAI Chat completion class."""
+class RawOpenAIChatClient(  # type: ignore[misc]
+    OpenAIBase,
+    BaseChatClient[OpenAIChatOptionsT],
+    Generic[OpenAIChatOptionsT],
+):
+    """Raw OpenAI Chat completion class without middleware, telemetry, or function invocation.
+
+    Warning:
+        **This class should not normally be used directly.** It does not include middleware,
+        telemetry, or function invocation support that you most likely need. If you do use it,
+        you should consider which additional layers to apply. There is a defined ordering that
+        you should follow:
+
+        1. **ChatMiddlewareLayer** - Should be applied first as it also prepares function middleware
+        2. **FunctionInvocationLayer** - Handles tool/function calling loop
+        3. **ChatTelemetryLayer** - Must be inside the function calling loop for correct per-call telemetry
+
+        Use ``OpenAIChatClient`` instead for a fully-featured client with all layers applied.
+    """
+
+    # region Hosted Tool Factory Methods
+
+    @staticmethod
+    def get_web_search_tool(
+        *,
+        web_search_options: WebSearchOptions | None = None,
+    ) -> dict[str, Any]:
+        """Create a web search tool configuration for the Chat Completions API.
+
+        Note: For the Chat Completions API, web search is passed via the `web_search_options`
+        parameter rather than in the `tools` array. This method returns a dict that can be
+        passed as a tool to ChatAgent, which will handle it appropriately.
+
+        Keyword Args:
+            web_search_options: The full WebSearchOptions configuration. This TypedDict includes:
+                - user_location: Location context with "type" and "approximate" containing
+                  "city", "country", "region", "timezone".
+                - search_context_size: One of "low", "medium", "high".
+
+        Returns:
+            A dict configuration that enables web search when passed to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIChatClient
+
+                # Basic web search
+                tool = OpenAIChatClient.get_web_search_tool()
+
+                # With location context
+                tool = OpenAIChatClient.get_web_search_tool(
+                    web_search_options={
+                        "user_location": {
+                            "type": "approximate",
+                            "approximate": {"city": "Seattle", "country": "US"},
+                        },
+                        "search_context_size": "medium",
+                    }
+                )
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        tool: dict[str, Any] = {"type": "web_search"}
+
+        if web_search_options:
+            tool.update(web_search_options)
+
+        return tool
+
+    # endregion
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
-        client = await self._ensure_client()
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         # prepare
         options_dict = self._prepare_options(messages, options)
-        try:
-            # execute and process
-            return self._parse_response_from_openai(
-                await client.chat.completions.create(stream=False, **options_dict), options
-            )
-        except BadRequestError as ex:
-            if ex.code == "content_filter":
-                raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error: {ex}",
-                    inner_exception=ex,
-                ) from ex
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
 
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        client = await self._ensure_client()
-        # prepare
-        options_dict = self._prepare_options(messages, options)
-        options_dict["stream_options"] = {"include_usage": True}
-        try:
-            # execute and process
-            async for chunk in await client.chat.completions.create(stream=True, **options_dict):
-                if len(chunk.choices) == 0 and chunk.usage is None:
-                    continue
-                yield self._parse_response_update_from_openai(chunk)
-        except BadRequestError as ex:
-            if ex.code == "content_filter":
-                raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error: {ex}",
+        if stream:
+            # Streaming mode
+            options_dict["stream_options"] = {"include_usage": True}
+
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                client = await self._ensure_client()
+                try:
+                    async for chunk in await client.chat.completions.create(stream=True, **options_dict):
+                        if len(chunk.choices) == 0 and chunk.usage is None:
+                            continue
+                        yield self._parse_response_update_from_openai(chunk)
+                except BadRequestError as ex:
+                    if ex.code == "content_filter":
+                        raise OpenAIContentFilterException(
+                            f"{type(self)} service encountered a content error: {ex}",
+                            inner_exception=ex,
+                        ) from ex
+                    raise ServiceResponseException(
+                        f"{type(self)} service failed to complete the prompt: {ex}",
+                        inner_exception=ex,
+                    ) from ex
+                except Exception as ex:
+                    raise ServiceResponseException(
+                        f"{type(self)} service failed to complete the prompt: {ex}",
+                        inner_exception=ex,
+                    ) from ex
+
+            return self._build_response_stream(_stream(), response_format=options.get("response_format"))
+
+        # Non-streaming mode
+        async def _get_response() -> ChatResponse:
+            client = await self._ensure_client()
+            try:
+                return self._parse_response_from_openai(
+                    await client.chat.completions.create(stream=False, **options_dict), options
+                )
+            except BadRequestError as ex:
+                if ex.code == "content_filter":
+                    raise OpenAIContentFilterException(
+                        f"{type(self)} service encountered a content error: {ex}",
+                        inner_exception=ex,
+                    ) from ex
+                raise ServiceResponseException(
+                    f"{type(self)} service failed to complete the prompt: {ex}",
                     inner_exception=ex,
                 ) from ex
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
+            except Exception as ex:
+                raise ServiceResponseException(
+                    f"{type(self)} service failed to complete the prompt: {ex}",
+                    inner_exception=ex,
+                ) from ex
+
+        return _get_response()
 
     # region content creation
 
-    def _prepare_tools_for_openai(self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]]) -> dict[str, Any]:
-        chat_tools: list[dict[str, Any]] = []
+    def _prepare_tools_for_openai(self, tools: Sequence[Any]) -> dict[str, Any]:
+        """Prepare tools for the OpenAI Chat Completions API.
+
+        Converts FunctionTool to JSON schema format. Web search tools are routed
+        to web_search_options parameter. All other tools pass through unchanged.
+
+        Args:
+            tools: Sequence of tools to prepare.
+
+        Returns:
+            Dict containing tools and optionally web_search_options.
+        """
+        chat_tools: list[Any] = []
         web_search_options: dict[str, Any] | None = None
         for tool in tools:
-            if isinstance(tool, ToolProtocol):
-                match tool:
-                    case FunctionTool():
-                        chat_tools.append(tool.to_json_schema_spec())
-                    case HostedWebSearchTool():
-                        web_search_options = (
-                            {
-                                "user_location": {
-                                    "approximate": tool.additional_properties.get("user_location", None),
-                                    "type": "approximate",
-                                }
-                            }
-                            if tool.additional_properties and "user_location" in tool.additional_properties
-                            else {}
-                        )
-                    case _:
-                        logger.debug("Unsupported tool passed (type: %s), ignoring", type(tool))
+            if isinstance(tool, FunctionTool):
+                chat_tools.append(tool.to_json_schema_spec())
+            elif isinstance(tool, MutableMapping) and tool.get("type") == "web_search":
+                # Web search is handled via web_search_options, not tools array
+                web_search_options = {k: v for k, v in tool.items() if k != "type"}
             else:
-                chat_tools.append(tool if isinstance(tool, dict) else dict(tool))
-        ret_dict: dict[str, Any] = {}
+                # Pass through all other tools (dicts, SDK types) unchanged
+                chat_tools.append(tool)
+        result: dict[str, Any] = {}
         if chat_tools:
-            ret_dict["tools"] = chat_tools
+            result["tools"] = chat_tools
         if web_search_options is not None:
-            ret_dict["web_search_options"] = web_search_options
-        return ret_dict
+            result["web_search_options"] = web_search_options
+        return result
 
-    def _prepare_options(self, messages: MutableSequence[ChatMessage], options: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_options(self, messages: Sequence[Message], options: Mapping[str, Any]) -> dict[str, Any]:
         # Prepend instructions from options if they exist
         from .._types import prepend_instructions_to_messages, validate_tool_mode
 
@@ -256,10 +334,11 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
         tools = options.get("tools")
         if tools is not None:
             run_options.update(self._prepare_tools_for_openai(tools))
+        # Only include tool_choice and parallel_tool_calls if tools are present
         if not run_options.get("tools"):
             run_options.pop("parallel_tool_calls", None)
             run_options.pop("tool_choice", None)
-        if tool_choice := run_options.pop("tool_choice", None):
+        elif tool_choice := run_options.pop("tool_choice", None):
             tool_mode = validate_tool_mode(tool_choice)
             if (mode := tool_mode.get("mode")) == "required" and (
                 func_name := tool_mode.get("required_function_name")
@@ -279,15 +358,15 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
                 run_options["response_format"] = type_to_response_format_param(response_format)
         return run_options
 
-    def _parse_response_from_openai(self, response: ChatCompletion, options: dict[str, Any]) -> "ChatResponse":
+    def _parse_response_from_openai(self, response: ChatCompletion, options: Mapping[str, Any]) -> ChatResponse:
         """Parse a response from OpenAI into a ChatResponse."""
         response_metadata = self._get_metadata_from_chat_response(response)
-        messages: list[ChatMessage] = []
-        finish_reason: str | None = None
+        messages: list[Message] = []
+        finish_reason: FinishReason | None = None
         for choice in response.choices:
             response_metadata.update(self._get_metadata_from_chat_choice(choice))
             if choice.finish_reason:
-                finish_reason = choice.finish_reason
+                finish_reason = choice.finish_reason  # type: ignore[assignment]
             contents: list[Content] = []
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
@@ -295,7 +374,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
                 contents.extend(parsed_tool_calls)
             if reasoning_details := getattr(choice.message, "reasoning_details", None):
                 contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
-            messages.append(ChatMessage("assistant", contents))
+            messages.append(Message(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
             created_at=datetime.fromtimestamp(response.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
@@ -327,12 +406,12 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
                 message_id=chunk.id,
             )
         contents: list[Content] = []
-        finish_reason: str | None = None
+        finish_reason: FinishReason | None = None
         for choice in chunk.choices:
             chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
             contents.extend(self._parse_tool_calls_from_openai(choice))
             if choice.finish_reason:
-                finish_reason = choice.finish_reason
+                finish_reason = choice.finish_reason  # type: ignore[assignment]
 
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
@@ -420,7 +499,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
 
     def _prepare_messages_for_openai(
         self,
-        chat_messages: Sequence[ChatMessage],
+        chat_messages: Sequence[Message],
         role_key: str = "role",
         content_key: str = "content",
     ) -> list[dict[str, Any]]:
@@ -448,7 +527,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
 
     # region Parsers
 
-    def _prepare_message_for_openai(self, message: ChatMessage) -> list[dict[str, Any]]:
+    def _prepare_message_for_openai(self, message: Message) -> list[dict[str, Any]]:
         """Prepare a chat message for OpenAI."""
         all_messages: list[dict[str, Any]] = []
         for content in message.contents:
@@ -476,9 +555,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
                     args["tool_call_id"] = content.call_id
                     # Always include content for tool results - API requires it even if empty
                     # Functions returning None should still have a tool result message
-                    args["content"] = (
-                        prepare_function_call_results(content.result) if content.result is not None else ""
-                    )
+                    args["content"] = content.result if content.result is not None else ""
                 case "text_reasoning" if (protected_data := content.protected_data) is not None:
                     all_messages[-1]["reasoning_details"] = json.loads(protected_data)
                 case _:
@@ -563,11 +640,15 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOpenAIChatOptions], Gener
 # region Public client
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[TOpenAIChatOptions], Generic[TOpenAIChatOptions]):
-    """OpenAI Chat completion class."""
+class OpenAIChatClient(  # type: ignore[misc]
+    OpenAIConfigMixin,
+    ChatMiddlewareLayer[OpenAIChatOptionsT],
+    FunctionInvocationLayer[OpenAIChatOptionsT],
+    ChatTelemetryLayer[OpenAIChatOptionsT],
+    RawOpenAIChatClient[OpenAIChatOptionsT],
+    Generic[OpenAIChatOptionsT],
+):
+    """OpenAI Chat completion class with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
@@ -579,6 +660,8 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[TOpenAIChatOption
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
         base_url: str | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -599,6 +682,8 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[TOpenAIChatOption
             base_url: The base URL to use. If provided will override
                 the standard value for an OpenAI connector, the env vars or .env file value.
                 Can also be set via environment variable OPENAI_BASE_URL.
+            middleware: Optional sequence of ChatAndFunctionMiddlewareTypes to apply to requests.
+            function_invocation_configuration: Optional configuration for function invocation support.
             env_file_path: Use the environment settings file as a fallback
                 to environment variables.
             env_file_encoding: The encoding of the environment settings file.
@@ -631,34 +716,35 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[TOpenAIChatOption
                 client: OpenAIChatClient[MyOptions] = OpenAIChatClient(model_id="<model name>")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            openai_settings = OpenAISettings(
-                api_key=api_key,  # type: ignore[reportArgumentType]
-                base_url=base_url,
-                org_id=org_id,
-                chat_model_id=model_id,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
+        openai_settings = load_settings(
+            OpenAISettings,
+            env_prefix="OPENAI_",
+            api_key=api_key,
+            base_url=base_url,
+            org_id=org_id,
+            chat_model_id=model_id,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
-        if not async_client and not openai_settings.api_key:
+        if not async_client and not openai_settings["api_key"]:
             raise ServiceInitializationError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
-        if not openai_settings.chat_model_id:
+        if not openai_settings["chat_model_id"]:
             raise ServiceInitializationError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
 
         super().__init__(
-            model_id=openai_settings.chat_model_id,
-            api_key=self._get_api_key(openai_settings.api_key),
-            base_url=openai_settings.base_url if openai_settings.base_url else None,
-            org_id=openai_settings.org_id,
+            model_id=openai_settings["chat_model_id"],
+            api_key=self._get_api_key(openai_settings["api_key"]),
+            base_url=openai_settings["base_url"] if openai_settings["base_url"] else None,
+            org_id=openai_settings["org_id"],
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
         )

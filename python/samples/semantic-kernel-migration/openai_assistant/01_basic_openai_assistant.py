@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/openai_assistant/01_basic_openai_assistant.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Create an OpenAI Assistant using SK and Agent Framework."""
 
@@ -41,7 +50,7 @@ async def run_agent_framework() -> None:
         print("[AF]", reply.text)
         follow_up = await assistant_agent.run(
             "How many residents live there?",
-            thread=assistant_agent.get_new_thread(),
+            session=assistant_agent.create_session(),
         )
         print("[AF][follow-up]", follow_up.text)
 

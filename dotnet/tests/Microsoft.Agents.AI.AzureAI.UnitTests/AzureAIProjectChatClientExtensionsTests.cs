@@ -2310,23 +2310,18 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     #region CreateChatClientAgentOptions - Options Preservation Tests
 
     /// <summary>
-    /// Verify that CreateChatClientAgentOptions preserves AIContextProviderFactory.
+    /// Verify that CreateChatClientAgentOptions preserves AIContextProviders.
     /// </summary>
     [Fact]
-    public async Task GetAIAgentAsync_WithAIContextProviderFactory_PreservesFactoryAsync()
+    public async Task GetAIAgentAsync_WithAIContextProviders_PreservesProviderAsync()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        bool factoryInvoked = false;
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
             ChatOptions = new ChatOptions { Instructions = "Test" },
-            AIContextProviderFactory = (_, _) =>
-            {
-                factoryInvoked = true;
-                return new ValueTask<AIContextProvider>(new TestAIContextProvider());
-            }
+            AIContextProviders = [new TestAIContextProvider()]
         };
 
         // Act
@@ -2334,15 +2329,13 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        // Verify the factory was captured (though not necessarily invoked yet)
-        Assert.False(factoryInvoked); // Factory is not invoked during creation
     }
 
     /// <summary>
-    /// Verify that CreateChatClientAgentOptions preserves ChatHistoryProviderFactory.
+    /// Verify that CreateChatClientAgentOptions preserves ChatHistoryProvider.
     /// </summary>
     [Fact]
-    public async Task GetAIAgentAsync_WithChatHistoryProviderFactory_PreservesFactoryAsync()
+    public async Task GetAIAgentAsync_WithChatHistoryProvider_PreservesProviderAsync()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
@@ -2350,7 +2343,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         {
             Name = "test-agent",
             ChatOptions = new ChatOptions { Instructions = "Test" },
-            ChatHistoryProviderFactory = (_, _) => new ValueTask<ChatHistoryProvider>(new TestChatHistoryProvider())
+            ChatHistoryProvider = new TestChatHistoryProvider()
         };
 
         // Act
@@ -3140,9 +3133,9 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// </summary>
     private sealed class TestAIContextProvider : AIContextProvider
     {
-        public override ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
-            return new ValueTask<AIContext>(new AIContext());
+            return new ValueTask<AIContext>(context.AIContext);
         }
     }
 
@@ -3151,17 +3144,12 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// </summary>
     private sealed class TestChatHistoryProvider : ChatHistoryProvider
     {
-        public override ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
-            return new ValueTask<IEnumerable<ChatMessage>>(Array.Empty<ChatMessage>());
+            return new ValueTask<IEnumerable<ChatMessage>>(context.RequestMessages);
         }
 
-        public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
-        {
-            return default;
-        }
-
-        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
             return default;
         }

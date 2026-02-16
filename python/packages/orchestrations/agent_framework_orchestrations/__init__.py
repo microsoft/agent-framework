@@ -17,6 +17,13 @@ try:
 except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"  # Fallback for development mode
 
+from ._base_group_chat_orchestrator import (
+    BaseGroupChatOrchestrator,
+    GroupChatRequestMessage,
+    GroupChatRequestSentEvent,
+    GroupChatResponseReceivedEvent,
+    TerminationCondition,
+)
 from ._concurrent import ConcurrentBuilder
 from ._group_chat import (
     AgentBasedGroupChatOrchestrator,
@@ -53,6 +60,9 @@ from ._magentic import (
     MagenticResetSignal,
     StandardMagenticManager,
 )
+from ._orchestration_request_info import AgentRequestInfoResponse
+from ._orchestration_state import OrchestrationState
+from ._orchestrator_helpers import clean_conversation_for_handoff, create_completion_message
 from ._sequential import SequentialBuilder
 
 __all__ = [
@@ -63,9 +73,14 @@ __all__ = [
     "ORCH_MSG_KIND_USER_TASK",
     "AgentBasedGroupChatOrchestrator",
     "AgentOrchestrationOutput",
+    "AgentRequestInfoResponse",
+    "BaseGroupChatOrchestrator",
     "ConcurrentBuilder",
     "GroupChatBuilder",
     "GroupChatOrchestrator",
+    "GroupChatRequestMessage",
+    "GroupChatRequestSentEvent",
+    "GroupChatResponseReceivedEvent",
     "GroupChatSelectionFunction",
     "GroupChatState",
     "HandoffAgentExecutor",
@@ -85,7 +100,11 @@ __all__ = [
     "MagenticProgressLedger",
     "MagenticProgressLedgerItem",
     "MagenticResetSignal",
+    "OrchestrationState",
     "SequentialBuilder",
     "StandardMagenticManager",
+    "TerminationCondition",
     "__version__",
+    "clean_conversation_for_handoff",
+    "create_completion_message",
 ]

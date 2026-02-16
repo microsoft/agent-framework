@@ -11,15 +11,13 @@ from typing import Any, TypeVar, overload
 
 from ..observability import create_processing_span
 from ._events import (
-    ExecutorCompletedEvent,
-    ExecutorFailedEvent,
-    ExecutorInvokedEvent,
     WorkflowErrorDetails,
+    WorkflowEvent,
     _framework_event_origin,  # type: ignore[reportPrivateUsage]
 )
 from ._model_utils import DictConvertible
 from ._request_info_mixin import RequestInfoMixin
-from ._runner_context import Message, MessageType, RunnerContext
+from ._runner_context import MessageType, RunnerContext, WorkflowMessage
 from ._state import State
 from ._typing_utils import is_instance_of, normalize_type_to_list, resolve_type_annotation
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
@@ -246,7 +244,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         with create_processing_span(
             self.id,
             self.__class__.__name__,
-            str(MessageType.STANDARD if not isinstance(message, Message) else message.type),
+            str(MessageType.STANDARD if not isinstance(message, WorkflowMessage) else message.type),
             type(message).__name__,
             source_trace_contexts=trace_contexts,
             source_span_ids=source_span_ids,
@@ -255,7 +253,7 @@ class Executor(RequestInfoMixin, DictConvertible):
             handler = self._find_handler(message)
 
             original_message = message
-            if isinstance(message, Message):
+            if isinstance(message, WorkflowMessage):
                 # Unwrap raw data for handler call
                 message = message.data
 
@@ -267,21 +265,21 @@ class Executor(RequestInfoMixin, DictConvertible):
                 trace_contexts=trace_contexts,
                 source_span_ids=source_span_ids,
                 request_id=original_message.original_request_info_event.request_id
-                if isinstance(original_message, Message) and original_message.original_request_info_event
+                if isinstance(original_message, WorkflowMessage) and original_message.original_request_info_event
                 else None,
             )
 
             # Invoke the handler with the message and context
             # Use deepcopy to capture original input state before handler can mutate it
             with _framework_event_origin():
-                invoke_event = ExecutorInvokedEvent(self.id, copy.deepcopy(message))
+                invoke_event = WorkflowEvent.executor_invoked(self.id, copy.deepcopy(message))
             await context.add_event(invoke_event)
             try:
                 await handler(message, context)
             except Exception as exc:
                 # Surface structured executor failure before propagating
                 with _framework_event_origin():
-                    failure_event = ExecutorFailedEvent(self.id, WorkflowErrorDetails.from_exception(exc))
+                    failure_event = WorkflowEvent.executor_failed(self.id, WorkflowErrorDetails.from_exception(exc))
                 await context.add_event(failure_event)
                 raise
             with _framework_event_origin():
@@ -289,7 +287,9 @@ class Executor(RequestInfoMixin, DictConvertible):
                 sent_messages = context.get_sent_messages()
                 yielded_outputs = context.get_yielded_outputs()
                 completion_data = sent_messages + yielded_outputs
-                completed_event = ExecutorCompletedEvent(self.id, completion_data if completion_data else None)
+                completed_event = WorkflowEvent.executor_completed(
+                    self.id, completion_data if completion_data else None
+                )
             await context.add_event(completed_event)
 
     def _create_context_for_handler(
@@ -351,7 +351,7 @@ class Executor(RequestInfoMixin, DictConvertible):
                 # Add to unified handler specs list
                 self._handler_specs.append({**handler_spec})
 
-    def can_handle(self, message: Message) -> bool:
+    def can_handle(self, message: WorkflowMessage) -> bool:
         """Check if the executor can handle a given message type.
 
         Args:
@@ -460,7 +460,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         Returns:
             The handler function if found, None otherwise
         """
-        if isinstance(message, Message):
+        if isinstance(message, WorkflowMessage):
             # Case where Message wrapper is passed instead of raw data
             # Handler can be a standard handler or a response handler
             if message.type == MessageType.STANDARD:
@@ -538,8 +538,8 @@ def handler(
     output: type | types.UnionType | str | None = None,
     workflow_output: type | types.UnionType | str | None = None,
 ) -> Callable[
-    [Callable[[ExecutorT, Any, ContextT], Awaitable[Any]]],
-    Callable[[ExecutorT, Any, ContextT], Awaitable[Any]],
+    [Callable[..., Awaitable[Any]]],
+    Callable[..., Awaitable[Any]],
 ]: ...
 
 
@@ -724,9 +724,15 @@ def _validate_handler_signature(
 
     # Validate ctx parameter is WorkflowContext and extract type args
     ctx_param = params[2]
-    output_types, workflow_output_types = validate_workflow_context_annotation(
-        ctx_param.annotation, f"parameter '{ctx_param.name}'", "Handler"
-    )
+    if skip_message_annotation and ctx_param.annotation == inspect.Parameter.empty:
+        # When explicit types are provided via @handler(input=..., output=...),
+        # the ctx parameter doesn't need a type annotation - types come from the decorator.
+        output_types: list[type[Any] | types.UnionType] = []
+        workflow_output_types: list[type[Any] | types.UnionType] = []
+    else:
+        output_types, workflow_output_types = validate_workflow_context_annotation(
+            ctx_param.annotation, f"parameter '{ctx_param.name}'", "Handler"
+        )
 
     message_type = message_param.annotation if message_param.annotation != inspect.Parameter.empty else None
     ctx_annotation = ctx_param.annotation

@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "autogen-agentchat",
+#     "autogen-ext[openai]",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/autogen-migration/orchestrations/01_round_robin_group_chat.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """AutoGen RoundRobinGroupChat vs Agent Framework GroupChatBuilder/SequentialBuilder.
 
@@ -7,7 +17,7 @@ the task in a round-robin fashion.
 
 import asyncio
 
-from agent_framework import AgentResponseUpdate, WorkflowOutputEvent
+from agent_framework import AgentResponseUpdate
 
 
 async def run_autogen() -> None:
@@ -55,8 +65,8 @@ async def run_autogen() -> None:
 
 async def run_agent_framework() -> None:
     """Agent Framework's SequentialBuilder for sequential agent orchestration."""
-    from agent_framework import SequentialBuilder
     from agent_framework.openai import OpenAIChatClient
+    from agent_framework.orchestrations import SequentialBuilder
 
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
 
@@ -77,21 +87,20 @@ async def run_agent_framework() -> None:
     )
 
     # Create sequential workflow
-    workflow = SequentialBuilder().participants([researcher, writer, editor]).build()
+    workflow = SequentialBuilder(participants=[researcher, writer, editor]).build()
 
     # Run the workflow
     print("[Agent Framework] Sequential conversation:")
     current_executor = None
-    async for event in workflow.run_stream("Create a brief summary about electric vehicles"):
-        if isinstance(event, WorkflowOutputEvent):
+    async for event in workflow.run("Create a brief summary about electric vehicles", stream=True):
+        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
             # Print executor name header when switching to a new agent
             if current_executor != event.executor_id:
                 if current_executor is not None:
                     print()  # Newline after previous agent's message
                 print(f"---------- {event.executor_id} ----------")
                 current_executor = event.executor_id
-            if isinstance(event.data, AgentResponseUpdate):
-                print(event.data.text, end="", flush=True)
+            print(event.data.text, end="", flush=True)
     print()  # Final newline after conversation
 
 
@@ -100,9 +109,9 @@ async def run_agent_framework_with_cycle() -> None:
     from agent_framework import (
         AgentExecutorRequest,
         AgentExecutorResponse,
+        AgentResponseUpdate,
         WorkflowBuilder,
         WorkflowContext,
-        WorkflowOutputEvent,
         executor,
     )
     from agent_framework.openai import OpenAIChatClient
@@ -138,7 +147,7 @@ async def run_agent_framework_with_cycle() -> None:
             await context.send_message(AgentExecutorRequest(messages=response.full_conversation, should_respond=True))
 
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=researcher)
         .add_edge(researcher, writer)
         .add_edge(writer, editor)
         .add_edge(
@@ -146,15 +155,17 @@ async def run_agent_framework_with_cycle() -> None:
             check_approval,
         )
         .add_edge(check_approval, researcher)
-        .set_start_executor(researcher)
         .build()
     )
 
     # Run the workflow
     print("[Agent Framework with Cycle] Cyclic conversation:")
     current_executor = None
-    async for event in workflow.run_stream("Create a brief summary about electric vehicles"):
-        if isinstance(event, WorkflowOutputEvent) and isinstance(event.data, AgentResponseUpdate):
+    async for event in workflow.run("Create a brief summary about electric vehicles", stream=True):
+        if event.type == "output" and not isinstance(event.data, AgentResponseUpdate):
+            print("\n---------- Workflow Output ----------")
+            print(event.data)
+        elif event.type == "output" and isinstance(event.data, AgentResponseUpdate):
             # Print executor name header when switching to a new agent
             if current_executor != event.executor_id:
                 if current_executor is not None:

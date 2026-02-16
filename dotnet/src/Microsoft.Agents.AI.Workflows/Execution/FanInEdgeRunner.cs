@@ -19,7 +19,7 @@ internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData e
     {
         Debug.Assert(!envelope.IsExternal, "FanIn edges should never be chased from external input");
 
-        using var activity = s_activitySource.StartActivity(ActivityNames.EdgeGroupProcess);
+        using var activity = this.StartActivity();
         activity?
             .SetTag(Tags.EdgeGroupType, nameof(FanInEdgeRunner))
             .SetTag(Tags.MessageTargetId, this.EdgeData.SinkId);

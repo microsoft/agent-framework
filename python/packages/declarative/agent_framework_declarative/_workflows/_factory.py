@@ -10,6 +10,8 @@ Each YAML action becomes a real Executor node in the workflow graph,
 enabling checkpointing, visualization, and pause/resume capabilities.
 """
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -17,8 +19,8 @@ from typing import Any, cast
 import yaml
 from agent_framework import (
     AgentExecutor,
-    AgentProtocol,
     CheckpointStorage,
+    SupportsAgentRun,
     Workflow,
     get_logger,
 )
@@ -52,7 +54,7 @@ class WorkflowFactory:
             factory = WorkflowFactory()
             workflow = factory.create_workflow_from_yaml_path("workflow.yaml")
 
-            async for event in workflow.run_stream({"query": "Hello"}):
+            async for event in workflow.run({"query": "Hello"}, stream=True):
                 print(event)
 
         .. code-block:: python
@@ -71,20 +73,20 @@ class WorkflowFactory:
             from agent_framework.declarative import WorkflowFactory
 
             # Pre-register agents for InvokeAzureAgent actions
-            chat_client = AzureOpenAIChatClient()
-            agent = chat_client.as_agent(name="MyAgent", instructions="You are helpful.")
+            client = AzureOpenAIChatClient()
+            agent = client.as_agent(name="MyAgent", instructions="You are helpful.")
 
             factory = WorkflowFactory(agents={"MyAgent": agent})
             workflow = factory.create_workflow_from_yaml_path("workflow.yaml")
     """
 
-    _agents: dict[str, AgentProtocol | AgentExecutor]
+    _agents: dict[str, SupportsAgentRun | AgentExecutor]
 
     def __init__(
         self,
         *,
         agent_factory: AgentFactory | None = None,
-        agents: Mapping[str, AgentProtocol | AgentExecutor] | None = None,
+        agents: Mapping[str, SupportsAgentRun | AgentExecutor] | None = None,
         bindings: Mapping[str, Any] | None = None,
         env_file: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
@@ -132,7 +134,7 @@ class WorkflowFactory:
                 )
         """
         self._agent_factory = agent_factory or AgentFactory(env_file_path=env_file)
-        self._agents: dict[str, AgentProtocol | AgentExecutor] = dict(agents) if agents else {}
+        self._agents: dict[str, SupportsAgentRun | AgentExecutor] = dict(agents) if agents else {}
         self._bindings: dict[str, Any] = dict(bindings) if bindings else {}
         self._checkpoint_storage = checkpoint_storage
 
@@ -161,7 +163,7 @@ class WorkflowFactory:
                 workflow = factory.create_workflow_from_yaml_path("workflow.yaml")
 
                 # Execute the workflow
-                async for event in workflow.run_stream({"input": "Hello"}):
+                async for event in workflow.run({"input": "Hello"}, stream=True):
                     print(event)
 
             .. code-block:: python
@@ -323,7 +325,7 @@ class WorkflowFactory:
         description = workflow_def.get("description")
 
         # Create agents from definitions
-        agents: dict[str, AgentProtocol | AgentExecutor] = dict(self._agents)
+        agents: dict[str, SupportsAgentRun | AgentExecutor] = dict(self._agents)
         agent_defs = workflow_def.get("agents", {})
 
         for agent_name, agent_def in agent_defs.items():
@@ -347,7 +349,7 @@ class WorkflowFactory:
         workflow_def: dict[str, Any],
         name: str,
         description: str | None,
-        agents: dict[str, AgentProtocol | AgentExecutor],
+        agents: dict[str, SupportsAgentRun | AgentExecutor],
     ) -> Workflow:
         """Create workflow from definition.
 
@@ -506,7 +508,7 @@ class WorkflowFactory:
             f"Invalid agent definition. Expected 'file', 'kind', or 'connection': {agent_def}"
         )
 
-    def register_agent(self, name: str, agent: AgentProtocol | AgentExecutor) -> "WorkflowFactory":
+    def register_agent(self, name: str, agent: SupportsAgentRun | AgentExecutor) -> WorkflowFactory:
         """Register an agent instance with the factory for use in workflows.
 
         Registered agents are available to InvokeAzureAgent actions by name.
@@ -515,7 +517,7 @@ class WorkflowFactory:
         Args:
             name: The name to register the agent under. Must match the agent name
                 referenced in InvokeAzureAgent actions.
-            agent: The agent instance (typically a ChatAgent or similar).
+            agent: The agent instance (typically a Agent or similar).
 
         Returns:
             Self for method chaining.
@@ -552,7 +554,7 @@ class WorkflowFactory:
         self._agents[name] = agent
         return self
 
-    def register_binding(self, name: str, func: Any) -> "WorkflowFactory":
+    def register_binding(self, name: str, func: Any) -> WorkflowFactory:
         """Register a function binding with the factory for use in workflow actions.
 
         Bindings allow workflow actions to invoke Python functions by name.

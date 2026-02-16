@@ -25,7 +25,7 @@ internal sealed class ResponseEdgeRunner(IRunnerContext runContext, string execu
     {
         Debug.Assert(envelope.IsExternal, "Input edges should only be chased from external input");
 
-        using var activity = s_activitySource.StartActivity(ActivityNames.EdgeGroupProcess);
+        using var activity = this.StartActivity();
         activity?
             .SetTag(Tags.EdgeGroupType, nameof(ResponseEdgeRunner))
             .SetTag(Tags.MessageSourceId, envelope.SourceId)

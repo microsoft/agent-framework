@@ -1,22 +1,28 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
+from azure.ai.projects.aio import AIProjectClient
 from azure.core.credentials import TokenCredential
-from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
-from pydantic import ValidationError
+from openai import AsyncOpenAI
+from openai.lib.azure import AsyncAzureADTokenProvider
 
-from .._middleware import use_chat_middleware
-from .._tools import use_function_invocation
+from .._middleware import ChatMiddlewareLayer
+from .._settings import load_settings
+from .._telemetry import AGENT_FRAMEWORK_USER_AGENT
+from .._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from ..exceptions import ServiceInitializationError
-from ..observability import use_instrumentation
-from ..openai._responses_client import OpenAIBaseResponsesClient
+from ..observability import ChatTelemetryLayer
+from ..openai._responses_client import RawOpenAIResponsesClient
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
+    _apply_azure_defaults,
 )
 
 if sys.version_info >= (3, 13):
@@ -33,28 +39,29 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
+    from .._middleware import MiddlewareTypes
     from ..openai._responses_client import OpenAIResponsesOptions
 
 __all__ = ["AzureOpenAIResponsesClient"]
 
 
-TAzureOpenAIResponsesOptions = TypeVar(
-    "TAzureOpenAIResponsesOptions",
+AzureOpenAIResponsesOptionsT = TypeVar(
+    "AzureOpenAIResponsesOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="OpenAIResponsesOptions",
     covariant=True,
 )
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class AzureOpenAIResponsesClient(
+class AzureOpenAIResponsesClient(  # type: ignore[misc]
     AzureOpenAIConfigMixin,
-    OpenAIBaseResponsesClient[TAzureOpenAIResponsesOptions],
-    Generic[TAzureOpenAIResponsesOptions],
+    ChatMiddlewareLayer[AzureOpenAIResponsesOptionsT],
+    FunctionInvocationLayer[AzureOpenAIResponsesOptionsT],
+    ChatTelemetryLayer[AzureOpenAIResponsesOptionsT],
+    RawOpenAIResponsesClient[AzureOpenAIResponsesOptionsT],
+    Generic[AzureOpenAIResponsesOptionsT],
 ):
-    """Azure Responses completion class."""
+    """Azure Responses completion class with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
@@ -69,13 +76,25 @@ class AzureOpenAIResponsesClient(
         token_endpoint: str | None = None,
         credential: TokenCredential | None = None,
         default_headers: Mapping[str, str] | None = None,
-        async_client: AsyncAzureOpenAI | None = None,
+        async_client: AsyncOpenAI | None = None,
+        project_client: Any | None = None,
+        project_endpoint: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an Azure OpenAI Responses client.
+
+        The client can be created in two ways:
+
+        1. **Direct Azure OpenAI** (default): Provide endpoint, api_key, or credential
+           to connect directly to an Azure OpenAI deployment.
+        2. **Foundry project endpoint**: Provide a ``project_client`` or ``project_endpoint``
+           (with ``credential``) to create the client via an Azure AI Foundry project.
+           This requires the ``azure-ai-projects`` package to be installed.
 
         Keyword Args:
             api_key: The API key. If provided, will override the value in the env vars or .env file.
@@ -100,10 +119,18 @@ class AzureOpenAIResponsesClient(
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests.
             async_client: An existing client to use.
+            project_client: An existing ``AIProjectClient`` (from ``azure.ai.projects.aio``) to use.
+                The OpenAI client will be obtained via ``project_client.get_openai_client()``.
+                Requires the ``azure-ai-projects`` package.
+            project_endpoint: The Azure AI Foundry project endpoint URL.
+                When provided with ``credential``, an ``AIProjectClient`` will be created
+                and used to obtain the OpenAI client. Requires the ``azure-ai-projects`` package.
             env_file_path: Use the environment settings file as a fallback to using env vars.
             env_file_encoding: The encoding of the environment settings file, defaults to 'utf-8'.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
                 prompts could use `developer` or `system`.
+            middleware: Optional sequence of middleware to apply to requests.
+            function_invocation_configuration: Optional configuration for function invocation behavior.
             kwargs: Additional keyword arguments.
 
         Examples:
@@ -125,6 +152,27 @@ class AzureOpenAIResponsesClient(
                 # Or loading from a .env file
                 client = AzureOpenAIResponsesClient(env_file_path="path/to/.env")
 
+                # Using a Foundry project endpoint
+                from azure.identity import DefaultAzureCredential
+
+                client = AzureOpenAIResponsesClient(
+                    project_endpoint="https://your-project.services.ai.azure.com",
+                    deployment_name="gpt-4o",
+                    credential=DefaultAzureCredential(),
+                )
+
+                # Or using an existing AIProjectClient
+                from azure.ai.projects.aio import AIProjectClient
+
+                project_client = AIProjectClient(
+                    endpoint="https://your-project.services.ai.azure.com",
+                    credential=DefaultAzureCredential(),
+                )
+                client = AzureOpenAIResponsesClient(
+                    project_client=project_client,
+                    deployment_name="gpt-4o",
+                )
+
                 # Using custom ChatOptions with type safety:
                 from typing import TypedDict
                 from agent_framework.azure import AzureOpenAIResponsesOptions
@@ -139,56 +187,104 @@ class AzureOpenAIResponsesClient(
         """
         if model_id := kwargs.pop("model_id", None) and not deployment_name:
             deployment_name = str(model_id)
-        try:
-            azure_openai_settings = AzureOpenAISettings(
-                # pydantic settings will see if there is a value, if not, will try the env var or .env file
-                api_key=api_key,  # type: ignore
-                base_url=base_url,  # type: ignore
-                endpoint=endpoint,  # type: ignore
-                responses_deployment_name=deployment_name,
-                api_version=api_version,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-                token_endpoint=token_endpoint,
-                default_api_version="preview",
-            )
-            # TODO(peterychang): This is a temporary hack to ensure that the base_url is set correctly
-            # while this feature is in preview.
-            # But we should only do this if we're on azure. Private deployments may not need this.
-            if (
-                not azure_openai_settings.base_url
-                and azure_openai_settings.endpoint
-                and azure_openai_settings.endpoint.host
-                and azure_openai_settings.endpoint.host.endswith(".openai.azure.com")
-            ):
-                azure_openai_settings.base_url = urljoin(str(azure_openai_settings.endpoint), "/openai/v1/")  # type: ignore
-        except ValidationError as exc:
-            raise ServiceInitializationError(f"Failed to validate settings: {exc}") from exc
 
-        if not azure_openai_settings.responses_deployment_name:
+        # Project client path: create OpenAI client from an Azure AI Foundry project
+        if async_client is None and (project_client is not None or project_endpoint is not None):
+            async_client = self._create_client_from_project(
+                project_client=project_client,
+                project_endpoint=project_endpoint,
+                credential=credential,
+            )
+
+        azure_openai_settings = load_settings(
+            AzureOpenAISettings,
+            env_prefix="AZURE_OPENAI_",
+            api_key=api_key,
+            base_url=base_url,
+            endpoint=endpoint,
+            responses_deployment_name=deployment_name,
+            api_version=api_version,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+            token_endpoint=token_endpoint,
+        )
+        _apply_azure_defaults(azure_openai_settings, default_api_version="preview")
+        # TODO(peterychang): This is a temporary hack to ensure that the base_url is set correctly
+        # while this feature is in preview.
+        # But we should only do this if we're on azure. Private deployments may not need this.
+        if (
+            not azure_openai_settings.get("base_url")
+            and azure_openai_settings.get("endpoint")
+            and (hostname := urlparse(str(azure_openai_settings["endpoint"])).hostname)
+            and hostname.endswith(".openai.azure.com")
+        ):
+            azure_openai_settings["base_url"] = urljoin(str(azure_openai_settings["endpoint"]), "/openai/v1/")
+
+        if not azure_openai_settings["responses_deployment_name"]:
             raise ServiceInitializationError(
                 "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME' environment variable."
             )
 
         super().__init__(
-            deployment_name=azure_openai_settings.responses_deployment_name,
-            endpoint=azure_openai_settings.endpoint,
-            base_url=azure_openai_settings.base_url,
-            api_version=azure_openai_settings.api_version,  # type: ignore
-            api_key=azure_openai_settings.api_key.get_secret_value() if azure_openai_settings.api_key else None,
+            deployment_name=azure_openai_settings["responses_deployment_name"],
+            endpoint=azure_openai_settings["endpoint"],
+            base_url=azure_openai_settings["base_url"],
+            api_version=azure_openai_settings["api_version"],  # type: ignore
+            api_key=azure_openai_settings["api_key"].get_secret_value() if azure_openai_settings["api_key"] else None,
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
-            token_endpoint=azure_openai_settings.token_endpoint,
+            token_endpoint=azure_openai_settings["token_endpoint"],
             credential=credential,
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
         )
 
+    @staticmethod
+    def _create_client_from_project(
+        *,
+        project_client: AIProjectClient | None,
+        project_endpoint: str | None,
+        credential: TokenCredential | None,
+    ) -> AsyncOpenAI:
+        """Create an AsyncOpenAI client from an Azure AI Foundry project.
+
+        Args:
+            project_client: An existing AIProjectClient to use.
+            project_endpoint: The Azure AI Foundry project endpoint URL.
+            credential: Azure credential for authentication.
+
+        Returns:
+            An AsyncAzureOpenAI client obtained from the project client.
+
+        Raises:
+            ServiceInitializationError: If required parameters are missing or
+                the azure-ai-projects package is not installed.
+        """
+        if project_client is not None:
+            return project_client.get_openai_client()
+
+        if not project_endpoint:
+            raise ServiceInitializationError(
+                "Azure AI project endpoint is required when project_client is not provided."
+            )
+        if not credential:
+            raise ServiceInitializationError(
+                "Azure credential is required when using project_endpoint without a project_client."
+            )
+        project_client = AIProjectClient(
+            endpoint=project_endpoint,
+            credential=credential,  # type: ignore[arg-type]
+            user_agent=AGENT_FRAMEWORK_USER_AGENT,
+        )
+        return project_client.get_openai_client()
+
     @override
-    def _check_model_presence(self, run_options: dict[str, Any]) -> None:
-        if not run_options.get("model"):
+    def _check_model_presence(self, options: dict[str, Any]) -> None:
+        if not options.get("model"):
             if not self.model_id:
                 raise ValueError("deployment_name must be a non-empty string")
-            run_options["model"] = self.model_id
+            options["model"] = self.model_id

@@ -2,6 +2,8 @@
 
 """Simplified tracing integration for Agent Framework Server."""
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
@@ -120,9 +122,7 @@ class SimpleTraceCollector(SpanExporter):
 
 
 @contextmanager
-def capture_traces(
-    response_id: str | None = None, entity_id: str | None = None
-) -> Generator[SimpleTraceCollector, None, None]:
+def capture_traces(response_id: str | None = None, entity_id: str | None = None) -> Generator[SimpleTraceCollector]:
     """Context manager to capture traces during execution.
 
     Args:
