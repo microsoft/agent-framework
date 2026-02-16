@@ -6,7 +6,6 @@ import tempfile
 import urllib.request as urllib_request
 from pathlib import Path
 
-import aiofiles  # pyright: ignore[reportMissingModuleSource]
 from agent_framework import Content
 from agent_framework.openai import OpenAIResponsesClient
 
@@ -20,8 +19,11 @@ and automated visual asset generation.
 """
 
 
-async def save_image(output: Content) -> None:
-    """Save the generated image to a temporary directory."""
+def save_image(output: Content) -> None:
+    """Save the generated image to a temporary directory.
+
+    This sample is simplified, usually a async aware storing method would be better.
+    """
     filename = "generated_image.webp"
     file_path = Path(tempfile.gettempdir()) / filename
 
@@ -37,15 +39,15 @@ async def save_image(output: Content) -> None:
                 data_bytes = None
         else:
             try:
-                data_bytes = await asyncio.to_thread(lambda: urllib_request.urlopen(uri).read())
+                data_bytes = urllib_request.urlopen(uri).read()
             except Exception:
                 data_bytes = None
 
     if data_bytes is None:
         raise RuntimeError("Image output present but could not retrieve bytes.")
 
-    async with aiofiles.open(file_path, "wb") as f:
-        await f.write(data_bytes)
+    with open(file_path, "wb") as f:
+        f.write(data_bytes)
 
     print(f"Image downloaded and saved to: {file_path}")
 
@@ -76,15 +78,15 @@ async def main() -> None:
     image_saved = False
     for message in result.messages:
         for content in message.contents:
-            if content.type == "image_generation_tool_result_tool_result" and content.outputs:
+            if content.type == "image_generation_tool_result" and content.outputs:
                 output = content.outputs
                 if isinstance(output, Content) and output.uri:
-                    await save_image(output)
+                    save_image(output)
                     image_saved = True
                 elif isinstance(output, list):
                     for out in output:
                         if isinstance(out, Content) and out.uri:
-                            await save_image(out)
+                            save_image(out)
                             image_saved = True
                             break
                 if image_saved:

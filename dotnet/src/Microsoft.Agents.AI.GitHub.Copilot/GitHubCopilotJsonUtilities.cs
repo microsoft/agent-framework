@@ -42,7 +42,7 @@ internal static partial class GitHubCopilotJsonUtilities
         UseStringEnumConverter = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
-    [JsonSerializable(typeof(GitHubCopilotAgentSession.State))]
+    [JsonSerializable(typeof(GitHubCopilotAgentSession))]
     [ExcludeFromCodeCoverage]
     private sealed partial class JsonContext : JsonSerializerContext;
 }

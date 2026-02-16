@@ -1,63 +1,57 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
-from collections.abc import Sequence
 from typing import Any
 
 import tiktoken
-from agent_framework import ChatMessageStore, Message
+from agent_framework import InMemoryHistoryProvider, Message
 from loguru import logger
 
 
-class SlidingWindowChatMessageStore(ChatMessageStore):
-    """A token-aware sliding window implementation of ChatMessageStore.
+class SlidingWindowHistoryProvider(InMemoryHistoryProvider):
+    """A token-aware sliding window implementation of InMemoryHistoryProvider.
 
-    Maintains two message lists: complete history and truncated window.
-    Automatically removes oldest messages when token limit is exceeded.
-    Also removes leading tool messages to ensure valid conversation flow.
+    Stores all messages in session state but returns a truncated window from
+    ``get_messages`` that fits within ``max_tokens``. Automatically removes
+    oldest messages and leading tool messages to ensure valid conversation flow.
     """
 
     def __init__(
         self,
-        messages: Sequence[Message] | None = None,
+        source_id: str = "memory",
+        *,
         max_tokens: int = 3800,
         system_message: str | None = None,
         tool_definitions: Any | None = None,
     ):
-        super().__init__(messages=messages)
-        self.truncated_messages = self.messages.copy()
+        super().__init__(source_id)
         self.max_tokens = max_tokens
         self.system_message = system_message  # Included in token count
         self.tool_definitions = tool_definitions
         # An estimation based on a commonly used vocab table
         self.encoding = tiktoken.get_encoding("o200k_base")
 
-    async def add_messages(self, messages: Sequence[Message]) -> None:
-        await super().add_messages(messages)
+    async def get_messages(
+        self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
+    ) -> list[Message]:
+        """Retrieve messages from session state, truncated to fit within max_tokens."""
+        all_messages = await super().get_messages(session_id, state=state, **kwargs)
+        return self._truncate(list(all_messages))
 
-        self.truncated_messages = self.messages.copy()
-        self.truncate_messages()
-
-    async def list_messages(self) -> list[Message]:
-        """Get the current list of messages, which may be truncated."""
-        return self.truncated_messages
-
-    async def list_all_messages(self) -> list[Message]:
-        """Get all messages from the store including the truncated ones."""
-        return self.messages
-
-    def truncate_messages(self) -> None:
-        while len(self.truncated_messages) > 0 and self.get_token_count() > self.max_tokens:
+    def _truncate(self, messages: list[Message]) -> list[Message]:
+        """Truncate messages to fit within max_tokens and remove leading tool messages."""
+        while len(messages) > 0 and self._get_token_count(messages) > self.max_tokens:
             logger.warning("Messages exceed max tokens. Truncating oldest message.")
-            self.truncated_messages.pop(0)
+            messages.pop(0)
         # Remove leading tool messages
-        while len(self.truncated_messages) > 0:
-            if self.truncated_messages[0].role != "tool":
+        while len(messages) > 0:
+            if messages[0].role != "tool":
                 break
             logger.warning("Removing leading tool message because tool result cannot be the first message.")
-            self.truncated_messages.pop(0)
+            messages.pop(0)
+        return messages
 
-    def get_token_count(self) -> int:
+    def _get_token_count(self, messages: list[Message]) -> int:
         """Estimate token count for a list of messages using tiktoken.
 
         Returns:
@@ -70,7 +64,7 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
             total_tokens += len(self.encoding.encode(self.system_message))
             total_tokens += 4  # Extra tokens for system message formatting
 
-        for msg in self.truncated_messages:
+        for msg in messages:
             # Add 4 tokens per message for role, formatting, etc.
             total_tokens += 4
 
@@ -87,7 +81,7 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
                                 "name": content.name,
                                 "arguments": content.arguments,
                             }
-                            total_tokens += self.estimate_any_object_token_count(func_call_data)
+                            total_tokens += self._estimate_any_object_token_count(func_call_data)
                         elif content.type == "function_result":
                             total_tokens += 4
                             # Serialize function result and count tokens
@@ -95,19 +89,16 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
                                 "call_id": content.call_id,
                                 "result": content.result,
                             }
-                            total_tokens += self.estimate_any_object_token_count(func_result_data)
+                            total_tokens += self._estimate_any_object_token_count(func_result_data)
                         else:
                             # For other content types, serialize the whole content
-                            total_tokens += self.estimate_any_object_token_count(content)
+                            total_tokens += self._estimate_any_object_token_count(content)
                     else:
                         # Content without type, treat as text
-                        total_tokens += self.estimate_any_object_token_count(content)
+                        total_tokens += self._estimate_any_object_token_count(content)
             elif hasattr(msg, "text") and msg.text:
                 # Simple text message
-                total_tokens += self.estimate_any_object_token_count(msg.text)
-            else:
-                # Skip it
-                pass
+                total_tokens += self._estimate_any_object_token_count(msg.text)
 
         if total_tokens > self.max_tokens / 2:
             logger.opt(colors=True).warning(
@@ -122,7 +113,7 @@ class SlidingWindowChatMessageStore(ChatMessageStore):
 
         return total_tokens
 
-    def estimate_any_object_token_count(self, obj: Any) -> int:
+    def _estimate_any_object_token_count(self, obj: Any) -> int:
         try:
             serialized = json.dumps(obj)
         except Exception:

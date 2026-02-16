@@ -7,10 +7,10 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
 """
-Multi-Turn Conversations — Use AgentThread to maintain context
+Multi-Turn Conversations — Use AgentSession to maintain context
 
 This sample shows how to keep conversation history across multiple calls
-by reusing the same thread object.
+by reusing the same session object.
 
 Environment variables:
   AZURE_AI_PROJECT_ENDPOINT        — Your Azure AI Foundry project endpoint
@@ -34,15 +34,15 @@ async def main() -> None:
     # </create_agent>
 
     # <multi_turn>
-    # Create a thread to maintain conversation history
-    thread = agent.get_new_thread()
+    # Create a session to maintain conversation history
+    session = agent.create_session()
 
     # First turn
-    result = await agent.run("My name is Alice and I love hiking.", thread=thread)
+    result = await agent.run("My name is Alice and I love hiking.", session=session)
     print(f"Agent: {result}\n")
 
     # Second turn — the agent should remember the user's name and hobby
-    result = await agent.run("What do you remember about me?", thread=thread)
+    result = await agent.run("What do you remember about me?", session=session)
     print(f"Agent: {result}")
     # </multi_turn>
 

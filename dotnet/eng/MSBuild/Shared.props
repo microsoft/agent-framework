@@ -20,4 +20,7 @@
   <ItemGroup Condition="'$(InjectSharedFoundryAgents)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Foundry\Agents\*.cs" LinkBase="Shared\Foundry" />
   </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedStructuredOutput)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\StructuredOutput\*.cs" LinkBase="Shared\StructuredOutput" />
+  </ItemGroup>
 </Project>

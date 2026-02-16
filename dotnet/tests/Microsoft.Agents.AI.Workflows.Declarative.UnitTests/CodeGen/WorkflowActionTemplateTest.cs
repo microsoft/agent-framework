@@ -34,11 +34,11 @@ public abstract class WorkflowActionTemplateTest(ITestOutputHelper output) : Wor
     {
         if (expected)
         {
-            Assert.Contains(", WorkflowAgentProvider agentProvider", workflowCode);
+            Assert.Contains($", {nameof(ResponseAgentProvider)} agentProvider", workflowCode);
         }
         else
         {
-            Assert.DoesNotContain(", WorkflowAgentProvider agentProvider", workflowCode);
+            Assert.DoesNotContain($", {nameof(ResponseAgentProvider)} agentProvider", workflowCode);
         }
     }
 

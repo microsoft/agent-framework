@@ -27,7 +27,7 @@ from tau2.environment.tool import Tool  # type: ignore[import-untyped]
 _original_set_state = Environment.set_state
 
 
-def convert_tau2_tool_to_function_tool(tau2_tool: Tool) -> FunctionTool[Any]:
+def convert_tau2_tool_to_function_tool(tau2_tool: Tool) -> FunctionTool:
     """Convert a tau2 Tool to a FunctionTool for agent framework compatibility.
 
     Creates a wrapper that preserves the tool's interface while ensuring

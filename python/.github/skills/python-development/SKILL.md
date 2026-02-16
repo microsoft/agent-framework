@@ -81,7 +81,12 @@ from agent_framework.azure import AzureOpenAIChatClient
 
 ## Public API and Exports
 
-Define `__all__` in each module. Avoid `from module import *` in `__init__.py` files:
+In `__init__.py` files that define package-level public APIs, use direct re-export imports plus an explicit
+`__all__`. Avoid identity aliases like `from ._agents import ChatAgent as ChatAgent`, and avoid
+`from module import *`.
+
+Do not define `__all__` in internal non-`__init__.py` modules. Exception: modules intentionally exposed as a
+public import surface (for example, `agent_framework.observability`) should define `__all__`.
 
 ```python
 __all__ = ["ChatAgent", "Message", "ChatResponse"]

@@ -64,6 +64,17 @@ public readonly struct AgentRequestMessageSourceAttribution : IEquatable<AgentRe
     }
 
     /// <summary>
+    /// Returns a string representation of the current instance.
+    /// </summary>
+    /// <returns>A string containing the source type and source identifier.</returns>
+    public override string ToString()
+    {
+        return this.SourceId is null
+            ? $"{this.SourceType}"
+            : $"{this.SourceType}:{this.SourceId}";
+    }
+
+    /// <summary>
     /// Returns a hash code for the current instance.
     /// </summary>
     /// <returns>A hash code for the current instance.</returns>

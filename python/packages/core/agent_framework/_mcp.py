@@ -24,11 +24,9 @@ from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
-from pydantic import BaseModel, create_model
 
 from ._tools import (
     FunctionTool,
-    _build_pydantic_model_from_json_schema,
 )
 from ._types import (
     Content,
@@ -74,12 +72,6 @@ LOG_LEVEL_MAPPING: dict[types.LoggingLevel, int] = {
     "emergency": logging.CRITICAL,
 }
 
-__all__ = [
-    "MCPStdioTool",
-    "MCPStreamableHTTPTool",
-    "MCPWebsocketTool",
-]
-
 
 def _parse_prompt_result_from_mcp(
     mcp_type: types.GetPromptResult,
@@ -102,21 +94,31 @@ def _parse_prompt_result_from_mcp(
         if isinstance(content, types.TextContent):
             parts.append(content.text)
         elif isinstance(content, (types.ImageContent, types.AudioContent)):
-            parts.append(json.dumps({
-                "type": "image" if isinstance(content, types.ImageContent) else "audio",
-                "data": content.data,
-                "mimeType": content.mimeType,
-            }, default=str))
+            parts.append(
+                json.dumps(
+                    {
+                        "type": "image" if isinstance(content, types.ImageContent) else "audio",
+                        "data": content.data,
+                        "mimeType": content.mimeType,
+                    },
+                    default=str,
+                )
+            )
         elif isinstance(content, types.EmbeddedResource):
             match content.resource:
                 case types.TextResourceContents():
                     parts.append(content.resource.text)
                 case types.BlobResourceContents():
-                    parts.append(json.dumps({
-                        "type": "blob",
-                        "data": content.resource.blob,
-                        "mimeType": content.resource.mimeType,
-                    }, default=str))
+                    parts.append(
+                        json.dumps(
+                            {
+                                "type": "blob",
+                                "data": content.resource.blob,
+                                "mimeType": content.resource.mimeType,
+                            },
+                            default=str,
+                        )
+                    )
         else:
             parts.append(str(content))
     if not parts:
@@ -159,27 +161,42 @@ def _parse_tool_result_from_mcp(
             case types.TextContent():
                 parts.append(item.text)
             case types.ImageContent() | types.AudioContent():
-                parts.append(json.dumps({
-                    "type": "image" if isinstance(item, types.ImageContent) else "audio",
-                    "data": item.data,
-                    "mimeType": item.mimeType,
-                }, default=str))
+                parts.append(
+                    json.dumps(
+                        {
+                            "type": "image" if isinstance(item, types.ImageContent) else "audio",
+                            "data": item.data,
+                            "mimeType": item.mimeType,
+                        },
+                        default=str,
+                    )
+                )
             case types.ResourceLink():
-                parts.append(json.dumps({
-                    "type": "resource_link",
-                    "uri": str(item.uri),
-                    "mimeType": item.mimeType,
-                }, default=str))
+                parts.append(
+                    json.dumps(
+                        {
+                            "type": "resource_link",
+                            "uri": str(item.uri),
+                            "mimeType": item.mimeType,
+                        },
+                        default=str,
+                    )
+                )
             case types.EmbeddedResource():
                 match item.resource:
                     case types.TextResourceContents():
                         parts.append(item.resource.text)
                     case types.BlobResourceContents():
-                        parts.append(json.dumps({
-                            "type": "blob",
-                            "data": item.resource.blob,
-                            "mimeType": item.resource.mimeType,
-                        }, default=str))
+                        parts.append(
+                            json.dumps(
+                                {
+                                    "type": "blob",
+                                    "data": item.resource.blob,
+                                    "mimeType": item.resource.mimeType,
+                                },
+                                default=str,
+                            )
+                        )
             case _:
                 parts.append(str(item))
     if not parts:
@@ -330,11 +347,14 @@ def _prepare_message_for_mcp(
     return messages
 
 
-def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> type[BaseModel]:
-    """Creates a Pydantic model from a prompt's parameters."""
+def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any]:
+    """Get the input model from an MCP prompt.
+
+    Returns a JSON schema dictionary for prompt arguments.
+    """
     # Check if 'arguments' is missing or empty
     if not prompt.arguments:
-        return create_model(f"{prompt.name}_input")
+        return {"type": "object", "properties": {}}
 
     # Convert prompt arguments to JSON schema format
     properties: dict[str, Any] = {}
@@ -349,13 +369,10 @@ def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> type[BaseModel]:
         if prompt_argument.required:
             required.append(prompt_argument.name)
 
-    schema = {"properties": properties, "required": required}
-    return _build_pydantic_model_from_json_schema(prompt.name, schema)
-
-
-def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
-    """Creates a Pydantic model from a tools parameters."""
-    return _build_pydantic_model_from_json_schema(tool.name, tool.inputSchema)
+    schema: dict[str, Any] = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return schema
 
 
 def _normalize_mcp_name(name: str) -> str:
@@ -442,7 +459,7 @@ class MCPTool:
         self.session = session
         self.request_timeout = request_timeout
         self.client = client
-        self._functions: list[FunctionTool[Any]] = []
+        self._functions: list[FunctionTool] = []
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
@@ -451,7 +468,7 @@ class MCPTool:
         return f"MCPTool(name={self.name}, description={self.description})"
 
     @property
-    def functions(self) -> list[FunctionTool[Any]]:
+    def functions(self) -> list[FunctionTool]:
         """Get the list of functions that are allowed."""
         if not self.allowed_tools:
             return self._functions
@@ -719,7 +736,7 @@ class MCPTool:
 
                 input_model = _get_input_model_from_mcp_prompt(prompt)
                 approval_mode = self._determine_approval_mode(local_name)
-                func: FunctionTool[BaseModel] = FunctionTool(
+                func: FunctionTool = FunctionTool(
                     func=partial(self.get_prompt, prompt.name),
                     name=local_name,
                     description=prompt.description or "",
@@ -760,15 +777,14 @@ class MCPTool:
                 if local_name in existing_names:
                     continue
 
-                input_model = _get_input_model_from_mcp_tool(tool)
                 approval_mode = self._determine_approval_mode(local_name)
                 # Create FunctionTools out of each tool
-                func: FunctionTool[BaseModel] = FunctionTool(
+                func: FunctionTool = FunctionTool(
                     func=partial(self.call_tool, tool.name),
                     name=local_name,
                     description=tool.description or "",
                     approval_mode=approval_mode,
-                    input_model=input_model,
+                    input_model=tool.inputSchema,
                 )
                 self._functions.append(func)
                 existing_names.add(local_name)
@@ -847,7 +863,16 @@ class MCPTool:
             k: v
             for k, v in kwargs.items()
             if k
-            not in {"chat_options", "tools", "tool_choice", "thread", "conversation_id", "options", "response_format"}
+            not in {
+                "chat_options",
+                "tools",
+                "tool_choice",
+                "session",
+                "thread",
+                "conversation_id",
+                "options",
+                "response_format",
+            }
         }
 
         parser = self.parse_tool_results or _parse_tool_result_from_mcp

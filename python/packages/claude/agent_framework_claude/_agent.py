@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from pathlib import Path
@@ -12,17 +13,18 @@ from agent_framework import (
     AgentMiddlewareTypes,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
+    BaseContextProvider,
     Content,
-    ContextProvider,
     FunctionTool,
     Message,
-    get_logger,
+    ResponseStream,
     normalize_messages,
 )
 from agent_framework._settings import load_settings
-from agent_framework._types import normalize_tools
+from agent_framework._tools import ToolTypes
+from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import ServiceException
 from claude_agent_sdk import (
     AssistantMessage,
@@ -60,7 +62,7 @@ if TYPE_CHECKING:
 
 __all__ = ["ClaudeAgent", "ClaudeAgentOptions"]
 
-logger = get_logger("agent_framework.claude")
+logger = logging.getLogger("agent_framework.claude")
 
 # Name of the in-process MCP server that hosts Agent Framework tools.
 # FunctionTool instances are converted to SDK MCP tools and served
@@ -184,9 +186,9 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         .. code-block:: python
 
             async with ClaudeAgent() as agent:
-                thread = agent.get_new_thread()
-                await agent.run("Remember my name is Alice", thread=thread)
-                response = await agent.run("What's my name?", thread=thread)
+                session = agent.create_session()
+                await agent.run("Remember my name is Alice", session=session)
+                response = await agent.run("What's my name?", session=session)
                 # Claude will remember "Alice" from the same session
 
         With Agent Framework tools:
@@ -214,14 +216,9 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | str
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | str]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | str | Sequence[ToolTypes | Callable[..., Any] | str] | None = None,
         default_options: OptionsT | MutableMapping[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -237,7 +234,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
             id: Unique identifier for the agent.
             name: Name of the agent.
             description: Description of the agent.
-            context_provider: Context provider for the agent.
+            context_providers: Context providers for the agent.
             middleware: List of middleware.
             tools: Tools for the agent. Can be:
                 - Strings for built-in tools (e.g., "Read", "Write", "Bash", "Glob")
@@ -250,7 +247,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
             id=id,
             name=name,
             description=description,
-            context_provider=context_provider,
+            context_providers=context_providers,
             middleware=middleware,
         )
 
@@ -288,7 +285,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         # Separate built-in tools (strings) from custom tools (callables/FunctionTool)
         self._builtin_tools: list[str] = []
-        self._custom_tools: list[FunctionTool | MutableMapping[str, Any]] = []
+        self._custom_tools: list[ToolTypes] = []
         self._normalize_tools(tools)
 
         self._default_options = opts
@@ -297,12 +294,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     def _normalize_tools(
         self,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | str
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | str]
-        | None,
+        tools: ToolTypes | Callable[..., Any] | str | Sequence[ToolTypes | Callable[..., Any] | str] | None,
     ) -> None:
         """Separate built-in tools (strings) from custom tools.
 
@@ -315,10 +307,10 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         # Normalize to sequence
         if isinstance(tools, str):
             tools_list: Sequence[Any] = [tools]
-        elif isinstance(tools, (FunctionTool, MutableMapping)) or callable(tools):
-            tools_list = [tools]
-        else:
+        elif isinstance(tools, Sequence):
             tools_list = list(tools)
+        else:
+            tools_list = [tools]
 
         for tool in tools_list:
             if isinstance(tool, str):
@@ -456,7 +448,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     def _prepare_tools(
         self,
-        tools: list[FunctionTool | MutableMapping[str, Any]],
+        tools: Sequence[ToolTypes],
     ) -> tuple[Any, list[str]]:
         """Convert Agent Framework tools to SDK MCP server.
 
@@ -483,7 +475,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         return create_sdk_mcp_server(name=TOOLS_MCP_SERVER_NAME, tools=sdk_tools), tool_names
 
-    def _function_tool_to_sdk_mcp_tool(self, func_tool: FunctionTool[Any]) -> SdkMcpTool[Any]:
+    def _function_tool_to_sdk_mcp_tool(self, func_tool: FunctionTool) -> SdkMcpTool[Any]:
         """Convert a FunctionTool to an SDK MCP tool.
 
         Args:
@@ -556,10 +548,10 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         options: OptionsT | MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]: ...
@@ -567,20 +559,20 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
     @overload
     async def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         options: OptionsT | MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AgentResponse[Any]: ...
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         options: OptionsT | MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate] | Awaitable[AgentResponse[Any]]:
@@ -592,46 +584,36 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         Keyword Args:
             stream: If True, returns an async iterable of updates. If False (default),
                 returns an awaitable AgentResponse.
-            thread: The conversation thread. If thread has service_thread_id set,
+            session: The conversation session. If session has service_session_id set,
                 the agent will resume that session.
             options: Runtime options (model, permission_mode can be changed per-request).
             kwargs: Additional keyword arguments.
 
         Returns:
-            When stream=True: An AsyncIterable[AgentResponseUpdate] for streaming updates.
+            When stream=True: An ResponseStream for streaming updates.
             When stream=False: An Awaitable[AgentResponse] with the complete response.
         """
-        if stream:
-            return self._run_streaming(messages, thread=thread, options=options, **kwargs)
-        return self._run_non_streaming(messages, thread=thread, options=options, **kwargs)
-
-    async def _run_non_streaming(
-        self,
-        messages: str | Message | Sequence[str | Message] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        options: OptionsT | MutableMapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AgentResponse[Any]:
-        """Internal non-streaming implementation."""
-        thread = thread or self.get_new_thread()
-        return await AgentResponse.from_update_generator(
-            self._run_streaming(messages, thread=thread, options=options, **kwargs)
+        response = ResponseStream(
+            self._get_stream(messages, session=session, options=options, **kwargs),
+            finalizer=AgentResponse.from_updates,
         )
+        if stream:
+            return response
+        return response.get_final_response()
 
-    async def _run_streaming(
+    async def _get_stream(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         options: OptionsT | MutableMapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal streaming implementation."""
-        thread = thread or self.get_new_thread()
+        session = session or self.create_session()
 
         # Ensure we're connected to the right session
-        await self._ensure_session(thread.service_thread_id)
+        await self._ensure_session(session.service_session_id)
 
         if not self._client:
             raise ServiceException("Claude SDK client not initialized.")
@@ -696,6 +678,6 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
                     raise ServiceException(f"Claude API error: {error_msg}")
                 session_id = message.session_id
 
-        # Update thread with session ID
+        # Update session with session ID
         if session_id:
-            thread.service_thread_id = session_id
+            session.service_session_id = session_id

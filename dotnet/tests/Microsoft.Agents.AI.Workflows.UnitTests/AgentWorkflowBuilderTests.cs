@@ -161,7 +161,7 @@ public class AgentWorkflowBuilderTests
         }
     }
 
-    private sealed class DoubleEchoAgentSession() : InMemoryAgentSession();
+    private sealed class DoubleEchoAgentSession() : AgentSession();
 
     [Fact]
     public async Task BuildConcurrent_AgentsRunInParallelAsync()

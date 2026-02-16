@@ -1,12 +1,24 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Orchestrations integration namespace for optional Agent Framework connectors.
+
+This module lazily re-exports objects from:
+- ``agent-framework-orchestrations``
+
+Supported classes include:
+- SequentialBuilder
+- ConcurrentBuilder
+- GroupChatBuilder
+- MagenticBuilder
+- HandoffBuilder
+"""
+
 import importlib
 from typing import Any
 
 IMPORT_PATH = "agent_framework_orchestrations"
 PACKAGE_NAME = "agent-framework-orchestrations"
 _IMPORTS = [
-    "__version__",
     # Sequential
     "SequentialBuilder",
     # Concurrent

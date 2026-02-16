@@ -52,7 +52,7 @@ Prerequisites:
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
 # see samples/02-agents/tools/function_tool_with_approval.py and
-# samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def fetch_product_brief(
     product_name: Annotated[str, Field(description="Product name to look up.")],

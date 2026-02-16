@@ -67,7 +67,7 @@ internal sealed class Program
 
     /// <summary>
     /// Create the workflow from the declarative YAML.  Includes definition of the
-    /// <see cref="DeclarativeWorkflowOptions" /> and the associated <see cref="WorkflowAgentProvider"/>.
+    /// <see cref="DeclarativeWorkflowOptions" /> and the associated <see cref="ResponseAgentProvider"/>.
     /// </summary>
     private Workflow CreateWorkflow()
     {

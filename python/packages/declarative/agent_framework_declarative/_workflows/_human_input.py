@@ -10,11 +10,10 @@ This module implements handlers for human input patterns:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
-
-from agent_framework import get_logger
 
 from ._handlers import (
     ActionContext,
@@ -25,7 +24,7 @@ from ._handlers import (
 if TYPE_CHECKING:
     from ._state import WorkflowState
 
-logger = get_logger("agent_framework.declarative.workflows.human_input")
+logger = logging.getLogger("agent_framework.declarative")
 
 
 @dataclass
