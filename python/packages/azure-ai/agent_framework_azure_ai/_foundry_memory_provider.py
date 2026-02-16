@@ -143,7 +143,7 @@ class FoundryMemoryProvider(BaseContextProvider):
 
         # Convert input messages to ItemParam format for search
         items = [
-            ItemParam(content=msg.text, content_type="text/plain")
+            ItemParam({"type": "text", "text": msg.text})
             for msg in context.input_messages
             if msg and msg.text and msg.text.strip()
         ]
@@ -207,7 +207,7 @@ class FoundryMemoryProvider(BaseContextProvider):
         items: list[ItemParam] = []
         for message in messages_to_store:
             if message.role in {"user", "assistant", "system"} and message.text and message.text.strip():
-                items.append(ItemParam(content=message.text, content_type="text/plain"))
+                items.append(ItemParam({"type": "text", "text": message.text}))
 
         if not items:
             return

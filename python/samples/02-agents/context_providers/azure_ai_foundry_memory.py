@@ -4,8 +4,7 @@ import os
 import uuid
 
 from agent_framework import Agent
-from agent_framework.azure import FoundryMemoryProvider
-from agent_framework.openai import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIChatClient, FoundryMemoryProvider
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import MemoryStoreDefaultDefinition, MemoryStoreDefaultOptions
 from azure.identity.aio import AzureCliCredential

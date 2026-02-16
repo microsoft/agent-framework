@@ -32,6 +32,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "AzureAIAgentsProvider": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
     "AzureCredentialTypes": ("agent_framework.azure._entra_id_authentication", "agent-framework-core"),
     "AzureTokenProvider": ("agent_framework.azure._entra_id_authentication", "agent-framework-core"),
+    "FoundryMemoryProvider": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
     "AzureOpenAIAssistantsClient": ("agent_framework.azure._assistants_client", "agent-framework-core"),
     "AzureOpenAIAssistantsOptions": ("agent_framework.azure._assistants_client", "agent-framework-core"),
     "AzureOpenAIChatClient": ("agent_framework.azure._chat_client", "agent-framework-core"),
