@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
 import json
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from contextlib import suppress
 from typing import Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast
 
 from agent_framework import (
@@ -419,7 +419,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             if tools_changed or structured_output_changed:
                 logger.warning(
                     "AzureAIClient does not support runtime tools or structured_output overrides after agent creation. "
-                    "Use ResponsesClient instead."
+                    "Use AzureOpenAIResponsesClient instead."
                 )
 
         return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
@@ -472,7 +472,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         if isinstance(response_format, Mapping):
             return json.dumps(response_format, sort_keys=True, default=str)
         return str(response_format)
-
 
     def _remove_agent_level_run_options(self, run_options: dict[str, Any]) -> None:
         """Remove request-level options that Azure AI only supports at agent creation time."""
