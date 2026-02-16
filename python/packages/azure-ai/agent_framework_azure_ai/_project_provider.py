@@ -17,6 +17,7 @@ from agent_framework import (
 )
 from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
+from agent_framework._tools import ToolTypes
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
@@ -161,11 +162,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         model: str | None = None,
         instructions: str | None = None,
         description: str | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
@@ -226,7 +223,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             for tool in normalized_tools:
                 if isinstance(tool, MCPTool):
                     mcp_tools.append(tool)
-                else:
+                elif isinstance(tool, (FunctionTool, MutableMapping)):
                     non_mcp_tools.append(tool)
 
         # Connect MCP tools and discover their functions BEFORE creating the agent
@@ -263,11 +260,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         *,
         name: str | None = None,
         reference: AgentReference | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
@@ -323,11 +316,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
     def as_agent(
         self,
         details: AgentVersionDetails,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
@@ -367,7 +356,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
     def _to_chat_agent_from_details(
         self,
         details: AgentVersionDetails,
-        provided_tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None = None,
+        provided_tools: Sequence[ToolTypes] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
@@ -415,8 +404,8 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
     def _merge_tools(
         self,
         definition_tools: Sequence[Any] | None,
-        provided_tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
-    ) -> list[FunctionTool | dict[str, Any]]:
+        provided_tools: Sequence[ToolTypes] | None,
+    ) -> list[ToolTypes]:
         """Merge hosted tools from definition with user-provided function tools.
 
         Args:
@@ -426,7 +415,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         Returns:
             Combined list of tools for the Agent.
         """
-        merged: list[FunctionTool | dict[str, Any]] = []
+        merged: list[ToolTypes] = []
 
         # Convert hosted tools from definition (MCP, code interpreter, file search, web search)
         # Function tools from the definition are skipped - we use user-provided implementations instead
@@ -450,11 +439,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
     def _validate_function_tools(
         self,
         agent_tools: Sequence[Any] | None,
-        provided_tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None,
+        provided_tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
     ) -> None:
         """Validate that required function tools are provided."""
         # Normalize and validate function tools

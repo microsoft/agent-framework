@@ -1,5 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Public API surface for Agent Framework core.
+
+This module exposes the primary abstractions for agents, chat clients, tools, sessions,
+middleware, observability, and workflows. Connector namespaces such as
+``agent_framework.azure`` and ``agent_framework.anthropic`` provide provider-specific
+integrations, many of which are lazy-loaded from optional packages.
+"""
+
 import importlib.metadata
 from typing import Final
 

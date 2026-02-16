@@ -343,15 +343,16 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             run_options.pop("tool_choice", None)
         elif tool_choice := run_options.pop("tool_choice", None):
             tool_mode = validate_tool_mode(tool_choice)
-            if (mode := tool_mode.get("mode")) == "required" and (
-                func_name := tool_mode.get("required_function_name")
-            ) is not None:
-                run_options["tool_choice"] = {
-                    "type": "function",
-                    "function": {"name": func_name},
-                }
-            else:
-                run_options["tool_choice"] = mode
+            if tool_mode is not None:
+                if (mode := tool_mode.get("mode")) == "required" and (
+                    func_name := tool_mode.get("required_function_name")
+                ) is not None:
+                    run_options["tool_choice"] = {
+                        "type": "function",
+                        "function": {"name": func_name},
+                    }
+                else:
+                    run_options["tool_choice"] = mode
 
         # response format
         if response_format := options.get("response_format"):

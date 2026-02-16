@@ -24,6 +24,7 @@ from typing import (
     Final,
     Generic,
     Literal,
+    TypeAlias,
     TypedDict,
     Union,
     get_args,
@@ -623,7 +624,7 @@ class FunctionTool(SerializationMixin):
         return as_dict
 
 
-ToolTypes = FunctionTool | MCPTool | Mapping[str, Any] | Any
+ToolTypes: TypeAlias = FunctionTool | MCPTool | Mapping[str, Any] | Any
 
 
 def normalize_tools(

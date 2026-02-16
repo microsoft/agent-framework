@@ -822,15 +822,16 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             # tool_choice: convert ToolMode to appropriate format
             if tool_choice := options.get("tool_choice"):
                 tool_mode = validate_tool_mode(tool_choice)
-                if (mode := tool_mode.get("mode")) == "required" and (
-                    func_name := tool_mode.get("required_function_name")
-                ) is not None:
-                    run_options["tool_choice"] = {
-                        "type": "function",
-                        "name": func_name,
-                    }
-                else:
-                    run_options["tool_choice"] = mode
+                if tool_mode is not None:
+                    if (mode := tool_mode.get("mode")) == "required" and (
+                        func_name := tool_mode.get("required_function_name")
+                    ) is not None:
+                        run_options["tool_choice"] = {
+                            "type": "function",
+                            "name": func_name,
+                        }
+                    else:
+                        run_options["tool_choice"] = mode
         else:
             run_options.pop("parallel_tool_calls", None)
             run_options.pop("tool_choice", None)

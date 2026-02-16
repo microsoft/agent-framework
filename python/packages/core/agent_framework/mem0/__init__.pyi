@@ -2,10 +2,8 @@
 
 from agent_framework_mem0 import (
     Mem0ContextProvider,
-    __version__,
 )
 
 __all__ = [
     "Mem0ContextProvider",
-    "__version__",
 ]

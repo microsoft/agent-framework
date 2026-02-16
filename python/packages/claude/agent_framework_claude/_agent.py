@@ -23,6 +23,7 @@ from agent_framework import (
     normalize_messages,
 )
 from agent_framework._settings import load_settings
+from agent_framework._tools import ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import ServiceException
 from claude_agent_sdk import (
@@ -217,12 +218,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         description: str | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | str
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | str]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | str | Sequence[ToolTypes | Callable[..., Any] | str] | None = None,
         default_options: OptionsT | MutableMapping[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -289,7 +285,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         # Separate built-in tools (strings) from custom tools (callables/FunctionTool)
         self._builtin_tools: list[str] = []
-        self._custom_tools: list[FunctionTool | MutableMapping[str, Any]] = []
+        self._custom_tools: list[ToolTypes] = []
         self._normalize_tools(tools)
 
         self._default_options = opts
@@ -298,12 +294,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     def _normalize_tools(
         self,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | str
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | str]
-        | None,
+        tools: ToolTypes | Callable[..., Any] | str | Sequence[ToolTypes | Callable[..., Any] | str] | None,
     ) -> None:
         """Separate built-in tools (strings) from custom tools.
 
@@ -316,10 +307,10 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         # Normalize to sequence
         if isinstance(tools, str):
             tools_list: Sequence[Any] = [tools]
-        elif isinstance(tools, (FunctionTool, MutableMapping)) or callable(tools):
-            tools_list = [tools]
-        else:
+        elif isinstance(tools, Sequence):
             tools_list = list(tools)
+        else:
+            tools_list = [tools]
 
         for tool in tools_list:
             if isinstance(tool, str):
@@ -457,7 +448,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     def _prepare_tools(
         self,
-        tools: list[FunctionTool | MutableMapping[str, Any]],
+        tools: Sequence[ToolTypes],
     ) -> tuple[Any, list[str]]:
         """Convert Agent Framework tools to SDK MCP server.
 

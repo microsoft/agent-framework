@@ -1,11 +1,23 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Amazon Bedrock integration namespace for optional Agent Framework connectors.
+
+This module lazily re-exports objects from:
+- ``agent-framework-bedrock``
+
+Supported classes:
+- BedrockChatClient
+- BedrockChatOptions
+- BedrockGuardrailConfig
+- BedrockSettings
+"""
+
 import importlib
 from typing import Any
 
 IMPORT_PATH = "agent_framework_bedrock"
 PACKAGE_NAME = "agent-framework-bedrock"
-_IMPORTS = ["__version__", "BedrockChatClient", "BedrockChatOptions", "BedrockGuardrailConfig", "BedrockSettings"]
+_IMPORTS = ["BedrockChatClient", "BedrockChatOptions", "BedrockGuardrailConfig", "BedrockSettings"]
 
 
 def __getattr__(name: str) -> Any:

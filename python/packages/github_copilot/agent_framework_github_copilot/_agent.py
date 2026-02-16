@@ -22,7 +22,7 @@ from agent_framework import (
     normalize_messages,
 )
 from agent_framework._settings import load_settings
-from agent_framework._tools import FunctionTool
+from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import ServiceException
 from copilot import CopilotClient, CopilotSession
@@ -151,11 +151,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         description: str | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsT | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -478,7 +474,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     def _prepare_tools(
         self,
-        tools: list[FunctionTool | MutableMapping[str, Any]],
+        tools: Sequence[ToolTypes],
     ) -> list[CopilotTool]:
         """Convert Agent Framework tools to Copilot SDK tools.
 
@@ -493,8 +489,8 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         for tool in tools:
             if isinstance(tool, FunctionTool):
                 copilot_tools.append(self._tool_to_copilot_tool(tool))  # type: ignore
-            elif isinstance(tool, CopilotTool):
-                copilot_tools.append(tool)
+            elif isinstance(tool, MutableMapping):
+                copilot_tools.append(tool)  # type: ignore[arg-type]
             # Note: Other tool types (e.g., dict-based hosted tools) are skipped
 
         return copilot_tools

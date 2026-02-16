@@ -1,5 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Observability and OpenTelemetry helpers for Agent Framework.
+
+Commonly used exports:
+- enable_instrumentation
+- configure_otel_providers
+- AgentTelemetryLayer
+- ChatTelemetryLayer
+- get_tracer
+- get_meter
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -1128,11 +1139,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(self.otel_provider_name)
         model_id = kwargs.get("model_id") or opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
-        service_url = str(
-            service_url_func()
-            if (service_url_func := getattr(self, "service_url", None)) and callable(service_url_func)
-            else "unknown"
-        )
+        service_url_func = getattr(self, "service_url", None)
+        service_url = str(service_url_func() if callable(service_url_func) else "unknown")
         attributes = _get_span_attributes(
             operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
             provider_name=provider_name,

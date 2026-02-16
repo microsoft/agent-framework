@@ -10,6 +10,21 @@ We use [ruff](https://github.com/astral-sh/ruff) for both linting and formatting
 - **Target Python version**: 3.10+
 - **Google-style docstrings**: All public functions, classes, and modules should have docstrings following Google conventions
 
+### Module Docstrings
+
+Public modules must include a module-level docstring, including `__init__.py` files.
+
+- Namespace-style `__init__.py` modules (for example under `agent_framework/<provider>/`) should use a structured
+  docstring that includes:
+  - A one-line summary of the namespace
+  - A short "This module lazily re-exports objects from:" section that lists only pip install package names
+    (for example `agent-framework-a2a`)
+  - A short "Supported classes:" (or "Supported classes and functions:") section
+- The main `agent_framework/__init__.py` should include a concise background-oriented docstring rather than a long
+  per-symbol list.
+- Core modules with broad surface area, including `agent_framework/exceptions.py` and
+  `agent_framework/observability.py`, should always have explicit module docstrings.
+
 ## Type Annotations
 
 ### Future Annotations

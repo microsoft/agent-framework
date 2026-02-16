@@ -720,6 +720,8 @@ class AnthropicClient(
         if options.get("tool_choice") is None:
             return result or None
         tool_mode = validate_tool_mode(options.get("tool_choice"))
+        if tool_mode is None:
+            return result or None
         allow_multiple = options.get("allow_multiple_tool_calls")
         match tool_mode.get("mode"):
             case "auto":
