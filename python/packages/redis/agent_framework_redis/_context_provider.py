@@ -373,7 +373,7 @@ class RedisContextProvider(BaseContextProvider):
                     vector_field_name=self.vector_field_name,
                     text_scorer=text_scorer,
                     filter_expression=combined_filter,
-                    alpha=alpha,
+                    linear_alpha=alpha,
                     dtype=self.redis_vectorizer.dtype,
                     num_results=num_results,
                     return_fields=return_fields,
