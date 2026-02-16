@@ -27,6 +27,7 @@ using ChatRole = Microsoft.Extensions.AI.ChatRole;
 string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 string openAiEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+string evaluatorDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? deploymentName;
 
 Console.WriteLine("=" + new string('=', 79));
 Console.WriteLine("SELF-REFLECTION EVALUATION SAMPLE");
@@ -34,16 +35,16 @@ Console.WriteLine("=" + new string('=', 79));
 Console.WriteLine();
 
 // Initialize Azure credentials and client
-var credential = new AzureCliCredential();
+DefaultAzureCredential credential = new();
 AIProjectClient aiProjectClient = new(new Uri(endpoint), credential);
 
 // Set up the LLM-based chat client for quality evaluators
 IChatClient chatClient = new AzureOpenAIClient(new Uri(openAiEndpoint), credential)
-    .GetChatClient(deploymentName)
+    .GetChatClient(evaluatorDeploymentName)
     .AsIChatClient();
 
 // Configure evaluation: quality evaluators use the LLM, safety evaluators use Azure AI Foundry
-var safetyConfig = new ContentSafetyServiceConfiguration(
+ContentSafetyServiceConfiguration safetyConfig = new(
     credential: credential,
     endpoint: new Uri(endpoint));
 
@@ -77,14 +78,19 @@ Console.WriteLine(Question);
 Console.WriteLine();
 
 // Run evaluations
-await RunSelfReflectionWithGroundedness(agent, Question, Context, chatConfiguration);
-await RunQualityEvaluation(agent, Question, Context, chatConfiguration);
-await RunCombinedQualityAndSafetyEvaluation(agent, Question, chatConfiguration);
-
-// Cleanup
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
-Console.WriteLine();
-Console.WriteLine("Cleanup: Agent deleted.");
+try
+{
+    await RunSelfReflectionWithGroundedness(agent, Question, Context, chatConfiguration);
+    await RunQualityEvaluation(agent, Question, Context, chatConfiguration);
+    await RunCombinedQualityAndSafetyEvaluation(agent, Question, chatConfiguration);
+}
+finally
+{
+    // Cleanup
+    await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+    Console.WriteLine();
+    Console.WriteLine("Cleanup: Agent deleted.");
+}
 
 // ============================================================================
 // Implementation Functions
@@ -104,8 +110,8 @@ static async Task RunSelfReflectionWithGroundedness(
     Console.WriteLine("Running Self-Reflection with Groundedness Evaluation...");
     Console.WriteLine();
 
-    var groundednessEvaluator = new GroundednessEvaluator();
-    var groundingContext = new GroundednessEvaluatorContext(context);
+    GroundednessEvaluator groundednessEvaluator = new();
+    GroundednessEvaluatorContext groundingContext = new(context);
 
     const int MaxReflections = 3;
     double bestScore = 0;
@@ -124,11 +130,11 @@ static async Task RunSelfReflectionWithGroundedness(
 
         Console.WriteLine($"Response: {responseText[..Math.Min(150, responseText.Length)]}...");
 
-        var messages = new List<ChatMessage>
-        {
+        List<ChatMessage> messages =
+        [
             new(ChatRole.User, question),
-        };
-        var chatResponse = new ChatResponse(new ChatMessage(ChatRole.Assistant, responseText));
+        ];
+        ChatResponse chatResponse = new(new ChatMessage(ChatRole.Assistant, responseText));
 
         EvaluationResult result = await groundednessEvaluator.EvaluateAsync(
             messages,
@@ -184,15 +190,15 @@ static async Task RunQualityEvaluation(
     Console.WriteLine("Running Quality Evaluation (Relevance, Coherence, Groundedness)...");
     Console.WriteLine();
 
-    var evaluators = new IEvaluator[]
-    {
+    IEvaluator[] evaluators =
+    [
         new RelevanceEvaluator(),
         new CoherenceEvaluator(),
         new GroundednessEvaluator(),
-    };
+    ];
 
-    var compositeEvaluator = new CompositeEvaluator(evaluators);
-    var groundingContext = new GroundednessEvaluatorContext(context);
+    CompositeEvaluator compositeEvaluator = new(evaluators);
+    GroundednessEvaluatorContext groundingContext = new(context);
 
     string prompt = $"Context: {context}\n\nQuestion: {question}";
 
@@ -203,11 +209,11 @@ static async Task RunQualityEvaluation(
     Console.WriteLine($"Response: {responseText[..Math.Min(150, responseText.Length)]}...");
     Console.WriteLine();
 
-    var messages = new List<ChatMessage>
-    {
+    List<ChatMessage> messages =
+    [
         new(ChatRole.User, question),
-    };
-    var chatResponse = new ChatResponse(new ChatMessage(ChatRole.Assistant, responseText));
+    ];
+    ChatResponse chatResponse = new(new ChatMessage(ChatRole.Assistant, responseText));
 
     EvaluationResult result = await compositeEvaluator.EvaluateAsync(
         messages,
@@ -234,15 +240,15 @@ static async Task RunCombinedQualityAndSafetyEvaluation(
     Console.WriteLine("Running Combined Quality + Safety Evaluation...");
     Console.WriteLine();
 
-    var evaluators = new IEvaluator[]
-    {
+    IEvaluator[] evaluators =
+    [
         new RelevanceEvaluator(),
         new CoherenceEvaluator(),
         new ContentHarmEvaluator(),
         new ProtectedMaterialEvaluator(),
-    };
+    ];
 
-    var compositeEvaluator = new CompositeEvaluator(evaluators);
+    CompositeEvaluator compositeEvaluator = new(evaluators);
 
     AgentSession session = await agent.CreateSessionAsync();
     AgentResponse agentResponse = await agent.RunAsync(question, session);
@@ -251,11 +257,11 @@ static async Task RunCombinedQualityAndSafetyEvaluation(
     Console.WriteLine($"Response: {responseText[..Math.Min(150, responseText.Length)]}...");
     Console.WriteLine();
 
-    var messages = new List<ChatMessage>
-    {
+    List<ChatMessage> messages =
+    [
         new(ChatRole.User, question),
-    };
-    var chatResponse = new ChatResponse(new ChatMessage(ChatRole.Assistant, responseText));
+    ];
+    ChatResponse chatResponse = new(new ChatMessage(ChatRole.Assistant, responseText));
 
     EvaluationResult result = await compositeEvaluator.EvaluateAsync(
         messages,

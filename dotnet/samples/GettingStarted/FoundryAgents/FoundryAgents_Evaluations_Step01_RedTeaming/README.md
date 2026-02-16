@@ -42,8 +42,8 @@ $env:AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults t
 Navigate to the FoundryAgents/Evaluation directory and run:
 
 ```powershell
-cd dotnet/samples/GettingStarted/FoundryAgents/Evaluation
-dotnet run --project .\Evaluation_Step01_RedTeaming
+cd dotnet/samples/GettingStarted/FoundryAgents/FoundryAgents_Evaluations_Step01_RedTeaming
+dotnet run
 ```
 
 ## Expected behavior
@@ -94,5 +94,5 @@ Lower scores indicate safer content. A score of 0 means no harmful content detec
 
 After running safety evaluations:
 1. Implement agent improvements based on findings
-2. Explore the Self-Reflection sample (Evaluation_Step02_SelfReflection) for quality assessment
+2. Explore the Self-Reflection sample (FoundryAgents_Evaluations_Step02_SelfReflection) for quality assessment
 3. Set up continuous evaluation in your CI/CD pipeline

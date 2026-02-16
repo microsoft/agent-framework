@@ -49,8 +49,8 @@ $env:AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME="gpt-4o-mini"                   # Mod
 Navigate to the FoundryAgents/Evaluation directory and run:
 
 ```powershell
-cd dotnet/samples/GettingStarted/FoundryAgents/Evaluation
-dotnet run --project .\Evaluation_Step02_SelfReflection
+cd dotnet/samples/GettingStarted/FoundryAgents/FoundryAgents_Evaluations_Step02_SelfReflection
+dotnet run
 ```
 
 ## Expected behavior
@@ -115,4 +115,4 @@ The `GroundednessEvaluator` measures how well the agent's response is grounded i
 After running self-reflection evaluation:
 1. Implement similar patterns for other quality metrics (relevance, coherence, fluency)
 2. Integrate into CI/CD pipeline for continuous quality assurance
-3. Explore the Safety Evaluation sample (Evaluation_Step01_RedTeaming) for content safety assessment
+3. Explore the Safety Evaluation sample (FoundryAgents_Evaluations_Step01_RedTeaming) for content safety assessment
