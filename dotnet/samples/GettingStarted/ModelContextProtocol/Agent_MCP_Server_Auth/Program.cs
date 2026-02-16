@@ -34,7 +34,10 @@ var transport = new HttpClientTransport(new()
     Name = "Secure Weather Client",
     OAuth = new()
     {
-        ClientId = "ProtectedMcpClient",
+        DynamicClientRegistration = new()
+        {
+            ClientName = "ProtectedMcpClient",
+        },
         RedirectUri = new Uri("http://localhost:1179/callback"),
         AuthorizationRedirectDelegate = HandleAuthorizationUrlAsync,
     }

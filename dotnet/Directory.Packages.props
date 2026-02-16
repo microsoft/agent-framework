@@ -42,7 +42,7 @@
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.3" />
     <PackageVersion Include="System.Linq.AsyncEnumerable" Version="10.0.0" />
     <PackageVersion Include="System.Net.Http.Json" Version="10.0.0" />
-    <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.1" />
+    <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.3" />
     <PackageVersion Include="System.Text.Json" Version="10.0.3" />
     <PackageVersion Include="System.Threading.Channels" Version="10.0.3" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
@@ -99,7 +99,7 @@
     <PackageVersion Include="A2A" Version="0.3.3-preview" />
     <PackageVersion Include="A2A.AspNetCore" Version="0.3.3-preview" />
     <!-- MCP -->
-    <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.3" />
+    <PackageVersion Include="ModelContextProtocol" Version="0.8.0-preview.1" />
     <!-- Inference SDKs -->
     <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.5.1" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
