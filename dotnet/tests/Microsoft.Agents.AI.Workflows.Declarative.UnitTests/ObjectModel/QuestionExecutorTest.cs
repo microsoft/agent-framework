@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading;
 using System.Threading.Tasks;
@@ -331,6 +331,11 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
         string? conversationId = null)
     {
         // Arrange
+        if (conversationId is not null)
+        {
+            this.State.Set(SystemScope.Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System);
+        }
+
         Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Loose);
 
         if (conversationId is not null && expectValid && responseText is not null)
@@ -351,19 +356,12 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
         // Act - Execute first to initialize state
         await this.ExecuteAsync(action, isDiscrete: false);
 
-        // Set conversation ID if provided
-        if (conversationId is not null)
-        {
-            this.State.Set(SystemScope.Names.ConversationId, FormulaValue.New(conversationId), VariableScopeNames.System);
-        }
-
         // Then call CaptureResponseAsync
         WorkflowEvent[] events = await this.ExecuteAsync(
             action,
             QuestionExecutor.Steps.Capture(action.Id),
             (IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken) =>
                 action.CaptureResponseAsync(context, response, cancellationToken));
-
         // Assert
         VerifyModel(model, action);
 
@@ -371,7 +369,7 @@ public sealed class QuestionExecutorTest(ITestOutputHelper output) : WorkflowAct
         {
             // Variable should be set with the extracted value
             FormulaValue actualValue = this.State.Get(TestVariableName);
-            Assert.NotEqual(FormulaValue.NewBlank().Format(), actualValue.Format());
+            Assert.Equal(responseText, actualValue.Format());
         }
         else
         {
