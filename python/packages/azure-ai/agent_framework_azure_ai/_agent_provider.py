@@ -9,13 +9,14 @@ from typing import Any, Generic, cast
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Agent,
-    ContextProvider,
+    BaseContextProvider,
     FunctionTool,
     MiddlewareTypes,
     normalize_tools,
 )
 from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
+from agent_framework._tools import ToolTypes
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import Agent as AzureAgent
@@ -169,14 +170,10 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         model: str | None = None,
         instructions: str | None = None,
         description: str | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Create a new agent on the Azure AI service and return a Agent.
 
@@ -195,7 +192,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
-            context_provider: Context provider to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
 
         Returns:
             Agent: A Agent instance configured with the created agent.
@@ -242,7 +239,12 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         normalized_tools = normalize_tools(tools)
         if normalized_tools:
             # Only convert non-MCP tools to Azure AI format
-            non_mcp_tools = [t for t in normalized_tools if not isinstance(t, MCPTool)]
+            non_mcp_tools: list[FunctionTool | MutableMapping[str, Any]] = []
+            for normalized_tool in normalized_tools:
+                if isinstance(normalized_tool, MCPTool):
+                    continue
+                if isinstance(normalized_tool, (FunctionTool, MutableMapping)):
+                    non_mcp_tools.append(normalized_tool)
             if non_mcp_tools:
                 # Pass run_options to capture tool_resources (e.g., for file search vector stores)
                 run_options: dict[str, Any] = {}
@@ -259,21 +261,17 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             normalized_tools,
             default_options=default_options,
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
         )
 
     async def get_agent(
         self,
         id: str,
         *,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Retrieve an existing agent from the service and return a Agent.
 
@@ -289,7 +287,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
-            context_provider: Context provider to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
 
         Returns:
             Agent: A Agent instance configured with the retrieved agent.
@@ -316,20 +314,16 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             normalized_tools,
             default_options=default_options,
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
         )
 
     def as_agent(
         self,
         agent: AzureAgent,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Wrap an existing Agent SDK object as a Agent without making HTTP calls.
 
@@ -343,7 +337,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
-            context_provider: Context provider to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
 
         Returns:
             Agent: A Agent instance configured with the agent.
@@ -373,16 +367,16 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             normalized_tools,
             default_options=default_options,
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
         )
 
     def _to_chat_agent_from_agent(
         self,
         agent: AzureAgent,
-        provided_tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None = None,
+        provided_tools: Sequence[ToolTypes] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Create a Agent from an Agent SDK object.
 
@@ -392,7 +386,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
             middleware: List of middleware to intercept agent and function invocations.
-            context_provider: Context provider to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
         """
         # Create the underlying client
         client = AzureAIAgentClient(
@@ -416,14 +410,14 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             tools=merged_tools,
             default_options=default_options,  # type: ignore[arg-type]
             middleware=middleware,
-            context_provider=context_provider,
+            context_providers=context_providers,
         )
 
     def _merge_tools(
         self,
         agent_tools: Sequence[Any] | None,
-        provided_tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
-    ) -> list[FunctionTool | dict[str, Any]]:
+        provided_tools: Sequence[ToolTypes] | None,
+    ) -> list[ToolTypes]:
         """Merge hosted tools from agent with user-provided function tools.
 
         Args:
@@ -433,7 +427,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         Returns:
             Combined list of tools for the Agent.
         """
-        merged: list[FunctionTool | dict[str, Any]] = []
+        merged: list[ToolTypes] = []
 
         # Convert hosted tools from agent definition
         hosted_tools = from_azure_ai_agent_tools(agent_tools)
@@ -459,7 +453,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
     def _validate_function_tools(
         self,
         agent_tools: Sequence[Any] | None,
-        provided_tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
+        provided_tools: Sequence[ToolTypes] | None,
     ) -> None:
         """Validate that required function tools are provided.
 

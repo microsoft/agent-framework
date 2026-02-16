@@ -140,14 +140,14 @@ def run_client(agent_client: DurableAIAgentClient) -> None:
     logger.debug("Getting reference to TravelPlanner agent...")
     travel_planner = agent_client.get_agent("TravelPlanner")
 
-    # Create a new thread for the conversation
-    thread = travel_planner.get_new_thread()
-    if not thread.session_id:
-        logger.error("Failed to create a new thread with session ID!")
+    # Create a new session for the conversation
+    session = travel_planner.create_session()
+    if not session.session_id:
+        logger.error("Failed to create a new session with session ID!")
         return
 
-    key = thread.session_id.key
-    logger.info(f"Thread ID: {key}")
+    key = session.session_id
+    logger.info(f"Session ID: {key}")
 
     # Get user input
     print("\nEnter your travel planning request:")
@@ -164,7 +164,7 @@ def run_client(agent_client: DurableAIAgentClient) -> None:
     # Start the agent run with wait_for_response=False for non-blocking execution
     # This signals the agent to start processing without waiting for completion
     # The agent will execute in the background and write chunks to Redis
-    travel_planner.run(user_message, thread=thread, options={"wait_for_response": False})
+    travel_planner.run(user_message, session=session, options={"wait_for_response": False})
 
     # Stream the response from Redis
     # This demonstrates that the client can stream from Redis while

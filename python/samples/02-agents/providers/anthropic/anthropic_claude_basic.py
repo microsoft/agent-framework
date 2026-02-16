@@ -19,7 +19,7 @@ import asyncio
 from typing import Annotated
 
 from agent_framework import tool
-from agent_framework_claude import ClaudeAgent
+from agent_framework.anthropic import ClaudeAgent
 
 
 @tool

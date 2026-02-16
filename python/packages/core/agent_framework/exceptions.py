@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Exception hierarchy used across Agent Framework core and connectors."""
+
 import logging
 from typing import Any, Literal
 
@@ -49,8 +51,8 @@ class AgentInitializationError(AgentException):
     pass
 
 
-class AgentThreadException(AgentException):
-    """An error occurred while managing the agent thread."""
+class AgentSessionException(AgentException):
+    """An error occurred while managing the agent session."""
 
     pass
 

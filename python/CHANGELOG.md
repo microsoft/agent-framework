@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b260212] - 2026-02-12
+
+### Added
+
+- **agent-framework-core**: Allow `AzureOpenAIResponsesClient` creation with Foundry project endpoint ([#3814](https://github.com/microsoft/agent-framework/pull/3814))
+
+### Changed
+
+- **agent-framework-core**: [BREAKING] Wire context provider pipeline, remove old types, update all consumers ([#3850](https://github.com/microsoft/agent-framework/pull/3850))
+- **agent-framework-core**: [BREAKING] Checkpoint refactor: encode/decode, checkpoint format, etc ([#3744](https://github.com/microsoft/agent-framework/pull/3744))
+- **agent-framework-core**: [BREAKING] Replace `Hosted*Tool` classes with tool methods ([#3634](https://github.com/microsoft/agent-framework/pull/3634))
+- **agent-framework-core**: Replace Pydantic Settings with `TypedDict` + `load_settings()` ([#3843](https://github.com/microsoft/agent-framework/pull/3843))
+- **agent-framework-core**: Centralize tool result parsing in `FunctionTool.invoke()` ([#3854](https://github.com/microsoft/agent-framework/pull/3854))
+- **samples**: Restructure Python samples into progressive 01-05 layout ([#3862](https://github.com/microsoft/agent-framework/pull/3862))
+- **samples**: Adopt `AzureOpenAIResponsesClient`, reorganize orchestration examples, and fix workflow/orchestration bugs ([#3873](https://github.com/microsoft/agent-framework/pull/3873))
+
+### Fixed
+
+- **agent-framework-core**: Fix non-ascii chars in span attributes ([#3894](https://github.com/microsoft/agent-framework/pull/3894))
+- **agent-framework-core**: Fix streamed workflow agent continuation context by finalizing `AgentExecutor` streams ([#3882](https://github.com/microsoft/agent-framework/pull/3882))
+- **agent-framework-ag-ui**: Fix `Workflow.as_agent()` streaming regression ([#3875](https://github.com/microsoft/agent-framework/pull/3875))
+- **agent-framework-declarative**: Fix declarative package powerfx import crash and `response_format` kwarg error ([#3841](https://github.com/microsoft/agent-framework/pull/3841))
+
 ## [1.0.0b260210] - 2026-02-10
 
 ### Added
@@ -622,7 +645,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260210...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260212...HEAD
+[1.0.0b260212]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260210...python-1.0.0b260212
 [1.0.0b260210]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260130...python-1.0.0b260210
 [1.0.0b260130]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260128...python-1.0.0b260130
 [1.0.0b260128]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260127...python-1.0.0b260128

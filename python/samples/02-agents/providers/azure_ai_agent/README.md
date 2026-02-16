@@ -38,7 +38,7 @@ async with (
 | [`azure_ai_with_code_interpreter_file_generation.py`](azure_ai_with_code_interpreter_file_generation.py) | Shows how to retrieve file IDs from code interpreter generated files using both streaming and non-streaming approaches. |
 | [`azure_ai_with_code_interpreter.py`](azure_ai_with_code_interpreter.py) | Shows how to use `AzureAIAgentClient.get_code_interpreter_tool()` with Azure AI agents to write and execute Python code. Includes helper methods for accessing code interpreter data from response chunks. |
 | [`azure_ai_with_existing_agent.py`](azure_ai_with_existing_agent.py) | Shows how to work with an existing SDK Agent object using `provider.as_agent()`. This wraps the agent without making HTTP calls. |
-| [`azure_ai_with_existing_thread.py`](azure_ai_with_existing_thread.py) | Shows how to work with a pre-existing thread by providing the thread ID. Demonstrates proper cleanup of manually created threads. |
+| [`azure_ai_with_existing_session.py`](azure_ai_with_existing_session.py) | Shows how to work with a pre-existing session by providing the session ID. Demonstrates proper cleanup of manually created sessions. |
 | [`azure_ai_with_explicit_settings.py`](azure_ai_with_explicit_settings.py) | Shows how to create an agent with explicitly configured provider settings, including project endpoint and model deployment name. |
 | [`azure_ai_with_azure_ai_search.py`](azure_ai_with_azure_ai_search.py) | Demonstrates how to use Azure AI Search with Azure AI agents. Shows how to create an agent with search tools using the SDK directly and wrap it with `provider.get_agent()`. |
 | [`azure_ai_with_file_search.py`](azure_ai_with_file_search.py) | Demonstrates how to use `AzureAIAgentClient.get_file_search_tool()` with Azure AI agents to search through uploaded documents. Shows file upload, vector store creation, and querying document content. |
@@ -46,9 +46,9 @@ async with (
 | [`azure_ai_with_hosted_mcp.py`](azure_ai_with_hosted_mcp.py) | Shows how to use `AzureAIAgentClient.get_mcp_tool()` with hosted Model Context Protocol (MCP) servers for enhanced functionality and tool integration. Demonstrates remote MCP server connections and tool discovery. |
 | [`azure_ai_with_local_mcp.py`](azure_ai_with_local_mcp.py) | Shows how to integrate Azure AI agents with local Model Context Protocol (MCP) servers for enhanced functionality and tool integration. Demonstrates both agent-level and run-level tool configuration. |
 | [`azure_ai_with_multiple_tools.py`](azure_ai_with_multiple_tools.py) | Demonstrates how to use multiple tools together with Azure AI agents, including web search, MCP servers, and function tools using client static methods. Shows coordinated multi-tool interactions and approval workflows. |
-| [`azure_ai_with_openapi_tools.py`](azure_ai_with_openapi_tools.py) | Demonstrates how to use OpenAPI tools with Azure AI agents to integrate external REST APIs. Shows OpenAPI specification loading, anonymous authentication, thread context management, and coordinated multi-API conversations. |
+| [`azure_ai_with_openapi_tools.py`](azure_ai_with_openapi_tools.py) | Demonstrates how to use OpenAPI tools with Azure AI agents to integrate external REST APIs. Shows OpenAPI specification loading, anonymous authentication, session context management, and coordinated multi-API conversations. |
 | [`azure_ai_with_response_format.py`](azure_ai_with_response_format.py) | Demonstrates how to use structured outputs with Azure AI agents using Pydantic models. |
-| [`azure_ai_with_thread.py`](azure_ai_with_thread.py) | Demonstrates thread management with Azure AI agents, including automatic thread creation for stateless conversations and explicit thread management for maintaining conversation context across multiple interactions. |
+| [`azure_ai_with_session.py`](azure_ai_with_session.py) | Demonstrates session management with Azure AI agents, including automatic session creation for stateless conversations and explicit session management for maintaining conversation context across multiple interactions. |
 
 ## Environment Variables
 

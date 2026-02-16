@@ -27,5 +27,5 @@ Mem0's telemetry is **disabled by default** when using this package. If you want
 import os
 os.environ["MEM0_TELEMETRY"] = "true"
 
-from agent_framework.mem0 import Mem0Provider
+from agent_framework.mem0 import Mem0ContextProvider
 ```

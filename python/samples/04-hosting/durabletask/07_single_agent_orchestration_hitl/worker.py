@@ -150,16 +150,16 @@ def content_generation_hitl_orchestration(
 
     # Get the writer agent
     writer = agent_context.get_agent(WRITER_AGENT_NAME)
-    writer_thread = writer.get_new_thread()
+    writer_session = writer.create_session()
 
-    logger.info(f"ThreadID: {writer_thread.session_id}")
+    logger.info(f"SessionID: {writer_session.session_id}")
 
     # Generate initial content
     logger.info("[Orchestration] Generating initial content...")
 
     initial_response: AgentResponse = yield writer.run(
         messages=f"Write a short article about '{payload.topic}'.",
-        thread=writer_thread,
+        session=writer_session,
             options={"response_format": GeneratedContent},
     )
     content = cast(GeneratedContent, initial_response.value)
@@ -251,11 +251,11 @@ def content_generation_hitl_orchestration(
 
             logger.debug("[Orchestration] Regenerating content with feedback...")
 
-            logger.warning(f"Regenerating with ThreadID: {writer_thread.session_id}")
+            logger.warning(f"Regenerating with SessionID: {writer_session.session_id}")
 
             rewrite_response: AgentResponse = yield writer.run(
                 messages=rewrite_prompt,
-                thread=writer_thread,
+                session=writer_session,
                     options={"response_format": GeneratedContent},
             )
             rewritten_content = cast(GeneratedContent, rewrite_response.value)

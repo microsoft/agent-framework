@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import os
 import re
 import sys
@@ -15,14 +16,13 @@ from agent_framework import (
     Agent,
     Annotation,
     BaseChatClient,
+    BaseContextProvider,
     ChatAndFunctionMiddlewareTypes,
-    ChatMessageStoreProtocol,
     ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    ContextProvider,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
@@ -32,9 +32,9 @@ from agent_framework import (
     Role,
     TextSpanRegion,
     UsageDetails,
-    get_logger,
 )
 from agent_framework._settings import load_settings
+from agent_framework._tools import ToolTypes
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
 from agent_framework.observability import ChatTelemetryLayer
 from azure.ai.agents.aio import AgentsClient
@@ -103,7 +103,7 @@ else:
     from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
-logger = get_logger("agent_framework.azure")
+logger = logging.getLogger("agent_framework.azure")
 
 __all__ = ["AzureAIAgentClient", "AzureAIAgentOptions"]
 
@@ -211,6 +211,7 @@ class AzureAIAgentClient(
     """Azure AI Agent Chat client with middleware, telemetry, and function invocation support."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     # region Hosted Tool Factory Methods
 
@@ -1428,14 +1429,9 @@ class AzureAIAgentClient(
         name: str | None = None,
         description: str | None = None,
         instructions: str | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: AzureAIAgentOptionsT | Mapping[str, Any] | None = None,
-        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> Agent[AzureAIAgentOptionsT]:
@@ -1455,8 +1451,7 @@ class AzureAIAgentClient(
             instructions: Optional instructions for the agent.
             tools: The tools to use for the request.
             default_options: A TypedDict containing chat options.
-            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
-            context_provider: Context providers to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
             kwargs: Any additional keyword arguments.
 
@@ -1470,8 +1465,7 @@ class AzureAIAgentClient(
             instructions=instructions,
             tools=tools,
             default_options=default_options,
-            chat_message_store_factory=chat_message_store_factory,
-            context_provider=context_provider,
+            context_providers=context_providers,
             middleware=middleware,
             **kwargs,
         )

@@ -14,7 +14,7 @@ Shell commands have full access to your system within the permissions of the run
 import asyncio
 from typing import Any
 
-from agent_framework_claude import ClaudeAgent
+from agent_framework.anthropic import ClaudeAgent
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
 

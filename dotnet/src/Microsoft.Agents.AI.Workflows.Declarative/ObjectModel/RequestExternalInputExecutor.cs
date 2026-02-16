@@ -12,7 +12,7 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
-internal sealed class RequestExternalInputExecutor(RequestExternalInput model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state)
+internal sealed class RequestExternalInputExecutor(RequestExternalInput model, ResponseAgentProvider agentProvider, WorkflowFormulaState state)
     : DeclarativeActionExecutor<RequestExternalInput>(model, state)
 {
     public static class Steps

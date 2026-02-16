@@ -11,7 +11,7 @@ import asyncio
 import os
 from typing import cast
 
-from agent_framework import ChatResponse, ChatResponseUpdate, ResponseStream
+from agent_framework import ChatResponse, ChatResponseUpdate, Message, ResponseStream
 from agent_framework.ag_ui import AGUIChatClient
 
 
@@ -44,7 +44,7 @@ async def main():
                 metadata = {"thread_id": thread_id} if thread_id else None
 
                 stream = client.get_response(
-                    message,
+                    [Message(role="user", text=message)],
                     stream=True,
                     options={"metadata": metadata} if metadata else None,
                 )

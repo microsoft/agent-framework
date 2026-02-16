@@ -11,6 +11,21 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 /// </summary>
 public class AgentSessionTests
 {
+    #region StateBag Tests
+
+    [Fact]
+    public void StateBag_Values_Roundtrips()
+    {
+        // Arrange
+        var session = new TestAgentSession();
+
+        // Act & Assert
+        session.StateBag.SetValue("key1", "value1");
+        Assert.Equal("value1", session.StateBag.GetValue<string>("key1"));
+    }
+
+    #endregion
+
     #region GetService Method Tests
 
     /// <summary>

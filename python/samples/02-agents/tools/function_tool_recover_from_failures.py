@@ -14,7 +14,7 @@ The LLM decides whether to retry the call or to respond with something else, bas
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def greet(name: Annotated[str, "Name to greet"]) -> str:
     """Greet someone."""
@@ -44,29 +44,28 @@ async def main():
         instructions="Use the provided tools.",
         tools=[greet, safe_divide],
     )
-    thread = agent.get_new_thread()
+    session = agent.create_session()
     print("=" * 60)
     print("Step 1: Call divide(10, 0) - tool raises exception")
-    response = await agent.run("Divide 10 by 0", thread=thread)
+    response = await agent.run("Divide 10 by 0", session=session)
     print(f"Response: {response.text}")
     print("=" * 60)
     print("Step 2: Call greet('Bob') - conversation can keep going.")
-    response = await agent.run("Greet Bob", thread=thread)
+    response = await agent.run("Greet Bob", session=session)
     print(f"Response: {response.text}")
     print("=" * 60)
-    print("Replay the conversation:")
-    assert thread.message_store
-    assert thread.message_store.list_messages
-    for idx, msg in enumerate(await thread.message_store.list_messages()):
-        if msg.text:
-            print(f"{idx + 1}  {msg.author_name or msg.role}: {msg.text} ")
-        for content in msg.contents:
-            if content.type == "function_call":
-                print(
-                    f"{idx + 1}  {msg.author_name}: calling function: {content.name} with arguments: {content.arguments}"
-                )
-            if content.type == "function_result":
-                print(f"{idx + 1}  {msg.role}: {content.result if content.result else content.exception}")
+    # TODO: Use history providers to replay the conversation
+    # print("Replay the conversation:")
+    # for idx, msg in enumerate(messages):
+    #     if msg.text:
+    #         print(f"{idx + 1}  {msg.author_name or msg.role}: {msg.text} ")
+    #     for content in msg.contents:
+    #         if content.type == "function_call":
+    #             print(
+    #                 f"{idx + 1}  {msg.author_name}: calling function: {content.name} with arguments: {content.arguments}"
+    #             )
+    #         if content.type == "function_result":
+    #             print(f"{idx + 1}  {msg.role}: {content.result if content.result else content.exception}")
 
 
 """

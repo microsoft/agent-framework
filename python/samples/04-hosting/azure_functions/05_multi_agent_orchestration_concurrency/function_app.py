@@ -64,12 +64,12 @@ def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext) -
     physicist = app.get_agent(context, PHYSICIST_AGENT_NAME)
     chemist = app.get_agent(context, CHEMIST_AGENT_NAME)
 
-    physicist_thread = physicist.get_new_thread()
-    chemist_thread = chemist.get_new_thread()
+    physicist_session = physicist.create_session()
+    chemist_session = chemist.create_session()
 
     # Create tasks from agent.run() calls
-    physicist_task = physicist.run(messages=str(prompt), thread=physicist_thread)
-    chemist_task = chemist.run(messages=str(prompt), thread=chemist_thread)
+    physicist_task = physicist.run(messages=str(prompt), session=physicist_session)
+    chemist_task = chemist.run(messages=str(prompt), session=chemist_session)
 
     # Execute both tasks concurrently using task_all
     task_results = yield context.task_all([physicist_task, chemist_task])

@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Azure Managed Redis Chat Message Store with Azure AD Authentication
+"""Azure Managed Redis History Provider with Azure AD Authentication
 
 This example demonstrates how to use Azure Managed Redis with Azure AD authentication
-to persist conversational details using RedisChatMessageStore.
+to persist conversational details using RedisHistoryProvider.
 
 Requirements:
   - Azure Managed Redis instance with Azure AD authentication enabled
@@ -13,24 +13,25 @@ Requirements:
 
 Environment Variables:
   - AZURE_REDIS_HOST: Your Azure Managed Redis host (e.g., myredis.redis.cache.windows.net)
-  - OPENAI_API_KEY: Your OpenAI API key
-  - OPENAI_CHAT_MODEL_ID: OpenAI model (e.g., gpt-4o-mini)
+  - AZURE_AI_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
+  - AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: Azure OpenAI Responses deployment name
   - AZURE_USER_OBJECT_ID: Your Azure AD User Object ID for authentication
 """
 
 import asyncio
 import os
 
-from agent_framework.openai import OpenAIChatClient
-from agent_framework.redis import RedisChatMessageStore
-from azure.identity.aio import AzureCliCredential
+from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.redis import RedisHistoryProvider
+from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from redis.credentials import CredentialProvider
 
 
 class AzureCredentialProvider(CredentialProvider):
     """Credential provider for Azure AD authentication with Redis Enterprise."""
 
-    def __init__(self, azure_credential: AzureCliCredential, user_object_id: str):
+    def __init__(self, azure_credential: AsyncAzureCliCredential, user_object_id: str):
         self.azure_credential = azure_credential
         self.user_object_id = user_object_id
 
@@ -57,31 +58,32 @@ async def main() -> None:
         return
 
     # Create Azure CLI credential provider (uses 'az login' credentials)
-    azure_credential = AzureCliCredential()
+    azure_credential = AsyncAzureCliCredential()
     credential_provider = AzureCredentialProvider(azure_credential, user_object_id)
 
-    thread_id = "azure_test_thread"
-
-    # Factory for creating Azure Redis chat message store
-    def chat_message_store_factory():
-        return RedisChatMessageStore(
-            credential_provider=credential_provider,
-            host=redis_host,
-            port=10000,
-            ssl=True,
-            thread_id=thread_id,
-            key_prefix="chat_messages",
-            max_messages=100,
-        )
+    # Create Azure Redis history provider
+    history_provider = RedisHistoryProvider(
+        source_id="redis_memory",
+        credential_provider=credential_provider,
+        host=redis_host,
+        port=10000,
+        ssl=True,
+        key_prefix="chat_messages",
+        max_messages=100,
+    )
 
     # Create chat client
-    client = OpenAIChatClient()
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
-    # Create agent with Azure Redis store
+    # Create agent with Azure Redis history provider
     agent = client.as_agent(
         name="AzureRedisAssistant",
         instructions="You are a helpful assistant.",
-        chat_message_store_factory=chat_message_store_factory,
+        context_providers=[history_provider],
     )
 
     # Conversation

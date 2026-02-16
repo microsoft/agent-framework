@@ -9,7 +9,7 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     ChatResponse,
     ChatResponseUpdate,
@@ -38,10 +38,10 @@ class StubAgent(BaseAgent):
 
     def run(  # type: ignore[override]
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
         if stream:
@@ -76,9 +76,9 @@ class StubManagerAgent(Agent):
 
     async def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         if self._call_count == 0:
@@ -130,9 +130,9 @@ class ConcatenatedJsonManagerAgent(Agent):
 
     async def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         if self._call_count == 0:
@@ -346,7 +346,7 @@ class TestGroupChatBuilder:
                 super().__init__(name="", description="test")
 
             def run(
-                self, messages: Any = None, *, stream: bool = False, thread: Any = None, **kwargs: Any
+                self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any
             ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
                 if stream:
 
@@ -896,9 +896,9 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
 
         async def run(
             self,
-            messages: str | Message | Sequence[str | Message] | None = None,
+            messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
             *,
-            thread: AgentThread | None = None,
+            session: AgentSession | None = None,
             **kwargs: Any,
         ) -> AgentResponse:
             if self._call_count == 0:

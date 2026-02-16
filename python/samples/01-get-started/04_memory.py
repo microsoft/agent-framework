@@ -2,10 +2,9 @@
 
 import asyncio
 import os
-from collections.abc import MutableSequence
 from typing import Any
 
-from agent_framework import Context, ContextProvider, Message
+from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 
@@ -23,28 +22,37 @@ Environment variables:
 
 
 # <context_provider>
-class UserNameProvider(ContextProvider):
+class UserNameProvider(BaseContextProvider):
     """A simple context provider that remembers the user's name."""
 
     def __init__(self) -> None:
+        super().__init__(source_id="user-name-provider")
         self.user_name: str | None = None
 
-    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
+    async def before_run(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
         """Called before each agent invocation — add extra instructions."""
         if self.user_name:
-            return Context(instructions=f"The user's name is {self.user_name}. Always address them by name.")
-        return Context(instructions="You don't know the user's name yet. Ask for it politely.")
+            context.instructions.append(f"The user's name is {self.user_name}. Always address them by name.")
+        else:
+            context.instructions.append("You don't know the user's name yet. Ask for it politely.")
 
-    async def invoked(
+    async def after_run(
         self,
-        request_messages: Message | list[Message] | None = None,
-        response_messages: "Message | list[Message] | None" = None,
-        invoke_exception: Exception | None = None,
-        **kwargs: Any,
+        *,
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
     ) -> None:
         """Called after each agent invocation — extract information."""
-        msgs = [request_messages] if isinstance(request_messages, Message) else list(request_messages or [])
-        for msg in msgs:
+        for msg in context.input_messages:
             text = msg.text if hasattr(msg, "text") else ""
             if isinstance(text, str) and "my name is" in text.lower():
                 # Simple extraction — production code should use structured extraction
@@ -66,25 +74,27 @@ async def main() -> None:
     agent = client.as_agent(
         name="MemoryAgent",
         instructions="You are a friendly assistant.",
-        context_provider=memory,
+        context_providers=[memory],
     )
     # </create_agent>
 
-    thread = agent.get_new_thread()
+    # <run_with_memory>
+    session = agent.create_session()
 
     # The provider doesn't know the user yet — it will ask for a name
-    result = await agent.run("Hello! What's the square root of 9?", thread=thread)
+    result = await agent.run("Hello! What's the square root of 9?", session=session)
     print(f"Agent: {result}\n")
 
     # Now provide the name — the provider extracts and stores it
-    result = await agent.run("My name is Alice", thread=thread)
+    result = await agent.run("My name is Alice", session=session)
     print(f"Agent: {result}\n")
 
     # Subsequent calls are personalized
-    result = await agent.run("What is 2 + 2?", thread=thread)
+    result = await agent.run("What is 2 + 2?", session=session)
     print(f"Agent: {result}\n")
 
     print(f"[Memory] Stored user name: {memory.user_name}")
+    # </run_with_memory>
 
 
 if __name__ == "__main__":
