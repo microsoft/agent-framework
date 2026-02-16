@@ -10,10 +10,10 @@ This module implements handlers for:
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncGenerator
 from typing import Any, cast
 
-from agent_framework import get_logger
 from agent_framework._types import AgentResponse, Message
 
 from ._handlers import (
@@ -25,7 +25,7 @@ from ._handlers import (
 )
 from ._human_input import ExternalLoopEvent, QuestionRequest
 
-logger = get_logger("agent_framework.declarative.workflows.actions")
+logger = logging.getLogger("agent_framework.declarative")
 
 
 def _extract_json_from_response(text: str) -> Any:

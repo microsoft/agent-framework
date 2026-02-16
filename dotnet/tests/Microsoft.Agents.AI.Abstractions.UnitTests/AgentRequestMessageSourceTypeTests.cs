@@ -414,6 +414,46 @@ public sealed class AgentRequestMessageSourceTypeTests
 
     #endregion
 
+    #region ToString Tests
+
+    [Fact]
+    public void ToString_ReturnsValue()
+    {
+        // Arrange
+        AgentRequestMessageSourceType source = new("CustomSource");
+
+        // Act
+        string result = source.ToString();
+
+        // Assert
+        Assert.Equal("CustomSource", result);
+    }
+
+    [Fact]
+    public void ToString_StaticExternal_ReturnsExternal()
+    {
+        // Arrange & Act
+        string result = AgentRequestMessageSourceType.External.ToString();
+
+        // Assert
+        Assert.Equal("External", result);
+    }
+
+    [Fact]
+    public void ToString_Default_ReturnsExternal()
+    {
+        // Arrange
+        AgentRequestMessageSourceType source = default;
+
+        // Act
+        string result = source.ToString();
+
+        // Assert
+        Assert.Equal("External", result);
+    }
+
+    #endregion
+
     #region IEquatable Tests
 
     [Fact]

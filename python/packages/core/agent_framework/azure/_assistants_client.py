@@ -27,8 +27,6 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-__all__ = ["AzureOpenAIAssistantsClient"]
-
 
 # region Azure OpenAI Assistants Options TypedDict
 

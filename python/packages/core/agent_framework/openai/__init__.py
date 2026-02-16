@@ -1,5 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""OpenAI namespace for built-in Agent Framework clients.
+
+This module re-exports objects from the core OpenAI implementation modules in
+``agent_framework.openai``.
+
+Supported classes include:
+- OpenAIChatClient
+- OpenAIResponsesClient
+- OpenAIAssistantsClient
+- OpenAIAssistantProvider
+"""
+
 from ._assistant_provider import OpenAIAssistantProvider
 from ._assistants_client import (
     AssistantToolResources,

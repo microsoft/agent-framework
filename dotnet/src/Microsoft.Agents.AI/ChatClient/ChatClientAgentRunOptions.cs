@@ -27,6 +27,17 @@ public sealed class ChatClientAgentRunOptions : AgentRunOptions
     }
 
     /// <summary>
+    /// Initializes a new instance of the <see cref="ChatClientAgentRunOptions"/> class by copying values from the specified options.
+    /// </summary>
+    /// <param name="options">The options instance from which to copy values.</param>
+    private ChatClientAgentRunOptions(ChatClientAgentRunOptions options)
+        : base(options)
+    {
+        this.ChatOptions = options.ChatOptions?.Clone();
+        this.ChatClientFactory = options.ChatClientFactory;
+    }
+
+    /// <summary>
     /// Gets or sets the chat options to apply to the agent invocation.
     /// </summary>
     /// <value>
@@ -50,4 +61,7 @@ public sealed class ChatClientAgentRunOptions : AgentRunOptions
     /// chat client will be used without modification.
     /// </value>
     public Func<IChatClient, IChatClient>? ChatClientFactory { get; set; }
+
+    /// <inheritdoc/>
+    public override AgentRunOptions Clone() => new ChatClientAgentRunOptions(this);
 }

@@ -37,16 +37,21 @@ AIAgent agent = new AzureOpenAIClient(
     {
         ChatOptions = new() { Instructions = "You are good at telling jokes." },
         Name = "Joker",
-        AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new ChatHistoryMemoryProvider(
+        AIContextProviders = [new ChatHistoryMemoryProvider(
             vectorStore,
             collectionName: "chathistory",
             vectorDimensions: 3072,
-            // Configure the scope values under which chat messages will be stored.
-            // In this case, we are using a fixed user ID and a unique session ID for each new session.
-            storageScope: new() { UserId = "UID1", SessionId = Guid.NewGuid().ToString() },
-            // Configure the scope which would be used to search for relevant prior messages.
-            // In this case, we are searching for any messages for the user across all sessions.
-            searchScope: new() { UserId = "UID1" }))
+            // Callback to configure the initial state of the ChatHistoryMemoryProvider.
+            // The ChatHistoryMemoryProvider stores its state in the AgentSession and this callback
+            // will be called whenever the ChatHistoryMemoryProvider cannot find existing state in the session,
+            // typically the first time it is used with a new session.
+            session => new ChatHistoryMemoryProvider.State(
+                // Configure the scope values under which chat messages will be stored.
+                // In this case, we are using a fixed user ID and a unique session ID for each new session.
+                storageScope: new() { UserId = "UID1", SessionId = Guid.NewGuid().ToString() },
+                // Configure the scope which would be used to search for relevant prior messages.
+                // In this case, we are searching for any messages for the user across all sessions.
+                searchScope: new() { UserId = "UID1" }))]
     });
 
 // Start a new session for the agent conversation.

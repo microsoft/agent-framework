@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import (
@@ -9,7 +10,6 @@ from collections.abc import (
     Awaitable,
     Callable,
     Mapping,
-    MutableMapping,
     Sequence,
 )
 from typing import (
@@ -27,18 +27,16 @@ from typing import (
 
 from pydantic import BaseModel
 
-from ._logging import get_logger
 from ._serialization import SerializationMixin
 from ._tools import (
     FunctionInvocationConfiguration,
-    FunctionTool,
+    ToolTypes,
 )
 from ._types import (
     ChatResponse,
     ChatResponseUpdate,
     Message,
     ResponseStream,
-    prepare_messages,
     validate_chat_options,
 )
 
@@ -61,17 +59,7 @@ InputT = TypeVar("InputT", contravariant=True)
 EmbeddingT = TypeVar("EmbeddingT")
 BaseChatClientT = TypeVar("BaseChatClientT", bound="BaseChatClient")
 
-logger = get_logger()
-
-__all__ = [
-    "BaseChatClient",
-    "SupportsChatGetResponse",
-    "SupportsCodeInterpreterTool",
-    "SupportsFileSearchTool",
-    "SupportsImageGenerationTool",
-    "SupportsMCPTool",
-    "SupportsWebSearchTool",
-]
+logger = logging.getLogger("agent_framework")
 
 
 # region SupportsChatGetResponse Protocol
@@ -139,7 +127,7 @@ class SupportsChatGetResponse(Protocol[OptionsContraT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -149,7 +137,7 @@ class SupportsChatGetResponse(Protocol[OptionsContraT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsContraT | ChatOptions[None] | None = None,
@@ -159,7 +147,7 @@ class SupportsChatGetResponse(Protocol[OptionsContraT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsContraT | ChatOptions[Any] | None = None,
@@ -168,7 +156,7 @@ class SupportsChatGetResponse(Protocol[OptionsContraT]):
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsContraT | ChatOptions[Any] | None = None,
@@ -254,9 +242,9 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             client = CustomChatClient()
 
             # Use the client to get responses
-            response = await client.get_response("Hello, how are you?")
+            response = await client.get_response([Message(role="user", text="Hello, how are you?")])
             # Or stream responses
-            async for update in client.get_response("Hello!", stream=True):
+            async for update in client.get_response([Message(role="user", text="Hello!")], stream=True):
                 print(update)
     """
 
@@ -376,7 +364,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -386,7 +374,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
@@ -396,7 +384,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -405,7 +393,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -422,9 +410,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         Returns:
             When streaming a response stream of ChatResponseUpdates, otherwise an Awaitable ChatResponse.
         """
-        prepared_messages = prepare_messages(messages)
         return self._inner_get_response(
-            messages=prepared_messages,
+            messages=messages,
             stream=stream,
             options=options or {},  # type: ignore[arg-type]
             **kwargs,
@@ -448,11 +435,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         name: str | None = None,
         description: str | None = None,
         instructions: str | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | Mapping[str, Any] | None = None,
         context_providers: Sequence[Any] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
