@@ -122,9 +122,12 @@ internal sealed class InvokeFunctionToolExecutor(
         }
 
         // Add messages to conversation if conversationId is provided
+        // Note: We transform messages containing FunctionResultContent or FunctionCallContent
+        // to assistant text messages because workflow-generated CallIds don't correspond to
+        // actual AI-generated tool calls and would be rejected by the API.
         if (conversationId is not null)
         {
-            foreach (ChatMessage message in response.Messages)
+            foreach (ChatMessage message in TransformConversationMessages(response.Messages))
             {
                 await agentProvider.CreateMessageAsync(conversationId, message, cancellationToken).ConfigureAwait(false);
             }
@@ -144,6 +147,53 @@ internal sealed class InvokeFunctionToolExecutor(
     public async ValueTask CompleteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
         await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Transforms messages containing function-related content to assistant text messages.
+    /// Messages with FunctionResultContent are converted to assistant messages with the result as text.
+    /// Messages with only FunctionCallContent are excluded as they have no informational value.
+    /// </summary>
+    private static IEnumerable<ChatMessage> TransformConversationMessages(IEnumerable<ChatMessage> messages)
+    {
+        foreach (ChatMessage message in messages)
+        {
+            // Check if message contains function content
+            bool hasFunctionResult = message.Contents.OfType<FunctionResultContent>().Any();
+            bool hasFunctionCall = message.Contents.OfType<FunctionCallContent>().Any();
+
+            if (hasFunctionResult)
+            {
+                // Convert function results to assistant text message
+                List<AIContent> updatedContents = [];
+                foreach (AIContent content in message.Contents)
+                {
+                    if (content is FunctionResultContent functionResult)
+                    {
+                        string? resultText = functionResult.Result?.ToString();
+                        if (!string.IsNullOrEmpty(resultText))
+                        {
+                            updatedContents.Add(new TextContent($"[Function {functionResult.CallId} result]: {resultText}"));
+                        }
+                    }
+                    else if (content is not FunctionCallContent)
+                    {
+                        // Keep non-function content as-is
+                        updatedContents.Add(content);
+                    }
+                }
+
+                if (updatedContents.Count > 0)
+                {
+                    yield return new ChatMessage(ChatRole.Assistant, updatedContents);
+                }
+            }
+            else if (!hasFunctionCall)
+            {
+                // Pass through messages without function content
+                yield return message;
+            }
+        }
     }
 
     private async ValueTask AssignResultAsync(IWorkflowContext context, FunctionResultContent result)
