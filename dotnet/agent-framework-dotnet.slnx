@@ -371,6 +371,10 @@
     <File Path="src/Shared/Demos/README.md" />
     <File Path="src/Shared/Demos/SampleEnvironment.cs" />
   </Folder>
+  <Folder Name="/Solution Items/src/Shared/DiagnosticIds/">
+    <File Path="src/Shared/DiagnosticIds/DiagnosticsIds.cs" />
+    <File Path="src/Shared/DiagnosticIds/README.md" />
+  </Folder>
   <Folder Name="/Solution Items/src/Shared/IntegrationTests/">
     <File Path="src/Shared/IntegrationTests/AnthropicConfiguration.cs" />
     <File Path="src/Shared/IntegrationTests/AzureAIConfiguration.cs" />
