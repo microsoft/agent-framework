@@ -484,7 +484,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         return create_sdk_mcp_server(name=TOOLS_MCP_SERVER_NAME, tools=sdk_tools), tool_names
 
-    def _function_tool_to_sdk_mcp_tool(self, func_tool: FunctionTool[Any]) -> SdkMcpTool[Any]:
+    def _function_tool_to_sdk_mcp_tool(self, func_tool: FunctionTool) -> SdkMcpTool[Any]:
         """Convert a FunctionTool to an SDK MCP tool.
 
         Args:
