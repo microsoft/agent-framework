@@ -190,6 +190,21 @@ def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None
     assert result["tools"] == [dict_tool]
 
 
+def test_prepare_tools_with_single_function_tool(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that a single FunctionTool is accepted for tool preparation."""
+    client = OpenAIChatClient()
+
+    @tool(approval_mode="never_require")
+    def test_function(query: str) -> str:
+        """A test function."""
+        return f"Result for {query}"
+
+    result = client._prepare_tools_for_openai(test_function)
+    assert "tools" in result
+    assert len(result["tools"]) == 1
+    assert result["tools"][0]["type"] == "function"
+
+
 @tool(approval_mode="never_require")
 def get_story_text() -> str:
     """Returns a story about Emily and David."""

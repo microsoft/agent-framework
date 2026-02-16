@@ -260,7 +260,7 @@ class BedrockChatClient(
         Examples:
             .. code-block:: python
 
-                from agent_framework.bedrock import BedrockChatClient
+                from agent_framework.amazon import BedrockChatClient
 
                 # Basic usage with default credentials
                 client = BedrockChatClient(model_id="<model name>")

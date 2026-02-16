@@ -10,7 +10,9 @@ from azure.identity.aio import AzureCliCredential
 from mem0 import AsyncMemory
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity.
+# Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def retrieve_company_report(company_code: str, detailed: bool) -> str:
     if company_code != "CNTS":
@@ -42,7 +44,7 @@ async def main() -> None:
             name="FriendlyAssistant",
             instructions="You are a friendly assistant.",
             tools=retrieve_company_report,
-            context_providers=[Mem0ContextProvider(user_id=user_id, mem0_client=local_mem0_client)],
+            context_providers=[Mem0ContextProvider(source_id="mem0", user_id=user_id, mem0_client=local_mem0_client)],
         ) as agent,
     ):
         # First ask the agent to retrieve a company report with no previous context.

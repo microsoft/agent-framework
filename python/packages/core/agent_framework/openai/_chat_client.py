@@ -27,6 +27,8 @@ from .._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
+    ToolTypes,
+    normalize_tools,
 )
 from .._types import (
     ChatOptions,
@@ -271,21 +273,24 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
     # region content creation
 
-    def _prepare_tools_for_openai(self, tools: Sequence[Any]) -> dict[str, Any]:
+    def _prepare_tools_for_openai(
+        self,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+    ) -> dict[str, Any]:
         """Prepare tools for the OpenAI Chat Completions API.
 
         Converts FunctionTool to JSON schema format. Web search tools are routed
         to web_search_options parameter. All other tools pass through unchanged.
 
         Args:
-            tools: Sequence of tools to prepare.
+            tools: Tool(s) to prepare.
 
         Returns:
             Dict containing tools and optionally web_search_options.
         """
         chat_tools: list[Any] = []
         web_search_options: dict[str, Any] | None = None
-        for tool in tools:
+        for tool in normalize_tools(tools):
             if isinstance(tool, FunctionTool):
                 chat_tools.append(tool.to_json_schema_spec())
             elif isinstance(tool, MutableMapping) and tool.get("type") == "web_search":

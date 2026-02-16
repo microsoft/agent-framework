@@ -12,8 +12,8 @@ pip install agent-framework --pre
 Set the required environment variables:
 
 ```bash
-export OPENAI_API_KEY="sk-..."
-export OPENAI_RESPONSES_MODEL_ID="gpt-4o"   # optional, defaults to gpt-4o
+export AZURE_AI_PROJECT_ENDPOINT="https://your-project-endpoint"
+export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"   # optional, defaults to gpt-4o
 ```
 
 ## Samples
@@ -32,3 +32,5 @@ Run any sample with:
 ```bash
 python 01_hello_agent.py
 ```
+
+These samples use Azure Foundry models with the Responses API. To switch providers, just replace the client, see [all providers](../02-agents/providers/README.md)

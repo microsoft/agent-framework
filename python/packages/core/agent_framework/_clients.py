@@ -10,7 +10,6 @@ from collections.abc import (
     Awaitable,
     Callable,
     Mapping,
-    MutableMapping,
     Sequence,
 )
 from typing import (
@@ -31,7 +30,7 @@ from pydantic import BaseModel
 from ._serialization import SerializationMixin
 from ._tools import (
     FunctionInvocationConfiguration,
-    FunctionTool,
+    ToolTypes,
 )
 from ._types import (
     ChatResponse,
@@ -436,11 +435,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         name: str | None = None,
         description: str | None = None,
         instructions: str | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | Mapping[str, Any] | None = None,
         context_providers: Sequence[Any] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,

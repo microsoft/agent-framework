@@ -37,6 +37,8 @@ from ._sessions import AgentSession, BaseContextProvider, BaseHistoryProvider, I
 from ._tools import (
     FunctionInvocationLayer,
     FunctionTool,
+    ToolTypes,
+    normalize_tools,
 )
 from ._types import (
     AgentResponse,
@@ -614,12 +616,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         **kwargs: Any,
@@ -665,24 +662,14 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
-        tools_ = cast(
-            FunctionTool
-            | Callable[..., Any]
-            | MutableMapping[str, Any]
-            | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-            | None,
-            tools_,
-        )
 
         # Handle instructions - named parameter takes precedence over options
         instructions_ = instructions if instructions is not None else opts.pop("instructions", None)
 
         # We ignore the MCP Servers here and store them separately,
         # we add their functions to the tools list at runtime
-        normalized_tools: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
-            [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]  # type: ignore[list-item]
-        )
-        self.mcp_tools: list[MCPTool] = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]  # type: ignore[misc]
+        normalized_tools = normalize_tools(tools_)
+        self.mcp_tools: list[MCPTool] = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
 
         # Build chat options dict
@@ -765,12 +752,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[ResponseModelBoundT],
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[ResponseModelBoundT]]: ...
@@ -782,12 +764,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[None] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
@@ -799,12 +776,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
@@ -815,12 +787,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
@@ -1000,12 +967,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         *,
         messages: AgentRunInputs | None,
         session: AgentSession | None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
         options: Mapping[str, Any] | None,
         kwargs: dict[str, Any],
     ) -> _RunContext:
@@ -1035,9 +997,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         )
 
         # Normalize tools
-        normalized_tools: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any] = (
-            [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]
-        )
+        normalized_tools = normalize_tools(tools_)
         agent_name = self._get_agent_name()
 
         # Resolve final tool list (runtime provided tools + local MCP server tools)
@@ -1343,12 +1303,7 @@ class Agent(
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,

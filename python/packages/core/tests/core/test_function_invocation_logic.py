@@ -56,6 +56,36 @@ async def test_base_client_with_function_calling(chat_client_base: SupportsChatG
     assert response.messages[2].text == "done"
 
 
+async def test_base_client_with_function_calling_tools_in_kwargs(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "value1"}')
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", text="done")),
+    ]
+
+    response = await chat_client_base.get_response("hello", tools=[ai_func])
+
+    assert exec_counter == 1
+    assert len(response.messages) == 3
+    assert response.messages[1].role == "tool"
+    assert response.messages[1].contents[0].type == "function_result"
+    assert response.messages[1].contents[0].result == "Processed value1"
+
+
 @pytest.mark.parametrize("max_iterations", [3])
 async def test_base_client_with_function_calling_resets(chat_client_base: SupportsChatGetResponse):
     exec_counter = 0
