@@ -130,7 +130,7 @@ def create_test_azure_ai_client(
     client.conversation_id = conversation_id
     client._is_application_endpoint = False  # type: ignore
     client._should_close_client = should_close_client  # type: ignore
-    client._tracks_created_agent_configuration = False  # type: ignore
+    client.warn_runtime_tools_and_structure_changed = False  # type: ignore
     client._created_agent_tool_names = set()  # type: ignore
     client._created_agent_structured_output_signature = None  # type: ignore
     client.additional_properties = {}
