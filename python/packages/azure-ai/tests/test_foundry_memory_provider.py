@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from agent_framework import AgentResponse, Message
@@ -47,7 +47,6 @@ class TestInit:
         assert provider.context_prompt == "Custom prompt"
         assert provider.update_delay == 60
 
-
     def test_init_default_source_id(self, mock_project_client: AsyncMock) -> None:
         provider = FoundryMemoryProvider(
             project_client=mock_project_client,
@@ -75,7 +74,7 @@ class TestInit:
     def test_init_requires_project_client(self) -> None:
         with pytest.raises(ServiceInitializationError, match="project_client is required"):
             FoundryMemoryProvider(
-            project_client=None,  # type: ignore[arg-type]
+                project_client=None,  # type: ignore[arg-type]
                 memory_store_name="test_store",
                 scope="user_123",
             )
@@ -83,7 +82,7 @@ class TestInit:
     def test_init_requires_memory_store_name(self, mock_project_client: AsyncMock) -> None:
         with pytest.raises(ServiceInitializationError, match="memory_store_name is required"):
             FoundryMemoryProvider(
-            project_client=mock_project_client,
+                project_client=mock_project_client,
                 memory_store_name="",
                 scope="user_123",
             )
@@ -91,7 +90,7 @@ class TestInit:
     def test_init_requires_scope(self, mock_project_client: AsyncMock) -> None:
         with pytest.raises(ServiceInitializationError, match="scope is required"):
             FoundryMemoryProvider(
-            project_client=mock_project_client,
+                project_client=mock_project_client,
                 memory_store_name="test_store",
                 scope="",
             )
@@ -153,7 +152,7 @@ class TestBeforeRun:
 
         # Check that memories were added to context
         assert provider.source_id in ctx.context_messages
-        added = ctx.context_messages["foundry_memory"]
+        added = ctx.context_messages[provider.source_id]
         assert len(added) == 1
         assert "User prefers Python" in added[0].text  # type: ignore[operator]
         assert "Last discussed async patterns" in added[0].text  # type: ignore[operator]
@@ -277,9 +276,9 @@ class TestAfterRun:
         assert call_kwargs["name"] == "test_store"
         assert call_kwargs["scope"] == "user_123"
         assert len(call_kwargs["items"]) == 2
-        assert call_kwargs["items"][0].content == "question"
-        assert call_kwargs["items"][1].content == "answer"
-        assert provider._previous_update_id == "update-456"
+        assert call_kwargs["items"][0]["text"] == "question"
+        assert call_kwargs["items"][1]["text"] == "answer"
+        assert session.state[provider.source_id]["previous_update_id"] == "update-456"
 
     async def test_only_stores_user_assistant_system(self, mock_project_client: AsyncMock) -> None:
         """Only stores user/assistant/system messages with text."""
@@ -306,8 +305,8 @@ class TestAfterRun:
         call_kwargs = mock_project_client.memory_stores.begin_update_memories.call_args.kwargs
         items = call_kwargs["items"]
         assert len(items) == 2
-        assert items[0].content == "hello"
-        assert items[1].content == "reply"
+        assert items[0]["text"] == "hello"
+        assert items[1]["text"] == "reply"
 
     async def test_skips_empty_messages(self, mock_project_client: AsyncMock) -> None:
         """Skips messages with empty text."""
