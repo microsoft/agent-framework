@@ -12,7 +12,6 @@ string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDP
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AgentInstructions = "You are a helpful assistant that can use the countries API to retrieve information about countries by their currency code.";
-const string AgentName = "OpenAPIToolsAgent";
 
 // A simple OpenAPI specification for the REST Countries API
 const string CountriesOpenApiSpec = """
@@ -71,29 +70,47 @@ const string CountriesOpenApiSpec = """
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
-// Create the OpenAPI tool definition
-ResponseTool openApiTool = (ResponseTool)AgentTool.CreateOpenApiTool(
-    new OpenAPIFunctionDefinition(
-        "get_countries",
-        BinaryData.FromString(CountriesOpenApiSpec),
-        new OpenAPIAnonymousAuthenticationDetails())
-    {
-        Description = "Retrieve information about countries by currency code"
-    });
+// Create the OpenAPI function definition
+var openApiFunction = new OpenAPIFunctionDefinition(
+    "get_countries",
+    BinaryData.FromString(CountriesOpenApiSpec),
+    new OpenAPIAnonymousAuthenticationDetails())
+{
+    Description = "Retrieve information about countries by currency code"
+};
 
-// Create an agent with OpenAPI tool using PromptAgentDefinition (native SDK approach)
-AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
-    name: AgentName,
-    creationOptions: new AgentVersionCreationOptions(
-        new PromptAgentDefinition(model: deploymentName)
-        {
-            Instructions = AgentInstructions,
-            Tools = { openApiTool }
-        })
-);
+AIAgent agent = await CreateAgentWithMEAI();
+// AIAgent agent = await CreateAgentWithNativeSDK();
 
 // Run the agent with a question about countries
 Console.WriteLine(await agent.RunAsync("What countries use the Euro (EUR) as their currency? Please list them."));
 
 // Cleanup by deleting the agent
 await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+
+// --- Agent Creation Options ---
+
+#pragma warning disable CS8321 // Local function is declared but never used
+// Option 1 - Using AsAITool wrapping for OpenApiTool (MEAI + AgentFramework)
+async Task<AIAgent> CreateAgentWithMEAI()
+{
+    return await aiProjectClient.CreateAIAgentAsync(
+        model: deploymentName,
+        name: "OpenAPIToolsAgent-MEAI",
+        instructions: AgentInstructions,
+        tools: [((ResponseTool)AgentTool.CreateOpenApiTool(openApiFunction)).AsAITool()]);
+}
+
+// Option 2 - Using PromptAgentDefinition with AgentTool.CreateOpenApiTool (Native SDK)
+async Task<AIAgent> CreateAgentWithNativeSDK()
+{
+    return await aiProjectClient.CreateAIAgentAsync(
+        name: "OpenAPIToolsAgent-NATIVE",
+        creationOptions: new AgentVersionCreationOptions(
+            new PromptAgentDefinition(model: deploymentName)
+            {
+                Instructions = AgentInstructions,
+                Tools = { (ResponseTool)AgentTool.CreateOpenApiTool(openApiFunction) }
+            })
+    );
+}
