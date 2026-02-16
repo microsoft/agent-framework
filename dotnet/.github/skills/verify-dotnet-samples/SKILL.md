@@ -1,9 +1,6 @@
 ---
-name: run-dotnet-samples
-description: >
-  How to build, run and verify the .NET sample projects in the Agent Framework
-  repository. Use this when a user wants to verify that the samples still function
-  as expected.
+name: verify-dotnet-samples
+description: > How to build, run and verify the .NET sample projects in the Agent Framework repository. Use this when a user wants to verify that the samples still function as expected.
 ---
 
 # Verifying .NET Sample Projects
