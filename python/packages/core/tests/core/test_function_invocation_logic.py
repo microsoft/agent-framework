@@ -38,7 +38,9 @@ async def test_base_client_with_function_calling(chat_client_base: SupportsChatG
         ),
         ChatResponse(messages=Message(role="assistant", text="done")),
     ]
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [ai_func]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [ai_func]}
+    )
     assert exec_counter == 1
     assert len(response.messages) == 3
     assert response.messages[0].role == "assistant"
@@ -52,6 +54,36 @@ async def test_base_client_with_function_calling(chat_client_base: SupportsChatG
     assert response.messages[1].contents[0].result == "Processed value1"
     assert response.messages[2].role == "assistant"
     assert response.messages[2].text == "done"
+
+
+async def test_base_client_with_function_calling_tools_in_kwargs(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "value1"}')
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", text="done")),
+    ]
+
+    response = await chat_client_base.get_response("hello", tools=[ai_func])
+
+    assert exec_counter == 1
+    assert len(response.messages) == 3
+    assert response.messages[1].role == "tool"
+    assert response.messages[1].contents[0].type == "function_result"
+    assert response.messages[1].contents[0].result == "Processed value1"
 
 
 @pytest.mark.parametrize("max_iterations", [3])
@@ -83,7 +115,9 @@ async def test_base_client_with_function_calling_resets(chat_client_base: Suppor
         ),
         ChatResponse(messages=Message(role="assistant", text="done")),
     ]
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [ai_func]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [ai_func]}
+    )
     assert exec_counter == 2
     assert len(response.messages) == 5
     assert response.messages[0].role == "assistant"
@@ -388,11 +422,13 @@ async def test_function_invocation_scenarios(
         options["conversation_id"] = conversation_id
 
     if not streaming:
-        response = await chat_client_base.get_response("hello", options=options)
+        response = await chat_client_base.get_response([Message(role="user", text="hello")], options=options)
         messages = response.messages
     else:
         updates = []
-        async for update in chat_client_base.get_response("hello", options=options, stream=True):
+        async for update in chat_client_base.get_response(
+            [Message(role="user", text="hello")], options=options, stream=True
+        ):
             updates.append(update)
         messages = updates
 
@@ -776,7 +812,9 @@ async def test_max_iterations_limit(chat_client_base: SupportsChatGetResponse):
     # Set max_iterations to 1 in additional_properties
     chat_client_base.function_invocation_configuration["max_iterations"] = 1
 
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [ai_func]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [ai_func]}
+    )
 
     # With max_iterations=1, we should:
     # 1. Execute first function call (exec_counter=1)
@@ -803,7 +841,9 @@ async def test_function_invocation_config_enabled_false(chat_client_base: Suppor
     # Disable function invocation
     chat_client_base.function_invocation_configuration["enabled"] = False
 
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [ai_func]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [ai_func]}
+    )
 
     # Function should not be executed - when enabled=False, the loop doesn't run
     assert exec_counter == 0
@@ -859,7 +899,9 @@ async def test_function_invocation_config_max_consecutive_errors(chat_client_bas
     # Set max_consecutive_errors to 2
     chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 2
 
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [error_func]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [error_func]}
+    )
 
     # Should stop after 2 consecutive errors and force a non-tool response
     error_results = [
@@ -904,7 +946,9 @@ async def test_function_invocation_config_terminate_on_unknown_calls_false(chat_
     # Set terminate_on_unknown_calls to False (default)
     chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = False
 
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [known_func]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [known_func]}
+    )
 
     # Should have a result message indicating the tool wasn't found
     assert len(response.messages) == 3
@@ -940,7 +984,9 @@ async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_c
 
     # Should raise an exception when encountering an unknown function
     with pytest.raises(KeyError, match='Error: Requested function "unknown_function" not found'):
-        await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [known_func]})
+        await chat_client_base.get_response(
+            [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [known_func]}
+        )
 
     assert exec_counter == 0
 
@@ -978,7 +1024,9 @@ async def test_function_invocation_config_additional_tools(chat_client_base: Sup
     chat_client_base.function_invocation_configuration["additional_tools"] = [hidden_func]
 
     # Only pass visible_func in the tools parameter
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [visible_func]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [visible_func]}
+    )
 
     # Additional tools are treated as declaration_only, so not executed
     # The function call should be in the messages but not executed
@@ -1016,7 +1064,9 @@ async def test_function_invocation_config_include_detailed_errors_false(chat_cli
     # Set include_detailed_errors to False (default)
     chat_client_base.function_invocation_configuration["include_detailed_errors"] = False
 
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [error_func]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [error_func]}
+    )
 
     # Should have a generic error message
     error_result = next(
@@ -1050,7 +1100,9 @@ async def test_function_invocation_config_include_detailed_errors_true(chat_clie
     # Set include_detailed_errors to True
     chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
 
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [error_func]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [error_func]}
+    )
 
     # Should have detailed error message
     error_result = next(
@@ -1120,7 +1172,9 @@ async def test_argument_validation_error_with_detailed_errors(chat_client_base: 
     # Set include_detailed_errors to True
     chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
 
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [typed_func]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [typed_func]}
+    )
 
     # Should have detailed validation error
     error_result = next(
@@ -1154,7 +1208,9 @@ async def test_argument_validation_error_without_detailed_errors(chat_client_bas
     # Set include_detailed_errors to False (default)
     chat_client_base.function_invocation_configuration["include_detailed_errors"] = False
 
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [typed_func]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [typed_func]}
+    )
 
     # Should have generic validation error
     error_result = next(
@@ -1219,7 +1275,9 @@ async def test_unapproved_tool_execution_raises_exception(chat_client_base: Supp
     ]
 
     # Get approval request
-    response1 = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [test_func]})
+    response1 = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [test_func]}
+    )
 
     approval_req = [c for c in response1.messages[0].contents if c.type == "function_approval_request"][0]
 
@@ -1277,7 +1335,9 @@ async def test_approved_function_call_with_error_without_detailed_errors(chat_cl
     chat_client_base.function_invocation_configuration["include_detailed_errors"] = False
 
     # Get approval request
-    response1 = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [error_func]})
+    response1 = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [error_func]}
+    )
 
     approval_req = [c for c in response1.messages[0].contents if c.type == "function_approval_request"][0]
 
@@ -1340,7 +1400,9 @@ async def test_approved_function_call_with_error_with_detailed_errors(chat_clien
     chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
 
     # Get approval request
-    response1 = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [error_func]})
+    response1 = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [error_func]}
+    )
 
     approval_req = [c for c in response1.messages[0].contents if c.type == "function_approval_request"][0]
 
@@ -1403,7 +1465,9 @@ async def test_approved_function_call_with_validation_error(chat_client_base: Su
     chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
 
     # Get approval request
-    response1 = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [typed_func]})
+    response1 = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [typed_func]}
+    )
 
     approval_req = [c for c in response1.messages[0].contents if c.type == "function_approval_request"][0]
 
@@ -1459,7 +1523,9 @@ async def test_approved_function_call_successful_execution(chat_client_base: Sup
     ]
 
     # Get approval request
-    response1 = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [success_func]})
+    response1 = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [success_func]}
+    )
 
     approval_req = [c for c in response1.messages[0].contents if c.type == "function_approval_request"][0]
 
@@ -1575,7 +1641,9 @@ async def test_multiple_function_calls_parallel_execution(chat_client_base: Supp
         ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [func1, func2]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [func1, func2]}
+    )
 
     # Both functions should have been executed
     assert "func1_start" in exec_order
@@ -1612,7 +1680,9 @@ async def test_callable_function_converted_to_tool(chat_client_base: SupportsCha
     ]
 
     # Pass plain function (will be auto-converted)
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [plain_function]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [plain_function]}
+    )
 
     # Function should be executed
     assert exec_counter == 1
@@ -1644,7 +1714,9 @@ async def test_conversation_id_handling(chat_client_base: SupportsChatGetRespons
         ),
     ]
 
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [test_func]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [test_func]}
+    )
 
     # Should have executed the function
     results = [content for msg in response.messages for content in msg.contents if content.type == "function_result"]
@@ -1671,7 +1743,9 @@ async def test_function_result_appended_to_existing_assistant_message(chat_clien
         ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [test_func]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [test_func]}
+    )
 
     # Should have messages with both function call and function result
     assert len(response.messages) >= 2
@@ -1716,7 +1790,9 @@ async def test_error_recovery_resets_counter(chat_client_base: SupportsChatGetRe
         ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
-    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [sometimes_fails]})
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [sometimes_fails]}
+    )
 
     # Should have both an error and a success
     error_results = [
@@ -1990,7 +2066,9 @@ async def test_streaming_function_invocation_config_terminate_on_unknown_calls_t
 
     # Should raise an exception when encountering an unknown function
     with pytest.raises(KeyError, match='Error: Requested function "unknown_function" not found'):
-        async for _ in chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [known_func]}):
+        async for _ in chat_client_base.get_response(
+            [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [known_func]}
+        ):
             pass
 
     assert exec_counter == 0

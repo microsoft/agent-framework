@@ -1,11 +1,21 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Ollama integration namespace for optional Agent Framework connectors.
+
+This module lazily re-exports objects from:
+- ``agent-framework-ollama``
+
+Supported classes:
+- OllamaChatClient
+- OllamaSettings
+"""
+
 import importlib
 from typing import Any
 
 IMPORT_PATH = "agent_framework_ollama"
 PACKAGE_NAME = "agent-framework-ollama"
-_IMPORTS = ["__version__", "OllamaChatClient", "OllamaSettings"]
+_IMPORTS = ["OllamaChatClient", "OllamaSettings"]
 
 
 def __getattr__(name: str) -> Any:
