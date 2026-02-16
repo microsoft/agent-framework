@@ -104,5 +104,5 @@ public class TestReplayAgent(List<ChatMessage>? messages = null, string? id = nu
         return candidateMessages;
     }
 
-    private sealed class ReplayAgentSession() : InMemoryAgentSession();
+    private sealed class ReplayAgentSession() : AgentSession();
 }

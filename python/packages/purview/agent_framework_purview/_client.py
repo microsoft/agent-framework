@@ -5,12 +5,12 @@ from __future__ import annotations
 import base64
 import inspect
 import json
+import logging
 from typing import Any, cast
 from uuid import uuid4
 
 import httpx
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT
-from agent_framework._logging import get_logger
 from agent_framework.observability import get_tracer
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -33,7 +33,7 @@ from ._models import (
 )
 from ._settings import PurviewSettings, get_purview_scopes
 
-logger = get_logger("agent_framework.purview")
+logger = logging.getLogger("agent_framework.purview")
 
 
 class PurviewClient:

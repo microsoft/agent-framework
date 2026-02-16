@@ -408,9 +408,6 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                 approval_payload_text = result_content if isinstance(result_content, str) else json.dumps(parsed)
 
                 # Log the full approval payload to debug modified arguments
-                import logging
-
-                logger = logging.getLogger(__name__)
                 logger.info(f"Approval payload received: {parsed}")
 
                 approval_call_id = tool_call_id

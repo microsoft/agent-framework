@@ -701,6 +701,7 @@ def test_prepare_options_basic(mock_async_openai: MagicMock) -> None:
     assert run_options["model"] == "gpt-4"
     assert run_options["temperature"] == 0.7
     assert run_options["top_p"] == 0.9
+    assert "tool_choice" not in run_options
     assert tool_results is None
 
 
@@ -731,6 +732,52 @@ def test_prepare_options_with_tool_tool(mock_async_openai: MagicMock) -> None:
     assert run_options["tools"][0]["type"] == "function"
     assert "function" in run_options["tools"][0]
     assert run_options["tool_choice"] == "auto"
+
+
+def test_prepare_options_with_tools_without_tool_choice(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options keeps tool_choice unset when not provided."""
+
+    client = create_test_openai_assistants_client(mock_async_openai)
+
+    @tool(approval_mode="never_require")
+    def test_function(query: str) -> str:
+        """A test function."""
+        return f"Result for {query}"
+
+    options = {
+        "tools": [test_function],
+    }
+
+    messages = [Message(role="user", text="Hello")]
+    run_options, _ = client._prepare_options(messages, options)  # type: ignore
+
+    assert "tools" in run_options
+    assert "tool_choice" not in run_options
+
+
+def test_prepare_options_with_single_tool_tool(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options with a single FunctionTool (non-sequence)."""
+    client = create_test_openai_assistants_client(mock_async_openai)
+
+    @tool(approval_mode="never_require")
+    def test_function(query: str) -> str:
+        """A test function."""
+        return f"Result for {query}"
+
+    options = {
+        "tools": test_function,
+        "tool_choice": "auto",
+    }
+
+    messages = [Message(role="user", text="Hello")]
+    run_options, tool_results = client._prepare_options(messages, options)  # type: ignore
+
+    assert "tools" in run_options
+    assert len(run_options["tools"]) == 1
+    assert run_options["tools"][0]["type"] == "function"
+    assert "function" in run_options["tools"][0]
+    assert run_options["tool_choice"] == "auto"
+    assert tool_results is None
 
 
 def test_prepare_options_with_code_interpreter(mock_async_openai: MagicMock) -> None:
