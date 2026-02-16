@@ -17,7 +17,7 @@ class UserInfo(BaseModel):
 
 
 class UserInfoMemory(BaseContextProvider):
-    def __init__(self, source_id: str = "user-info-memory", client: SupportsChatGetResponse = None, **kwargs: Any):
+    def __init__(self, source_id: str = "user-info-memory", *, client: SupportsChatGetResponse, **kwargs: Any):
         """Create the memory.
 
         If you pass in kwargs, they will be attempted to be used to create a UserInfo object.

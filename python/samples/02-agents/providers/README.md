@@ -5,7 +5,7 @@ This directory groups provider-specific samples for Agent Framework.
 | Folder | What you will find |
 | --- | --- |
 | [`anthropic/`](anthropic/) | Anthropic Claude samples using both `AnthropicClient` and `ClaudeAgent`, including tools, MCP, sessions, and Foundry Anthropic integration. |
-| [`bedrock/`](bedrock/) | AWS Bedrock samples using `BedrockChatClient`, including tool-enabled agent usage. |
+| [`amazon/`](amazon/) | AWS Bedrock samples using `BedrockChatClient`, including tool-enabled agent usage. |
 | [`azure_ai/`](azure_ai/) | Azure AI Foundry V2 (`azure-ai-projects`) samples with `AzureAIClient`, from basic setup to advanced patterns like search, memory, A2A, MCP, and provider methods. |
 | [`azure_ai_agent/`](azure_ai_agent/) | Azure AI Foundry V1 (`azure-ai-agents`) samples with `AzureAIAgentsProvider`, including provider methods and common hosted tool integrations. |
 | [`azure_openai/`](azure_openai/) | Azure OpenAI samples for Assistants, Chat, and Responses clients, with examples for sessions, tools, MCP, file search, and code interpreter. |
