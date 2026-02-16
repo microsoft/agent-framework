@@ -1083,7 +1083,12 @@ async def test_integration_web_search() -> None:
         # Use static method for web search tool
         web_search_tool = OpenAIChatClient.get_web_search_tool()
         content = {
-            "messages": "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+            "messages": [
+                Message(
+                    role="user",
+                    text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+                )
+            ],
             "options": {
                 "tool_choice": "auto",
                 "tools": [web_search_tool],
@@ -1110,7 +1115,7 @@ async def test_integration_web_search() -> None:
             }
         )
         content = {
-            "messages": "What is the current weather? Do not ask for my current location.",
+            "messages": [Message(role="user", text="What is the current weather? Do not ask for my current location.")],
             "options": {
                 "tool_choice": "auto",
                 "tools": [web_search_tool_with_location],

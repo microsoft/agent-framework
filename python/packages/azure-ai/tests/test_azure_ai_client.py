@@ -134,7 +134,7 @@ def create_test_azure_ai_client(
     client._created_agent_tool_names = set()  # type: ignore
     client._created_agent_structured_output_signature = None  # type: ignore
     client.additional_properties = {}
-    client.middleware = None
+    client.chat_middleware = []
 
     # Mock the OpenAI client attribute
     mock_openai_client = MagicMock()
@@ -1546,7 +1546,12 @@ async def test_integration_web_search() -> None:
     async with temporary_chat_client(agent_name="af-int-test-web-search") as client:
         for streaming in [False, True]:
             content = {
-                "messages": "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+                "messages": [
+                    Message(
+                        role="user",
+                        text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+                    )
+                ],
                 "options": {
                     "tool_choice": "auto",
                     "tools": [client.get_web_search_tool()],
@@ -1565,7 +1570,9 @@ async def test_integration_web_search() -> None:
 
             # Test that the client will use the web search tool with location
             content = {
-                "messages": "What is the current weather? Do not ask for my current location.",
+                "messages": [
+                    Message(role="user", text="What is the current weather? Do not ask for my current location.")
+                ],
                 "options": {
                     "tool_choice": "auto",
                     "tools": [client.get_web_search_tool(user_location={"country": "US", "city": "Seattle"})],
@@ -1584,7 +1591,7 @@ async def test_integration_agent_hosted_mcp_tool() -> None:
     """Integration test for MCP tool with Azure Response Agent using Microsoft Learn MCP."""
     async with temporary_chat_client(agent_name="af-int-test-mcp") as client:
         response = await client.get_response(
-            "How to create an Azure storage account using az cli?",
+            messages=[Message(role="user", text="How to create an Azure storage account using az cli?")],
             options={
                 # this needs to be high enough to handle the full MCP tool response.
                 "max_tokens": 5000,
@@ -1608,7 +1615,7 @@ async def test_integration_agent_hosted_code_interpreter_tool():
     """Test Azure Responses Client agent with code interpreter tool through AzureAIClient."""
     async with temporary_chat_client(agent_name="af-int-test-code-interpreter") as client:
         response = await client.get_response(
-            "Calculate the sum of numbers from 1 to 10 using Python code.",
+            messages=[Message(role="user", text="Calculate the sum of numbers from 1 to 10 using Python code.")],
             options={
                 "tools": [client.get_code_interpreter_tool()],
             },
