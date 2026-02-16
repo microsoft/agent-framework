@@ -130,6 +130,9 @@ def create_test_azure_ai_client(
     client.conversation_id = conversation_id
     client._is_application_endpoint = False  # type: ignore
     client._should_close_client = should_close_client  # type: ignore
+    client.warn_runtime_tools_and_structure_changed = False  # type: ignore
+    client._created_agent_tool_names = set()  # type: ignore
+    client._created_agent_structured_output_signature = None  # type: ignore
     client.additional_properties = {}
     client.middleware = None
 
@@ -773,6 +776,82 @@ async def test_agent_creation_with_tools(
     assert call_args[1]["definition"].tools == test_tools
 
 
+async def test_runtime_tools_override_logs_warning(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test warning is logged when runtime tools differ from creation-time tools."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent")
+
+    mock_agent = MagicMock()
+    mock_agent.name = "test-agent"
+    mock_agent.version = "1.0"
+    mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+
+    with patch(
+        "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+        return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_one"}]},
+    ):
+        await client._prepare_options(messages, {})
+
+    with (
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_two"}]},
+        ),
+        patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
+    ):
+        await client._prepare_options(messages, {})
+    mock_warning.assert_called_once()
+    assert "Use AzureOpenAIResponsesClient instead." in mock_warning.call_args[0][0]
+
+
+async def test_prepare_options_logs_warning_for_tools_with_existing_agent_version(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test warning is logged when tools are supplied against an existing agent version."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+
+    with (
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_one"}]},
+        ),
+        patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
+    ):
+        run_options = await client._prepare_options(messages, {})
+
+    mock_warning.assert_called_once()
+    assert "Use AzureOpenAIResponsesClient instead." in mock_warning.call_args[0][0]
+    assert "tools" not in run_options
+
+
+async def test_prepare_options_logs_warning_for_tools_on_application_endpoint(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test warning is logged when runtime tools are removed for application endpoints."""
+    client = create_test_azure_ai_client(mock_project_client)
+    client._is_application_endpoint = True  # type: ignore
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+
+    with (
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_one"}]},
+        ),
+        patch.object(client, "_get_agent_reference_or_create", new_callable=AsyncMock) as mock_get_agent_reference,
+        patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
+    ):
+        run_options = await client._prepare_options(messages, {})
+
+    mock_get_agent_reference.assert_not_called()
+    mock_warning.assert_called_once()
+    assert "Use AzureOpenAIResponsesClient instead." in mock_warning.call_args[0][0]
+    assert "tools" not in run_options
+    assert "extra_body" not in run_options
+
+
 async def test_use_latest_version_existing_agent(
     mock_project_client: MagicMock,
 ) -> None:
@@ -872,6 +951,13 @@ class ResponseFormatModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AlternateResponseFormatModel(BaseModel):
+    """Alternate model for structured output warning checks."""
+
+    summary: str
+    confidence: float
+
+
 async def test_agent_creation_with_response_format(
     mock_project_client: MagicMock,
 ) -> None:
@@ -964,6 +1050,36 @@ async def test_agent_creation_with_mapping_response_format(
     assert format_config.strict is True
 
 
+async def test_runtime_structured_output_override_logs_warning(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test warning is logged when runtime structured_output differs from creation-time configuration."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent")
+
+    mock_agent = MagicMock()
+    mock_agent.name = "test-agent"
+    mock_agent.version = "1.0"
+    mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+
+    with patch(
+        "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+        return_value={"model": "test-model"},
+    ):
+        await client._prepare_options(messages, {"response_format": ResponseFormatModel})
+
+    with (
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model"},
+        ),
+        patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
+    ):
+        await client._prepare_options(messages, {"response_format": AlternateResponseFormatModel})
+    mock_warning.assert_called_once()
+    assert "Use AzureOpenAIResponsesClient instead." in mock_warning.call_args[0][0]
+
+
 async def test_prepare_options_excludes_response_format(
     mock_project_client: MagicMock,
 ) -> None:
@@ -999,6 +1115,39 @@ async def test_prepare_options_excludes_response_format(
         # But extra_body should contain agent reference
         assert "extra_body" in run_options
         assert run_options["extra_body"]["agent"]["name"] == "test-agent"
+
+
+async def test_prepare_options_keeps_values_for_unsupported_option_keys(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test that run_options removal only applies to known AzureAI agent-level option mappings."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+
+    with (
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            return_value={
+                "model": "test-model",
+                "tools": [{"type": "function", "name": "weather"}],
+                "text": {"format": {"type": "json_schema", "name": "schema"}},
+                "text_format": ResponseFormatModel,
+                "custom_option": "keep-me",
+            },
+        ),
+        patch.object(
+            client,
+            "_get_agent_reference_or_create",
+            return_value={"name": "test-agent", "version": "1.0", "type": "agent_reference"},
+        ),
+    ):
+        run_options = await client._prepare_options(messages, {})
+
+        assert "model" not in run_options
+        assert "tools" not in run_options
+        assert "text" not in run_options
+        assert "text_format" not in run_options
+        assert run_options["custom_option"] == "keep-me"
 
 
 def test_get_conversation_id_with_store_true_and_conversation_id() -> None:
