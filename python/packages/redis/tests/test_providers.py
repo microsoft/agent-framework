@@ -246,19 +246,16 @@ class TestRedisContextProviderHybridQuery:
     async def test_hybrid_query_uses_linear_alpha(
         self,
         mock_index: AsyncMock,
-        patch_index_from_dict: MagicMock,  # noqa: ARG002
+        patch_index_from_dict: MagicMock,  # noqa: ARG002 - fixture modifies behavior via side effects
     ):
         """Ensure HybridQuery is called with linear_alpha parameter for redisvl 0.14.0+."""
-        from unittest.mock import AsyncMock as AM
-        from unittest.mock import MagicMock as MM
-
         from redisvl.utils.vectorize import BaseVectorizer
 
         # Create a mock vectorizer that inherits from BaseVectorizer
-        mock_vectorizer = MM(spec=BaseVectorizer)
+        mock_vectorizer = MagicMock(spec=BaseVectorizer)
         mock_vectorizer.dims = 128
         mock_vectorizer.dtype = "float32"
-        mock_vectorizer.aembed = AM(return_value=[0.1] * 128)
+        mock_vectorizer.aembed = AsyncMock(return_value=[0.1] * 128)
 
         mock_index.query = AsyncMock(return_value=[{"content": "test result"}])
 
@@ -271,7 +268,7 @@ class TestRedisContextProviderHybridQuery:
 
         # Call _redis_search with custom alpha
         with patch("agent_framework_redis._context_provider.HybridQuery") as mock_hybrid_query:
-            mock_hybrid_query.return_value = MM()
+            mock_hybrid_query.return_value = MagicMock()
             await provider._redis_search(text="test query", alpha=0.5)
 
             # Verify HybridQuery was called with linear_alpha, not alpha
