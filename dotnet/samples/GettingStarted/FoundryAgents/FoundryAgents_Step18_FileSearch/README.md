@@ -44,9 +44,9 @@ The sample will:
 1. Create a temporary text file with employee directory information
 2. Upload the file to Azure Foundry
 3. Create a vector store with the uploaded file
-4. Create two agents with file search capabilities:
+4. Create an agent with file search capabilities using one of:
    - Option 1: Using HostedFileSearchTool (MEAI abstraction)
    - Option 2: Using native SDK file search tools
-5. Run queries against the agents to search through the uploaded file
+5. Run a query against the agent to search through the uploaded file
 6. Display file citation annotations from responses
-7. Clean up resources (agents, vector store, and uploaded file)
+7. Clean up resources (agent, vector store, and uploaded file)
