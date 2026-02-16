@@ -798,7 +798,7 @@ async def test_runtime_tools_override_logs_warning(
             None,
         )
     mock_warning.assert_called_once()
-    assert "Use ResponsesClient instead." in mock_warning.call_args[0][0]
+    assert "Use AzureOpenAIResponsesClient instead." in mock_warning.call_args[0][0]
 
 
 async def test_use_latest_version_existing_agent(
@@ -1023,7 +1023,7 @@ async def test_runtime_structured_output_override_logs_warning(
             {"response_format": AlternateResponseFormatModel},
         )
     mock_warning.assert_called_once()
-    assert "Use ResponsesClient instead." in mock_warning.call_args[0][0]
+    assert "Use AzureOpenAIResponsesClient instead." in mock_warning.call_args[0][0]
 
 
 async def test_prepare_options_excludes_response_format(
