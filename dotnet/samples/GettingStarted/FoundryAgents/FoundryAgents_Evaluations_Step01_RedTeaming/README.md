@@ -73,9 +73,14 @@ The sample will:
 
 ### Interpreting Results
 
-- Results are available in the Azure AI Foundry portal under the red teaming section
+- Results are available in the Azure AI Foundry portal (classic view) under the red teaming section
 - Lower Attack Success Rate (ASR) is better — target ASR < 5% for production
 - Review individual attack conversations to understand vulnerabilities
+
+### Current Limitations
+
+> [!NOTE]
+> The .NET Red Teaming API (`Azure.AI.Projects` v1.2.0-beta.5) currently supports targeting **model deployments** via `AzureOpenAIModelConfiguration`. Agent-targeted red teaming (using `AzureAIAgentTarget`) with agent-specific risk categories (Prohibited actions, Sensitive data leakage, Task adherence) is documented in the [AI Red Teaming Agent concept docs](https://learn.microsoft.com/azure/ai-foundry/concepts/ai-red-teaming-agent) but is not yet available in the .NET SDK's `RedTeam` API. This sample will be updated when agent-targeted red teaming becomes available.
 
 ## Related Resources
 
