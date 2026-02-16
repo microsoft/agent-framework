@@ -8,6 +8,7 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using OpenAI.Responses;
 
+// Warning: DefaultAzureCredential is intended for simplicity in development. For production scenarios, consider using a more specific credential.
 string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
@@ -68,7 +69,7 @@ const string CountriesOpenApiSpec = """
 """;
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create the OpenAPI function definition
 var openApiFunction = new OpenAPIFunctionDefinition(
@@ -90,7 +91,6 @@ await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
 
 // --- Agent Creation Options ---
 
-#pragma warning disable CS8321 // Local function is declared but never used
 // Option 1 - Using AsAITool wrapping for OpenApiTool (MEAI + AgentFramework)
 async Task<AIAgent> CreateAgentWithMEAI()
 {

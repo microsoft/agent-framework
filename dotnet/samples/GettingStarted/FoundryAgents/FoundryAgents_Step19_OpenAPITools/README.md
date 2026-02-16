@@ -18,7 +18,7 @@ Before you begin, ensure you have the following prerequisites:
 - Azure Foundry service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 
-**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure Foundry resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
+**Note**: This demo uses `DefaultAzureCredential` for authentication, which supports multiple authentication methods including Azure CLI, managed identity, and more. Make sure you're logged in with `az login` and have access to the Azure Foundry resource. For more information, see the [Azure Identity documentation](https://learn.microsoft.com/dotnet/api/azure.identity.defaultazurecredential).
 
 Set the following environment variables:
 
