@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 import json
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
@@ -220,7 +221,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         # Track whether we should close client connection
         self._should_close_client = should_close_client
         # Track creation-time agent configuration for runtime mismatch warnings.
-        self._tracks_created_agent_configuration = False
+        self.warn_runtime_tools_and_structure_changed = False
         self._created_agent_tool_names: set[str] = set()
         self._created_agent_structured_output_signature: str | None = None
 
@@ -346,18 +347,18 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 "Agent name is required. Provide 'agent_name' when initializing AzureAIClient "
                 "or 'name' when initializing Agent."
             )
+        # If the agent exists and we do not want to track agent configuration, return early
+        if self.agent_version is not None and not self.warn_runtime_tools_and_structure_changed:
+            return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
 
         # If no agent_version is provided, either use latest version or create a new agent:
         if self.agent_version is None:
             # Try to use latest version if requested and agent exists
             if self.use_latest_version:
-                try:
+                with suppress(ResourceNotFoundError):
                     existing_agent = await self.project_client.agents.get(self.agent_name)
                     self.agent_version = existing_agent.versions.latest.version
                     return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
-                except ResourceNotFoundError:
-                    # Agent doesn't exist, fall through to creation logic
-                    pass
 
             if "model" not in run_options or not run_options["model"]:
                 raise ServiceInitializationError(
@@ -400,11 +401,26 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             )
 
             self.agent_version = created_agent.version
-            self._tracks_created_agent_configuration = True
+            self.warn_runtime_tools_and_structure_changed = True
             self._created_agent_tool_names = self._extract_tool_names(run_options.get("tools"))
             self._created_agent_structured_output_signature = self._get_structured_output_signature(chat_options)
         else:
-            self._warn_if_runtime_overrides_changed(run_options, chat_options)
+            runtime_tools = run_options.get("tools")
+            tools_changed = False
+            if runtime_tools is not None:
+                tools_changed = self._extract_tool_names(runtime_tools) != self._created_agent_tool_names
+
+            runtime_structured_output = self._get_structured_output_signature(chat_options)
+            structured_output_changed = (
+                runtime_structured_output is not None
+                and runtime_structured_output != self._created_agent_structured_output_signature
+            )
+
+            if tools_changed or structured_output_changed:
+                logger.warning(
+                    "AzureAIClient does not support runtime tools or structured_output overrides after agent creation. "
+                    "Use ResponsesClient instead."
+                )
 
         return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
 
@@ -457,31 +473,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             return json.dumps(response_format, sort_keys=True, default=str)
         return str(response_format)
 
-    def _warn_if_runtime_overrides_changed(
-        self,
-        run_options: Mapping[str, Any],
-        chat_options: Mapping[str, Any] | None,
-    ) -> None:
-        """Warn when runtime tools or structured_output differ from creation-time configuration."""
-        if not self._tracks_created_agent_configuration:
-            return
-
-        runtime_tools = run_options.get("tools")
-        tools_changed = False
-        if runtime_tools is not None:
-            tools_changed = self._extract_tool_names(runtime_tools) != self._created_agent_tool_names
-
-        runtime_structured_output = self._get_structured_output_signature(chat_options)
-        structured_output_changed = (
-            runtime_structured_output is not None
-            and runtime_structured_output != self._created_agent_structured_output_signature
-        )
-
-        if tools_changed or structured_output_changed:
-            logger.warning(
-                "AzureAIClient does not support runtime tools or structured_output overrides after agent creation. "
-                "Use ResponsesClient instead."
-            )
 
     def _remove_agent_level_run_options(self, run_options: dict[str, Any]) -> None:
         """Remove request-level options that Azure AI only supports at agent creation time."""
