@@ -56,7 +56,6 @@ async def main() -> None:
 
             # Create the Foundry Memory context provider
             memory_provider = FoundryMemoryProvider(
-                source_id="foundry_memory",
                 project_client=project_client,
                 memory_store_name=memory_store.name,
                 scope="user_123",  # Scope memories to a specific user

@@ -8,9 +8,10 @@ This module provides ``FoundryMemoryProvider``, built on the new
 
 from __future__ import annotations
 
+import logging
 import sys
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
@@ -25,6 +26,8 @@ else:
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
+
+logger = logging.getLogger(__name__)
 
 
 class FoundryMemoryProvider(BaseContextProvider):
@@ -43,15 +46,16 @@ class FoundryMemoryProvider(BaseContextProvider):
             Defaults to 300 (5 minutes). Set to 0 to immediately trigger updates.
     """
 
+    DEFAULT_SOURCE_ID: ClassVar[str] = "foundry"
     DEFAULT_CONTEXT_PROMPT = "## Memories\nConsider the following memories when answering user questions:"
 
     def __init__(
         self,
-        source_id: str,
+        source_id: str = DEFAULT_SOURCE_ID,
+        *,
         project_client: AIProjectClient,
         memory_store_name: str,
         scope: str,
-        *,
         context_prompt: str | None = None,
         update_delay: int = 300,
     ) -> None:
@@ -78,9 +82,6 @@ class FoundryMemoryProvider(BaseContextProvider):
         self.scope = scope
         self.context_prompt = context_prompt or self.DEFAULT_CONTEXT_PROMPT
         self.update_delay = update_delay
-        self._previous_update_id: str | None = None
-        self._previous_search_id: str | None = None
-        self._static_memories: list[dict[str, Any]] = []
 
     async def __aenter__(self) -> Self:
         """Async context manager entry."""
@@ -110,27 +111,29 @@ class FoundryMemoryProvider(BaseContextProvider):
         2. Searches for contextual memories based on input messages
         3. Combines and injects memories into the context
         """
+        # Get provider-specific state
+        my_state = state.setdefault(self.source_id, {})
+
         # On first run, retrieve static memories (user profile memories)
-        if "foundry_memory_initialized" not in state:
+        if not my_state.get("initialized"):
             try:
                 static_search_result = await self.project_client.memory_stores.search_memories(
                     name=self.memory_store_name,
                     scope=self.scope,
                 )
-                self._static_memories = [
+                static_memories = [
                     {"content": memory.get("content", "")}
                     for memory in getattr(static_search_result, "memories", [])
                     if memory.get("content")
                 ]
+                my_state["static_memories"] = static_memories
             except Exception as e:
                 # Log but don't fail - memory retrieval is non-critical
-                from agent_framework import get_logger
-
-                logger = get_logger("agent_framework.azure")
                 logger.warning(f"Failed to retrieve static memories: {e}")
+                my_state["static_memories"] = []
             finally:
                 # Mark as initialized regardless of success to avoid repeated attempts
-                state["foundry_memory_initialized"] = True
+                my_state["initialized"] = True
 
         # Search for contextual memories based on input messages
         # Check if there are any non-empty input messages
@@ -150,12 +153,12 @@ class FoundryMemoryProvider(BaseContextProvider):
                 name=self.memory_store_name,
                 scope=self.scope,
                 items=items,
-                previous_search_id=self._previous_search_id,
+                previous_search_id=my_state.get("previous_search_id"),
             )
 
             # Extract search_id for next incremental search
             if hasattr(search_result, "search_id"):
-                self._previous_search_id = getattr(search_result, "search_id", None)
+                my_state["previous_search_id"] = getattr(search_result, "search_id", None)
 
             # Combine static and contextual memories
             contextual_memories = [
@@ -164,7 +167,7 @@ class FoundryMemoryProvider(BaseContextProvider):
                 if memory.get("content")
             ]
 
-            all_memories = self._static_memories + contextual_memories
+            all_memories = my_state.get("static_memories", []) + contextual_memories
 
             # Inject memories into context
             if all_memories:
@@ -178,9 +181,6 @@ class FoundryMemoryProvider(BaseContextProvider):
                     )
         except Exception as e:
             # Log but don't fail - memory retrieval is non-critical
-            from agent_framework import get_logger
-
-            logger = get_logger("agent_framework.azure")
             logger.warning(f"Failed to search contextual memories: {e}")
 
     async def after_run(
@@ -196,6 +196,9 @@ class FoundryMemoryProvider(BaseContextProvider):
         This method updates the memory store with conversation messages.
         The update is debounced by the configured update_delay.
         """
+        # Get provider-specific state
+        my_state = state.setdefault(self.source_id, {})
+
         messages_to_store: list[Message] = list(context.input_messages)
         if context.response and context.response.messages:
             messages_to_store.extend(context.response.messages)
@@ -215,19 +218,16 @@ class FoundryMemoryProvider(BaseContextProvider):
                 name=self.memory_store_name,
                 scope=self.scope,
                 items=items,
-                previous_update_id=self._previous_update_id,
+                previous_update_id=my_state.get("previous_update_id"),
                 update_delay=self.update_delay,
             )
 
             # Store the update_id for next incremental update
             if hasattr(update_poller, "update_id"):
-                self._previous_update_id = getattr(update_poller, "update_id", None)
+                my_state["previous_update_id"] = getattr(update_poller, "update_id", None)
 
         except Exception as e:
             # Log but don't fail - memory storage is non-critical
-            from agent_framework import get_logger
-
-            logger = get_logger("agent_framework.azure")
             logger.warning(f"Failed to update memories: {e}")
 
 
