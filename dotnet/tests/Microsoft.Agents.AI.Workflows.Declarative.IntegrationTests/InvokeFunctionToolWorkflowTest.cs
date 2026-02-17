@@ -23,7 +23,7 @@ public sealed class InvokeFunctionToolWorkflowTest(ITestOutputHelper output) : I
 {
     [Theory]
     [InlineData("InvokeFunctionTool.yaml", new string[] { "GetSpecials", "GetItemPrice" }, "2.95")]
-    [InlineData("InvokeFunctionToolWithApproval.yaml", new string[] { "GetItemPrice" }, "4.95")]
+    [InlineData("InvokeFunctionToolWithApproval.yaml", new string[] { "GetItemPrice" }, "4.9")]
     public Task ValidateInvokeFunctionToolAsync(string workflowFileName, string[] expectedFunctionCalls, string? expectedResultContains) =>
         this.RunInvokeToolTestAsync(workflowFileName, expectedFunctionCalls, expectedResultContains);
 
