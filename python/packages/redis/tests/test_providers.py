@@ -241,14 +241,14 @@ class TestRedisContextProviderContextManager:
 
 
 class TestRedisContextProviderHybridQuery:
-    """Test for HybridQuery parameter compatibility with redisvl 0.14.0."""
+    """Test for AggregateHybridQuery parameter compatibility with redisvl 0.14.0."""
 
-    async def test_hybrid_query_uses_linear_alpha(
+    async def test_aggregate_hybrid_query_uses_alpha(
         self,
         mock_index: AsyncMock,
         patch_index_from_dict: MagicMock,  # noqa: ARG002 - fixture modifies behavior via side effects
     ):
-        """Ensure HybridQuery is called with linear_alpha parameter for redisvl 0.14.0+."""
+        """Ensure AggregateHybridQuery is called with alpha parameter for backward compatibility."""
         from redisvl.utils.vectorize import BaseVectorizer
 
         # Create a mock vectorizer that inherits from BaseVectorizer
@@ -267,16 +267,17 @@ class TestRedisContextProviderHybridQuery:
         )
 
         # Call _redis_search with custom alpha
-        with patch("agent_framework_redis._context_provider.HybridQuery") as mock_hybrid_query:
+        with patch("agent_framework_redis._context_provider.AggregateHybridQuery") as mock_hybrid_query:
             mock_hybrid_query.return_value = MagicMock()
             await provider._redis_search(text="test query", alpha=0.5)
 
-            # Verify HybridQuery was called with linear_alpha, not alpha
+            # Verify AggregateHybridQuery was called with alpha parameter
             mock_hybrid_query.assert_called_once()
             call_kwargs = mock_hybrid_query.call_args.kwargs
-            assert "linear_alpha" in call_kwargs
-            assert call_kwargs["linear_alpha"] == 0.5
-            assert "alpha" not in call_kwargs
+            assert "alpha" in call_kwargs
+            assert call_kwargs["alpha"] == 0.5
+            # linear_alpha should NOT be in the call (that's for the new HybridQuery)
+            assert "linear_alpha" not in call_kwargs
 
 
 # ===========================================================================

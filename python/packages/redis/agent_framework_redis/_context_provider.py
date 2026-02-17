@@ -23,7 +23,7 @@ from agent_framework.exceptions import (
     ServiceInvalidRequestError,
 )
 from redisvl.index import AsyncSearchIndex
-from redisvl.query import HybridQuery, TextQuery
+from redisvl.query import AggregateHybridQuery, TextQuery
 from redisvl.query.filter import FilterExpression, Tag
 from redisvl.utils.token_escaper import TokenEscaper
 from redisvl.utils.vectorize import BaseVectorizer
@@ -366,14 +366,14 @@ class RedisContextProvider(BaseContextProvider):
         try:
             if self.redis_vectorizer and self.vector_field_name:
                 vector = await self.redis_vectorizer.aembed(q)
-                query = HybridQuery(
+                query = AggregateHybridQuery(
                     text=q,
                     text_field_name="content",
                     vector=vector,
                     vector_field_name=self.vector_field_name,
                     text_scorer=text_scorer,
                     filter_expression=combined_filter,
-                    linear_alpha=alpha,
+                    alpha=alpha,
                     dtype=self.redis_vectorizer.dtype,
                     num_results=num_results,
                     return_fields=return_fields,
