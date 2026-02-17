@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, TypeAlias, TypeVar
 
+from .._agents import SupportsAgentRun
 from ._const import INTERNAL_SOURCE_ID
 from ._executor import Executor
 from ._model_utils import DictConvertible, encode_value
@@ -264,7 +265,7 @@ class Case:
     """
 
     condition: Callable[[Any], bool]
-    target: Executor | str
+    target: Executor | SupportsAgentRun
 
 
 @dataclass
@@ -287,7 +288,7 @@ class Default:
             assert fallback.target.id == "dead_letter"
     """
 
-    target: Executor | str
+    target: Executor | SupportsAgentRun
 
 
 @dataclass(init=False)
