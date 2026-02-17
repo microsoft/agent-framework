@@ -42,6 +42,35 @@ public class BehaviorPipelineTests
     }
 
     [Fact]
+    public async Task ExecutorPipeline_WithNoBehaviors_FinalHandlerExceptionNotWrappedAsync()
+    {
+        // Arrange - no behaviors registered, so exceptions from the core handler should not be wrapped
+        var options = new WorkflowBehaviorOptions();
+        var pipeline = options.BuildPipeline();
+
+        var context = new ExecutorBehaviorContext
+        {
+            ExecutorId = "test-executor",
+            ExecutorType = typeof(BehaviorPipelineTests),
+            Message = "test",
+            MessageType = typeof(string),
+            RunId = Guid.NewGuid().ToString(),
+            Stage = ExecutorStage.PreExecution,
+            WorkflowContext = NullWorkflowContext.Instance
+        };
+
+        // Act
+        Func<Task> act = async () => await pipeline!.ExecuteExecutorPipelineAsync(
+            context,
+            ct => throw new InvalidOperationException("Core handler error"),
+            CancellationToken.None);
+
+        // Assert - the raw exception propagates without being wrapped in BehaviorExecutionException
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Core handler error");
+    }
+
+    [Fact]
     public async Task ExecutorPipeline_WithSingleBehavior_ExecutesBehaviorAsync()
     {
         // Arrange
