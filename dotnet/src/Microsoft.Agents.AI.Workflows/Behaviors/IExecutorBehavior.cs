@@ -46,7 +46,9 @@ public delegate ValueTask<object?> ExecutorBehaviorContinuation(CancellationToke
 public sealed class ExecutorBehaviorContext
 {
     /// <summary>
-    /// Gets the identifier of the executor being invoked.
+    /// Gets the string identifier assigned to the executor being invoked.
+    /// This is the logical name used to register and route messages to the executor,
+    /// and is distinct from <see cref="ExecutorType"/>, which represents the executor's CLR type.
     /// </summary>
     public string ExecutorId { get; init; } = string.Empty;
 
