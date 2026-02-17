@@ -70,6 +70,23 @@ internal sealed class BehaviorPipeline
     }
 
     /// <summary>
+    /// Executes the workflow behavior pipeline with no return value.
+    /// </summary>
+    /// <param name="context">The context for the workflow execution.</param>
+    /// <param name="finalHandler">The final handler to execute after all behaviors.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    public async ValueTask ExecuteWorkflowPipelineAsync(
+        WorkflowBehaviorContext context,
+        Func<CancellationToken, ValueTask> finalHandler,
+        CancellationToken cancellationToken)
+    {
+        await this.ExecuteWorkflowPipelineAsync<int>(
+            context,
+            async ct => { await finalHandler(ct).ConfigureAwait(false); return 0; },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Executes the workflow behavior pipeline.
     /// </summary>
     /// <typeparam name="TResult">The result type of the workflow operation.</typeparam>
