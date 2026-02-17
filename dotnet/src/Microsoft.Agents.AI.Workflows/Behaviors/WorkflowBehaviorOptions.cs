@@ -18,7 +18,7 @@ public sealed class WorkflowBehaviorOptions
     /// </summary>
     /// <param name="behavior">The executor behavior instance to register.</param>
     /// <returns>The current options instance for method chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="behavior"/> is null.</exception>
+    /// <exception cref="System.ArgumentNullException">Thrown when <paramref name="behavior"/> is null.</exception>
     public WorkflowBehaviorOptions AddExecutorBehavior(IExecutorBehavior behavior)
     {
         this.ExecutorBehaviors.Add(Throw.IfNull(behavior));
@@ -30,7 +30,7 @@ public sealed class WorkflowBehaviorOptions
     /// </summary>
     /// <param name="behavior">The workflow behavior instance to register.</param>
     /// <returns>The current options instance for method chaining.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="behavior"/> is null.</exception>
+    /// <exception cref="System.ArgumentNullException">Thrown when <paramref name="behavior"/> is null.</exception>
     public WorkflowBehaviorOptions AddWorkflowBehavior(IWorkflowBehavior behavior)
     {
         this.WorkflowBehaviors.Add(Throw.IfNull(behavior));
