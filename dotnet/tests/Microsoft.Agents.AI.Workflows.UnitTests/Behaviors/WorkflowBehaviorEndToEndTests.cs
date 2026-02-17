@@ -257,9 +257,12 @@ public class WorkflowBehaviorEndToEndTests
         await using var run = await InProcessExecution.RunAsync(workflow, "test-input");
 
         // Assert
-        run.OutgoingEvents.OfType<WorkflowErrorEvent>()
-            .Should().ContainSingle()
-            .Which.Exception.Should().BeOfType<BehaviorExecutionException>();
+        var behaviorException = run.OutgoingEvents.OfType<WorkflowErrorEvent>()
+            .Should().ContainSingle().Which.Exception
+            .Should().BeOfType<BehaviorExecutionException>().Subject;
+
+        behaviorException.BehaviorType.Should().Contain(nameof(FaultyBehavior));
+        behaviorException.Stage.Should().Be(nameof(ExecutorStage.PreExecution));
     }
 
     // Test Executors
