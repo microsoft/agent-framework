@@ -140,29 +140,33 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
     private ValueTask RaiseWorkflowEventAsync(WorkflowEvent workflowEvent)
         => this.OutgoingEvents.EnqueueAsync(workflowEvent);
 
-    public async ValueTask<AsyncRunHandle> BeginStreamAsync(ExecutionMode mode, CancellationToken cancellationToken = default)
+    public ValueTask<AsyncRunHandle> BeginStreamAsync(ExecutionMode mode, CancellationToken cancellationToken = default)
     {
         this.RunContext.CheckEnded();
 
-        // Execute workflow start behaviors
-        if (this.Workflow.BehaviorPipeline?.HasWorkflowBehaviors == true)
-        {
-            var context = new WorkflowBehaviorContext
-            {
-                WorkflowName = this.Workflow.Name ?? string.Empty,
-                WorkflowDescription = this.Workflow.Description,
-                RunId = this.RunId,
-                StartExecutorId = this.StartExecutorId,
-                Stage = WorkflowStage.Starting,
-                Properties = null
-            };
+        if (this.Workflow.BehaviorPipeline?.HasWorkflowBehaviors != true)
+            return new ValueTask<AsyncRunHandle>(new AsyncRunHandle(this, this, mode));
 
-            await this.Workflow.BehaviorPipeline.ExecuteWorkflowPipelineAsync(
-                context,
-                (ct) => new ValueTask<int>(0),
-                cancellationToken
-            ).ConfigureAwait(false);
-        }
+        return new ValueTask<AsyncRunHandle>(this.BeginStreamWithBehaviorsAsync(mode, cancellationToken));
+    }
+
+    private async Task<AsyncRunHandle> BeginStreamWithBehaviorsAsync(ExecutionMode mode, CancellationToken cancellationToken)
+    {
+        var context = new WorkflowBehaviorContext
+        {
+            WorkflowName = this.Workflow.Name ?? string.Empty,
+            WorkflowDescription = this.Workflow.Description,
+            RunId = this.RunId,
+            StartExecutorId = this.StartExecutorId,
+            Stage = WorkflowStage.Starting,
+            Properties = null
+        };
+
+        await this.Workflow.BehaviorPipeline!.ExecuteWorkflowPipelineAsync(
+            context,
+            (ct) => new ValueTask<int>(0),
+            cancellationToken
+        ).ConfigureAwait(false);
 
         return new AsyncRunHandle(this, this, mode);
     }
