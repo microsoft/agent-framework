@@ -302,7 +302,6 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             max_rounds: Optional limit on selection rounds to prevent infinite loops.
             termination_condition: Optional callable that halts the conversation when it returns True
             retry_attempts: Optional number of retry attempts for the agent in case of failure.
-                Defaults to 2 retries when not provided.
             session: Optional agent session to use for the orchestrator agent.
         """
         super().__init__(
@@ -313,7 +312,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             termination_condition=termination_condition,
         )
         self._agent = agent
-        self._retry_attempts = retry_attempts if retry_attempts is not None else 2
+        self._retry_attempts = retry_attempts
         self._session = session or agent.create_session()
         # Cache for messages since last agent invocation
         # This is different from the full conversation history maintained by the base orchestrator
@@ -486,7 +485,6 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         # We only need the last message for context since history is maintained in the thread
         current_conversation = self._cache.copy()
         self._cache.clear()
-        participant_names = ", ".join(self._participant_registry.participants.keys())
         instruction = (
             "Decide what to do next. Respond with a JSON object of the following format:\n"
             "{\n"
@@ -509,7 +507,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
                 return await _invoke_agent_helper(current_conversation)
             except Exception as ex:
                 logger.error(f"Agent orchestration invocation failed: {ex}")
-                if retry_attempts <= 0:
+                if retry_attempts is None or retry_attempts <= 0:
                     raise
                 retry_attempts -= 1
                 logger.debug(f"Retrying agent orchestration invocation, attempts left: {retry_attempts}")
@@ -517,12 +515,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
                 current_conversation = [
                     Message(
                         role="user",
-                        text=(
-                            "Your previous response could not be parsed as valid orchestration JSON. "
-                            f"Error: {ex}. Respond with ONLY one JSON object and no extra text. "
-                            "Use exactly these keys: terminate, reason, next_speaker, final_message. "
-                            f"If terminate is false, next_speaker must be one of: {participant_names}."
-                        ),
+                        text=f"Your input could not be parsed due to an error: {ex}. Please try again.",
                     )
                 ]
 
