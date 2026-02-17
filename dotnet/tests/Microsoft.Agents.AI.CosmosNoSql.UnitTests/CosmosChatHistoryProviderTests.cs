@@ -881,12 +881,12 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
         var session = CreateMockSession();
         var conversationId = Guid.NewGuid().ToString();
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
-            _ => new CosmosChatHistoryProvider.State(conversationId))
-        {
-            // Custom filter: only store External messages (also exclude AIContextProvider)
-            StorageInputMessageFilter = messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External)
-        };
+        using var provider = new CosmosChatHistoryProvider(
+            this._connectionString,
+            s_testDatabaseId,
+            TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversationId),
+            storeInputMessageFilter: messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External));
 
         var requestMessages = new[]
         {
@@ -919,12 +919,12 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
         var session = CreateMockSession();
         var conversationId = Guid.NewGuid().ToString();
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
-            _ => new CosmosChatHistoryProvider.State(conversationId))
-        {
-            // Only return User messages when retrieving
-            RetrievalOutputMessageFilter = messages => messages.Where(m => m.Role == ChatRole.User)
-        };
+        using var provider = new CosmosChatHistoryProvider(
+            this._connectionString,
+            s_testDatabaseId,
+            TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversationId),
+            provideOutputMessageFilter: messages => messages.Where(m => m.Role == ChatRole.User));
 
         var requestMessages = new[]
         {
@@ -943,7 +943,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
         var messages = (await provider.InvokingAsync(invokingContext)).ToList();
 
-        // Assert - Only User messages returned (System and Assistant filtered by RetrievalOutputMessageFilter)
+        // Assert - Only User messages returned (System and Assistant filtered by ProvideOutputMessageFilter)
         Assert.Single(messages);
         Assert.Equal("User message", messages[0].Text);
         Assert.Equal(ChatRole.User, messages[0].Role);
