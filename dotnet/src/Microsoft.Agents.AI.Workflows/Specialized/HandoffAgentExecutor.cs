@@ -28,10 +28,12 @@ internal sealed class HandoffAgentExecutorOptions
 internal sealed class HandoffMessagesFilter
 {
     private readonly HandoffToolCallFilteringBehavior _filteringBehavior;
+    private readonly HashSet<string> _handoffFunctionNames;
 
     public HandoffMessagesFilter(HandoffToolCallFilteringBehavior filteringBehavior, HashSet<string> handoffFunctionNames)
     {
         this._filteringBehavior = filteringBehavior;
+        this._handoffFunctionNames = handoffFunctionNames;
     }
 
     public IEnumerable<ChatMessage> FilterMessages(List<ChatMessage> messages)
@@ -63,18 +65,9 @@ internal sealed class HandoffMessagesFilter
                 for (int i = 0; i < unfilteredMessage.Contents!.Count; i++)
                 {
                     AIContent content = unfilteredMessage.Contents[i];
-                    if (content is not FunctionCallContent fcc || (filterHandoffOnly && !IsHandoffFunctionName(fcc.Name)))
+                    if (content is not FunctionCallContent fcc || (filterHandoffOnly && !this._handoffFunctionNames.Contains(fcc.Name)))
                     {
                         filteredMessage.Contents.Add(content);
-
-                        // Track non-handoff function calls so their tool results are preserved in HandoffOnly mode
-                        if (filterHandoffOnly && content is FunctionCallContent nonHandoffFcc)
-                        {
-                            filteringCandidates[nonHandoffFcc.CallId] = new FilterCandidateState(nonHandoffFcc.CallId)
-                            {
-                                IsHandoffFunction = false,
-                            };
-                        }
                     }
                     else if (filterHandoffOnly)
                     {
@@ -89,7 +82,6 @@ internal sealed class HandoffMessagesFilter
                         {
                             candidateState.IsHandoffFunction = true;
                             (int messageIndex, int contentIndex) = candidateState.FunctionCallResultLocation!.Value;
-
                             ChatMessage messageToFilter = filteredMessages[messageIndex];
                             messageToFilter.Contents.RemoveAt(contentIndex);
                             if (messageToFilter.Contents.Count == 0)
@@ -98,8 +90,10 @@ internal sealed class HandoffMessagesFilter
                             }
                         }
                     }
-
-                    // All mode: FunctionCallContent is stripped entirely.
+                    else
+                    {
+                        filteredMessage.Contents.Add(content);
+                    }
                 }
             }
             else
@@ -141,14 +135,11 @@ internal sealed class HandoffMessagesFilter
         return filteredMessages.Where((_, index) => !messagesToRemove.Contains(index));
     }
 
-    private static bool IsHandoffFunctionName(string name) =>
-        name.StartsWith(HandoffsWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal);
-
     private class FilterCandidateState(string callId)
     {
         public (int MessageIndex, int ContentIndex)? FunctionCallResultLocation { get; set; }
 
-        public string CallId { get; } = callId;
+        public string CallId => callId;
 
         public bool? IsHandoffFunction { get; set; }
     }
