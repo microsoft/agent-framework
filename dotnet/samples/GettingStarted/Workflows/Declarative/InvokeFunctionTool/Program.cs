@@ -44,12 +44,10 @@ internal sealed class Program
         // Get input from command line or console
         string workflowInput = Application.GetInput(args);
 
-        // Create the workflow factory. This workflow demonstrates InvokeFunctionTool
-        // which allows the workflow to call functions directly without going through an agent.
+        // Create the workflow factory.
         WorkflowFactory workflowFactory = new("InvokeFunctionTool.yaml", foundryEndpoint);
 
-        // Execute the workflow: The WorkflowRunner handles external input requests
-        // including function call requests from InvokeFunctionTool actions.
+        // Execute the workflow
         WorkflowRunner runner = new(functions) { UseJsonCheckpoints = true };
         await runner.ExecuteAsync(workflowFactory.CreateWorkflow, workflowInput);
     }
