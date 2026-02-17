@@ -16,7 +16,7 @@ import copy
 import uuid
 from abc import abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from ._types import AgentResponse, Message
 
@@ -310,7 +310,8 @@ class BaseContextProvider:
             agent: The agent running this invocation.
             session: The current session.
             context: The invocation context - add messages/instructions/tools here.
-            state: The session's mutable state dict.
+            state: The provider-scoped mutable state dict for this provider.
+                Full cross-provider state remains available at ``session.state``.
         """
 
     async def after_run(
@@ -330,7 +331,8 @@ class BaseContextProvider:
             agent: The agent that ran this invocation.
             session: The current session.
             context: The invocation context with response populated.
-            state: The session's mutable state dict.
+            state: The provider-scoped mutable state dict for this provider.
+                Full cross-provider state remains available at ``session.state``.
         """
 
 
@@ -520,16 +522,48 @@ class AgentSession:
 class InMemoryHistoryProvider(BaseHistoryProvider):
     """Built-in history provider that stores messages in session.state.
 
-    Messages are stored in ``state[source_id]["messages"]`` as a list of
+    Messages are stored in ``state["messages"]`` as a list of
     ``Message`` objects. Serialization to/from dicts is handled by
     ``AgentSession.to_dict()``/``from_dict()`` using ``SerializationProtocol``.
 
     This provider holds no instance state — all data lives in the session's
     state dict, passed as a named ``state`` parameter to ``get_messages``/``save_messages``.
 
-    This is the default provider auto-added by the agent when no providers
-    are configured and ``conversation_id`` or ``store=True`` is set.
+    This is the default provider auto-added by the agent for local sessions
+    when no providers are configured and service-side storage is not requested.
     """
+
+    DEFAULT_SOURCE_ID: ClassVar[str] = "in_memory"
+
+    def __init__(
+        self,
+        source_id: str | None = None,
+        *,
+        load_messages: bool = True,
+        store_inputs: bool = True,
+        store_context_messages: bool = False,
+        store_context_from: set[str] | None = None,
+        store_outputs: bool = True,
+    ) -> None:
+        """Initialize the in-memory history provider.
+
+        Args:
+            source_id: Unique identifier for this provider instance.
+                Defaults to DEFAULT_SOURCE_ID when not provided.
+            load_messages: Whether to load messages before invocation.
+            store_inputs: Whether to store input messages.
+            store_context_messages: Whether to store context from other providers.
+            store_context_from: If set, only store context from these source_ids.
+            store_outputs: Whether to store response messages.
+        """
+        super().__init__(
+            source_id=source_id or self.DEFAULT_SOURCE_ID,
+            load_messages=load_messages,
+            store_inputs=store_inputs,
+            store_context_messages=store_context_messages,
+            store_context_from=store_context_from,
+            store_outputs=store_outputs,
+        )
 
     async def get_messages(
         self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
@@ -537,8 +571,7 @@ class InMemoryHistoryProvider(BaseHistoryProvider):
         """Retrieve messages from session state."""
         if state is None:
             return []
-        my_state = state.get(self.source_id, {})
-        return list(my_state.get("messages", []))
+        return list(state.get("messages", []))
 
     async def save_messages(
         self,
@@ -551,6 +584,5 @@ class InMemoryHistoryProvider(BaseHistoryProvider):
         """Persist messages to session state."""
         if state is None:
             return
-        my_state = state.setdefault(self.source_id, {})
-        existing = my_state.get("messages", [])
-        my_state["messages"] = [*existing, *messages]
+        existing = state.get("messages", [])
+        state["messages"] = [*existing, *messages]

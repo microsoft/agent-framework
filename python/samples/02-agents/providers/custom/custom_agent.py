@@ -10,6 +10,7 @@ from agent_framework import (
     AgentSession,
     BaseAgent,
     Content,
+    InMemoryHistoryProvider,
     Message,
     Role,
     normalize_messages,
@@ -93,7 +94,9 @@ class EchoAgent(BaseAgent):
         if not normalized_messages:
             response_message = Message(
                 role=Role.ASSISTANT,
-                contents=[Content.from_text(text="Hello! I'm a custom echo agent. Send me a message and I'll echo it back.")],
+                contents=[
+                    Content.from_text(text="Hello! I'm a custom echo agent. Send me a message and I'll echo it back.")
+                ],
             )
         else:
             # For simplicity, echo the last user message
@@ -199,7 +202,7 @@ async def main() -> None:
     print(f"Agent: {result2.messages[0].text}")
 
     # Check conversation history
-    memory_state = session.state.get("memory", {})
+    memory_state = session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {})
     messages = memory_state.get("messages", [])
     if messages:
         print(f"\nSession contains {len(messages)} messages in history")

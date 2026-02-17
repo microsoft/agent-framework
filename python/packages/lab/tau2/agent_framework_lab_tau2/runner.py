@@ -12,6 +12,7 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentResponse,
     FunctionExecutor,
+    InMemoryHistoryProvider,
     Message,
     SupportsChatGetResponse,
     Workflow,
@@ -359,7 +360,9 @@ class TaskRunner:
         # 2. The assistant's session state (full history, not just the truncated window)
         # 3. The final user message (if any)
         session_state: dict[str, Any] = self._assistant_executor._session.state  # type: ignore
-        all_messages: list[Message] = list(session_state.get("memory", {}).get("messages", []))  # type: ignore
+        all_messages: list[Message] = list(
+            session_state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {}).get("messages", [])
+        )  # type: ignore
         full_conversation = [first_message, *all_messages]
         if self._final_user_message is not None:
             full_conversation.extend(self._final_user_message)
