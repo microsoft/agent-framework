@@ -55,9 +55,23 @@ public static class Program
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
-            if (evt is AgentResponseUpdateEvent executorComplete)
+            switch (evt)
             {
-                Console.WriteLine($"{executorComplete.ExecutorId}: {executorComplete.Data}");
+                case AgentResponseUpdateEvent executorComplete:
+                    Console.WriteLine($"{executorComplete.ExecutorId}: {executorComplete.Data}");
+                    break;
+
+                case ExecutorFailedEvent failureEvent:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"Executor failed [{failureEvent.ExecutorId}]: {failureEvent.Data?.Message ?? "Unknown error"}");
+                    Console.ResetColor();
+                    break;
+
+                case WorkflowErrorEvent errorEvent:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"Workflow error: {errorEvent.Exception?.Message ?? "Unknown error"}");
+                    Console.ResetColor();
+                    throw errorEvent.Exception ?? new InvalidOperationException("Workflow encountered an error.");
             }
         }
     }
