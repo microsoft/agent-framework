@@ -1366,7 +1366,7 @@ class AgentTelemetryLayer:
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=_get_instructions_from_options(options),
+                    system_instructions=_get_instructions_from_options(merged_options),
                 )
 
             span_state = {"closed": False}
@@ -1423,7 +1423,7 @@ class AgentTelemetryLayer:
                         span=span,
                         provider_name=provider_name,
                         messages=messages,
-                        system_instructions=_get_instructions_from_options(options),
+                        system_instructions=_get_instructions_from_options(merged_options),
                     )
                 start_time_stamp = perf_counter()
                 try:

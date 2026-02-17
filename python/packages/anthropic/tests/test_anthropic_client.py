@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 import os
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -399,11 +399,13 @@ async def test_prepare_options_with_tool_choice_auto(mock_anthropic_client: Magi
     client = create_test_anthropic_client(mock_anthropic_client)
 
     messages = [Message(role="user", text="Hello")]
-    chat_options = ChatOptions(tool_choice="auto")
+    chat_options = ChatOptions(tool_choice="auto", allow_multiple_tool_calls=False)
 
     run_options = client._prepare_options(messages, chat_options)
 
     assert run_options["tool_choice"]["type"] == "auto"
+    assert run_options["tool_choice"]["disable_parallel_tool_use"] is True
+    assert "allow_multiple_tool_calls" not in run_options
 
 
 async def test_prepare_options_with_tool_choice_required(mock_anthropic_client: MagicMock) -> None:
@@ -472,6 +474,18 @@ async def test_prepare_options_with_top_p(mock_anthropic_client: MagicMock) -> N
     run_options = client._prepare_options(messages, chat_options)
 
     assert run_options["top_p"] == 0.9
+
+
+async def test_prepare_options_excludes_stream_option(mock_anthropic_client: MagicMock) -> None:
+    """Test _prepare_options excludes stream when stream is provided in options."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [Message(role="user", text="Hello")]
+    chat_options: dict[str, Any] = {"stream": True, "max_tokens": 100}
+
+    run_options = client._prepare_options(messages, chat_options)
+
+    assert "stream" not in run_options
 
 
 async def test_prepare_options_filters_internal_kwargs(mock_anthropic_client: MagicMock) -> None:
@@ -703,6 +717,30 @@ async def test_inner_get_response(mock_anthropic_client: MagicMock) -> None:
     assert len(response.messages) == 1
 
 
+async def test_inner_get_response_ignores_options_stream_non_streaming(mock_anthropic_client: MagicMock) -> None:
+    """Test stream option in options does not conflict in non-streaming mode."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_message = MagicMock(spec=BetaMessage)
+    mock_message.id = "msg_test"
+    mock_message.model = "claude-3-5-sonnet-20241022"
+    mock_message.content = [BetaTextBlock(type="text", text="Hello!")]
+    mock_message.usage = BetaUsage(input_tokens=5, output_tokens=3)
+    mock_message.stop_reason = "end_turn"
+    mock_anthropic_client.beta.messages.create.return_value = mock_message
+
+    messages = [Message(role="user", text="Hi")]
+    options: dict[str, Any] = {"max_tokens": 10, "stream": True}
+
+    await client._inner_get_response(  # type: ignore[attr-defined]
+        messages=messages,
+        options=options,
+    )
+
+    assert mock_anthropic_client.beta.messages.create.call_count == 1
+    assert mock_anthropic_client.beta.messages.create.call_args.kwargs["stream"] is False
+
+
 async def test_inner_get_response_streaming(mock_anthropic_client: MagicMock) -> None:
     """Test _inner_get_response method with streaming."""
     client = create_test_anthropic_client(mock_anthropic_client)
@@ -727,6 +765,31 @@ async def test_inner_get_response_streaming(mock_anthropic_client: MagicMock) ->
 
     # We should get at least some response (even if empty due to message_stop)
     assert isinstance(chunks, list)
+
+
+async def test_inner_get_response_ignores_options_stream_streaming(mock_anthropic_client: MagicMock) -> None:
+    """Test stream option in options does not conflict in streaming mode."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    async def mock_stream():
+        mock_event = MagicMock()
+        mock_event.type = "message_stop"
+        yield mock_event
+
+    mock_anthropic_client.beta.messages.create.return_value = mock_stream()
+
+    messages = [Message(role="user", text="Hi")]
+    options: dict[str, Any] = {"max_tokens": 10, "stream": False}
+
+    async for _ in client._inner_get_response(  # type: ignore[attr-defined]
+        messages=messages,
+        options=options,
+        stream=True,
+    ):
+        pass
+
+    assert mock_anthropic_client.beta.messages.create.call_count == 1
+    assert mock_anthropic_client.beta.messages.create.call_args.kwargs["stream"] is True
 
 
 # Integration Tests
