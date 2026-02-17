@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Behaviors;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Observability;
@@ -139,10 +140,57 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
     private ValueTask RaiseWorkflowEventAsync(WorkflowEvent workflowEvent)
         => this.OutgoingEvents.EnqueueAsync(workflowEvent);
 
-    public ValueTask<AsyncRunHandle> BeginStreamAsync(ExecutionMode mode, CancellationToken cancellationToken = default)
+    public async ValueTask<AsyncRunHandle> BeginStreamAsync(ExecutionMode mode, CancellationToken cancellationToken = default)
     {
         this.RunContext.CheckEnded();
-        return new(new AsyncRunHandle(this, this, mode));
+
+        // Execute workflow start behaviors
+        if (this.Workflow.BehaviorPipeline?.HasWorkflowBehaviors == true)
+        {
+            var context = new WorkflowBehaviorContext
+            {
+                WorkflowName = this.Workflow.Name ?? string.Empty,
+                WorkflowDescription = this.Workflow.Description,
+                RunId = this.RunId,
+                StartExecutorId = this.StartExecutorId,
+                Stage = WorkflowStage.Starting,
+                Properties = null
+            };
+
+            await this.Workflow.BehaviorPipeline.ExecuteWorkflowPipelineAsync(
+                context,
+                (ct) => new ValueTask<int>(0),
+                cancellationToken
+            ).ConfigureAwait(false);
+        }
+
+        return new AsyncRunHandle(this, this, mode);
+    }
+
+    /// <summary>
+    /// Executes workflow end behaviors if configured.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal async ValueTask ExecuteWorkflowEndBehaviorsAsync(CancellationToken cancellationToken = default)
+    {
+        if (this.Workflow.BehaviorPipeline?.HasWorkflowBehaviors == true)
+        {
+            var context = new WorkflowBehaviorContext
+            {
+                WorkflowName = this.Workflow.Name ?? string.Empty,
+                WorkflowDescription = this.Workflow.Description,
+                RunId = this.RunId,
+                StartExecutorId = this.StartExecutorId,
+                Stage = WorkflowStage.Ending,
+                Properties = null
+            };
+
+            await this.Workflow.BehaviorPipeline.ExecuteWorkflowPipelineAsync(
+                context,
+                (ct) => new ValueTask<int>(0),
+                cancellationToken
+            ).ConfigureAwait(false);
+        }
     }
 
     public async ValueTask<AsyncRunHandle> ResumeStreamAsync(ExecutionMode mode, CheckpointInfo fromCheckpoint, CancellationToken cancellationToken = default)
@@ -206,6 +254,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
                 envelope.MessageType,
                 this.RunContext.BindWorkflowContext(receiverId, envelope.TraceContext),
                 this.TelemetryContext,
+                this.Workflow.BehaviorPipeline,
                 cancellationToken
             ).ConfigureAwait(false);
         }

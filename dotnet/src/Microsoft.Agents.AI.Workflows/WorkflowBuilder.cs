@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
+using Microsoft.Agents.AI.Workflows.Behaviors;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Shared.Diagnostics;
@@ -39,6 +40,7 @@ public class WorkflowBuilder
     private string? _name;
     private string? _description;
     private WorkflowTelemetryContext _telemetryContext = WorkflowTelemetryContext.Disabled;
+    private WorkflowBehaviorOptions? _behaviorOptions;
 
     /// <summary>
     /// Initializes a new instance of the WorkflowBuilder class with the specified starting executor.
@@ -142,6 +144,19 @@ public class WorkflowBuilder
     internal void SetTelemetryContext(WorkflowTelemetryContext context)
     {
         this._telemetryContext = Throw.IfNull(context);
+    }
+
+    /// <summary>
+    /// Configures pipeline behaviors for the workflow, allowing custom logic to be executed before and after
+    /// workflow and executor operations.
+    /// </summary>
+    /// <param name="configure">An action to configure the behavior options.</param>
+    /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
+    public WorkflowBuilder WithBehaviors(Action<WorkflowBehaviorOptions> configure)
+    {
+        this._behaviorOptions ??= new WorkflowBehaviorOptions();
+        configure?.Invoke(this._behaviorOptions);
+        return this;
     }
 
     /// <summary>
@@ -575,7 +590,8 @@ public class WorkflowBuilder
             ExecutorBindings = this._executorBindings,
             Edges = this._edges,
             Ports = this._requestPorts,
-            OutputExecutors = this._outputExecutors
+            OutputExecutors = this._outputExecutors,
+            BehaviorPipeline = this._behaviorOptions?.BuildPipeline()
         };
 
         // Using the start executor ID as a proxy for the workflow ID
