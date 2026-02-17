@@ -2,7 +2,7 @@
 
 ## Overview
 
-Durable agents extend the standard Microsoft Agent Framework with **durable state management** powered by the [Durable Task Framework](https://github.com/microsoft/durabletask). An ordinary Agent Framework agent runs in-process: its conversation history lives in memory and is lost when the process ends. A durable agent persists conversation history and execution state in external storage so that sessions survive process restarts, failures, and scale-out events.
+Durable agents extend the standard Microsoft Agent Framework with **durable state management** powered by the Durable Task framework. An ordinary Agent Framework agent runs in-process: its conversation history lives in memory and is lost when the process ends. A durable agent persists conversation history and execution state in external storage so that sessions survive process restarts, failures, and scale-out events.
 
 | Capability | Ordinary agent | Durable agent |
 | --- | --- | --- |
