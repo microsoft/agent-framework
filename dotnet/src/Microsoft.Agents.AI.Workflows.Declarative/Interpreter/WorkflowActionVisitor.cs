@@ -559,8 +559,6 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
     protected override void Visit(SearchAndSummarizeContent item) => this.NotSupported(item);
 
-    protected override void Visit(InvokeMcpTool item) => this.NotSupported(item);
-
     #endregion
 
     private void ContinueWith(
