@@ -18,9 +18,9 @@ internal static class DiagnosticIds
         // These diagnostic IDs are defined by the MEAI package for its experimental APIs.
         // We use the same IDs so consumers do not need to suppress additional diagnostics
         // when using the experimental MEAI APIs.
-        internal const string AIResponseContinuations = AIExperiments;
-        internal const string AIMcpServers = AIExperiments;
-        internal const string AIFunctionApprovals = AIExperiments;
+        internal const string AIResponseContinuations = MEAIExperiments;
+        internal const string AIMcpServers = MEAIExperiments;
+        internal const string AIFunctionApprovals = MEAIExperiments;
 
         // These diagnostic IDs are defined by the OpenAI package for its experimental APIs.
         // We use the same IDs so consumers do not need to suppress additional diagnostics
@@ -28,6 +28,6 @@ internal static class DiagnosticIds
         internal const string AIOpenAIResponses = "OPENAI001";
         internal const string AIOpenAIAssistants = "OPENAI001";
 
-        private const string AIExperiments = "MEAI001";
+        private const string MEAIExperiments = "MEAI001";
     }
 }
