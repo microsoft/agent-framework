@@ -138,18 +138,6 @@ internal sealed class InvokeFunctionToolExecutor(
     }
 
     /// <summary>
-    /// Completes the action after processing the function result.
-    /// </summary>
-    /// <param name="context">The workflow context.</param>
-    /// <param name="message">The action executor result.</param>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    public async ValueTask CompleteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
-    {
-        await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
     /// Transforms messages containing function-related content to assistant text messages.
     /// Messages with FunctionResultContent are converted to assistant messages with the result as text.
     /// Messages with only FunctionCallContent are excluded as they have no informational value.

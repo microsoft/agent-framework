@@ -263,31 +263,6 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
 
     #endregion
 
-    #region CompleteAsync Tests
-
-    [Fact]
-    public async Task InvokeFunctionToolCompleteAsyncRaisesCompletionEventAsync()
-    {
-        // Arrange
-        this.State.InitializeSystem();
-        InvokeFunctionTool model = this.CreateModel(
-            displayName: nameof(InvokeFunctionToolCompleteAsyncRaisesCompletionEventAsync),
-            functionName: "test_function");
-        MockAgentProvider mockAgentProvider = new();
-        InvokeFunctionToolExecutor action = new(model, mockAgentProvider.Object, this.State);
-
-        // Act
-        WorkflowEvent[] events = await this.ExecuteAsync(
-            InvokeFunctionToolExecutor.Steps.Resume(action.Id),
-            action.CompleteAsync);
-
-        // Assert
-        VerifyModel(model, action);
-        VerifyCompletionEvent(events);
-    }
-
-    #endregion
-
     #region Helper Methods
 
     private async Task ExecuteTestAsync(InvokeFunctionTool model)
