@@ -144,9 +144,9 @@ public abstract class Executor : IIdentified
         => this.ExecuteAsync(message, messageType, context, WorkflowTelemetryContext.Disabled, cancellationToken);
 
     internal async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, CancellationToken cancellationToken = default)
-        => await this.ExecuteAsync(message, messageType, context, telemetryContext, behaviorPipeline: null, cancellationToken).ConfigureAwait(false);
+        => await this.ExecuteAsync(message, messageType, context, telemetryContext, behaviorPipeline: null, runId: null, cancellationToken).ConfigureAwait(false);
 
-    internal async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, BehaviorPipeline? behaviorPipeline, CancellationToken cancellationToken = default)
+    internal async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, BehaviorPipeline? behaviorPipeline, string? runId, CancellationToken cancellationToken = default)
     {
         // Check if behaviors are configured
         if (behaviorPipeline?.HasExecutorBehaviors == true)
@@ -157,7 +157,7 @@ public abstract class Executor : IIdentified
                 ExecutorType = this.GetType(),
                 Message = message,
                 MessageType = message.GetType(),
-                RunId = Guid.NewGuid().ToString(), // TODO: Get actual run ID from context
+                RunId = runId ?? string.Empty,
                 Stage = ExecutorStage.PreExecution,
                 WorkflowContext = context,
                 TraceContext = context.TraceContext,

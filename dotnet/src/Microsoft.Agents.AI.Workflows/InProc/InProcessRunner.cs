@@ -259,6 +259,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
                 this.RunContext.BindWorkflowContext(receiverId, envelope.TraceContext),
                 this.TelemetryContext,
                 this.Workflow.BehaviorPipeline,
+                this.RunId,
                 cancellationToken
             ).ConfigureAwait(false);
         }
