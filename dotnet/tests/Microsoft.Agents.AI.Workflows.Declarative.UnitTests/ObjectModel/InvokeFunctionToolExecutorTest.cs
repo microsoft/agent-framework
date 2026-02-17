@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
@@ -278,11 +277,7 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         VerifyInvocationEvent(events);
 
         // IsDiscreteAction should be false for InvokeFunction
-        Assert.Equal(
-            false,
-            action.GetType().BaseType?
-                .GetProperty("IsDiscreteAction", BindingFlags.NonPublic | BindingFlags.Instance)?
-                .GetValue(action));
+        VerifyIsDiscrete(action, isDiscrete: false);
     }
 
     private async Task<WorkflowEvent[]> ExecuteCaptureResponseTestAsync(
