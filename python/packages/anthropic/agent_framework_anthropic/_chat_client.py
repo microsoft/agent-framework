@@ -43,9 +43,11 @@ from anthropic.types.beta import (
 from anthropic.types.beta.beta_bash_code_execution_tool_result_error import (
     BetaBashCodeExecutionToolResultError,
 )
+from anthropic.types.beta.beta_code_execution_result_block import BetaCodeExecutionResultBlock
 from anthropic.types.beta.beta_code_execution_tool_result_error import (
     BetaCodeExecutionToolResultError,
 )
+from anthropic.types.beta.beta_encrypted_code_execution_result_block import BetaEncryptedCodeExecutionResultBlock
 from pydantic import BaseModel
 
 if sys.version_info >= (3, 11):
@@ -488,6 +490,10 @@ class AnthropicClient(
         run_options: dict[str, Any] = {
             k: v for k, v in options.items() if v is not None and k not in {"instructions", "response_format"}
         }
+        # Framework-level options handled elsewhere; do not forward as raw Anthropic request kwargs.
+        run_options.pop("allow_multiple_tool_calls", None)
+        # Stream mode is controlled explicitly at call sites.
+        run_options.pop("stream", None)
 
         # Translation between options keys and Anthropic Messages API
         for old_key, new_key in OPTION_TRANSLATIONS.items():
@@ -934,10 +940,23 @@ class AnthropicClient(
                                 )
                             )
                         else:
-                            if content_block.content.stdout:
+                            if (
+                                isinstance(content_block.content, BetaCodeExecutionResultBlock)
+                                and content_block.content.stdout
+                            ):
                                 code_outputs.append(
                                     Content.from_text(
                                         text=content_block.content.stdout,
+                                        raw_representation=content_block.content,
+                                    )
+                                )
+                            if (
+                                isinstance(content_block.content, BetaEncryptedCodeExecutionResultBlock)
+                                and content_block.content.encrypted_stdout
+                            ):
+                                code_outputs.append(
+                                    Content.from_text(
+                                        text=content_block.content.encrypted_stdout,
                                         raw_representation=content_block.content,
                                     )
                                 )

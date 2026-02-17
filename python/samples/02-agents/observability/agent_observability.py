@@ -17,7 +17,10 @@ same observability setup function.
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# See:
+# samples/02-agents/tools/function_tool_with_approval.py
+# samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -32,7 +35,7 @@ async def main():
     # calling `configure_otel_providers` will *enable* tracing and create the necessary tracing, logging
     # and metrics providers based on environment variables.
     # See the .env.example file for the available configuration options.
-    configure_otel_providers()
+    configure_otel_providers(enable_sensitive_data=True)
 
     questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
 

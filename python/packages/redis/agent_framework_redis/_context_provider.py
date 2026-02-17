@@ -12,7 +12,7 @@ import json
 import sys
 from functools import reduce
 from operator import and_
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 import numpy as np
 from agent_framework import Message
@@ -50,10 +50,11 @@ class RedisContextProvider(BaseContextProvider):
     """
 
     DEFAULT_CONTEXT_PROMPT = "## Memories\nConsider the following memories when answering user questions:"
+    DEFAULT_SOURCE_ID: ClassVar[str] = "redis"
 
     def __init__(
         self,
-        source_id: str,
+        source_id: str = DEFAULT_SOURCE_ID,
         redis_url: str = "redis://localhost:6379",
         index_name: str = "context",
         prefix: str = "context",
