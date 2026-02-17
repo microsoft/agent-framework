@@ -488,6 +488,10 @@ class AnthropicClient(
         run_options: dict[str, Any] = {
             k: v for k, v in options.items() if v is not None and k not in {"instructions", "response_format"}
         }
+        # Framework-level options handled elsewhere; do not forward as raw Anthropic request kwargs.
+        run_options.pop("allow_multiple_tool_calls", None)
+        # Stream mode is controlled explicitly at call sites.
+        run_options.pop("stream", None)
 
         # Translation between options keys and Anthropic Messages API
         for old_key, new_key in OPTION_TRANSLATIONS.items():

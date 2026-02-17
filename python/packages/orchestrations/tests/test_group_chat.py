@@ -166,6 +166,96 @@ class ConcatenatedJsonManagerAgent(Agent):
         )
 
 
+class NonJsonManagerAgent(Agent):
+    """Manager agent that emits only non-JSON assistant text."""
+
+    def __init__(self) -> None:
+        super().__init__(client=MockChatClient(), name="non_json_manager", description="Non-JSON manager")
+        self._call_count = 0
+
+    async def run(
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse:
+        self._call_count += 1
+        return AgentResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    text="Good! Continue with the audit.",
+                    author_name=self.name,
+                )
+            ]
+        )
+
+
+class RetryableNonJsonManagerAgent(Agent):
+    """Manager agent that emits non-JSON once, then valid orchestration JSON."""
+
+    def __init__(self) -> None:
+        super().__init__(client=MockChatClient(), name="retry_manager", description="Retry manager")
+        self._call_count = 0
+
+    async def run(
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse:
+        if self._call_count == 0:
+            self._call_count += 1
+            return AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        text="Good! Continue with the audit.",
+                        author_name=self.name,
+                    )
+                ]
+            )
+        if self._call_count == 1:
+            self._call_count += 1
+            payload = {"terminate": False, "reason": "Selecting agent", "next_speaker": "agent", "final_message": None}
+            return AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        text=(
+                            '{"terminate": false, "reason": "Selecting agent", '
+                            '"next_speaker": "agent", "final_message": null}'
+                        ),
+                        author_name=self.name,
+                    )
+                ],
+                value=payload,
+            )
+
+        self._call_count += 1
+        payload = {
+            "terminate": True,
+            "reason": "Task complete",
+            "next_speaker": None,
+            "final_message": "retry manager final",
+        }
+        return AgentResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    text=(
+                        '{"terminate": true, "reason": "Task complete", '
+                        '"next_speaker": null, "final_message": "retry manager final"}'
+                    ),
+                    author_name=self.name,
+                )
+            ],
+            value=payload,
+        )
+
+
 def make_sequence_selector() -> Callable[[GroupChatState], str]:
     state_counter = {"value": 0}
 
@@ -287,6 +377,46 @@ async def test_agent_manager_handles_concatenated_json_output() -> None:
     assert any(msg.author_name == "agent" and msg.text == "worker response" for msg in conversation)
     assert conversation[-1].author_name == manager.name
     assert conversation[-1].text == "concatenated manager final"
+
+
+async def test_agent_manager_non_json_output_raises_parse_error() -> None:
+    manager = NonJsonManagerAgent()
+    worker = StubAgent("agent", "worker response")
+
+    workflow = GroupChatBuilder(
+        participants=[worker],
+        orchestrator_agent=manager,
+    ).build()
+
+    with pytest.raises(ValueError, match="Failed to parse agent orchestration output."):
+        async for _ in workflow.run("coordinate task", stream=True):
+            pass
+
+    assert manager._call_count > 1
+
+
+async def test_agent_manager_retries_once_then_recovers_from_non_json_output() -> None:
+    manager = RetryableNonJsonManagerAgent()
+    worker = StubAgent("agent", "worker response")
+
+    workflow = GroupChatBuilder(
+        participants=[worker],
+        orchestrator_agent=manager,
+    ).build()
+
+    outputs: list[list[Message]] = []
+    async for event in workflow.run("coordinate task", stream=True):
+        if event.type == "output":
+            data = event.data
+            if isinstance(data, list):
+                outputs.append(cast(list[Message], data))
+
+    assert outputs
+    conversation = outputs[-1]
+    assert any(msg.author_name == "agent" and msg.text == "worker response" for msg in conversation)
+    assert conversation[-1].author_name == manager.name
+    assert conversation[-1].text == "retry manager final"
+    assert manager._call_count == 3
 
 
 # Comprehensive tests for group chat functionality
