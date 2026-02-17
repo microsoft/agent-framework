@@ -232,7 +232,7 @@ namespace SampleApp
         string? Outline);
 
     /// <summary>
-    /// An <see cref="AIContextProvider{TState}"/> that acts as persistent memory for a novel-writing agent.
+    /// An <see cref="AIContextProvider"/> that acts as persistent memory for a novel-writing agent.
     /// On each turn it injects the current novel context as additional instructions, and after each
     /// turn it extracts structured novel facts from the conversation to update the context.
     /// </summary>
