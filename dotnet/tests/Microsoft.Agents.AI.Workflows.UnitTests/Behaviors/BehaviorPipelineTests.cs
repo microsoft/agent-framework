@@ -26,7 +26,8 @@ public class BehaviorPipelineTests
             Message = "test",
             MessageType = typeof(string),
             RunId = Guid.NewGuid().ToString(),
-            Stage = ExecutorStage.PreExecution
+            Stage = ExecutorStage.PreExecution,
+            WorkflowContext = NullWorkflowContext.Instance
         };
 
         // Act
@@ -58,7 +59,8 @@ public class BehaviorPipelineTests
             Message = "test",
             MessageType = typeof(string),
             RunId = Guid.NewGuid().ToString(),
-            Stage = ExecutorStage.PreExecution
+            Stage = ExecutorStage.PreExecution,
+            WorkflowContext = NullWorkflowContext.Instance
         };
 
         // Act
@@ -93,7 +95,8 @@ public class BehaviorPipelineTests
             Message = "test",
             MessageType = typeof(string),
             RunId = Guid.NewGuid().ToString(),
-            Stage = ExecutorStage.PreExecution
+            Stage = ExecutorStage.PreExecution,
+            WorkflowContext = NullWorkflowContext.Instance
         };
 
         // Act
@@ -129,7 +132,8 @@ public class BehaviorPipelineTests
             Message = "test",
             MessageType = typeof(string),
             RunId = Guid.NewGuid().ToString(),
-            Stage = ExecutorStage.PreExecution
+            Stage = ExecutorStage.PreExecution,
+            WorkflowContext = NullWorkflowContext.Instance
         };
 
         // Act
@@ -162,7 +166,8 @@ public class BehaviorPipelineTests
             Message = "test",
             MessageType = typeof(string),
             RunId = Guid.NewGuid().ToString(),
-            Stage = ExecutorStage.PreExecution
+            Stage = ExecutorStage.PreExecution,
+            WorkflowContext = NullWorkflowContext.Instance
         };
 
         // Act
@@ -391,5 +396,22 @@ public class BehaviorPipelineTests
         {
             throw new InvalidOperationException("Test exception from workflow behavior");
         }
+    }
+
+    private sealed class NullWorkflowContext : IWorkflowContext
+    {
+        public static readonly NullWorkflowContext Instance = new();
+
+        public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) => default;
+        public ValueTask SendMessageAsync(object message, string? targetId, CancellationToken cancellationToken = default) => default;
+        public ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default) => default;
+        public ValueTask RequestHaltAsync() => default;
+        public ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null, CancellationToken cancellationToken = default) => default;
+        public ValueTask<T> ReadOrInitStateAsync<T>(string key, Func<T> initialStateFactory, string? scopeName = null, CancellationToken cancellationToken = default) => new(initialStateFactory());
+        public ValueTask<HashSet<string>> ReadStateKeysAsync(string? scopeName = null, CancellationToken cancellationToken = default) => new(new HashSet<string>());
+        public ValueTask QueueStateUpdateAsync<T>(string key, T? value, string? scopeName = null, CancellationToken cancellationToken = default) => default;
+        public ValueTask QueueClearScopeAsync(string? scopeName = null, CancellationToken cancellationToken = default) => default;
+        public IReadOnlyDictionary<string, string>? TraceContext => null;
+        public bool ConcurrentRunsEnabled => false;
     }
 }
