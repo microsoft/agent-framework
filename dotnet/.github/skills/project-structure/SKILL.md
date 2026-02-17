@@ -12,4 +12,4 @@ description: Explains the project structure of the agent-framework .NET solution
 | `src/` | Source code projects |
 | `tests/` | Test projects — named `<Source-Code-Project>.UnitTests` or `<Source-Code-Project>.IntegrationTests` |
 | `samples/` | Sample projects |
-| `src/Shared`, `src/LegacySupport` | Shared code files included by multiple source code projects (see each folder's README.md for instructions on how to include in a project) |
+| `src/Shared`, `src/LegacySupport` | Shared code files included by multiple source code projects (see README.md files in these folders or their subdirectories for instructions on how to include them in a project) |

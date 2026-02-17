@@ -24,7 +24,7 @@ cd /workspaces/agent-framework/dotnet
 dotnet build ./src/Microsoft.Agents.AI.Abstractions/Microsoft.Agents.AI.Abstractions.csproj
 ```
 
-Example: Building a single code project for all just .net 10.
+Example: Building a single code project for just .NET 10.
 
 ```bash
 cd /workspaces/agent-framework/dotnet
