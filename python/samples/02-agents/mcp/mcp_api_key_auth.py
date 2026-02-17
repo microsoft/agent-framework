@@ -54,3 +54,9 @@ async def api_key_auth_example() -> None:
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result.text}")
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    asyncio.run(api_key_auth_example())
