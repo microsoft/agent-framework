@@ -429,6 +429,8 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
 
     protected override void Visit(SearchAndSummarizeContent item) => this.NotSupported(item);
 
+    protected override void Visit(InvokeFunctionTool item) => this.NotSupported(item);
+
     #endregion
 
     private void ContinueWith(
