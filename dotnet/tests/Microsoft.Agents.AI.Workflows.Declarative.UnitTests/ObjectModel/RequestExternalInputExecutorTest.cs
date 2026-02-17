@@ -32,17 +32,14 @@ public sealed class RequestExternalInputExecutorTest(ITestOutputHelper output) :
         string captureStep = RequestExternalInputExecutor.Steps.Capture(testId);
 
         // Assert
-        Assert.Equal($"{testId}_{nameof(QuestionExecutor.Steps.Input)}", inputStep);
-        Assert.Equal($"{testId}_{nameof(QuestionExecutor.Steps.Capture)}", captureStep);
+        Assert.Equal($"{testId}_{nameof(RequestExternalInputExecutor.Steps.Input)}", inputStep);
+        Assert.Equal($"{testId}_{nameof(RequestExternalInputExecutor.Steps.Capture)}", captureStep);
     }
 
     [Fact]
     public async Task ExecuteRequestsExternalInputAsync()
     {
-        // Arrange
-        RequestExternalInput model = this.CreateModel(nameof(ExecuteRequestsExternalInputAsync), "TestVariable");
-
-        // Act & Assert
+        // Arrange, Act & Assert
         await this.ExecuteTestAsync(
             displayName: nameof(ExecuteRequestsExternalInputAsync),
             variableName: "TestVariable");
