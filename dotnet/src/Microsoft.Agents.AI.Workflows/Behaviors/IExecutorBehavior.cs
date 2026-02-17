@@ -13,6 +13,8 @@ namespace Microsoft.Agents.AI.Workflows.Behaviors;
 /// <remarks>
 /// Implement this interface to add cross-cutting concerns like logging, telemetry, validation, or performance monitoring
 /// at the executor level. Multiple behaviors can be chained together to form a pipeline.
+/// Behaviors execute once per executor invocation. Logic placed before <c>await continuation()</c> runs before the executor;
+/// logic placed after runs once the executor (and any subsequent behaviors) has completed.
 /// </remarks>
 public interface IExecutorBehavior
 {
@@ -93,12 +95,9 @@ public sealed class ExecutorBehaviorContext
 public enum ExecutorStage
 {
     /// <summary>
-    /// Before the executor begins processing the message.
+    /// Before the executor begins processing the message. Behaviors are invoked once per executor call.
+    /// To perform logic after the executor completes, place code after the <c>await continuation()</c> call
+    /// in <see cref="IExecutorBehavior.HandleAsync"/>.
     /// </summary>
-    PreExecution,
-
-    /// <summary>
-    /// After the executor completes processing the message.
-    /// </summary>
-    PostExecution
+    PreExecution
 }
