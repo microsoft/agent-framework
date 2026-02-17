@@ -6,6 +6,7 @@ from typing import Annotated
 
 from agent_framework import (
     AgentContext,
+    InMemoryHistoryProvider,
     tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
@@ -50,7 +51,7 @@ async def thread_tracking_middleware(
     """MiddlewareTypes that tracks and logs session behavior across runs."""
     session_message_count = 0
     if context.session:
-        memory_state = context.session.state.get("memory", {})
+        memory_state = context.session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {})
         session_message_count = len(memory_state.get("messages", []))
 
     print(f"[MiddlewareTypes pre-execution] Current input messages: {len(context.messages)}")
@@ -62,7 +63,7 @@ async def thread_tracking_middleware(
     # Check session state after agent execution
     updated_session_message_count = 0
     if context.session:
-        memory_state = context.session.state.get("memory", {})
+        memory_state = context.session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {})
         updated_session_message_count = len(memory_state.get("messages", []))
 
     print(f"[MiddlewareTypes post-execution] Updated session messages: {updated_session_message_count}")

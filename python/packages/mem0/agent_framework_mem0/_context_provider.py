@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
@@ -42,10 +42,11 @@ class Mem0ContextProvider(BaseContextProvider):
     """
 
     DEFAULT_CONTEXT_PROMPT = "## Memories\nConsider the following memories when answering user questions:"
+    DEFAULT_SOURCE_ID: ClassVar[str] = "mem0"
 
     def __init__(
         self,
-        source_id: str,
+        source_id: str = DEFAULT_SOURCE_ID,
         mem0_client: AsyncMemory | AsyncMemoryClient | None = None,
         api_key: str | None = None,
         application_id: str | None = None,
