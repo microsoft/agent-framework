@@ -55,7 +55,10 @@ ChatConfiguration chatConfiguration = safetyConfig.ToChatConfiguration(
     originalChatConfiguration: new ChatConfiguration(chatClient));
 
 // Create a test agent
-AIAgent agent = await CreateKnowledgeAgent(aiProjectClient, deploymentName);
+AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
+    name: "KnowledgeAgent",
+    model: deploymentName,
+    instructions: "You are a helpful assistant. Answer questions accurately based on the provided context.");
 Console.WriteLine($"Created agent: {agent.Name}");
 Console.WriteLine();
 
@@ -99,14 +102,6 @@ finally
 // Implementation Functions
 // ============================================================================
 
-static async Task<AIAgent> CreateKnowledgeAgent(AIProjectClient client, string model)
-{
-    return await client.CreateAIAgentAsync(
-        name: "KnowledgeAgent",
-        model: model,
-        instructions: "You are a helpful assistant. Answer questions accurately based on the provided context.");
-}
-
 static async Task RunSelfReflectionWithGroundedness(
     AIAgent agent, string question, string context, ChatConfiguration chatConfiguration)
 {
@@ -137,7 +132,7 @@ static async Task RunSelfReflectionWithGroundedness(
 
         List<ChatMessage> messages =
         [
-            new(ChatRole.User, question),
+            new(ChatRole.User, currentPrompt),
         ];
         ChatResponse chatResponse = new(new ChatMessage(ChatRole.Assistant, responseText));
 
@@ -169,11 +164,15 @@ static async Task RunSelfReflectionWithGroundedness(
             break;
         }
 
-        // Ask for improvement in the next iteration
+        // Ask for improvement in the next iteration, including the previous response
+        // so the LLM knows what to improve on (each iteration uses a new session).
         currentPrompt = $"""
             Context: {context}
 
             Your previous answer scored {score}/5 on groundedness.
+            Your previous answer was:
+            {responseText}
+
             Please improve your answer to be more grounded in the provided context.
             Only include information that is directly supported by the context.
 
@@ -215,7 +214,7 @@ static async Task RunQualityEvaluation(
 
     List<ChatMessage> messages =
     [
-        new(ChatRole.User, question),
+        new(ChatRole.User, prompt),
     ];
     ChatResponse chatResponse = new(new ChatMessage(ChatRole.Assistant, responseText));
 
@@ -263,7 +262,7 @@ static async Task RunCombinedQualityAndSafetyEvaluation(
 
     List<ChatMessage> messages =
     [
-        new(ChatRole.User, question),
+        new(ChatRole.User, question), // No context in this evaluation — testing quality and safety on raw question
     ];
     ChatResponse chatResponse = new(new ChatMessage(ChatRole.Assistant, responseText));
 
