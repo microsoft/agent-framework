@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
 from collections.abc import Awaitable, Callable
 
 from agent_framework import AgentContext, AgentMiddleware, ChatContext, ChatMiddleware, MiddlewareTermination
-from agent_framework._logging import get_logger
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
@@ -14,7 +14,7 @@ from ._models import Activity
 from ._processor import ScopedContentProcessor
 from ._settings import PurviewSettings
 
-logger = get_logger("agent_framework.purview")
+logger = logging.getLogger("agent_framework.purview")
 
 
 class PurviewPolicyMiddleware(AgentMiddleware):
@@ -48,12 +48,12 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         """Resolve a session/conversation id from the agent run context.
 
         Resolution order:
-          1. thread.service_thread_id
+          1. session.service_session_id
           2. First message whose additional_properties contains 'conversation_id'
           3. None: the downstream processor will generate a new UUID
         """
-        if context.thread and context.thread.service_thread_id:
-            return context.thread.service_thread_id
+        if context.session and context.session.service_session_id:
+            return context.session.service_session_id
 
         for message in context.messages:
             conversation_id = message.additional_properties.get("conversation_id")

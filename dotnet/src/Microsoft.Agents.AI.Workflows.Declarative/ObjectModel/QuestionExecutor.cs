@@ -16,7 +16,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
-internal sealed class QuestionExecutor(Question model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state) :
+internal sealed class QuestionExecutor(Question model, ResponseAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<Question>(model, state)
 {
     public static class Steps

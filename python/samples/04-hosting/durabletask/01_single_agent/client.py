@@ -69,9 +69,9 @@ def run_client(agent_client: DurableAIAgentClient) -> None:
     logger.debug("Getting reference to Joker agent...")
     joker = agent_client.get_agent("Joker")
 
-    # Create a new thread for the conversation
-    thread = joker.get_new_thread()
-    logger.debug(f"Thread ID: {thread.session_id}")
+    # Create a new session for the conversation
+    session = joker.create_session()
+    logger.debug(f"Session ID: {session.session_id}")
     logger.info("Start chatting with the Joker agent! (Type 'exit' to quit)")
 
     # Interactive conversation loop
@@ -94,7 +94,7 @@ def run_client(agent_client: DurableAIAgentClient) -> None:
 
         # Send message to agent and get response
         try:
-            response = joker.run(user_message, thread=thread)
+            response = joker.run(user_message, session=session)
             logger.info(f"Joker: {response.text} \n")
         except Exception as e:
             logger.error(f"Error getting response: {e}")

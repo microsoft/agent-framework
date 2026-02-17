@@ -9,6 +9,7 @@ with Azure Durable Entities, enabling stateful and durable AI agent execution.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from collections.abc import Callable, Mapping
@@ -18,7 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import azure.durable_functions as df
 import azure.functions as func
-from agent_framework import SupportsAgentRun, get_logger
+from agent_framework import SupportsAgentRun
 from agent_framework_durabletask import (
     DEFAULT_MAX_POLL_RETRIES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -42,7 +43,7 @@ from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
 
-logger = get_logger("agent_framework.azurefunctions")
+logger = logging.getLogger("agent_framework.azurefunctions")
 
 EntityHandler = Callable[[df.DurableEntityContext], None]
 HandlerT = TypeVar("HandlerT", bound=Callable[..., Any])
@@ -135,8 +136,8 @@ class AgentFunctionApp(DFAppBase):
         @app.orchestration_trigger(context_name="context")
         def my_orchestration(context):
             writer = app.get_agent(context, "WeatherAgent")
-            thread = writer.get_new_thread()
-            forecast_task = writer.run("What's the forecast?", thread=thread)
+            session = writer.create_session()
+            forecast_task = writer.run("What's the forecast?", session=session)
             forecast = yield forecast_task
             return forecast
 

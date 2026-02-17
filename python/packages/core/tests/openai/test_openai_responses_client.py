@@ -2168,6 +2168,90 @@ async def test_conversation_id_precedence_kwargs_over_options() -> None:
     assert "conversation" not in run_opts
 
 
+def _create_mock_responses_text_response(*, response_id: str) -> MagicMock:
+    mock_response = MagicMock()
+    mock_response.id = response_id
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.finish_reason = None
+
+    mock_message_content = MagicMock()
+    mock_message_content.type = "output_text"
+    mock_message_content.text = "Hello! How can I help?"
+    mock_message_content.annotations = []
+
+    mock_message_item = MagicMock()
+    mock_message_item.type = "message"
+    mock_message_item.content = [mock_message_content]
+
+    mock_response.output = [mock_message_item]
+    return mock_response
+
+
+async def test_instructions_sent_first_turn_then_skipped_for_continuation() -> None:
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    mock_response = _create_mock_responses_text_response(response_id="resp_123")
+
+    with patch.object(client.client.responses, "create", return_value=mock_response) as mock_create:
+        await client.get_response(
+            messages=[Message(role="user", text="Hello")],
+            options={"instructions": "Reply in uppercase."},
+        )
+
+        first_input_messages = mock_create.call_args.kwargs["input"]
+        assert len(first_input_messages) == 2
+        assert first_input_messages[0]["role"] == "system"
+        assert any("Reply in uppercase" in str(c) for c in first_input_messages[0]["content"])
+        assert first_input_messages[1]["role"] == "user"
+
+        await client.get_response(
+            messages=[Message(role="user", text="Tell me a joke")],
+            options={"instructions": "Reply in uppercase.", "conversation_id": "resp_123"},
+        )
+
+        second_input_messages = mock_create.call_args.kwargs["input"]
+        assert len(second_input_messages) == 1
+        assert second_input_messages[0]["role"] == "user"
+        assert not any(message["role"] == "system" for message in second_input_messages)
+
+
+@pytest.mark.parametrize("conversation_id", ["resp_456", "conv_abc123"])
+async def test_instructions_not_repeated_for_continuation_ids(conversation_id: str) -> None:
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    mock_response = _create_mock_responses_text_response(response_id="resp_456")
+
+    with patch.object(client.client.responses, "create", return_value=mock_response) as mock_create:
+        await client.get_response(
+            messages=[Message(role="user", text="Continue conversation")],
+            options={"instructions": "Be helpful.", "conversation_id": conversation_id},
+        )
+
+        input_messages = mock_create.call_args.kwargs["input"]
+        assert len(input_messages) == 1
+        assert input_messages[0]["role"] == "user"
+        assert not any(message["role"] == "system" for message in input_messages)
+
+
+async def test_instructions_included_without_conversation_id() -> None:
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    mock_response = _create_mock_responses_text_response(response_id="resp_new")
+
+    with patch.object(client.client.responses, "create", return_value=mock_response) as mock_create:
+        await client.get_response(
+            messages=[Message(role="user", text="Hello")],
+            options={"instructions": "You are a helpful assistant."},
+        )
+
+        input_messages = mock_create.call_args.kwargs["input"]
+        assert len(input_messages) == 2
+        assert input_messages[0]["role"] == "system"
+        assert any("helpful assistant" in str(c) for c in input_messages[0]["content"])
+        assert input_messages[1]["role"] == "user"
+
+
 def test_with_callable_api_key() -> None:
     """Test OpenAIResponsesClient initialization with callable API key."""
 
@@ -2332,7 +2416,12 @@ async def test_integration_web_search() -> None:
         # Use static method for web search tool
         web_search_tool = OpenAIResponsesClient.get_web_search_tool()
         content = {
-            "messages": "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+            "messages": [
+                Message(
+                    role="user",
+                    text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+                )
+            ],
             "options": {
                 "tool_choice": "auto",
                 "tools": [web_search_tool],
@@ -2354,7 +2443,7 @@ async def test_integration_web_search() -> None:
             user_location={"country": "US", "city": "Seattle"},
         )
         content = {
-            "messages": "What is the current weather? Do not ask for my current location.",
+            "messages": [Message(role="user", text="What is the current weather? Do not ask for my current location.")],
             "options": {
                 "tool_choice": "auto",
                 "tools": [web_search_tool_with_location],

@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from collections.abc import MutableSequence, Sequence
+import os
+from contextlib import suppress
 from typing import Any
 
-from agent_framework import Agent, Context, ContextProvider, Message, SupportsChatGetResponse
-from agent_framework.azure import AzureAIClient
-from azure.identity.aio import AzureCliCredential
+from agent_framework import Agent, AgentSession, BaseContextProvider, SessionContext, SupportsChatGetResponse
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 
 
@@ -15,34 +16,33 @@ class UserInfo(BaseModel):
     age: int | None = None
 
 
-class UserInfoMemory(ContextProvider):
-    def __init__(self, client: SupportsChatGetResponse, user_info: UserInfo | None = None, **kwargs: Any):
+class UserInfoMemory(BaseContextProvider):
+    def __init__(self, source_id: str = "user-info-memory", *, client: SupportsChatGetResponse, **kwargs: Any):
         """Create the memory.
 
         If you pass in kwargs, they will be attempted to be used to create a UserInfo object.
         """
-
+        super().__init__(source_id)
         self._chat_client = client
-        if user_info:
-            self.user_info = user_info
-        elif kwargs:
-            self.user_info = UserInfo.model_validate(kwargs)
-        else:
-            self.user_info = UserInfo()
 
-    async def invoked(
+    async def after_run(
         self,
-        request_messages: Message | Sequence[Message],
-        response_messages: Message | Sequence[Message] | None = None,
-        invoke_exception: Exception | None = None,
-        **kwargs: Any,
+        *,
+        agent: Any,
+        session: AgentSession | None,
+        context: SessionContext,
+        state: dict[str, Any],
     ) -> None:
         """Extract user information from messages after each agent call."""
+        # ensure you get all the messages you want to parse from, including the input in this case.
+        request_messages = context.get_messages(include_input=True, include_response=True)
         # Check if we need to extract user info from user messages
         user_messages = [msg for msg in request_messages if hasattr(msg, "role") and msg.role == "user"]  # type: ignore
 
-        if (self.user_info.name is None or self.user_info.age is None) and user_messages:
-            try:
+        if (
+            state[self.source_id]["user_info"].name is None or state[self.source_id]["user_info"].age is None
+        ) and user_messages:
+            with suppress(Exception):
                 # Use the chat client to extract structured information
                 result = await self._chat_client.get_response(
                     messages=request_messages,  # type: ignore
@@ -52,70 +52,68 @@ class UserInfoMemory(ContextProvider):
                 )
 
                 # Update user info with extracted data
-                try:
+                with suppress(Exception):
                     extracted = result.value
-                    if self.user_info.name is None and extracted.name:
-                        self.user_info.name = extracted.name
-                    if self.user_info.age is None and extracted.age:
-                        self.user_info.age = extracted.age
-                except Exception:
-                    pass  # Failed to extract, continue without updating
+                    if state[self.source_id]["user_info"].name is None and extracted.name:
+                        state[self.source_id]["user_info"].name = extracted.name
+                    if state[self.source_id]["user_info"].age is None and extracted.age:
+                        state[self.source_id]["user_info"].age = extracted.age
 
-            except Exception:
-                pass  # Failed to extract, continue without updating
-
-    async def invoking(self, messages: Message | MutableSequence[Message], **kwargs: Any) -> Context:
+    async def before_run(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession | None,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
         """Provide user information context before each agent call."""
-        instructions: list[str] = []
+        if state.setdefault(self.source_id, None) is None:
+            state[self.source_id] = {"user_info": UserInfo()}
 
-        if self.user_info.name is None:
-            instructions.append(
-                "Ask the user for their name and politely decline to answer any questions until they provide it."
-            )
-        else:
-            instructions.append(f"The user's name is {self.user_info.name}.")
-
-        if self.user_info.age is None:
-            instructions.append(
-                "Ask the user for their age and politely decline to answer any questions until they provide it."
-            )
-        else:
-            instructions.append(f"The user's age is {self.user_info.age}.")
-
-        # Return context with additional instructions
-        return Context(instructions=" ".join(instructions))
-
-    def serialize(self) -> str:
-        """Serialize the user info for thread persistence."""
-        return self.user_info.model_dump_json()
+        context.extend_instructions(
+            self.source_id,
+            "Ask the user for their name and politely decline to answer any questions until they provide it."
+            if state[self.source_id]["user_info"].name is None
+            else f"The user's name is {state[self.source_id]['user_info'].name}.",
+        )
+        context.extend_instructions(
+            self.source_id,
+            "Ask the user for their age and politely decline to answer any questions until they provide it."
+            if state[self.source_id]["user_info"].age is None
+            else f"The user's age is {state[self.source_id]['user_info'].age}.",
+        )
 
 
 async def main():
-    async with AzureCliCredential() as credential:
-        client = AzureAIClient(credential=credential)
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
-        # Create the memory provider
-        memory_provider = UserInfoMemory(client)
+    context_name = "user-info-memory"
 
-        # Create the agent with memory
-        async with Agent(
-            client=client,
-            instructions="You are a friendly assistant. Always address the user by their name.",
-            context_provider=memory_provider,
-        ) as agent:
-            # Create a new thread for the conversation
-            thread = agent.get_new_thread()
+    # Create the memory provider
+    memory_provider = UserInfoMemory(context_name, client=client)
 
-            print(await agent.run("Hello, what is the square root of 9?", thread=thread))
-            print(await agent.run("My name is Ruaidhrí", thread=thread))
-            print(await agent.run("I am 20 years old", thread=thread))
+    # Create the agent with memory
+    async with Agent(
+        client=client,
+        instructions="You are a friendly assistant. Always address the user by their name.",
+        context_providers=[memory_provider],
+    ) as agent:
+        # Create a new session for the conversation
+        session = agent.create_session()
 
-            # Access the memory component via the thread's get_service method and inspect the memories
-            user_info_memory = thread.context_provider.providers[0]  # type: ignore
-            if user_info_memory:
-                print()
-                print(f"MEMORY - User Name: {user_info_memory.user_info.name}")  # type: ignore
-                print(f"MEMORY - User Age: {user_info_memory.user_info.age}")  # type: ignore
+        for msg in ["Hello, what is the square root of 9?", "My name is Ruaidhrí", "I am 20 years old"]:
+            print(f"User: {msg}")
+            print(f"Assistant: {await agent.run(msg, session=session)}")
+
+        # Access the memory component and inspect the memories
+        print()
+        print(f"MEMORY - User Name: {session.state[context_name]['user_info'].name}")
+        print(f"MEMORY - User Age: {session.state[context_name]['user_info'].age}")
 
 
 if __name__ == "__main__":

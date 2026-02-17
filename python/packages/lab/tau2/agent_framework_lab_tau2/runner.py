@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import cast
+from typing import Any
 
 from agent_framework import (
     Agent,
@@ -32,7 +32,7 @@ from tau2.user.user_simulator import (  # type: ignore[import-untyped]
 from tau2.utils.utils import get_now  # type: ignore[import-untyped]
 
 from ._message_utils import flip_messages, log_messages
-from ._sliding_window import SlidingWindowChatMessageStore
+from ._sliding_window import SlidingWindowHistoryProvider
 from ._tau2_utils import convert_agent_framework_messages_to_tau2_messages, convert_tau2_tool_to_function_tool
 
 __all__ = ["ASSISTANT_AGENT_ID", "ORCHESTRATOR_ID", "USER_SIMULATOR_ID", "TaskRunner"]
@@ -201,11 +201,13 @@ class TaskRunner:
             instructions=assistant_system_prompt,
             tools=tools,
             temperature=self.assistant_sampling_temperature,
-            chat_message_store_factory=lambda: SlidingWindowChatMessageStore(
-                system_message=assistant_system_prompt,
-                tool_definitions=[tool.openai_schema for tool in tools],
-                max_tokens=self.assistant_window_size,
-            ),
+            context_providers=[
+                SlidingWindowHistoryProvider(
+                    system_message=assistant_system_prompt,
+                    tool_definitions=[tool.openai_schema for tool in tools],
+                    max_tokens=self.assistant_window_size,
+                )
+            ],
         )
 
     def user_simulator(self, user_simuator_chat_client: SupportsChatGetResponse, task: Task) -> Agent:
@@ -354,11 +356,11 @@ class TaskRunner:
         # STEP 5: Ensemble the conversation history needed for evaluation.
         # It's coming from three parts:
         # 1. The initial greeting
-        # 2. The assistant's message store (not just the truncated window)
+        # 2. The assistant's session state (full history, not just the truncated window)
         # 3. The final user message (if any)
-        assistant_executor = cast(AgentExecutor, self._assistant_executor)
-        message_store = cast(SlidingWindowChatMessageStore, assistant_executor._agent_thread.message_store)
-        full_conversation = [first_message] + await message_store.list_all_messages()
+        session_state: dict[str, Any] = self._assistant_executor._session.state  # type: ignore
+        all_messages: list[Message] = list(session_state.get("memory", {}).get("messages", []))  # type: ignore
+        full_conversation = [first_message, *all_messages]
         if self._final_user_message is not None:
             full_conversation.extend(self._final_user_message)
 

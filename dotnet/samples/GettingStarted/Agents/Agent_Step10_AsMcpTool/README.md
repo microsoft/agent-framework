@@ -11,9 +11,9 @@ Alternatively, use the QuickstartClient sample from this repository: https://git
 To use the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector), follow these steps:
 
 1. Open a terminal in the Agent_Step10_AsMcpTool project directory.
-1. Run the `npx @modelcontextprotocol/inspector dotnet run` command to start the MCP Inspector. Make sure you have [node.js](https://nodejs.org/en/download/) and npm installed.
+1. Run the `npx @modelcontextprotocol/inspector dotnet run --framework net10.0` command to start the MCP Inspector. Make sure you have [node.js](https://nodejs.org/en/download/) and npm installed.
    ```bash
-   npx @modelcontextprotocol/inspector dotnet run
+   npx @modelcontextprotocol/inspector dotnet run --framework net10.0
    ```
 1. When the inspector is running, it will display a URL in the terminal, like this:
    ```

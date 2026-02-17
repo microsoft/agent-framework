@@ -5,11 +5,11 @@ import uuid
 
 from agent_framework import tool
 from agent_framework.azure import AzureAIAgentClient
-from agent_framework.mem0 import Mem0Provider
+from agent_framework.mem0 import Mem0ContextProvider
 from azure.identity.aio import AzureCliCredential
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def retrieve_company_report(company_code: str, detailed: bool) -> str:
     if company_code != "CNTS":
@@ -39,7 +39,7 @@ async def main() -> None:
             name="FriendlyAssistant",
             instructions="You are a friendly assistant.",
             tools=retrieve_company_report,
-            context_provider=Mem0Provider(user_id=user_id),
+            context_providers=[Mem0ContextProvider(source_id="mem0", user_id=user_id)],
         ) as agent,
     ):
         # First ask the agent to retrieve a company report with no previous context.
@@ -64,17 +64,17 @@ async def main() -> None:
         print("Waiting for memories to be processed...")
         await asyncio.sleep(12)  # Empirically determined delay for Mem0 indexing
 
-        print("\nRequest within a new thread:")
-        # Create a new thread for the agent.
-        # The new thread has no context of the previous conversation.
-        thread = agent.get_new_thread()
+        print("\nRequest within a new session:")
+        # Create a new session for the agent.
+        # The new session has no context of the previous conversation.
+        session = agent.create_session()
 
-        # Since we have the mem0 component in the thread, the agent should be able to
+        # Since we have the mem0 component in the session, the agent should be able to
         # retrieve the company report without asking for clarification, as it will
         # be able to remember the user preferences from Mem0 component.
         query = "Please retrieve my company report"
         print(f"User: {query}")
-        result = await agent.run(query, thread=thread)
+        result = await agent.run(query, session=session)
         print(f"Agent: {result}\n")
 
 

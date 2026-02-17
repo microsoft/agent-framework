@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import base64
+import logging
 import pickle  # nosec  # noqa: S403
 from typing import Any
-
-from agent_framework import get_logger
 
 """Checkpoint encoding using JSON structure with pickle+base64 for arbitrary data.
 
@@ -20,7 +19,7 @@ from trusted sources. Loading a malicious checkpoint file can execute arbitrary 
 """
 
 
-logger = get_logger(__name__)
+logger = logging.getLogger("agent_framework")
 
 # Marker to identify pickled values in serialized JSON
 _PICKLE_MARKER = "__pickled__"

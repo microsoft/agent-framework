@@ -75,6 +75,7 @@ async def main() -> None:
     if knowledge_base_name:
         # Use existing Knowledge Base - simplest approach
         search_provider = AzureAISearchContextProvider(
+            source_id="search_provider",
             endpoint=search_endpoint,
             api_key=search_key,
             credential=AzureCliCredential() if not search_key else None,
@@ -91,6 +92,7 @@ async def main() -> None:
         if not azure_openai_resource_url:
             raise ValueError("AZURE_OPENAI_RESOURCE_URL required when using index_name")
         search_provider = AzureAISearchContextProvider(
+            source_id="search_provider",
             endpoint=search_endpoint,
             index_name=index_name,
             api_key=search_key,
@@ -120,7 +122,7 @@ async def main() -> None:
                 "Use the provided context from the knowledge base to answer complex "
                 "questions that may require synthesizing information from multiple sources."
             ),
-            context_provider=search_provider,
+            context_providers=[search_provider],
         ) as agent,
     ):
         print("=== Azure AI Agent with Search Context (Agentic Mode) ===\n")
