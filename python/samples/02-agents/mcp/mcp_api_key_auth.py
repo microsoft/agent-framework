@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import os
 
 from agent_framework import Agent, MCPStreamableHTTPTool
@@ -57,6 +58,4 @@ async def api_key_auth_example() -> None:
 
 
 if __name__ == "__main__":
-    import asyncio
-
     asyncio.run(api_key_auth_example())
