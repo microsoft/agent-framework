@@ -72,7 +72,15 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         this.ConcurrentRunsEnabled = enableConcurrentRuns;
         this.OutgoingEvents = outgoingEvents;
     }
-    internal void SetRunEndingCallback(Func<CancellationToken, ValueTask> callback) => this._onRunEnding = callback;
+    internal void SetRunEndingCallback(Func<CancellationToken, ValueTask> callback)
+    {
+        if (this._onRunEnding is not null)
+        {
+            throw new InvalidOperationException("A run-ending callback has already been registered.");
+        }
+
+        this._onRunEnding = callback;
+    }
 
     public WorkflowTelemetryContext TelemetryContext => this._workflow.TelemetryContext;
 
