@@ -86,8 +86,6 @@ internal sealed class Program
             AllowBackgroundResponses = true,
         };
 
-        AgentSession session = await agent.CreateSessionAsync();
-
         ChatMessage message = new(ChatRole.User, [
             new TextContent("I need you to help me search for 'OpenAI news'. Please type 'OpenAI news' and submit the search. Once you see search results, the task is complete."),
             new DataContent(new BinaryData(screenshots["browser_search"]), "image/png")
@@ -96,6 +94,9 @@ internal sealed class Program
         // Initial request with screenshot - start with Bing search page
         Console.WriteLine("Starting computer automation session (initial screenshot: cua_browser_search.png)...");
 
+        // Computer-use requires a fresh session per call to avoid previous_response_id being set.
+        // Instead, the full conversation context is sent as input items each time.
+        AgentSession session = await agent.CreateSessionAsync();
         AgentResponse response = await agent.RunAsync(message, session: session, options: runOptions);
 
         // Main interaction loop
@@ -103,7 +104,6 @@ internal sealed class Program
         int iteration = 0;
         // Initialize state machine
         SearchState currentState = SearchState.Initial;
-        string initialCallId = string.Empty;
 
         while (true)
         {
@@ -118,6 +118,9 @@ internal sealed class Program
 
                 response = await agent.RunAsync(session, runOptions);
             }
+
+            // Clear the continuation token so the next RunAsync call is a fresh request.
+            runOptions.ContinuationToken = null;
 
             Console.WriteLine($"Agent response received (ID: {response.ResponseId})");
 
@@ -148,12 +151,6 @@ internal sealed class Program
             ComputerCallAction action = firstComputerCall.Action;
             string currentCallId = firstComputerCall.CallId;
 
-            // Set the initial computer call ID for tracking and subsequent responses.
-            if (string.IsNullOrEmpty(initialCallId))
-            {
-                initialCallId = currentCallId;
-            }
-
             Console.WriteLine($"Processing computer call (ID: {currentCallId})");
 
             // Simulate executing the action and taking a screenshot
@@ -162,16 +159,30 @@ internal sealed class Program
 
             Console.WriteLine("Sending action result back to agent...");
 
-            AIContent content = new()
+            // Build the follow-up messages with full conversation context.
+            // The Azure Agents API requires all prior output items (reasoning, computer_call, etc.)
+            // to be re-sent as input items alongside the computer_call_output.
+            List<ChatMessage> followUpMessages = [];
+
+            // Re-send all response output items as an assistant message so the API has full context
+            List<AIContent> priorOutputContents = response.Messages
+                .SelectMany(m => m.Contents)
+                .ToList();
+            followUpMessages.Add(new ChatMessage(ChatRole.Assistant, priorOutputContents));
+
+            // Add the computer_call_output as a user message
+            AIContent callOutput = new()
             {
                 RawRepresentation = new ComputerCallOutputResponseItem(
-                    initialCallId,
+                    currentCallId,
                     output: ComputerCallOutput.CreateScreenshotOutput(new BinaryData(screenInfo.ImageBytes), "image/png"))
             };
+            followUpMessages.Add(new ChatMessage(ChatRole.User, [callOutput]));
 
-            // Follow-up message with action result and new screenshot
-            message = new(ChatRole.User, [content]);
-            response = await agent.RunAsync(message, session: session, options: runOptions);
+            // Create a fresh session to avoid previous_response_id being set from prior ConversationId.
+            // Computer-use with the Azure Agents API requires full context as input items instead.
+            session = await agent.CreateSessionAsync();
+            response = await agent.RunAsync(followUpMessages, session: session, options: runOptions);
         }
     }
 }
