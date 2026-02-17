@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 import os
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
