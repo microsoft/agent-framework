@@ -26,7 +26,7 @@ var filesClient = projectOpenAIClient.GetProjectFilesClient();
 var vectorStoresClient = projectOpenAIClient.GetProjectVectorStoresClient();
 
 // 1. Create a temp file with test content and upload it.
-string searchFilePath = Path.GetTempFileName() + "_lookup.txt";
+string searchFilePath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + "_lookup.txt");
 File.WriteAllText(
     path: searchFilePath,
     contents: """
