@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Behaviors;
 
@@ -21,7 +21,7 @@ public sealed class WorkflowBehaviorOptions
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="behavior"/> is null.</exception>
     public WorkflowBehaviorOptions AddExecutorBehavior(IExecutorBehavior behavior)
     {
-        this.ExecutorBehaviors.Add(behavior ?? throw new ArgumentNullException(nameof(behavior)));
+        this.ExecutorBehaviors.Add(Throw.IfNull(behavior));
         return this;
     }
 
@@ -33,7 +33,7 @@ public sealed class WorkflowBehaviorOptions
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="behavior"/> is null.</exception>
     public WorkflowBehaviorOptions AddWorkflowBehavior(IWorkflowBehavior behavior)
     {
-        this.WorkflowBehaviors.Add(behavior ?? throw new ArgumentNullException(nameof(behavior)));
+        this.WorkflowBehaviors.Add(Throw.IfNull(behavior));
         return this;
     }
 
