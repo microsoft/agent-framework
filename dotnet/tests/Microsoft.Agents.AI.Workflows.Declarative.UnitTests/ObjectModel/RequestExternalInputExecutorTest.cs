@@ -95,7 +95,7 @@ public sealed class RequestExternalInputExecutorTest(ITestOutputHelper output) :
         string variableName)
     {
         MockAgentProvider mockAgentProvider = new();
-        RequestExternalInput model = this.CreateModel(nameof(displayName), variableName);
+        RequestExternalInput model = this.CreateModel(displayName, variableName);
         RequestExternalInputExecutor action = new(model, mockAgentProvider.Object, this.State);
 
         // Act
