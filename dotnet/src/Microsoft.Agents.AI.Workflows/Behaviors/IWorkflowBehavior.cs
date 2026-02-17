@@ -20,9 +20,16 @@ public interface IWorkflowBehavior
     /// </summary>
     /// <typeparam name="TResult">The result type of the workflow operation.</typeparam>
     /// <param name="context">The context containing information about the current workflow execution.</param>
-    /// <param name="continuation">The delegate to invoke the next behavior in the pipeline or the actual workflow operation.</param>
+    /// <param name="continuation">The delegate to invoke the next behavior in the pipeline or the actual workflow operation.
+    /// Should be called exactly once. Calling it multiple times will re-execute downstream behaviors and the workflow operation.
+    /// Logic placed before the call runs before the workflow operation; logic placed after runs once the operation completes.</param>
     /// <param name="cancellationToken">The cancellation token to monitor for cancellation requests.</param>
     /// <returns>A task representing the asynchronous operation, with the result of the workflow operation.</returns>
+    /// <remarks>
+    /// Implementations must return the result produced by <paramref name="continuation"/>, or a compatible <typeparamref name="TResult"/>
+    /// value. The concrete <typeparamref name="TResult"/> is determined by the pipeline caller and may vary across invocations;
+    /// do not assume a specific type or attempt to cast the result to a different type.
+    /// </remarks>
     ValueTask<TResult> HandleAsync<TResult>(
         WorkflowBehaviorContext context,
         WorkflowBehaviorContinuation<TResult> continuation,
