@@ -51,17 +51,17 @@ public sealed class ExecutorBehaviorContext
     /// <summary>
     /// Gets the type of the executor being invoked.
     /// </summary>
-    public Type ExecutorType { get; init; } = null!;
+    public required Type ExecutorType { get; init; }
 
     /// <summary>
     /// Gets the message being processed by the executor.
     /// </summary>
-    public object Message { get; init; } = null!;
+    public required object Message { get; init; }
 
     /// <summary>
     /// Gets the type of the message being processed.
     /// </summary>
-    public Type MessageType { get; init; } = null!;
+    public required Type MessageType { get; init; }
 
     /// <summary>
     /// Gets the unique identifier for the workflow execution run.
@@ -76,7 +76,7 @@ public sealed class ExecutorBehaviorContext
     /// <summary>
     /// Gets the workflow context for this execution.
     /// </summary>
-    public IWorkflowContext WorkflowContext { get; init; } = null!;
+    public required IWorkflowContext WorkflowContext { get; init; }
 
     /// <summary>
     /// Gets the trace context for distributed tracing.
