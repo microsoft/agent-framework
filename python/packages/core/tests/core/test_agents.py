@@ -107,10 +107,10 @@ async def test_chat_client_agent_create_session(client: SupportsChatGetResponse)
 async def test_chat_client_agent_prepare_session_and_messages(client: SupportsChatGetResponse) -> None:
     from agent_framework._sessions import InMemoryHistoryProvider
 
-    agent = Agent(client=client, context_providers=[InMemoryHistoryProvider("memory")])
+    agent = Agent(client=client, context_providers=[InMemoryHistoryProvider()])
     message = Message(role="user", text="Hello")
     session = AgentSession()
-    session.state["memory"] = {"messages": [message]}
+    session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID] = {"messages": [message]}
 
     session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
         session=session,
@@ -267,6 +267,8 @@ async def test_chat_client_agent_update_session_id_streaming_does_not_use_respon
 
 
 async def test_chat_client_agent_update_session_messages(client: SupportsChatGetResponse) -> None:
+    from agent_framework._sessions import InMemoryHistoryProvider
+
     agent = Agent(client=client)
     session = agent.create_session()
 
@@ -275,7 +277,7 @@ async def test_chat_client_agent_update_session_messages(client: SupportsChatGet
 
     assert session.service_session_id is None
 
-    chat_messages: list[Message] = session.state.get("memory", {}).get("messages", [])
+    chat_messages: list[Message] = session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {}).get("messages", [])
 
     assert chat_messages is not None
     assert len(chat_messages) == 2
