@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Exception hierarchy used across Agent Framework core and connectors."""
+
 import logging
 from typing import Any, Literal
 
@@ -49,8 +51,8 @@ class AgentInitializationError(AgentException):
     pass
 
 
-class AgentThreadException(AgentException):
-    """An error occurred while managing the agent thread."""
+class AgentSessionException(AgentException):
+    """An error occurred while managing the agent session."""
 
     pass
 
@@ -144,5 +146,11 @@ class MiddlewareException(AgentFrameworkException):
 
 class ContentError(AgentFrameworkException):
     """An error occurred while processing content."""
+
+    pass
+
+
+class SettingNotFoundError(AgentFrameworkException):
+    """A required setting could not be resolved from any source."""
 
     pass

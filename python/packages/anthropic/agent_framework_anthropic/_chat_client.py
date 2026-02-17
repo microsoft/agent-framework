@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
@@ -11,7 +12,6 @@ from agent_framework import (
     Annotation,
     BaseChatClient,
     ChatAndFunctionMiddlewareTypes,
-    ChatMessage,
     ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
@@ -21,16 +21,12 @@ from agent_framework import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
-    HostedCodeInterpreterTool,
-    HostedMCPTool,
-    HostedWebSearchTool,
+    Message,
     ResponseStream,
     TextSpanRegion,
     UsageDetails,
-    get_logger,
-    prepare_function_call_results,
 )
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import SecretString, load_settings
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
@@ -50,7 +46,7 @@ from anthropic.types.beta.beta_bash_code_execution_tool_result_error import (
 from anthropic.types.beta.beta_code_execution_tool_result_error import (
     BetaCodeExecutionToolResultError,
 )
-from pydantic import BaseModel, SecretStr, ValidationError
+from pydantic import BaseModel
 
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
@@ -72,13 +68,13 @@ __all__ = [
     "ThinkingConfig",
 ]
 
-logger = get_logger("agent_framework.anthropic")
+logger = logging.getLogger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
 STRUCTURED_OUTPUTS_BETA_FLAG: Final[str] = "structured-outputs-2025-11-13"
 
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 # region Anthropic Chat Options TypedDict
@@ -102,7 +98,7 @@ class ThinkingConfig(TypedDict, total=False):
     budget_tokens: int
 
 
-class AnthropicChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """Anthropic-specific chat options.
 
     Extends ChatOptions with options specific to Anthropic's Messages API.
@@ -160,8 +156,8 @@ class AnthropicChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel],
     conversation_id: None  # type: ignore[misc]
 
 
-TAnthropicOptions = TypeVar(
-    "TAnthropicOptions",
+AnthropicOptionsT = TypeVar(
+    "AnthropicOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="AnthropicChatOptions",
     covariant=True,
@@ -195,48 +191,28 @@ FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
 }
 
 
-class AnthropicSettings(AFBaseSettings):
+class AnthropicSettings(TypedDict, total=False):
     """Anthropic Project settings.
 
     The settings are first loaded from environment variables with the prefix 'ANTHROPIC_'.
     If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
-    are ignored; however, validation will fail alerting that the settings are missing.
+    with the encoding 'utf-8'.
 
-    Keyword Args:
+    Keys:
         api_key: The Anthropic API key.
         chat_model_id: The Anthropic chat model ID.
-        env_file_path: If provided, the .env settings are read from this file path location.
-        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework.anthropic import AnthropicSettings
-
-            # Using environment variables
-            # Set ANTHROPIC_API_KEY=your_anthropic_api_key
-            # ANTHROPIC_CHAT_MODEL_ID=claude-sonnet-4-5-20250929
-
-            # Or passing parameters directly
-            settings = AnthropicSettings(chat_model_id="claude-sonnet-4-5-20250929")
-
-            # Or loading from a .env file
-            settings = AnthropicSettings(env_file_path="path/to/.env")
     """
 
-    env_prefix: ClassVar[str] = "ANTHROPIC_"
-
-    api_key: SecretStr | None = None
-    chat_model_id: str | None = None
+    api_key: SecretString | None
+    chat_model_id: str | None
 
 
 class AnthropicClient(
-    ChatMiddlewareLayer[TAnthropicOptions],
-    FunctionInvocationLayer[TAnthropicOptions],
-    ChatTelemetryLayer[TAnthropicOptions],
-    BaseChatClient[TAnthropicOptions],
-    Generic[TAnthropicOptions],
+    ChatMiddlewareLayer[AnthropicOptionsT],
+    FunctionInvocationLayer[AnthropicOptionsT],
+    ChatTelemetryLayer[AnthropicOptionsT],
+    BaseChatClient[AnthropicOptionsT],
+    Generic[AnthropicOptionsT],
 ):
     """Anthropic Chat client with middleware, telemetry, and function invocation support."""
 
@@ -314,25 +290,24 @@ class AnthropicClient(
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
 
         """
-        try:
-            anthropic_settings = AnthropicSettings(
-                api_key=api_key,  # type: ignore[arg-type]
-                chat_model_id=model_id,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Anthropic settings.", ex) from ex
+        anthropic_settings = load_settings(
+            AnthropicSettings,
+            env_prefix="ANTHROPIC_",
+            api_key=api_key,
+            chat_model_id=model_id,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
         if anthropic_client is None:
-            if not anthropic_settings.api_key:
+            if not anthropic_settings["api_key"]:
                 raise ServiceInitializationError(
                     "Anthropic API key is required. Set via 'api_key' parameter "
                     "or 'ANTHROPIC_API_KEY' environment variable."
                 )
 
             anthropic_client = AsyncAnthropic(
-                api_key=anthropic_settings.api_key.get_secret_value(),
+                api_key=anthropic_settings["api_key"].get_secret_value(),
                 default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
             )
 
@@ -346,9 +321,112 @@ class AnthropicClient(
         # Initialize instance variables
         self.anthropic_client = anthropic_client
         self.additional_beta_flags = additional_beta_flags or []
-        self.model_id = anthropic_settings.chat_model_id
+        self.model_id = anthropic_settings["chat_model_id"]
         # streaming requires tracking the last function call ID and name
         self._last_call_id_name: tuple[str, str] | None = None
+
+    # region Static factory methods for hosted tools
+
+    @staticmethod
+    def get_code_interpreter_tool(
+        *,
+        type_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a code interpreter tool configuration for Anthropic.
+
+        Keyword Args:
+            type_name: Override the tool type name. Defaults to "code_execution_20250825".
+
+        Returns:
+            A dict-based tool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.anthropic import AnthropicClient
+
+                tool = AnthropicClient.get_code_interpreter_tool()
+                agent = AnthropicClient().as_agent(tools=[tool])
+        """
+        return {"type": type_name or "code_execution_20250825"}
+
+    @staticmethod
+    def get_web_search_tool(
+        *,
+        type_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a web search tool configuration for Anthropic.
+
+        Keyword Args:
+            type_name: Override the tool type name. Defaults to "web_search_20250305".
+
+        Returns:
+            A dict-based tool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.anthropic import AnthropicClient
+
+                tool = AnthropicClient.get_web_search_tool()
+                agent = AnthropicClient().as_agent(tools=[tool])
+        """
+        return {"type": type_name or "web_search_20250305"}
+
+    @staticmethod
+    def get_mcp_tool(
+        *,
+        name: str,
+        url: str,
+        allowed_tools: list[str] | None = None,
+        authorization_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a hosted MCP tool configuration for Anthropic.
+
+        This configures an MCP (Model Context Protocol) server that will be called
+        by Anthropic's service. The tools from this MCP server are executed remotely
+        by Anthropic, not locally by your application.
+
+        Note:
+            For local MCP execution where your application calls the MCP server
+            directly, use the MCP client tools instead of this method.
+
+        Keyword Args:
+            name: A label/name for the MCP server.
+            url: The URL of the MCP server.
+            allowed_tools: List of tool names that are allowed to be used from this MCP server.
+            authorization_token: Authorization token for the MCP server (e.g., Bearer token).
+
+        Returns:
+            A dict-based tool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.anthropic import AnthropicClient
+
+                tool = AnthropicClient.get_mcp_tool(
+                    name="GitHub",
+                    url="https://api.githubcopilot.com/mcp/",
+                    authorization_token="Bearer ghp_xxx",
+                )
+                agent = AnthropicClient().as_agent(tools=[tool])
+        """
+        result: dict[str, Any] = {
+            "type": "mcp",
+            "server_label": name.replace(" ", "_"),
+            "server_url": url,
+        }
+
+        if allowed_tools:
+            result["allowed_tools"] = allowed_tools
+
+        if authorization_token:
+            result["headers"] = {"authorization": authorization_token}
+
+        return result
+
+    # endregion
 
     # region Get response methods
 
@@ -356,7 +434,7 @@ class AnthropicClient(
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
@@ -385,7 +463,7 @@ class AnthropicClient(
 
     def _prepare_options(
         self,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -430,7 +508,7 @@ class AnthropicClient(
         run_options["messages"] = self._prepare_messages_for_anthropic(messages)
 
         # system message - first system message is passed as instructions
-        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == "system":
+        if messages and isinstance(messages[0], Message) and messages[0].role == "system":
             run_options["system"] = messages[0].text
 
         # betas
@@ -516,22 +594,22 @@ class AnthropicClient(
             "schema": schema,
         }
 
-    def _prepare_messages_for_anthropic(self, messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
+    def _prepare_messages_for_anthropic(self, messages: Sequence[Message]) -> list[dict[str, Any]]:
         """Prepare a list of ChatMessages for the Anthropic client.
 
         This skips the first message if it is a system message,
         as Anthropic expects system instructions as a separate parameter.
         """
         # first system message is passed as instructions
-        if messages and isinstance(messages[0], ChatMessage) and messages[0].role == "system":
+        if messages and isinstance(messages[0], Message) and messages[0].role == "system":
             return [self._prepare_message_for_anthropic(msg) for msg in messages[1:]]
         return [self._prepare_message_for_anthropic(msg) for msg in messages]
 
-    def _prepare_message_for_anthropic(self, message: ChatMessage) -> dict[str, Any]:
-        """Prepare a ChatMessage for the Anthropic client.
+    def _prepare_message_for_anthropic(self, message: Message) -> dict[str, Any]:
+        """Prepare a Message for the Anthropic client.
 
         Args:
-            message: The ChatMessage to convert.
+            message: The Message to convert.
 
         Returns:
             A dictionary representing the message in Anthropic format.
@@ -574,7 +652,7 @@ class AnthropicClient(
                     a_content.append({
                         "type": "tool_result",
                         "tool_use_id": content.call_id,
-                        "content": prepare_function_call_results(content.result),
+                        "content": content.result if content.result is not None else "",
                         "is_error": content.exception is not None,
                     })
                 case "text_reasoning":
@@ -590,6 +668,9 @@ class AnthropicClient(
     def _prepare_tools_for_anthropic(self, options: Mapping[str, Any]) -> dict[str, Any] | None:
         """Prepare tools and tool choice configuration for the Anthropic API request.
 
+        Converts FunctionTool to Anthropic format. MCP tools are routed to separate
+        mcp_servers parameter. All other tools pass through unchanged.
+
         Args:
             options: The options dict containing tools and tool choice settings.
 
@@ -603,46 +684,32 @@ class AnthropicClient(
 
         # Process tools
         if tools:
-            tool_list: list[MutableMapping[str, Any]] = []
-            mcp_server_list: list[MutableMapping[str, Any]] = []
+            tool_list: list[Any] = []
+            mcp_server_list: list[Any] = []
             for tool in tools:
-                match tool:
-                    case MutableMapping():
-                        tool_list.append(tool)
-                    case FunctionTool():
-                        tool_list.append({
-                            "type": "custom",
-                            "name": tool.name,
-                            "description": tool.description,
-                            "input_schema": tool.parameters(),
-                        })
-                    case HostedWebSearchTool():
-                        search_tool: dict[str, Any] = {
-                            "type": "web_search_20250305",
-                            "name": "web_search",
-                        }
-                        if tool.additional_properties:
-                            search_tool.update(tool.additional_properties)
-                        tool_list.append(search_tool)
-                    case HostedCodeInterpreterTool():
-                        code_tool: dict[str, Any] = {
-                            "type": "code_execution_20250825",
-                            "name": "code_execution",
-                        }
-                        tool_list.append(code_tool)
-                    case HostedMCPTool():
-                        server_def: dict[str, Any] = {
-                            "type": "url",
-                            "name": tool.name,
-                            "url": str(tool.url),
-                        }
-                        if tool.allowed_tools:
-                            server_def["tool_configuration"] = {"allowed_tools": list(tool.allowed_tools)}
-                        if tool.headers and (auth := tool.headers.get("authorization")):
-                            server_def["authorization_token"] = auth
-                        mcp_server_list.append(server_def)
-                    case _:
-                        logger.debug(f"Ignoring unsupported tool type: {type(tool)} for now")
+                if isinstance(tool, FunctionTool):
+                    tool_list.append({
+                        "type": "custom",
+                        "name": tool.name,
+                        "description": tool.description,
+                        "input_schema": tool.parameters(),
+                    })
+                elif isinstance(tool, MutableMapping) and tool.get("type") == "mcp":
+                    # MCP servers must be routed to separate mcp_servers parameter
+                    server_def: dict[str, Any] = {
+                        "type": "url",
+                        "name": tool.get("server_label", ""),
+                        "url": tool.get("server_url", ""),
+                    }
+                    if allowed_tools := tool.get("allowed_tools"):
+                        server_def["tool_configuration"] = {"allowed_tools": list(allowed_tools)}
+                    headers = tool.get("headers")
+                    if isinstance(headers, dict) and (auth := headers.get("authorization")):
+                        server_def["authorization_token"] = auth
+                    mcp_server_list.append(server_def)
+                else:
+                    # Pass through all other tools (dicts, SDK types) unchanged
+                    tool_list.append(tool)
 
             if tool_list:
                 result["tools"] = tool_list
@@ -653,6 +720,8 @@ class AnthropicClient(
         if options.get("tool_choice") is None:
             return result or None
         tool_mode = validate_tool_mode(options.get("tool_choice"))
+        if tool_mode is None:
+            return result or None
         allow_multiple = options.get("allow_multiple_tool_calls")
         match tool_mode.get("mode"):
             case "auto":
@@ -693,7 +762,7 @@ class AnthropicClient(
         return ChatResponse(
             response_id=message.id,
             messages=[
-                ChatMessage(
+                Message(
                     role="assistant",
                     contents=self._parse_contents_from_anthropic(message.content),
                     raw_representation=message,

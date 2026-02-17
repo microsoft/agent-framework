@@ -1,14 +1,25 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""AG-UI integration namespace for optional Agent Framework connectors.
+
+This module lazily re-exports objects from:
+- ``agent-framework-ag-ui``
+
+Supported classes and functions:
+- AgentFrameworkAgent
+- AGUIChatClient
+- AGUIEventConverter
+- AGUIHttpService
+- add_agent_framework_fastapi_endpoint
+"""
+
 import importlib
 from typing import Any
 
 IMPORT_PATH = "agent_framework_ag_ui"
 PACKAGE_NAME = "agent-framework-ag-ui"
 _IMPORTS = [
-    "__version__",
     "AgentFrameworkAgent",
-    "AGUIThread",
     "add_agent_framework_fastapi_endpoint",
     "AGUIChatClient",
     "AGUIEventConverter",

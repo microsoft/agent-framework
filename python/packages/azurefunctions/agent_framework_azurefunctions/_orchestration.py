@@ -5,11 +5,12 @@
 This module provides support for using agents inside Durable Function orchestrations.
 """
 
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import azure.durable_functions as df
-from agent_framework import AgentThread, get_logger
+from agent_framework import AgentSession
 from agent_framework_durabletask import (
     DurableAgentExecutor,
     RunRequest,
@@ -21,7 +22,7 @@ from azure.durable_functions.models.actions.NoOpAction import NoOpAction
 from azure.durable_functions.models.Task import CompoundTask, TaskState
 from pydantic import BaseModel
 
-logger = get_logger("agent_framework.azurefunctions.orchestration")
+logger = logging.getLogger("agent_framework.azurefunctions")
 
 CompoundActionConstructor: TypeAlias = Callable[[list[Any]], Any] | None
 
@@ -178,11 +179,11 @@ class AzureFunctionsAgentExecutor(DurableAgentExecutor[AgentTask]):
         self,
         agent_name: str,
         run_request: RunRequest,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
     ) -> AgentTask:
 
         # Resolve session
-        session_id = self._create_session_id(agent_name, thread)
+        session_id = self._create_session_id(agent_name, session)
 
         entity_id = df.EntityId(
             name=session_id.entity_name,

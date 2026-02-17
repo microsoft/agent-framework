@@ -10,11 +10,11 @@ This module implements handlers for:
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncGenerator
 from typing import Any, cast
 
-from agent_framework import get_logger
-from agent_framework._types import AgentResponse, ChatMessage
+from agent_framework._types import AgentResponse, Message
 
 from ._handlers import (
     ActionContext,
@@ -25,7 +25,7 @@ from ._handlers import (
 )
 from ._human_input import ExternalLoopEvent, QuestionRequest
 
-logger = get_logger("agent_framework.declarative.workflows.actions")
+logger = logging.getLogger("agent_framework.declarative")
 
 
 def _extract_json_from_response(text: str) -> Any:
@@ -162,7 +162,7 @@ def _extract_json_from_response(text: str) -> Any:
     raise json.JSONDecodeError("No valid JSON found in response", text, 0)
 
 
-def _build_messages_from_state(ctx: ActionContext) -> list[ChatMessage]:
+def _build_messages_from_state(ctx: ActionContext) -> list[Message]:
     """Build the message list to send to an agent.
 
     This collects messages from:
@@ -174,9 +174,9 @@ def _build_messages_from_state(ctx: ActionContext) -> list[ChatMessage]:
         ctx: The action context
 
     Returns:
-        List of ChatMessage objects to send to the agent
+        List of Message objects to send to the agent
     """
-    messages: list[ChatMessage] = []
+    messages: list[Message] = []
 
     # Get conversation history
     history = ctx.state.get("conversation.messages", [])
@@ -287,23 +287,23 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
         evaluated_input = ctx.state.eval_if_expression(input_messages)
         if evaluated_input:
             if isinstance(evaluated_input, str):
-                messages.append(ChatMessage(role="user", text=evaluated_input))
+                messages.append(Message(role="user", text=evaluated_input))
             elif isinstance(evaluated_input, list):
                 for msg_item in evaluated_input:  # type: ignore
                     if isinstance(msg_item, str):
-                        messages.append(ChatMessage(role="user", text=msg_item))
-                    elif isinstance(msg_item, ChatMessage):
+                        messages.append(Message(role="user", text=msg_item))
+                    elif isinstance(msg_item, Message):
                         messages.append(msg_item)
                     elif isinstance(msg_item, dict) and "content" in msg_item:
                         item_dict = cast(dict[str, Any], msg_item)
                         role: str = str(item_dict.get("role", "user"))
                         content: str = str(item_dict.get("content", ""))
                         if role == "user":
-                            messages.append(ChatMessage(role="user", text=content))
+                            messages.append(Message(role="user", text=content))
                         elif role == "assistant":
-                            messages.append(ChatMessage(role="assistant", text=content))
+                            messages.append(Message(role="assistant", text=content))
                         elif role == "system":
-                            messages.append(ChatMessage(role="system", text=content))
+                            messages.append(Message(role="system", text=content))
 
     # Evaluate and include input arguments
     evaluated_args: dict[str, Any] = {}
@@ -327,6 +327,16 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
     max_iterations = 100  # Safety limit
 
     # Start external loop if configured
+    # Build options for kwargs propagation to agent tools
+    run_kwargs = ctx.run_kwargs
+    options: dict[str, Any] | None = None
+    if run_kwargs:
+        # Merge caller-provided options to avoid duplicate keyword argument
+        options = dict(run_kwargs.get("options") or {})
+        options["additional_function_arguments"] = run_kwargs
+        # Exclude 'options' from splat to avoid TypeError on duplicate keyword
+        run_kwargs = {k: v for k, v in run_kwargs.items() if k != "options"}
+
     while True:
         # Invoke the agent
         try:
@@ -337,7 +347,7 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
                     updates: list[Any] = []
                     tool_calls: list[Any] = []
 
-                    async for chunk in agent.run(messages, stream=True):
+                    async for chunk in agent.run(messages, stream=True, options=options, **run_kwargs):
                         updates.append(chunk)
 
                         # Yield streaming events for text chunks
@@ -365,7 +375,7 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
 
                     # Add to conversation history
                     if text:
-                        ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
+                        ctx.state.add_conversation_message(Message(role="assistant", text=text))
 
                     # Store in output variables (.NET style)
                     if output_messages_var:
@@ -403,7 +413,7 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
 
                 except TypeError:
                     # Agent doesn't support streaming, fall back to non-streaming
-                    response = await agent.run(messages)
+                    response = await agent.run(messages, options=options, **run_kwargs)
 
                     text = response.text
                     response_messages = response.messages
@@ -418,7 +428,7 @@ async def handle_invoke_azure_agent(ctx: ActionContext) -> AsyncGenerator[Workfl
 
                     # Add to conversation history
                     if text:
-                        ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
+                        ctx.state.add_conversation_message(Message(role="assistant", text=text))
 
                     # Store in output variables (.NET style)
                     if output_messages_var:
@@ -564,11 +574,21 @@ async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[Workf
     # Add input as user message if provided
     if input_value:
         if isinstance(input_value, str):
-            messages.append(ChatMessage(role="user", text=input_value))
-        elif isinstance(input_value, ChatMessage):
+            messages.append(Message(role="user", text=input_value))
+        elif isinstance(input_value, Message):
             messages.append(input_value)
 
     logger.debug(f"InvokePromptAgent: calling '{agent_name}' with {len(messages)} messages")
+
+    # Build options for kwargs propagation to agent tools
+    prompt_run_kwargs = ctx.run_kwargs
+    prompt_options: dict[str, Any] | None = None
+    if prompt_run_kwargs:
+        # Merge caller-provided options to avoid duplicate keyword argument
+        prompt_options = dict(prompt_run_kwargs.get("options") or {})
+        prompt_options["additional_function_arguments"] = prompt_run_kwargs
+        # Exclude 'options' from splat to avoid TypeError on duplicate keyword
+        prompt_run_kwargs = {k: v for k, v in prompt_run_kwargs.items() if k != "options"}
 
     # Invoke the agent
     try:
@@ -577,7 +597,7 @@ async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[Workf
             try:
                 updates: list[Any] = []
 
-                async for chunk in agent.run(messages, stream=True):
+                async for chunk in agent.run(messages, stream=True, options=prompt_options, **prompt_run_kwargs):
                     updates.append(chunk)
 
                     if hasattr(chunk, "text") and chunk.text:
@@ -594,7 +614,7 @@ async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[Workf
                 ctx.state.set_agent_result(text=text, messages=response_messages)
 
                 if text:
-                    ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
+                    ctx.state.add_conversation_message(Message(role="assistant", text=text))
 
                 if output_path:
                     ctx.state.set(output_path, text)
@@ -607,14 +627,14 @@ async def handle_invoke_prompt_agent(ctx: ActionContext) -> AsyncGenerator[Workf
 
             except TypeError:
                 # Agent doesn't support streaming, fall back to non-streaming
-                response = await agent.run(messages)
+                response = await agent.run(messages, options=prompt_options, **prompt_run_kwargs)
                 text = response.text
                 response_messages = response.messages
 
                 ctx.state.set_agent_result(text=text, messages=response_messages)
 
                 if text:
-                    ctx.state.add_conversation_message(ChatMessage(role="assistant", text=text))
+                    ctx.state.add_conversation_message(Message(role="assistant", text=text))
 
                 if output_path:
                     ctx.state.set(output_path, text)

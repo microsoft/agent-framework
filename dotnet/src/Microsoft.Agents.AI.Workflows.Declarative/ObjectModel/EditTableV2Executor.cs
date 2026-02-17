@@ -18,12 +18,12 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        PropertyPath variablePath = Throw.IfNull(this.Model.ItemsVariable?.Path, $"{nameof(this.Model)}.{nameof(this.Model.ItemsVariable)}");
+        Throw.IfNull(this.Model.ItemsVariable, $"{nameof(this.Model)}.{nameof(this.Model.ItemsVariable)}");
 
-        FormulaValue table = context.ReadState(variablePath);
+        FormulaValue table = context.ReadState(this.Model.ItemsVariable);
         if (table is not TableValue tableValue)
         {
-            throw this.Exception($"Require '{variablePath}' to be a table, not: '{table.GetType().Name}'.");
+            throw this.Exception($"Require '{this.Model.ItemsVariable.Path}' to be a table, not: '{table.GetType().Name}'.");
         }
 
         EditTableOperation? changeType = this.Model.ChangeType;
@@ -33,12 +33,12 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
             EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(addItemValue);
             RecordValue newRecord = BuildRecord(tableValue.Type.ToRecord(), expressionResult.Value.ToFormula());
             await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
-            await this.AssignAsync(variablePath, newRecord, context).ConfigureAwait(false);
+            await this.AssignAsync(this.Model.ItemsVariable, newRecord, context).ConfigureAwait(false);
         }
         else if (changeType is ClearItemsOperation)
         {
             await tableValue.ClearAsync(cancellationToken).ConfigureAwait(false);
-            await this.AssignAsync(variablePath, FormulaValue.NewBlank(), context).ConfigureAwait(false);
+            await this.AssignAsync(this.Model.ItemsVariable, FormulaValue.NewBlank(), context).ConfigureAwait(false);
         }
         else if (changeType is RemoveItemOperation removeItemOperation)
         {
@@ -46,8 +46,8 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
             EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(removeItemValue);
             if (expressionResult.Value.ToFormula() is TableValue removeItemTable)
             {
-                await tableValue.RemoveAsync(removeItemTable?.Rows.Select(row => row.Value), all: true, cancellationToken).ConfigureAwait(false);
-                await this.AssignAsync(variablePath, FormulaValue.NewBlank(), context).ConfigureAwait(false);
+                await tableValue.RemoveAsync(removeItemTable.Rows.Select(row => row.Value), all: true, cancellationToken).ConfigureAwait(false);
+                await this.AssignAsync(this.Model.ItemsVariable, FormulaValue.NewBlank(), context).ConfigureAwait(false);
             }
         }
         else if (changeType is TakeLastItemOperation)
@@ -56,7 +56,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
             if (lastRow is not null)
             {
                 await tableValue.RemoveAsync([lastRow], all: true, cancellationToken).ConfigureAwait(false);
-                await this.AssignAsync(variablePath, lastRow, context).ConfigureAwait(false);
+                await this.AssignAsync(this.Model.ItemsVariable, lastRow, context).ConfigureAwait(false);
             }
         }
         else if (changeType is TakeFirstItemOperation)
@@ -65,7 +65,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
             if (firstRow is not null)
             {
                 await tableValue.RemoveAsync([firstRow], all: true, cancellationToken).ConfigureAwait(false);
-                await this.AssignAsync(variablePath, firstRow, context).ConfigureAwait(false);
+                await this.AssignAsync(this.Model.ItemsVariable, firstRow, context).ConfigureAwait(false);
             }
         }
 

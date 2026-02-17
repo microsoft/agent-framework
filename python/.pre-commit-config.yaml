@@ -31,6 +31,9 @@ repos:
         name: Detect Private Keys
       - id: check-added-large-files
         name: Check Added Large Files
+      - id: no-commit-to-branch
+        name: Protect main branch
+        args: [--branch, main]
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:

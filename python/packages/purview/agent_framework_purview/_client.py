@@ -5,12 +5,12 @@ from __future__ import annotations
 import base64
 import inspect
 import json
+import logging
 from typing import Any, cast
 from uuid import uuid4
 
 import httpx
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT
-from agent_framework._logging import get_logger
 from agent_framework.observability import get_tracer
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -31,9 +31,9 @@ from ._models import (
     ProtectionScopesRequest,
     ProtectionScopesResponse,
 )
-from ._settings import PurviewSettings
+from ._settings import PurviewSettings, get_purview_scopes
 
-logger = get_logger("agent_framework.purview")
+logger = logging.getLogger("agent_framework.purview")
 
 
 class PurviewClient:
@@ -52,7 +52,7 @@ class PurviewClient:
     ):
         self._credential: TokenCredential | AsyncTokenCredential = credential
         self._settings = settings
-        self._graph_uri = settings.graph_base_uri.rstrip("/")
+        self._graph_uri = (settings.get("graph_base_uri") or "https://graph.microsoft.com/v1.0/").rstrip("/")
         self._timeout = timeout
         self._client = httpx.AsyncClient(timeout=timeout)
 
@@ -61,7 +61,7 @@ class PurviewClient:
 
     async def _get_token(self, *, tenant_id: str | None = None) -> str:
         """Acquire an access token using either async or sync credential."""
-        scopes = self._settings.get_scopes()
+        scopes = get_purview_scopes(self._settings)
         cred = self._credential
         token = cred.get_token(*scopes, tenant_id=tenant_id)
         token = await token if inspect.isawaitable(token) else token
@@ -167,7 +167,7 @@ class PurviewClient:
         if resp.status_code in (401, 403):
             raise PurviewAuthenticationError(f"Auth failure {resp.status_code}: {resp.text}")
         if resp.status_code == 402:
-            if self._settings.ignore_payment_required:
+            if self._settings.get("ignore_payment_required", False):
                 return response_type()  # type: ignore[call-arg, no-any-return]
             raise PurviewPaymentRequiredError(f"Payment required {resp.status_code}: {resp.text}")
         if resp.status_code == 429:

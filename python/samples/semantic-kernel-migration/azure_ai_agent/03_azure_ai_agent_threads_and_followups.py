@@ -52,19 +52,19 @@ async def run_agent_framework() -> None:
             instructions="Track follow-up questions within the same thread.",
         ) as agent,
     ):
-        thread = agent.get_new_thread()
-        # AF threads are explicit and can be serialized for external storage.
-        first = await agent.run("Outline the onboarding checklist.", thread=thread)
+        session = agent.create_session()
+        # AF sessions are explicit and can be serialized for external storage.
+        first = await agent.run("Outline the onboarding checklist.", session=session)
         print("[AF][turn1]", first.text)
 
         second = await agent.run(
             "Highlight the items that require legal review.",
-            thread=thread,
+            session=session,
         )
         print("[AF][turn2]", second.text)
 
-        serialized = await thread.serialize()
-        print("[AF][thread-json]", serialized)
+        serialized = session.to_dict()
+        print("[AF][session-json]", serialized)
 
 
 async def main() -> None:

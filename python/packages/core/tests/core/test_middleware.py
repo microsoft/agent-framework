@@ -10,10 +10,10 @@ from pydantic import BaseModel, Field
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Message,
     ResponseStream,
     SupportsAgentRun,
 )
@@ -37,7 +37,7 @@ class TestAgentContext:
 
     def test_init_with_defaults(self, mock_agent: SupportsAgentRun) -> None:
         """Test AgentContext initialization with default values."""
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages)
 
         assert context.agent is mock_agent
@@ -47,7 +47,7 @@ class TestAgentContext:
 
     def test_init_with_custom_values(self, mock_agent: SupportsAgentRun) -> None:
         """Test AgentContext initialization with custom values."""
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         metadata = {"key": "value"}
         context = AgentContext(agent=mock_agent, messages=messages, stream=True, metadata=metadata)
 
@@ -56,17 +56,17 @@ class TestAgentContext:
         assert context.stream is True
         assert context.metadata == metadata
 
-    def test_init_with_thread(self, mock_agent: SupportsAgentRun) -> None:
-        """Test AgentContext initialization with thread parameter."""
-        from agent_framework import AgentThread
+    def test_init_with_session(self, mock_agent: SupportsAgentRun) -> None:
+        """Test AgentContext initialization with session parameter."""
+        from agent_framework import AgentSession
 
-        messages = [ChatMessage(role="user", text="test")]
-        thread = AgentThread()
-        context = AgentContext(agent=mock_agent, messages=messages, thread=thread)
+        messages = [Message(role="user", text="test")]
+        session = AgentSession()
+        context = AgentContext(agent=mock_agent, messages=messages, session=session)
 
         assert context.agent is mock_agent
         assert context.messages == messages
-        assert context.thread is thread
+        assert context.session is session
         assert context.stream is False
         assert context.metadata == {}
 
@@ -74,7 +74,7 @@ class TestAgentContext:
 class TestFunctionInvocationContext:
     """Test cases for FunctionInvocationContext."""
 
-    def test_init_with_defaults(self, mock_function: FunctionTool[Any, Any]) -> None:
+    def test_init_with_defaults(self, mock_function: FunctionTool) -> None:
         """Test FunctionInvocationContext initialization with default values."""
         arguments = FunctionTestArgs(name="test")
         context = FunctionInvocationContext(function=mock_function, arguments=arguments)
@@ -83,7 +83,7 @@ class TestFunctionInvocationContext:
         assert context.arguments == arguments
         assert context.metadata == {}
 
-    def test_init_with_custom_metadata(self, mock_function: FunctionTool[Any, Any]) -> None:
+    def test_init_with_custom_metadata(self, mock_function: FunctionTool) -> None:
         """Test FunctionInvocationContext initialization with custom metadata."""
         arguments = FunctionTestArgs(name="test")
         metadata = {"key": "value"}
@@ -99,11 +99,11 @@ class TestChatContext:
 
     def test_init_with_defaults(self, mock_chat_client: Any) -> None:
         """Test ChatContext initialization with default values."""
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options)
 
-        assert context.chat_client is mock_chat_client
+        assert context.client is mock_chat_client
         assert context.messages == messages
         assert context.options is chat_options
         assert context.stream is False
@@ -112,19 +112,19 @@ class TestChatContext:
 
     def test_init_with_custom_values(self, mock_chat_client: Any) -> None:
         """Test ChatContext initialization with custom values."""
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {"temperature": 0.5}
         metadata = {"key": "value"}
 
         context = ChatContext(
-            chat_client=mock_chat_client,
+            client=mock_chat_client,
             messages=messages,
             options=chat_options,
             stream=True,
             metadata=metadata,
         )
 
-        assert context.chat_client is mock_chat_client
+        assert context.client is mock_chat_client
         assert context.messages == messages
         assert context.options is chat_options
         assert context.stream is True
@@ -135,12 +135,12 @@ class TestAgentMiddlewarePipeline:
     """Test cases for AgentMiddlewarePipeline."""
 
     class PreNextTerminateMiddleware(AgentMiddleware):
-        async def process(self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]) -> None:
+        async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
             raise MiddlewareTermination
 
     class PostNextTerminateMiddleware(AgentMiddleware):
         async def process(self, context: AgentContext, call_next: Any) -> None:
-            await call_next(context)
+            await call_next()
             raise MiddlewareTermination
 
     def test_init_empty(self) -> None:
@@ -157,8 +157,8 @@ class TestAgentMiddlewarePipeline:
     def test_init_with_function_middleware(self) -> None:
         """Test AgentMiddlewarePipeline initialization with function-based middleware."""
 
-        async def test_middleware(context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]) -> None:
-            await call_next(context)
+        async def test_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
 
         pipeline = AgentMiddlewarePipeline(test_middleware)
         assert pipeline.has_middlewares
@@ -166,10 +166,10 @@ class TestAgentMiddlewarePipeline:
     async def test_execute_no_middleware(self, mock_agent: SupportsAgentRun) -> None:
         """Test pipeline execution with no middleware."""
         pipeline = AgentMiddlewarePipeline()
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages)
 
-        expected_response = AgentResponse(messages=[ChatMessage(role="assistant", text="response")])
+        expected_response = AgentResponse(messages=[Message(role="assistant", text="response")])
 
         async def final_handler(ctx: AgentContext) -> AgentResponse:
             return expected_response
@@ -185,19 +185,17 @@ class TestAgentMiddlewarePipeline:
             def __init__(self, name: str):
                 self.name = name
 
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append(f"{self.name}_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append(f"{self.name}_after")
 
         middleware = OrderTrackingMiddleware("test")
         pipeline = AgentMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages)
 
-        expected_response = AgentResponse(messages=[ChatMessage(role="assistant", text="response")])
+        expected_response = AgentResponse(messages=[Message(role="assistant", text="response")])
 
         async def final_handler(ctx: AgentContext) -> AgentResponse:
             execution_order.append("handler")
@@ -210,7 +208,7 @@ class TestAgentMiddlewarePipeline:
     async def test_execute_stream_no_middleware(self, mock_agent: SupportsAgentRun) -> None:
         """Test pipeline streaming execution with no middleware."""
         pipeline = AgentMiddlewarePipeline()
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages, stream=True)
 
         async def final_handler(ctx: AgentContext) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
@@ -238,16 +236,14 @@ class TestAgentMiddlewarePipeline:
             def __init__(self, name: str):
                 self.name = name
 
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append(f"{self.name}_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append(f"{self.name}_after")
 
         middleware = StreamOrderTrackingMiddleware("test")
         pipeline = AgentMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages, stream=True)
 
         async def final_handler(ctx: AgentContext) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
@@ -273,14 +269,14 @@ class TestAgentMiddlewarePipeline:
         """Test pipeline execution with termination before next()."""
         middleware = self.PreNextTerminateMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages)
         execution_order: list[str] = []
 
         async def final_handler(ctx: AgentContext) -> AgentResponse:
             # Handler should not be executed when terminated before next()
             execution_order.append("handler")
-            return AgentResponse(messages=[ChatMessage(role="assistant", text="response")])
+            return AgentResponse(messages=[Message(role="assistant", text="response")])
 
         response = await pipeline.execute(context, final_handler)
         assert response is None
@@ -291,13 +287,13 @@ class TestAgentMiddlewarePipeline:
         """Test pipeline execution with termination after next()."""
         middleware = self.PostNextTerminateMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages)
         execution_order: list[str] = []
 
         async def final_handler(ctx: AgentContext) -> AgentResponse:
             execution_order.append("handler")
-            return AgentResponse(messages=[ChatMessage(role="assistant", text="response")])
+            return AgentResponse(messages=[Message(role="assistant", text="response")])
 
         response = await pipeline.execute(context, final_handler)
         assert response is not None
@@ -309,7 +305,7 @@ class TestAgentMiddlewarePipeline:
         """Test pipeline streaming execution with termination before next()."""
         middleware = self.PreNextTerminateMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages, stream=True)
         execution_order: list[str] = []
 
@@ -337,7 +333,7 @@ class TestAgentMiddlewarePipeline:
         """Test pipeline streaming execution with termination after next()."""
         middleware = self.PostNextTerminateMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages, stream=True)
         execution_order: list[str] = []
 
@@ -360,60 +356,56 @@ class TestAgentMiddlewarePipeline:
         assert updates[1].text == "chunk2"
         assert execution_order == ["handler_start", "handler_end"]
 
-    async def test_execute_with_thread_in_context(self, mock_agent: SupportsAgentRun) -> None:
-        """Test pipeline execution properly passes thread to middleware."""
-        from agent_framework import AgentThread
+    async def test_execute_with_session_in_context(self, mock_agent: SupportsAgentRun) -> None:
+        """Test pipeline execution properly passes session to middleware."""
+        from agent_framework import AgentSession
 
-        captured_thread = None
+        captured_session = None
 
-        class ThreadCapturingMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
-                nonlocal captured_thread
-                captured_thread = context.thread
-                await call_next(context)
+        class SessionCapturingMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                nonlocal captured_session
+                captured_session = context.session
+                await call_next()
 
-        middleware = ThreadCapturingMiddleware()
+        middleware = SessionCapturingMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
-        thread = AgentThread()
-        context = AgentContext(agent=mock_agent, messages=messages, thread=thread)
+        messages = [Message(role="user", text="test")]
+        session = AgentSession()
+        context = AgentContext(agent=mock_agent, messages=messages, session=session)
 
-        expected_response = AgentResponse(messages=[ChatMessage(role="assistant", text="response")])
+        expected_response = AgentResponse(messages=[Message(role="assistant", text="response")])
 
         async def final_handler(ctx: AgentContext) -> AgentResponse:
             return expected_response
 
         result = await pipeline.execute(context, final_handler)
         assert result == expected_response
-        assert captured_thread is thread
+        assert captured_session is session
 
-    async def test_execute_with_no_thread_in_context(self, mock_agent: SupportsAgentRun) -> None:
-        """Test pipeline execution when no thread is provided."""
-        captured_thread = "not_none"  # Use string to distinguish from None
+    async def test_execute_with_no_session_in_context(self, mock_agent: SupportsAgentRun) -> None:
+        """Test pipeline execution when no session is provided."""
+        captured_session = "not_none"  # Use string to distinguish from None
 
-        class ThreadCapturingMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
-                nonlocal captured_thread
-                captured_thread = context.thread
-                await call_next(context)
+        class SessionCapturingMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                nonlocal captured_session
+                captured_session = context.session
+                await call_next()
 
-        middleware = ThreadCapturingMiddleware()
+        middleware = SessionCapturingMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
-        context = AgentContext(agent=mock_agent, messages=messages, thread=None)
+        messages = [Message(role="user", text="test")]
+        context = AgentContext(agent=mock_agent, messages=messages, session=None)
 
-        expected_response = AgentResponse(messages=[ChatMessage(role="assistant", text="response")])
+        expected_response = AgentResponse(messages=[Message(role="assistant", text="response")])
 
         async def final_handler(ctx: AgentContext) -> AgentResponse:
             return expected_response
 
         result = await pipeline.execute(context, final_handler)
         assert result == expected_response
-        assert captured_thread is None
+        assert captured_session is None
 
 
 class TestFunctionMiddlewarePipeline:
@@ -425,10 +417,10 @@ class TestFunctionMiddlewarePipeline:
 
     class PostNextTerminateFunctionMiddleware(FunctionMiddleware):
         async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
-            await call_next(context)
+            await call_next()
             raise MiddlewareTermination
 
-    async def test_execute_with_pre_next_termination(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_execute_with_pre_next_termination(self, mock_function: FunctionTool) -> None:
         """Test pipeline execution with termination before next() raises MiddlewareTermination."""
         middleware = self.PreNextTerminateFunctionMiddleware()
         pipeline = FunctionMiddlewarePipeline(middleware)
@@ -447,7 +439,7 @@ class TestFunctionMiddlewarePipeline:
         # Handler should not be called when terminated before next()
         assert execution_order == []
 
-    async def test_execute_with_post_next_termination(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_execute_with_post_next_termination(self, mock_function: FunctionTool) -> None:
         """Test pipeline execution with termination after next() raises MiddlewareTermination."""
         middleware = self.PostNextTerminateFunctionMiddleware()
         pipeline = FunctionMiddlewarePipeline(middleware)
@@ -482,15 +474,13 @@ class TestFunctionMiddlewarePipeline:
     def test_init_with_function_middleware(self) -> None:
         """Test FunctionMiddlewarePipeline initialization with function-based middleware."""
 
-        async def test_middleware(
-            context: FunctionInvocationContext, call_next: Callable[[FunctionInvocationContext], Awaitable[None]]
-        ) -> None:
-            await call_next(context)
+        async def test_middleware(context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
 
         pipeline = FunctionMiddlewarePipeline(test_middleware)
         assert pipeline.has_middlewares
 
-    async def test_execute_no_middleware(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_execute_no_middleware(self, mock_function: FunctionTool) -> None:
         """Test pipeline execution with no middleware."""
         pipeline = FunctionMiddlewarePipeline()
         arguments = FunctionTestArgs(name="test")
@@ -504,7 +494,7 @@ class TestFunctionMiddlewarePipeline:
         result = await pipeline.execute(context, final_handler)
         assert result == expected_result
 
-    async def test_execute_with_middleware(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_execute_with_middleware(self, mock_function: FunctionTool) -> None:
         """Test pipeline execution with middleware."""
         execution_order: list[str] = []
 
@@ -515,10 +505,10 @@ class TestFunctionMiddlewarePipeline:
             async def process(
                 self,
                 context: FunctionInvocationContext,
-                call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 execution_order.append(f"{self.name}_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append(f"{self.name}_after")
 
         middleware = OrderTrackingFunctionMiddleware("test")
@@ -541,12 +531,12 @@ class TestChatMiddlewarePipeline:
     """Test cases for ChatMiddlewarePipeline."""
 
     class PreNextTerminateChatMiddleware(ChatMiddleware):
-        async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+        async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
             raise MiddlewareTermination
 
     class PostNextTerminateChatMiddleware(ChatMiddleware):
-        async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
-            await call_next(context)
+        async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
             raise MiddlewareTermination
 
     def test_init_empty(self) -> None:
@@ -563,8 +553,8 @@ class TestChatMiddlewarePipeline:
     def test_init_with_function_middleware(self) -> None:
         """Test ChatMiddlewarePipeline initialization with function-based middleware."""
 
-        async def test_middleware(context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
-            await call_next(context)
+        async def test_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
 
         pipeline = ChatMiddlewarePipeline(test_middleware)
         assert pipeline.has_middlewares
@@ -572,11 +562,11 @@ class TestChatMiddlewarePipeline:
     async def test_execute_no_middleware(self, mock_chat_client: Any) -> None:
         """Test pipeline execution with no middleware."""
         pipeline = ChatMiddlewarePipeline()
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options)
 
-        expected_response = ChatResponse(messages=[ChatMessage(role="assistant", text="response")])
+        expected_response = ChatResponse(messages=[Message(role="assistant", text="response")])
 
         async def final_handler(ctx: ChatContext) -> ChatResponse:
             return expected_response
@@ -592,18 +582,18 @@ class TestChatMiddlewarePipeline:
             def __init__(self, name: str):
                 self.name = name
 
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append(f"{self.name}_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append(f"{self.name}_after")
 
         middleware = OrderTrackingChatMiddleware("test")
         pipeline = ChatMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options)
 
-        expected_response = ChatResponse(messages=[ChatMessage(role="assistant", text="response")])
+        expected_response = ChatResponse(messages=[Message(role="assistant", text="response")])
 
         async def final_handler(ctx: ChatContext) -> ChatResponse:
             execution_order.append("handler")
@@ -616,9 +606,9 @@ class TestChatMiddlewarePipeline:
     async def test_execute_stream_no_middleware(self, mock_chat_client: Any) -> None:
         """Test pipeline streaming execution with no middleware."""
         pipeline = ChatMiddlewarePipeline()
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options, stream=True)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options, stream=True)
 
         def final_handler(ctx: ChatContext) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
@@ -644,16 +634,16 @@ class TestChatMiddlewarePipeline:
             def __init__(self, name: str):
                 self.name = name
 
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append(f"{self.name}_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append(f"{self.name}_after")
 
         middleware = StreamOrderTrackingChatMiddleware("test")
         pipeline = ChatMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options, stream=True)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options, stream=True)
 
         def final_handler(ctx: ChatContext) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
@@ -678,15 +668,15 @@ class TestChatMiddlewarePipeline:
         """Test pipeline execution with termination before next()."""
         middleware = self.PreNextTerminateChatMiddleware()
         pipeline = ChatMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options)
         execution_order: list[str] = []
 
         async def final_handler(ctx: ChatContext) -> ChatResponse:
             # Handler should not be executed when terminated before next()
             execution_order.append("handler")
-            return ChatResponse(messages=[ChatMessage(role="assistant", text="response")])
+            return ChatResponse(messages=[Message(role="assistant", text="response")])
 
         response = await pipeline.execute(context, final_handler)
         assert response is None
@@ -697,14 +687,14 @@ class TestChatMiddlewarePipeline:
         """Test pipeline execution with termination after next()."""
         middleware = self.PostNextTerminateChatMiddleware()
         pipeline = ChatMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options)
         execution_order: list[str] = []
 
         async def final_handler(ctx: ChatContext) -> ChatResponse:
             execution_order.append("handler")
-            return ChatResponse(messages=[ChatMessage(role="assistant", text="response")])
+            return ChatResponse(messages=[Message(role="assistant", text="response")])
 
         response = await pipeline.execute(context, final_handler)
         assert response is not None
@@ -716,9 +706,9 @@ class TestChatMiddlewarePipeline:
         """Test pipeline streaming execution with termination before next()."""
         middleware = self.PreNextTerminateChatMiddleware()
         pipeline = ChatMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options, stream=True)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options, stream=True)
         execution_order: list[str] = []
 
         def final_handler(ctx: ChatContext) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
@@ -741,9 +731,9 @@ class TestChatMiddlewarePipeline:
         """Test pipeline streaming execution with termination after next()."""
         middleware = self.PostNextTerminateChatMiddleware()
         pipeline = ChatMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options, stream=True)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options, stream=True)
         execution_order: list[str] = []
 
         def final_handler(ctx: ChatContext) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
@@ -774,23 +764,21 @@ class TestClassBasedMiddleware:
         metadata_updates: list[str] = []
 
         class MetadataAgentMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 context.metadata["before"] = True
                 metadata_updates.append("before")
-                await call_next(context)
+                await call_next()
                 context.metadata["after"] = True
                 metadata_updates.append("after")
 
         middleware = MetadataAgentMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages)
 
         async def final_handler(ctx: AgentContext) -> AgentResponse:
             metadata_updates.append("handler")
-            return AgentResponse(messages=[ChatMessage(role="assistant", text="response")])
+            return AgentResponse(messages=[Message(role="assistant", text="response")])
 
         result = await pipeline.execute(context, final_handler)
 
@@ -799,7 +787,7 @@ class TestClassBasedMiddleware:
         assert context.metadata["after"] is True
         assert metadata_updates == ["before", "handler", "after"]
 
-    async def test_function_middleware_execution(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_function_middleware_execution(self, mock_function: FunctionTool) -> None:
         """Test class-based function middleware execution."""
         metadata_updates: list[str] = []
 
@@ -807,11 +795,11 @@ class TestClassBasedMiddleware:
             async def process(
                 self,
                 context: FunctionInvocationContext,
-                call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 context.metadata["before"] = True
                 metadata_updates.append("before")
-                await call_next(context)
+                await call_next()
                 context.metadata["after"] = True
                 metadata_updates.append("after")
 
@@ -839,21 +827,19 @@ class TestFunctionBasedMiddleware:
         """Test function-based agent middleware."""
         execution_order: list[str] = []
 
-        async def test_agent_middleware(
-            context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-        ) -> None:
+        async def test_agent_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
             execution_order.append("function_before")
             context.metadata["function_middleware"] = True
-            await call_next(context)
+            await call_next()
             execution_order.append("function_after")
 
         pipeline = AgentMiddlewarePipeline(test_agent_middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages)
 
         async def final_handler(ctx: AgentContext) -> AgentResponse:
             execution_order.append("handler")
-            return AgentResponse(messages=[ChatMessage(role="assistant", text="response")])
+            return AgentResponse(messages=[Message(role="assistant", text="response")])
 
         result = await pipeline.execute(context, final_handler)
 
@@ -861,16 +847,16 @@ class TestFunctionBasedMiddleware:
         assert context.metadata["function_middleware"] is True
         assert execution_order == ["function_before", "handler", "function_after"]
 
-    async def test_function_function_middleware(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_function_function_middleware(self, mock_function: FunctionTool) -> None:
         """Test function-based function middleware."""
         execution_order: list[str] = []
 
         async def test_function_middleware(
-            context: FunctionInvocationContext, call_next: Callable[[FunctionInvocationContext], Awaitable[None]]
+            context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
         ) -> None:
             execution_order.append("function_before")
             context.metadata["function_middleware"] = True
-            await call_next(context)
+            await call_next()
             execution_order.append("function_after")
 
         pipeline = FunctionMiddlewarePipeline(test_function_middleware)
@@ -896,34 +882,30 @@ class TestMixedMiddleware:
         execution_order: list[str] = []
 
         class ClassMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("class_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("class_after")
 
-        async def function_middleware(
-            context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-        ) -> None:
+        async def function_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
             execution_order.append("function_before")
-            await call_next(context)
+            await call_next()
             execution_order.append("function_after")
 
         pipeline = AgentMiddlewarePipeline(ClassMiddleware(), function_middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages)
 
         async def final_handler(ctx: AgentContext) -> AgentResponse:
             execution_order.append("handler")
-            return AgentResponse(messages=[ChatMessage(role="assistant", text="response")])
+            return AgentResponse(messages=[Message(role="assistant", text="response")])
 
         result = await pipeline.execute(context, final_handler)
 
         assert result is not None
         assert execution_order == ["class_before", "function_before", "handler", "function_after", "class_after"]
 
-    async def test_mixed_function_middleware(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_mixed_function_middleware(self, mock_function: FunctionTool) -> None:
         """Test mixed class and function-based function middleware."""
         execution_order: list[str] = []
 
@@ -931,17 +913,17 @@ class TestMixedMiddleware:
             async def process(
                 self,
                 context: FunctionInvocationContext,
-                call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 execution_order.append("class_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("class_after")
 
         async def function_middleware(
-            context: FunctionInvocationContext, call_next: Callable[[FunctionInvocationContext], Awaitable[None]]
+            context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
         ) -> None:
             execution_order.append("function_before")
-            await call_next(context)
+            await call_next()
             execution_order.append("function_after")
 
         pipeline = FunctionMiddlewarePipeline(ClassMiddleware(), function_middleware)
@@ -962,26 +944,24 @@ class TestMixedMiddleware:
         execution_order: list[str] = []
 
         class ClassChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("class_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("class_after")
 
-        async def function_chat_middleware(
-            context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]
-        ) -> None:
+        async def function_chat_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
             execution_order.append("function_before")
-            await call_next(context)
+            await call_next()
             execution_order.append("function_after")
 
         pipeline = ChatMiddlewarePipeline(ClassChatMiddleware(), function_chat_middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options)
 
         async def final_handler(ctx: ChatContext) -> ChatResponse:
             execution_order.append("handler")
-            return ChatResponse(messages=[ChatMessage(role="assistant", text="response")])
+            return ChatResponse(messages=[Message(role="assistant", text="response")])
 
         result = await pipeline.execute(context, final_handler)
 
@@ -997,37 +977,31 @@ class TestMultipleMiddlewareOrdering:
         execution_order: list[str] = []
 
         class FirstMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("first_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("first_after")
 
         class SecondMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("second_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("second_after")
 
         class ThirdMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("third_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("third_after")
 
         middleware = [FirstMiddleware(), SecondMiddleware(), ThirdMiddleware()]
         pipeline = AgentMiddlewarePipeline(*middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages)
 
         async def final_handler(ctx: AgentContext) -> AgentResponse:
             execution_order.append("handler")
-            return AgentResponse(messages=[ChatMessage(role="assistant", text="response")])
+            return AgentResponse(messages=[Message(role="assistant", text="response")])
 
         result = await pipeline.execute(context, final_handler)
 
@@ -1043,7 +1017,7 @@ class TestMultipleMiddlewareOrdering:
         ]
         assert execution_order == expected_order
 
-    async def test_function_middleware_execution_order(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_function_middleware_execution_order(self, mock_function: FunctionTool) -> None:
         """Test that multiple function middleware execute in registration order."""
         execution_order: list[str] = []
 
@@ -1051,20 +1025,20 @@ class TestMultipleMiddlewareOrdering:
             async def process(
                 self,
                 context: FunctionInvocationContext,
-                call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 execution_order.append("first_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("first_after")
 
         class SecondMiddleware(FunctionMiddleware):
             async def process(
                 self,
                 context: FunctionInvocationContext,
-                call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 execution_order.append("second_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("second_after")
 
         middleware = [FirstMiddleware(), SecondMiddleware()]
@@ -1087,32 +1061,32 @@ class TestMultipleMiddlewareOrdering:
         execution_order: list[str] = []
 
         class FirstChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("first_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("first_after")
 
         class SecondChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("second_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("second_after")
 
         class ThirdChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("third_before")
-                await call_next(context)
+                await call_next()
                 execution_order.append("third_after")
 
         middleware = [FirstChatMiddleware(), SecondChatMiddleware(), ThirdChatMiddleware()]
         pipeline = ChatMiddlewarePipeline(*middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options)
 
         async def final_handler(ctx: ChatContext) -> ChatResponse:
             execution_order.append("handler")
-            return ChatResponse(messages=[ChatMessage(role="assistant", text="response")])
+            return ChatResponse(messages=[Message(role="assistant", text="response")])
 
         result = await pipeline.execute(context, final_handler)
 
@@ -1136,9 +1110,7 @@ class TestContextContentValidation:
         """Test that agent context contains expected data."""
 
         class ContextValidationMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 # Verify context has all expected attributes
                 assert hasattr(context, "agent")
                 assert hasattr(context, "messages")
@@ -1156,29 +1128,29 @@ class TestContextContentValidation:
                 # Add custom metadata
                 context.metadata["validated"] = True
 
-                await call_next(context)
+                await call_next()
 
         middleware = ContextValidationMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages)
 
         async def final_handler(ctx: AgentContext) -> AgentResponse:
             # Verify metadata was set by middleware
             assert ctx.metadata.get("validated") is True
-            return AgentResponse(messages=[ChatMessage(role="assistant", text="response")])
+            return AgentResponse(messages=[Message(role="assistant", text="response")])
 
         result = await pipeline.execute(context, final_handler)
         assert result is not None
 
-    async def test_function_context_validation(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_function_context_validation(self, mock_function: FunctionTool) -> None:
         """Test that function context contains expected data."""
 
         class ContextValidationMiddleware(FunctionMiddleware):
             async def process(
                 self,
                 context: FunctionInvocationContext,
-                call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 # Verify context has all expected attributes
                 assert hasattr(context, "function")
@@ -1194,7 +1166,7 @@ class TestContextContentValidation:
                 # Add custom metadata
                 context.metadata["validated"] = True
 
-                await call_next(context)
+                await call_next()
 
         middleware = ContextValidationMiddleware()
         pipeline = FunctionMiddlewarePipeline(middleware)
@@ -1213,9 +1185,9 @@ class TestContextContentValidation:
         """Test that chat context contains expected data."""
 
         class ChatContextValidationMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 # Verify context has all expected attributes
-                assert hasattr(context, "chat_client")
+                assert hasattr(context, "client")
                 assert hasattr(context, "messages")
                 assert hasattr(context, "options")
                 assert hasattr(context, "stream")
@@ -1223,7 +1195,7 @@ class TestContextContentValidation:
                 assert hasattr(context, "result")
 
                 # Verify context content
-                assert context.chat_client is mock_chat_client
+                assert context.client is mock_chat_client
                 assert len(context.messages) == 1
                 assert context.messages[0].role == "user"
                 assert context.messages[0].text == "test"
@@ -1235,18 +1207,18 @@ class TestContextContentValidation:
                 # Add custom metadata
                 context.metadata["validated"] = True
 
-                await call_next(context)
+                await call_next()
 
         middleware = ChatContextValidationMiddleware()
         pipeline = ChatMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {"temperature": 0.5}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options)
 
         async def final_handler(ctx: ChatContext) -> ChatResponse:
             # Verify metadata was set by middleware
             assert ctx.metadata.get("validated") is True
-            return ChatResponse(messages=[ChatMessage(role="assistant", text="response")])
+            return ChatResponse(messages=[Message(role="assistant", text="response")])
 
         result = await pipeline.execute(context, final_handler)
         assert result is not None
@@ -1260,22 +1232,20 @@ class TestStreamingScenarios:
         streaming_flags: list[bool] = []
 
         class StreamingFlagMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 streaming_flags.append(context.stream)
-                await call_next(context)
+                await call_next()
 
         middleware = StreamingFlagMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
 
         # Test non-streaming
         context = AgentContext(agent=mock_agent, messages=messages)
 
         async def final_handler(ctx: AgentContext) -> AgentResponse:
             streaming_flags.append(ctx.stream)
-            return AgentResponse(messages=[ChatMessage(role="assistant", text="response")])
+            return AgentResponse(messages=[Message(role="assistant", text="response")])
 
         await pipeline.execute(context, final_handler)
 
@@ -1302,16 +1272,14 @@ class TestStreamingScenarios:
         chunks_processed: list[str] = []
 
         class StreamProcessingMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 chunks_processed.append("before_stream")
-                await call_next(context)
+                await call_next()
                 chunks_processed.append("after_stream")
 
         middleware = StreamProcessingMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages, stream=True)
 
         async def final_stream_handler(ctx: AgentContext) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
@@ -1345,26 +1313,26 @@ class TestStreamingScenarios:
         streaming_flags: list[bool] = []
 
         class ChatStreamingFlagMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 streaming_flags.append(context.stream)
-                await call_next(context)
+                await call_next()
 
         middleware = ChatStreamingFlagMiddleware()
         pipeline = ChatMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
 
         # Test non-streaming
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options)
 
         async def final_handler(ctx: ChatContext) -> ChatResponse:
             streaming_flags.append(ctx.stream)
-            return ChatResponse(messages=[ChatMessage(role="assistant", text="response")])
+            return ChatResponse(messages=[Message(role="assistant", text="response")])
 
         await pipeline.execute(context, final_handler)
 
         # Test streaming
-        context_stream = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options, stream=True)
+        context_stream = ChatContext(client=mock_chat_client, messages=messages, options=chat_options, stream=True)
 
         def final_stream_handler(ctx: ChatContext) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
@@ -1386,16 +1354,16 @@ class TestStreamingScenarios:
         chunks_processed: list[str] = []
 
         class ChatStreamProcessingMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 chunks_processed.append("before_stream")
-                await call_next(context)
+                await call_next()
                 chunks_processed.append("after_stream")
 
         middleware = ChatStreamProcessingMiddleware()
         pipeline = ChatMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options, stream=True)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options, stream=True)
 
         def final_stream_handler(ctx: ChatContext) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
@@ -1436,24 +1404,22 @@ class FunctionTestArgs(BaseModel):
 class TestAgentMiddleware(AgentMiddleware):
     """Test implementation of AgentMiddleware."""
 
-    async def process(self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]) -> None:
-        await call_next(context)
+    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
 
 
 class TestFunctionMiddleware(FunctionMiddleware):
     """Test implementation of FunctionMiddleware."""
 
-    async def process(
-        self, context: FunctionInvocationContext, call_next: Callable[[FunctionInvocationContext], Awaitable[None]]
-    ) -> None:
-        await call_next(context)
+    async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
 
 
 class TestChatMiddleware(ChatMiddleware):
     """Test implementation of ChatMiddleware."""
 
-    async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
-        await call_next(context)
+    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
 
 
 class MockFunctionArgs(BaseModel):
@@ -1469,15 +1435,13 @@ class TestMiddlewareExecutionControl:
         """Test that when agent middleware doesn't call next(), no execution happens."""
 
         class NoNextMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 # Don't call next() - this should prevent any execution
                 pass
 
         middleware = NoNextMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages)
 
         handler_called = False
@@ -1485,7 +1449,7 @@ class TestMiddlewareExecutionControl:
         async def final_handler(ctx: AgentContext) -> AgentResponse:
             nonlocal handler_called
             handler_called = True
-            return AgentResponse(messages=[ChatMessage(role="assistant", text="should not execute")])
+            return AgentResponse(messages=[Message(role="assistant", text="should not execute")])
 
         result = await pipeline.execute(context, final_handler)
 
@@ -1498,15 +1462,13 @@ class TestMiddlewareExecutionControl:
         """Test that when agent middleware doesn't call next(), no streaming execution happens."""
 
         class NoNextStreamingMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 # Don't call next() - this should prevent any execution
                 pass
 
         middleware = NoNextStreamingMiddleware()
         pipeline = AgentMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages, stream=True)
 
         handler_called = False
@@ -1527,7 +1489,7 @@ class TestMiddlewareExecutionControl:
         assert not handler_called
         assert context.result is None
 
-    async def test_function_middleware_no_next_no_execution(self, mock_function: FunctionTool[Any, Any]) -> None:
+    async def test_function_middleware_no_next_no_execution(self, mock_function: FunctionTool) -> None:
         """Test that when function middleware doesn't call next(), no execution happens."""
 
         class FunctionTestArgs(BaseModel):
@@ -1537,7 +1499,7 @@ class TestMiddlewareExecutionControl:
             async def process(
                 self,
                 context: FunctionInvocationContext,
-                call_next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 # Don't call next() - this should prevent any execution
                 pass
@@ -1566,21 +1528,17 @@ class TestMiddlewareExecutionControl:
         execution_order: list[str] = []
 
         class FirstMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("first")
                 # Don't call next() - this should stop the pipeline
 
         class SecondMiddleware(AgentMiddleware):
-            async def process(
-                self, context: AgentContext, call_next: Callable[[AgentContext], Awaitable[None]]
-            ) -> None:
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("second")
-                await call_next(context)
+                await call_next()
 
         pipeline = AgentMiddlewarePipeline(FirstMiddleware(), SecondMiddleware())
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         context = AgentContext(agent=mock_agent, messages=messages)
 
         handler_called = False
@@ -1588,7 +1546,7 @@ class TestMiddlewareExecutionControl:
         async def final_handler(ctx: AgentContext) -> AgentResponse:
             nonlocal handler_called
             handler_called = True
-            return AgentResponse(messages=[ChatMessage(role="assistant", text="should not execute")])
+            return AgentResponse(messages=[Message(role="assistant", text="should not execute")])
 
         result = await pipeline.execute(context, final_handler)
 
@@ -1601,22 +1559,22 @@ class TestMiddlewareExecutionControl:
         """Test that when chat middleware doesn't call next(), no execution happens."""
 
         class NoNextChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 # Don't call next() - this should prevent any execution
                 pass
 
         middleware = NoNextChatMiddleware()
         pipeline = ChatMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options)
 
         handler_called = False
 
         async def final_handler(ctx: ChatContext) -> ChatResponse:
             nonlocal handler_called
             handler_called = True
-            return ChatResponse(messages=[ChatMessage(role="assistant", text="should not execute")])
+            return ChatResponse(messages=[Message(role="assistant", text="should not execute")])
 
         result = await pipeline.execute(context, final_handler)
 
@@ -1629,15 +1587,15 @@ class TestMiddlewareExecutionControl:
         """Test that when chat middleware doesn't call next(), no streaming execution happens."""
 
         class NoNextStreamingChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 # Don't call next() - this should prevent any execution
                 pass
 
         middleware = NoNextStreamingChatMiddleware()
         pipeline = ChatMiddlewarePipeline(middleware)
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options, stream=True)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options, stream=True)
 
         handler_called = False
 
@@ -1670,26 +1628,26 @@ class TestMiddlewareExecutionControl:
         execution_order: list[str] = []
 
         class FirstChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("first")
                 # Don't call next() - this should stop the pipeline
 
         class SecondChatMiddleware(ChatMiddleware):
-            async def process(self, context: ChatContext, call_next: Callable[[ChatContext], Awaitable[None]]) -> None:
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 execution_order.append("second")
-                await call_next(context)
+                await call_next()
 
         pipeline = ChatMiddlewarePipeline(FirstChatMiddleware(), SecondChatMiddleware())
-        messages = [ChatMessage(role="user", text="test")]
+        messages = [Message(role="user", text="test")]
         chat_options: dict[str, Any] = {}
-        context = ChatContext(chat_client=mock_chat_client, messages=messages, options=chat_options)
+        context = ChatContext(client=mock_chat_client, messages=messages, options=chat_options)
 
         handler_called = False
 
         async def final_handler(ctx: ChatContext) -> ChatResponse:
             nonlocal handler_called
             handler_called = True
-            return ChatResponse(messages=[ChatMessage(role="assistant", text="should not execute")])
+            return ChatResponse(messages=[Message(role="assistant", text="should not execute")])
 
         result = await pipeline.execute(context, final_handler)
 
@@ -1708,9 +1666,9 @@ def mock_agent() -> SupportsAgentRun:
 
 
 @pytest.fixture
-def mock_function() -> FunctionTool[Any, Any]:
+def mock_function() -> FunctionTool:
     """Mock function for testing."""
-    function = MagicMock(spec=FunctionTool[Any, Any])
+    function = MagicMock(spec=FunctionTool)
     function.name = "test_function"
     return function
 
@@ -1718,8 +1676,8 @@ def mock_function() -> FunctionTool[Any, Any]:
 @pytest.fixture
 def mock_chat_client() -> Any:
     """Mock chat client for testing."""
-    from agent_framework import ChatClientProtocol
+    from agent_framework import SupportsChatGetResponse
 
-    client = MagicMock(spec=ChatClientProtocol)
+    client = MagicMock(spec=SupportsChatGetResponse)
     client.service_url = MagicMock(return_value="mock://test")
     return client

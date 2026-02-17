@@ -27,26 +27,25 @@ from openai.types.beta.threads import (
 from openai.types.beta.threads.run_create_params import AdditionalMessage
 from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from .._clients import BaseChatClient
 from .._middleware import ChatMiddlewareLayer
+from .._settings import load_settings
 from .._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
-    HostedCodeInterpreterTool,
-    HostedFileSearchTool,
+    normalize_tools,
 )
 from .._types import (
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Message,
     ResponseStream,
     UsageDetails,
-    prepare_function_call_results,
 )
 from ..exceptions import ServiceInitializationError
 from ..observability import ChatTelemetryLayer
@@ -70,16 +69,10 @@ else:
 if TYPE_CHECKING:
     from .._middleware import MiddlewareTypes
 
-__all__ = [
-    "AssistantToolResources",
-    "OpenAIAssistantsClient",
-    "OpenAIAssistantsOptions",
-]
-
 
 # region OpenAI Assistants Options TypedDict
 
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 class VectorStoreToolResource(TypedDict, total=False):
@@ -109,7 +102,7 @@ class AssistantToolResources(TypedDict, total=False):
     """Resources for file search tool, including vector store IDs."""
 
 
-class OpenAIAssistantsOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class OpenAIAssistantsOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """OpenAI Assistants API-specific options dict.
 
     Extends base ChatOptions with Assistants API-specific parameters
@@ -193,8 +186,8 @@ ASSISTANTS_OPTION_TRANSLATIONS: dict[str, str] = {
 }
 """Maps ChatOptions keys to OpenAI Assistants API parameter names."""
 
-TOpenAIAssistantsOptions = TypeVar(
-    "TOpenAIAssistantsOptions",
+OpenAIAssistantsOptionsT = TypeVar(
+    "OpenAIAssistantsOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="OpenAIAssistantsOptions",
     covariant=True,
@@ -206,13 +199,69 @@ TOpenAIAssistantsOptions = TypeVar(
 
 class OpenAIAssistantsClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    ChatMiddlewareLayer[TOpenAIAssistantsOptions],
-    FunctionInvocationLayer[TOpenAIAssistantsOptions],
-    ChatTelemetryLayer[TOpenAIAssistantsOptions],
-    BaseChatClient[TOpenAIAssistantsOptions],
-    Generic[TOpenAIAssistantsOptions],
+    ChatMiddlewareLayer[OpenAIAssistantsOptionsT],
+    FunctionInvocationLayer[OpenAIAssistantsOptionsT],
+    ChatTelemetryLayer[OpenAIAssistantsOptionsT],
+    BaseChatClient[OpenAIAssistantsOptionsT],
+    Generic[OpenAIAssistantsOptionsT],
 ):
     """OpenAI Assistants client with middleware, telemetry, and function invocation support."""
+
+    # region Hosted Tool Factory Methods
+
+    @staticmethod
+    def get_code_interpreter_tool() -> dict[str, Any]:
+        """Create a code interpreter tool configuration for the Assistants API.
+
+        Returns:
+            A dict tool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIAssistantsClient
+
+                # Enable code interpreter
+                tool = OpenAIAssistantsClient.get_code_interpreter_tool()
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        return {"type": "code_interpreter"}
+
+    @staticmethod
+    def get_file_search_tool(
+        *,
+        max_num_results: int | None = None,
+    ) -> dict[str, Any]:
+        """Create a file search tool configuration for the Assistants API.
+
+        Keyword Args:
+            max_num_results: Maximum number of results to return from file search.
+
+        Returns:
+            A dict tool configuration ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIAssistantsClient
+
+                # Basic file search
+                tool = OpenAIAssistantsClient.get_file_search_tool()
+
+                # With result limit
+                tool = OpenAIAssistantsClient.get_file_search_tool(max_num_results=10)
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        tool: dict[str, Any] = {"type": "file_search"}
+
+        if max_num_results is not None:
+            tool["file_search"] = {"max_num_results": max_num_results}
+
+        return tool
+
+    # endregion
 
     def __init__(
         self,
@@ -289,35 +338,34 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                 client: OpenAIAssistantsClient[MyOptions] = OpenAIAssistantsClient(model_id="gpt-4")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            openai_settings = OpenAISettings(
-                api_key=api_key,  # type: ignore[reportArgumentType]
-                base_url=base_url,
-                org_id=org_id,
-                chat_model_id=model_id,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
+        openai_settings = load_settings(
+            OpenAISettings,
+            env_prefix="OPENAI_",
+            api_key=api_key,
+            base_url=base_url,
+            org_id=org_id,
+            chat_model_id=model_id,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
-        if not async_client and not openai_settings.api_key:
+        if not async_client and not openai_settings["api_key"]:
             raise ServiceInitializationError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
-        if not openai_settings.chat_model_id:
+        if not openai_settings["chat_model_id"]:
             raise ServiceInitializationError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
 
         super().__init__(
-            model_id=openai_settings.chat_model_id,
-            api_key=self._get_api_key(openai_settings.api_key),
-            org_id=openai_settings.org_id,
+            model_id=openai_settings["chat_model_id"],
+            api_key=self._get_api_key(openai_settings["api_key"]),
+            org_id=openai_settings["org_id"],
             default_headers=default_headers,
             client=async_client,
-            base_url=openai_settings.base_url,
+            base_url=openai_settings["base_url"],
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
         )
@@ -352,7 +400,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         stream: bool = False,
         **kwargs: Any,
@@ -605,7 +653,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
     def _prepare_options(
         self,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[Content] | None]:
@@ -639,34 +687,26 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         tool_definitions: list[MutableMapping[str, Any]] = []
         # Always include tools if provided, regardless of tool_choice
         # tool_choice="none" means the model won't call tools, but tools should still be available
-        if tools is not None:
-            for tool in tools:
-                if isinstance(tool, FunctionTool):
-                    tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
-                elif isinstance(tool, HostedCodeInterpreterTool):
-                    tool_definitions.append({"type": "code_interpreter"})
-                elif isinstance(tool, HostedFileSearchTool):
-                    params: dict[str, Any] = {
-                        "type": "file_search",
-                    }
-                    if tool.max_results is not None:
-                        params["max_num_results"] = tool.max_results
-                    tool_definitions.append(params)
-                elif isinstance(tool, MutableMapping):
-                    tool_definitions.append(tool)
+        for tool in normalize_tools(tools):
+            if isinstance(tool, FunctionTool):
+                tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
+            elif isinstance(tool, MutableMapping):
+                # Pass through dict-based tools directly (from static factory methods)
+                tool_definitions.append(tool)
 
         if len(tool_definitions) > 0:
             run_options["tools"] = tool_definitions
 
-        if (mode := tool_mode["mode"]) == "required" and (
-            func_name := tool_mode.get("required_function_name")
-        ) is not None:
-            run_options["tool_choice"] = {
-                "type": "function",
-                "function": {"name": func_name},
-            }
-        else:
-            run_options["tool_choice"] = mode
+        if tool_mode is not None:
+            if (mode := tool_mode["mode"]) == "required" and (
+                func_name := tool_mode.get("required_function_name")
+            ) is not None:
+                run_options["tool_choice"] = {
+                    "type": "function",
+                    "function": {"name": func_name},
+                }
+            else:
+                run_options["tool_choice"] = mode
 
         if response_format is not None:
             if isinstance(response_format, dict):
@@ -759,10 +799,11 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
                 if tool_outputs is None:
                     tool_outputs = []
-                if function_result_content.result:
-                    output = prepare_function_call_results(function_result_content.result)
-                else:
-                    output = "No output received."
+                output = (
+                    function_result_content.result
+                    if function_result_content.result is not None
+                    else "No output received."
+                )
                 tool_outputs.append(ToolOutput(tool_call_id=call_id, output=output))
 
         return run_id, tool_outputs

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from copy import copy
 from typing import Any, ClassVar, Union
@@ -20,16 +21,14 @@ from openai.types.images_response import ImagesResponse
 from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 from packaging.version import parse
-from pydantic import SecretStr
 
-from .._logging import get_logger
-from .._pydantic import AFBaseSettings
 from .._serialization import SerializationMixin
+from .._settings import SecretString
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
-from .._tools import FunctionTool, HostedCodeInterpreterTool, HostedFileSearchTool, ToolProtocol
+from .._tools import FunctionTool
 from ..exceptions import ServiceInitializationError
 
-logger: logging.Logger = get_logger("agent_framework.openai")
+logger: logging.Logger = logging.getLogger("agent_framework.openai")
 
 
 RESPONSE_TYPE = Union[
@@ -47,8 +46,10 @@ RESPONSE_TYPE = Union[
 
 OPTION_TYPE = dict[str, Any]
 
-
-__all__ = ["OpenAISettings"]
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
 def _check_openai_version_for_callable_api_key() -> None:
@@ -74,7 +75,7 @@ def _check_openai_version_for_callable_api_key() -> None:
         logger.warning(f"Could not check OpenAI version for callable API key support: {e}")
 
 
-class OpenAISettings(AFBaseSettings):
+class OpenAISettings(TypedDict, total=False):
     """OpenAI environment settings.
 
     The settings are first loaded from environment variables with the prefix 'OPENAI_'.
@@ -93,8 +94,6 @@ class OpenAISettings(AFBaseSettings):
             Can be set via environment variable OPENAI_CHAT_MODEL_ID.
         responses_model_id: The OpenAI responses model ID to use, for example, gpt-4o or o1.
             Can be set via environment variable OPENAI_RESPONSES_MODEL_ID.
-        env_file_path: The path to the .env file to load settings from.
-        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
 
     Examples:
         .. code-block:: python
@@ -104,22 +103,20 @@ class OpenAISettings(AFBaseSettings):
             # Using environment variables
             # Set OPENAI_API_KEY=sk-...
             # Set OPENAI_CHAT_MODEL_ID=gpt-4
-            settings = OpenAISettings()
+            settings = load_settings(OpenAISettings, env_prefix="OPENAI_")
 
             # Or passing parameters directly
-            settings = OpenAISettings(api_key="sk-...", chat_model_id="gpt-4")
+            settings = load_settings(OpenAISettings, env_prefix="OPENAI_", api_key="sk-...", chat_model_id="gpt-4")
 
             # Or loading from a .env file
-            settings = OpenAISettings(env_file_path="path/to/.env")
+            settings = load_settings(OpenAISettings, env_prefix="OPENAI_", env_file_path="path/to/.env")
     """
 
-    env_prefix: ClassVar[str] = "OPENAI_"
-
-    api_key: SecretStr | Callable[[], str | Awaitable[str]] | None = None
-    base_url: str | None = None
-    org_id: str | None = None
-    chat_model_id: str | None = None
-    responses_model_id: str | None = None
+    api_key: SecretString | Callable[[], str | Awaitable[str]] | None
+    base_url: str | None
+    org_id: str | None
+    chat_model_id: str | None
+    responses_model_id: str | None
 
 
 class OpenAIBase(SerializationMixin):
@@ -181,19 +178,18 @@ class OpenAIBase(SerializationMixin):
         return self.client
 
     def _get_api_key(
-        self, api_key: str | SecretStr | Callable[[], str | Awaitable[str]] | None
+        self, api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None
     ) -> str | Callable[[], str | Awaitable[str]] | None:
         """Get the appropriate API key value for client initialization.
 
         Args:
-            api_key: The API key parameter which can be a string, SecretStr, callable, or None.
+            api_key: The API key parameter which can be a string, SecretString, callable, or None.
 
         Returns:
             For callable API keys: returns the callable directly.
-            For SecretStr API keys: returns the string value.
-            For string/None API keys: returns as-is.
+            For SecretString/string/None API keys: returns as-is (SecretString is a str subclass).
         """
-        if isinstance(api_key, SecretStr):
+        if isinstance(api_key, SecretString):
             return api_key.get_secret_value()
 
         # Check version compatibility for callable API keys
@@ -284,12 +280,14 @@ class OpenAIConfigMixin(OpenAIBase):
 
 
 def to_assistant_tools(
-    tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None,
+    tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
 ) -> list[dict[str, Any]]:
     """Convert Agent Framework tools to OpenAI Assistants API format.
 
+    Handles FunctionTool instances and dict-based tools from static factory methods.
+
     Args:
-        tools: Normalized tools (from ChatOptions.tools).
+        tools: Sequence of Agent Framework tools.
 
     Returns:
         List of tool definitions for OpenAI Assistants API.
@@ -302,15 +300,8 @@ def to_assistant_tools(
     for tool in tools:
         if isinstance(tool, FunctionTool):
             tool_definitions.append(tool.to_json_schema_spec())
-        elif isinstance(tool, HostedCodeInterpreterTool):
-            tool_definitions.append({"type": "code_interpreter"})
-        elif isinstance(tool, HostedFileSearchTool):
-            params: dict[str, Any] = {"type": "file_search"}
-            if tool.max_results is not None:
-                params["file_search"] = {"max_num_results": tool.max_results}
-            tool_definitions.append(params)
         elif isinstance(tool, MutableMapping):
-            # Pass through raw dict definitions
+            # Pass through dict-based tools directly (from static factory methods)
             tool_definitions.append(dict(tool))
 
     return tool_definitions
@@ -318,11 +309,11 @@ def to_assistant_tools(
 
 def from_assistant_tools(
     assistant_tools: list[Any] | None,
-) -> list[ToolProtocol]:
-    """Convert OpenAI Assistant tools to Agent Framework format.
+) -> list[dict[str, Any]]:
+    """Convert OpenAI Assistant tools to dict-based format.
 
     This converts hosted tools (code_interpreter, file_search) from an OpenAI
-    Assistant definition back to Agent Framework tool instances.
+    Assistant definition back to dict-based tool definitions.
 
     Note: Function tools are skipped - user must provide implementations separately.
 
@@ -330,12 +321,12 @@ def from_assistant_tools(
         assistant_tools: Tools from OpenAI Assistant object (assistant.tools).
 
     Returns:
-        List of Agent Framework tool instances for hosted tools.
+        List of dict-based tool definitions for hosted tools.
     """
     if not assistant_tools:
         return []
 
-    tools: list[ToolProtocol] = []
+    tools: list[dict[str, Any]] = []
 
     for tool in assistant_tools:
         if hasattr(tool, "type"):
@@ -346,9 +337,9 @@ def from_assistant_tools(
             tool_type = None
 
         if tool_type == "code_interpreter":
-            tools.append(HostedCodeInterpreterTool())
+            tools.append({"type": "code_interpreter"})
         elif tool_type == "file_search":
-            tools.append(HostedFileSearchTool())
+            tools.append({"type": "file_search"})
         # Skip function tools - user must provide implementations
 
     return tools

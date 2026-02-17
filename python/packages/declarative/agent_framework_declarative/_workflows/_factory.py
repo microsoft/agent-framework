@@ -12,6 +12,7 @@ enabling checkpointing, visualization, and pause/resume capabilities.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -22,13 +23,12 @@ from agent_framework import (
     CheckpointStorage,
     SupportsAgentRun,
     Workflow,
-    get_logger,
 )
 
 from .._loader import AgentFactory
 from ._declarative_builder import DeclarativeWorkflowBuilder
 
-logger = get_logger("agent_framework.declarative.workflows")
+logger = logging.getLogger("agent_framework.declarative")
 
 
 class DeclarativeWorkflowError(Exception):
@@ -73,8 +73,8 @@ class WorkflowFactory:
             from agent_framework.declarative import WorkflowFactory
 
             # Pre-register agents for InvokeAzureAgent actions
-            chat_client = AzureOpenAIChatClient()
-            agent = chat_client.as_agent(name="MyAgent", instructions="You are helpful.")
+            client = AzureOpenAIChatClient()
+            agent = client.as_agent(name="MyAgent", instructions="You are helpful.")
 
             factory = WorkflowFactory(agents={"MyAgent": agent})
             workflow = factory.create_workflow_from_yaml_path("workflow.yaml")
@@ -517,7 +517,7 @@ class WorkflowFactory:
         Args:
             name: The name to register the agent under. Must match the agent name
                 referenced in InvokeAzureAgent actions.
-            agent: The agent instance (typically a ChatAgent or similar).
+            agent: The agent instance (typically a Agent or similar).
 
         Returns:
             Self for method chaining.

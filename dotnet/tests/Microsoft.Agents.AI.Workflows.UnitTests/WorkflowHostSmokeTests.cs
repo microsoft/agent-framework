@@ -32,18 +32,16 @@ public class WorkflowHostSmokeTests
 {
     private sealed class AlwaysFailsAIAgent(bool failByThrowing) : AIAgent
     {
-        private sealed class Session : InMemoryAgentSession
+        private sealed class Session : AgentSession
         {
             public Session() { }
 
-            public Session(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null)
-                : base(serializedSession, jsonSerializerOptions)
-            { }
+            public Session(AgentSessionStateBag stateBag) : base(stateBag) { }
         }
 
         protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
-            return new(new Session(serializedState, jsonSerializerOptions));
+            return new(serializedState.Deserialize<Session>(jsonSerializerOptions)!);
         }
 
         protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
@@ -51,7 +49,7 @@ public class WorkflowHostSmokeTests
             return new(new Session());
         }
 
-        protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => default;
 
         protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

@@ -12,10 +12,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Literal, TypeVar
 
-from agent_framework import AgentThread, ChatMessage, SupportsAgentRun
+from agent_framework import AgentSession, SupportsAgentRun, normalize_messages
+from agent_framework._types import AgentRunInputs
 
 from ._executors import DurableAgentExecutor
-from ._models import DurableAgentThread
+from ._models import DurableAgentSession
 
 # TypeVar for the task type returned by executors
 # Covariant because TaskT only appears in return positions (output)
@@ -86,10 +87,10 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
 
     def run(  # type: ignore[override]
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         options: dict[str, Any] | None = None,
     ) -> TaskT:
         """Execute the agent via the injected provider.
@@ -98,7 +99,7 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
             messages: The message(s) to send to the agent
             stream: Whether to use streaming for the response (must be False)
                 DurableAgents do not support streaming mode.
-            thread: Optional agent thread for conversation context
+            session: Optional agent session for conversation context
             options: Optional options dictionary. Supported keys include
                 ``response_format``, ``enable_tool_calls``, and ``wait_for_response``.
                 Additional keys are forwarded to the agent execution.
@@ -129,14 +130,21 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
         return self._executor.run_durable_agent(
             agent_name=self.name,
             run_request=run_request,
-            thread=thread,
+            session=session,
         )
 
-    def get_new_thread(self, **kwargs: Any) -> DurableAgentThread:
-        """Create a new agent thread via the provider."""
-        return self._executor.get_new_thread(self.name, **kwargs)
+    def create_session(self, **kwargs: Any) -> DurableAgentSession:
+        """Create a new agent session via the provider."""
+        return self._executor.get_new_session(self.name, **kwargs)
 
-    def _normalize_messages(self, messages: str | ChatMessage | list[str] | list[ChatMessage] | None) -> str:
+    def get_session(self, **kwargs: Any) -> AgentSession:
+        """Retrieve an existing session via the provider.
+
+        For durable agents, sessions do not use `service_session_id` so this is not used.
+        """
+        return self._executor.get_new_session(self.name, **kwargs)
+
+    def _normalize_messages(self, messages: AgentRunInputs | None) -> str:
         """Convert supported message inputs to a single string.
 
         Args:
@@ -144,19 +152,18 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
 
         Returns:
             A single string representation of the messages
+
+        Raises:
+            ValueError: If normalized messages contain non-text content only.
         """
-        if messages is None:
+        normalized_messages = normalize_messages(messages)
+        if not normalized_messages:
             return ""
-        if isinstance(messages, str):
-            return messages
-        if isinstance(messages, ChatMessage):
-            return messages.text or ""
-        if isinstance(messages, list):
-            if not messages:
-                return ""
-            first_item = messages[0]
-            if isinstance(first_item, str):
-                return "\n".join(messages)  # type: ignore[arg-type]
-            # List of ChatMessage
-            return "\n".join([msg.text or "" for msg in messages])  # type: ignore[union-attr]
-        return ""
+
+        message_texts: list[str] = []
+        for message in normalized_messages:
+            if not message.text:
+                raise ValueError("DurableAIAgent only supports text message inputs.")
+            message_texts.append(message.text)
+
+        return "\n".join(message_texts)

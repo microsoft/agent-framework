@@ -1,12 +1,16 @@
 ﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
 <#@ output extension=".cs" #>
 <#@ assembly name="System.Core" #>
-<#@ include file="Snippets/Index.tt" once="true" #>
-
+<#@ import namespace="Microsoft.Agents.AI.Workflows.Declarative.Extensions" #>
+<#@ import namespace="Microsoft.Agents.ObjectModel" #>
+<#@ include file="Snippets/AssignVariableTemplate.tt" once="true" #>
+<#@ include file="Snippets/EvaluateRecordExpressionTemplate.tt" once="true" #>
+<#@ include file="Snippets/EvaluateStringExpressionTemplate.tt" once="true" #>
+<#@ include file="Snippets/FormatMessageTemplate.tt" once="true" #>
 /// <summary>
 /// Adds a new message to the specified agent conversation
 /// </summary>
-internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "<#= this.Id #>", session)
+internal sealed class <#= this.Name #>Executor(FormulaSession session, ResponseAgentProvider agentProvider) : ActionExecutor(id: "<#= this.Id #>", session)
 {
     // <inheritdoc />
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)

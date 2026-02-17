@@ -5,7 +5,6 @@ from agent_framework_ag_ui import (
     AGUIChatClient,
     AGUIEventConverter,
     AGUIHttpService,
-    __version__,
     add_agent_framework_fastapi_endpoint,
 )
 
@@ -14,6 +13,5 @@ __all__ = [
     "AGUIEventConverter",
     "AGUIHttpService",
     "AgentFrameworkAgent",
-    "__version__",
     "add_agent_framework_fastapi_endpoint",
 ]

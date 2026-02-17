@@ -11,17 +11,17 @@ import pytest
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseChatClient,
-    ChatClientProtocol,
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Message,
     SupportsAgentRun,
+    SupportsChatGetResponse,
 )
-from agent_framework._clients import TOptions_co
+from agent_framework._clients import OptionsCoT
 from agent_framework._middleware import ChatMiddlewareLayer
 from agent_framework._tools import FunctionInvocationLayer
 from agent_framework._types import ResponseStream
@@ -37,25 +37,25 @@ ResponseFn = Callable[..., Awaitable[ChatResponse]]
 
 
 class StreamingChatClientStub(
-    ChatMiddlewareLayer[TOptions_co],
-    FunctionInvocationLayer[TOptions_co],
-    ChatTelemetryLayer[TOptions_co],
-    BaseChatClient[TOptions_co],
-    Generic[TOptions_co],
+    ChatMiddlewareLayer[OptionsCoT],
+    FunctionInvocationLayer[OptionsCoT],
+    ChatTelemetryLayer[OptionsCoT],
+    BaseChatClient[OptionsCoT],
+    Generic[OptionsCoT],
 ):
-    """Typed streaming stub that satisfies ChatClientProtocol."""
+    """Typed streaming stub that satisfies SupportsChatGetResponse."""
 
     def __init__(self, stream_fn: StreamFn, response_fn: ResponseFn | None = None) -> None:
         super().__init__(function_middleware=[])
         self._stream_fn = stream_fn
         self._response_fn = response_fn
-        self.last_thread: AgentThread | None = None
-        self.last_service_thread_id: str | None = None
+        self.last_session: AgentSession | None = None
+        self.last_service_session_id: str | None = None
 
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[Any],
@@ -65,33 +65,33 @@ class StreamingChatClientStub(
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
-        options: TOptions_co | ChatOptions[None] | None = ...,
+        options: OptionsCoT | ChatOptions[None] | None = ...,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
-        options: TOptions_co | ChatOptions[Any] | None = ...,
+        options: OptionsCoT | ChatOptions[Any] | None = ...,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     def get_response(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
-        options: TOptions_co | ChatOptions[Any] | None = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
-        self.last_thread = kwargs.get("thread")
-        self.last_service_thread_id = self.last_thread.service_thread_id if self.last_thread else None
+        self.last_session = kwargs.get("session")
+        self.last_service_session_id = self.last_session.service_session_id if self.last_session else None
         return cast(
             Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
             super().get_response(
@@ -106,7 +106,7 @@ class StreamingChatClientStub(
     def _inner_get_response(
         self,
         *,
-        messages: Sequence[ChatMessage],
+        messages: Sequence[Message],
         stream: bool = False,
         options: Mapping[str, Any],
         **kwargs: Any,
@@ -121,7 +121,7 @@ class StreamingChatClientStub(
         return self._get_response_impl(messages, options, **kwargs)
 
     async def _get_response_impl(
-        self, messages: Sequence[ChatMessage], options: Mapping[str, Any], **kwargs: Any
+        self, messages: Sequence[Message], options: Mapping[str, Any], **kwargs: Any
     ) -> ChatResponse:
         """Non-streaming implementation."""
         if self._response_fn is not None:
@@ -132,7 +132,7 @@ class StreamingChatClientStub(
             contents.extend(update.contents)
 
         return ChatResponse(
-            messages=[ChatMessage(role="assistant", contents=contents)],
+            messages=[Message(role="assistant", contents=contents)],
             response_id="stub-response",
         )
 
@@ -141,7 +141,7 @@ def stream_from_updates(updates: list[ChatResponseUpdate]) -> StreamFn:
     """Create a stream function that yields from a static list of updates."""
 
     async def _stream(
-        messages: MutableSequence[ChatMessage], options: dict[str, Any], **kwargs: Any
+        messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
         for update in updates:
             yield update
@@ -159,7 +159,7 @@ class StubAgent(SupportsAgentRun):
         agent_id: str = "stub-agent",
         agent_name: str | None = "stub-agent",
         default_options: Any | None = None,
-        chat_client: Any | None = None,
+        client: Any | None = None,
     ) -> None:
         self.id = agent_id
         self.name = agent_name
@@ -168,36 +168,36 @@ class StubAgent(SupportsAgentRun):
         self.default_options: dict[str, Any] = (
             default_options if isinstance(default_options, dict) else {"tools": None, "response_format": None}
         )
-        self.chat_client = chat_client or SimpleNamespace(function_invocation_configuration=None)
+        self.client = client or SimpleNamespace(function_invocation_configuration=None)
         self.messages_received: list[Any] = []
         self.tools_received: list[Any] | None = None
 
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[False] = ...,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[True],
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         if stream:
@@ -218,15 +218,15 @@ class StubAgent(SupportsAgentRun):
 
         return _get_response()
 
-    def get_new_thread(self, **kwargs: Any) -> AgentThread:
-        return AgentThread()
+    def create_session(self, **kwargs: Any) -> AgentSession:
+        return AgentSession()
 
 
 # Fixtures
 
 
 @pytest.fixture
-def streaming_chat_client_stub() -> type[ChatClientProtocol]:
+def streaming_chat_client_stub() -> type[SupportsChatGetResponse]:
     """Return the StreamingChatClientStub class for creating test instances."""
     return StreamingChatClientStub  # type: ignore[return-value]
 

@@ -10,13 +10,14 @@ and are injected into the shim.
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Generic, TypeVar
 
-from agent_framework import AgentResponse, AgentThread, ChatMessage, Content, get_logger
+from agent_framework import AgentResponse, AgentSession, Content, Message
 from durabletask.client import TaskHubGrpcClient
 from durabletask.entities import EntityInstanceId
 from durabletask.task import CompletableTask, CompositeTask, OrchestrationContext, Task
@@ -24,10 +25,10 @@ from pydantic import BaseModel
 
 from ._constants import DEFAULT_MAX_POLL_RETRIES, DEFAULT_POLL_INTERVAL_SECONDS
 from ._durable_agent_state import DurableAgentState
-from ._models import AgentSessionId, DurableAgentThread, RunRequest
+from ._models import AgentSessionId, DurableAgentSession, RunRequest
 from ._response_utils import ensure_response_format, load_agent_response
 
-logger = get_logger("agent_framework.durabletask.executors")
+logger = logging.getLogger("agent_framework.durabletask")
 
 # TypeVar for the task type returned by executors
 TaskT = TypeVar("TaskT")
@@ -114,7 +115,7 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
         self,
         agent_name: str,
         run_request: RunRequest,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
     ) -> TaskT:
         """Execute the durable agent.
 
@@ -123,20 +124,20 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
         """
         raise NotImplementedError
 
-    def get_new_thread(self, agent_name: str, **kwargs: Any) -> DurableAgentThread:
-        """Create a new DurableAgentThread with random session ID."""
+    def get_new_session(self, agent_name: str, **kwargs: Any) -> DurableAgentSession:
+        """Create a new DurableAgentSession with random session ID."""
         session_id = self._create_session_id(agent_name)
-        return DurableAgentThread.from_session_id(session_id, **kwargs)
+        return DurableAgentSession.from_session_id(session_id, **kwargs)
 
     def _create_session_id(
         self,
         agent_name: str,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
     ) -> AgentSessionId:
         """Create the AgentSessionId for the execution."""
-        if isinstance(thread, DurableAgentThread) and thread.session_id is not None:
-            return thread.session_id
-        # Create new session ID - either no thread provided or it's a regular AgentThread
+        if isinstance(session, DurableAgentSession) and session.durable_session_id is not None:
+            return session.durable_session_id
+        # Create new session ID - either no session provided or it's a regular AgentSession
         key = self.generate_unique_id()
         return AgentSessionId(name=agent_name, key=key)
 
@@ -179,7 +180,7 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
         Returns:
             AgentResponse: Acceptance response with correlation ID
         """
-        acceptance_message = ChatMessage(
+        acceptance_message = Message(
             role="system",
             contents=[
                 Content.from_text(
@@ -217,7 +218,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentResponse]):
         self,
         agent_name: str,
         run_request: RunRequest,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
     ) -> AgentResponse:
         """Execute the agent via the durabletask client.
 
@@ -231,14 +232,14 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentResponse]):
         Args:
             agent_name: Name of the agent to execute
             run_request: The run request containing message and optional response format
-            thread: Optional conversation thread (creates new if not provided)
+            session: Optional conversation session (creates new if not provided)
 
         Returns:
             AgentResponse: The agent's response after execution completes, or an immediate
                             acknowledgement if wait_for_response is False
         """
         # Signal the entity with the request
-        entity_id = self._signal_agent_entity(agent_name, run_request, thread)
+        entity_id = self._signal_agent_entity(agent_name, run_request, session)
 
         # If fire-and-forget mode, return immediately without polling
         if not run_request.wait_for_response:
@@ -258,20 +259,20 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentResponse]):
         self,
         agent_name: str,
         run_request: RunRequest,
-        thread: AgentThread | None,
+        session: AgentSession | None,
     ) -> EntityInstanceId:
         """Signal the agent entity with a run request.
 
         Args:
             agent_name: Name of the agent to execute
             run_request: The run request containing message and optional response format
-            thread: Optional conversation thread
+            session: Optional conversation session
 
         Returns:
             entity_id
         """
         # Get or create session ID
-        session_id = self._create_session_id(agent_name, thread)
+        session_id = self._create_session_id(agent_name, session)
 
         # Create the entity ID
         entity_id = EntityInstanceId(
@@ -360,7 +361,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentResponse]):
                     "[ClientAgentExecutor] Error converting response for correlation: %s",
                     correlation_id,
                 )
-                error_message = ChatMessage(
+                error_message = Message(
                     role="system",
                     contents=[
                         Content.from_error(
@@ -375,7 +376,7 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentResponse]):
                 self.max_poll_retries,
                 correlation_id,
             )
-            error_message = ChatMessage(
+            error_message = Message(
                 role="system",
                 contents=[
                     Content.from_error(
@@ -460,7 +461,7 @@ class OrchestrationAgentExecutor(DurableAgentExecutor[DurableAgentTask]):
         self,
         agent_name: str,
         run_request: RunRequest,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
     ) -> DurableAgentTask:
         """Execute the agent via orchestration context.
 
@@ -470,13 +471,13 @@ class OrchestrationAgentExecutor(DurableAgentExecutor[DurableAgentTask]):
         Args:
             agent_name: Name of the agent to execute
             run_request: The run request containing message and optional response format
-            thread: Optional conversation thread (creates new if not provided)
+            session: Optional conversation session (creates new if not provided)
 
         Returns:
             DurableAgentTask: A task wrapping the entity call that yields AgentResponse
         """
         # Resolve session
-        session_id = self._create_session_id(agent_name, thread)
+        session_id = self._create_session_id(agent_name, session)
 
         # Create the entity ID
         entity_id = EntityInstanceId(

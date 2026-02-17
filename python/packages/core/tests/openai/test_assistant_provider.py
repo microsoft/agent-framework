@@ -8,9 +8,9 @@ import pytest
 from openai.types.beta.assistant import Assistant
 from pydantic import BaseModel, Field
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool, HostedFileSearchTool, normalize_tools, tool
+from agent_framework import Agent, normalize_tools, tool
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.openai import OpenAIAssistantProvider
+from agent_framework.openai import OpenAIAssistantProvider, OpenAIAssistantsClient
 from agent_framework.openai._shared import from_assistant_tools, to_assistant_tools
 
 # region Test Helpers
@@ -131,9 +131,15 @@ class TestOpenAIAssistantProviderInit:
         """Test initialization fails without API key when settings return None."""
         from unittest.mock import patch
 
-        # Mock OpenAISettings to return None for api_key
-        with patch("agent_framework.openai._assistant_provider.OpenAISettings") as mock_settings:
-            mock_settings.return_value.api_key = None
+        # Mock load_settings to return a dict with None for api_key
+        with patch("agent_framework.openai._assistant_provider.load_settings") as mock_load:
+            mock_load.return_value = {
+                "api_key": None,
+                "org_id": None,
+                "base_url": None,
+                "chat_model_id": None,
+                "responses_model_id": None,
+            }
 
             with pytest.raises(ServiceInitializationError) as exc_info:
                 OpenAIAssistantProvider()
@@ -202,7 +208,7 @@ class TestOpenAIAssistantProviderCreateAgent:
             instructions="You are helpful.",
         )
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
         assert agent.name == "CreatedAssistant"
         mock_async_openai.beta.assistants.create.assert_called_once()
 
@@ -235,7 +241,7 @@ class TestOpenAIAssistantProviderCreateAgent:
             tools=[get_weather],
         )
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
         # Verify tools were passed to create
         call_kwargs = mock_async_openai.beta.assistants.create.call_args.kwargs
@@ -269,7 +275,7 @@ class TestOpenAIAssistantProviderCreateAgent:
         await provider.create_agent(
             name="CodeAgent",
             model="gpt-4",
-            tools=[HostedCodeInterpreterTool()],
+            tools=[OpenAIAssistantsClient.get_code_interpreter_tool()],
         )
 
         call_kwargs = mock_async_openai.beta.assistants.create.call_args.kwargs
@@ -282,7 +288,7 @@ class TestOpenAIAssistantProviderCreateAgent:
         await provider.create_agent(
             name="SearchAgent",
             model="gpt-4",
-            tools=[HostedFileSearchTool()],
+            tools=[OpenAIAssistantsClient.get_file_search_tool()],
         )
 
         call_kwargs = mock_async_openai.beta.assistants.create.call_args.kwargs
@@ -295,7 +301,7 @@ class TestOpenAIAssistantProviderCreateAgent:
         await provider.create_agent(
             name="SearchAgent",
             model="gpt-4",
-            tools=[HostedFileSearchTool(max_results=10)],
+            tools=[OpenAIAssistantsClient.get_file_search_tool(max_num_results=10)],
         )
 
         call_kwargs = mock_async_openai.beta.assistants.create.call_args.kwargs
@@ -309,7 +315,11 @@ class TestOpenAIAssistantProviderCreateAgent:
         await provider.create_agent(
             name="MultiToolAgent",
             model="gpt-4",
-            tools=[get_weather, HostedCodeInterpreterTool(), HostedFileSearchTool()],
+            tools=[
+                get_weather,
+                OpenAIAssistantsClient.get_code_interpreter_tool(),
+                OpenAIAssistantsClient.get_file_search_tool(),
+            ],
         )
 
         call_kwargs = mock_async_openai.beta.assistants.create.call_args.kwargs
@@ -343,7 +353,7 @@ class TestOpenAIAssistantProviderCreateAgent:
         assert call_kwargs["response_format"]["json_schema"]["name"] == "WeatherResponse"
 
     async def test_create_agent_returns_chat_agent(self, mock_async_openai: MagicMock) -> None:
-        """Test that create_agent returns a ChatAgent instance."""
+        """Test that create_agent returns a Agent instance."""
         provider = OpenAIAssistantProvider(mock_async_openai)
 
         agent = await provider.create_agent(
@@ -351,7 +361,7 @@ class TestOpenAIAssistantProviderCreateAgent:
             model="gpt-4",
         )
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
 
 # endregion
@@ -369,7 +379,7 @@ class TestOpenAIAssistantProviderGetAgent:
 
         agent = await provider.get_agent(assistant_id="asst_123")
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
         mock_async_openai.beta.assistants.retrieve.assert_called_once_with("asst_123")
 
     async def test_get_agent_with_instructions_override(self, mock_async_openai: MagicMock) -> None:
@@ -382,7 +392,7 @@ class TestOpenAIAssistantProviderGetAgent:
         )
 
         # Agent should be created successfully with the custom instructions
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
         assert agent.id == "asst_retrieved123"
 
     async def test_get_agent_with_function_tools(self, mock_async_openai: MagicMock) -> None:
@@ -398,7 +408,7 @@ class TestOpenAIAssistantProviderGetAgent:
             tools=[get_weather],
         )
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
     async def test_get_agent_validates_missing_function_tools(self, mock_async_openai: MagicMock) -> None:
         """Test that missing function tools raise ValueError."""
@@ -439,7 +449,7 @@ class TestOpenAIAssistantProviderGetAgent:
         agent = await provider.get_agent(assistant_id="asst_123")
 
         # Hosted tools should be merged automatically
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
 
 # endregion
@@ -458,7 +468,7 @@ class TestOpenAIAssistantProviderAsAgent:
 
         agent = provider.as_agent(assistant)
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
         # Verify no HTTP calls were made
         mock_async_openai.beta.assistants.create.assert_not_called()
         mock_async_openai.beta.assistants.retrieve.assert_not_called()
@@ -477,7 +487,7 @@ class TestOpenAIAssistantProviderAsAgent:
         assert agent.id == "asst_wrap123"
         assert agent.name == "WrappedAssistant"
         # Instructions are passed to ChatOptions, not exposed as attribute
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
     def test_as_agent_with_instructions_override(self, mock_async_openai: MagicMock) -> None:
         """Test as_agent with instruction override."""
@@ -487,7 +497,7 @@ class TestOpenAIAssistantProviderAsAgent:
         agent = provider.as_agent(assistant, instructions="Override")
 
         # Agent should be created successfully with override instructions
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
     def test_as_agent_validates_function_tools(self, mock_async_openai: MagicMock) -> None:
         """Test that missing function tools raise ValueError."""
@@ -506,7 +516,7 @@ class TestOpenAIAssistantProviderAsAgent:
 
         agent = provider.as_agent(assistant, tools=[get_weather])
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
     def test_as_agent_merges_hosted_tools(self, mock_async_openai: MagicMock) -> None:
         """Test that hosted tools are merged automatically."""
@@ -515,7 +525,7 @@ class TestOpenAIAssistantProviderAsAgent:
 
         agent = provider.as_agent(assistant)
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
     def test_as_agent_hosted_tools_not_required(self, mock_async_openai: MagicMock) -> None:
         """Test that hosted tools don't require user implementations."""
@@ -525,7 +535,7 @@ class TestOpenAIAssistantProviderAsAgent:
         # Should not raise - hosted tools don't need implementations
         agent = provider.as_agent(assistant)
 
-        assert isinstance(agent, ChatAgent)
+        assert isinstance(agent, Agent)
 
 
 # endregion
@@ -564,22 +574,22 @@ class TestToolConversion:
         assert api_tools[0]["function"]["name"] == "get_weather"
 
     def test_to_assistant_tools_code_interpreter(self) -> None:
-        """Test HostedCodeInterpreterTool conversion."""
-        api_tools = to_assistant_tools([HostedCodeInterpreterTool()])
+        """Test code_interpreter tool dict conversion."""
+        api_tools = to_assistant_tools([OpenAIAssistantsClient.get_code_interpreter_tool()])
 
         assert len(api_tools) == 1
         assert api_tools[0] == {"type": "code_interpreter"}
 
     def test_to_assistant_tools_file_search(self) -> None:
-        """Test HostedFileSearchTool conversion."""
-        api_tools = to_assistant_tools([HostedFileSearchTool()])
+        """Test file_search tool dict conversion."""
+        api_tools = to_assistant_tools([OpenAIAssistantsClient.get_file_search_tool()])
 
         assert len(api_tools) == 1
         assert api_tools[0]["type"] == "file_search"
 
     def test_to_assistant_tools_file_search_with_max_results(self) -> None:
-        """Test HostedFileSearchTool with max_results conversion."""
-        api_tools = to_assistant_tools([HostedFileSearchTool(max_results=5)])
+        """Test file_search tool with max_results conversion."""
+        api_tools = to_assistant_tools([OpenAIAssistantsClient.get_file_search_tool(max_num_results=5)])
 
         assert api_tools[0]["file_search"]["max_num_results"] == 5
 
@@ -605,7 +615,7 @@ class TestToolConversion:
         tools = from_assistant_tools(assistant_tools)
 
         assert len(tools) == 1
-        assert isinstance(tools[0], HostedCodeInterpreterTool)
+        assert tools[0] == {"type": "code_interpreter"}
 
     def test_from_assistant_tools_file_search(self) -> None:
         """Test converting file_search tool from OpenAI format."""
@@ -614,7 +624,7 @@ class TestToolConversion:
         tools = from_assistant_tools(assistant_tools)
 
         assert len(tools) == 1
-        assert isinstance(tools[0], HostedFileSearchTool)
+        assert tools[0] == {"type": "file_search"}
 
     def test_from_assistant_tools_function_skipped(self) -> None:
         """Test that function tools are skipped (no implementations)."""
@@ -707,7 +717,7 @@ class TestToolMerging:
         merged = provider._merge_tools(assistant_tools, None)  # type: ignore[reportPrivateUsage]
 
         assert len(merged) == 1
-        assert isinstance(merged[0], HostedCodeInterpreterTool)
+        assert merged[0] == {"type": "code_interpreter"}
 
     def test_merge_file_search(self, mock_async_openai: MagicMock) -> None:
         """Test merging file search tool."""
@@ -717,7 +727,7 @@ class TestToolMerging:
         merged = provider._merge_tools(assistant_tools, None)  # type: ignore[reportPrivateUsage]
 
         assert len(merged) == 1
-        assert isinstance(merged[0], HostedFileSearchTool)
+        assert merged[0] == {"type": "file_search"}
 
     def test_merge_with_user_tools(self, mock_async_openai: MagicMock) -> None:
         """Test merging hosted and user tools."""
@@ -727,7 +737,7 @@ class TestToolMerging:
         merged = provider._merge_tools(assistant_tools, [get_weather])  # type: ignore[reportPrivateUsage]
 
         assert len(merged) == 2
-        assert isinstance(merged[0], HostedCodeInterpreterTool)
+        assert merged[0] == {"type": "code_interpreter"}
 
     def test_merge_multiple_hosted_tools(self, mock_async_openai: MagicMock) -> None:
         """Test merging multiple hosted tools."""
