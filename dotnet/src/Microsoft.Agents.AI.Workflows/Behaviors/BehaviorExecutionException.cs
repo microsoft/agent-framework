@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Behaviors;
 
@@ -51,11 +52,9 @@ public sealed class BehaviorExecutionException : Exception
     public BehaviorExecutionException(string behaviorType, string stage, Exception innerException)
         : base($"Error executing behavior '{behaviorType}' at stage '{stage}'", innerException)
     {
-        if (behaviorType is null) { throw new ArgumentNullException(nameof(behaviorType)); }
-        if (stage is null) { throw new ArgumentNullException(nameof(stage)); }
-        if (innerException is null) { throw new ArgumentNullException(nameof(innerException)); }
-        this.BehaviorType = behaviorType;
-        this.Stage = stage;
+        Throw.IfNull(innerException);
+        this.BehaviorType = Throw.IfNull(behaviorType);
+        this.Stage = Throw.IfNull(stage);
     }
 
     /// <summary>
