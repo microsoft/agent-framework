@@ -13,11 +13,15 @@ import sys
 from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from agent_framework import Message
+from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
+from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import ItemParam
+from azure.core.credentials_async import AsyncTokenCredential
+
+from ._shared import AzureAISettings
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -53,25 +57,54 @@ class FoundryMemoryProvider(BaseContextProvider):
         self,
         source_id: str = DEFAULT_SOURCE_ID,
         *,
-        project_client: AIProjectClient,
+        project_client: AIProjectClient | None = None,
+        project_endpoint: str | None = None,
+        credential: AsyncTokenCredential | None = None,
         memory_store_name: str,
         scope: str,
         context_prompt: str | None = None,
         update_delay: int = 300,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
     ) -> None:
         """Initialize the Foundry Memory context provider.
 
         Args:
             source_id: Unique identifier for this provider instance.
             project_client: Azure AI Project client for memory operations.
+            project_endpoint: Azure AI project endpoint URL. Used when project_client is not provided.
+            credential: Azure credential for authentication. Required when project_client is not provided.
             memory_store_name: The name of the memory store to use.
             scope: The namespace that logically groups and isolates memories (e.g., user ID).
             context_prompt: The prompt to prepend to retrieved memories.
             update_delay: Timeout period before processing memory update in seconds.
+            env_file_path: Path to environment file for loading settings.
+            env_file_encoding: Encoding of the environment file.
         """
         super().__init__(source_id)
-        if not project_client:
-            raise ServiceInitializationError("project_client is required")
+        azure_ai_settings = load_settings(
+            AzureAISettings,
+            env_prefix="AZURE_AI_",
+            project_endpoint=project_endpoint,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+
+        if project_client is None:
+            resolved_endpoint = azure_ai_settings.get("project_endpoint")
+            if not resolved_endpoint:
+                raise ServiceInitializationError(
+                    "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
+                    "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
+                )
+            if not credential:
+                raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
+            project_client = AIProjectClient(
+                endpoint=resolved_endpoint,
+                credential=credential,
+                user_agent=AGENT_FRAMEWORK_USER_AGENT,
+            )
+
         if not memory_store_name:
             raise ServiceInitializationError("memory_store_name is required")
         if not scope:
