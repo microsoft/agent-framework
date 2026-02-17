@@ -15,11 +15,11 @@ from typing import Any
 from agent_framework import (
     CheckpointStorage,
     RunnerContext,
-    State,
     WorkflowCheckpoint,
     WorkflowEvent,
     WorkflowMessage,
 )
+from agent_framework._workflows import State
 
 
 class CapturingRunnerContext(RunnerContext):

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import azure.durable_functions as df
 import azure.functions as func
-from agent_framework import AgentExecutor, SupportsAgentRun, Workflow, WorkflowEvent, get_logger
+from agent_framework import AgentExecutor, SupportsAgentRun, Workflow, WorkflowEvent
 from agent_framework_durabletask import (
     DEFAULT_MAX_POLL_RETRIES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -272,7 +272,7 @@ class AgentFunctionApp(DFAppBase):
             Note: We use str type annotations instead of dict to work around
             Azure Functions worker type validation issues with dict[str, Any].
             """
-            from agent_framework import State
+            from agent_framework._workflows import State
 
             data = json.loads(inputData)
             message_data = data["message"]

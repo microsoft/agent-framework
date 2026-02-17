@@ -44,7 +44,7 @@ from agent_framework._workflows._edge import (
     SingleEdgeGroup,
     SwitchCaseEdgeGroup,
 )
-from agent_framework_durabletask import AgentSessionId, DurableAgentThread, DurableAIAgent
+from agent_framework_durabletask import AgentSessionId, DurableAgentSession, DurableAIAgent
 from azure.durable_functions import DurableOrchestrationContext
 
 from ._context import CapturingRunnerContext
@@ -287,11 +287,11 @@ def _prepare_agent_task(
     """
     message_content = _extract_message_content(message)
     session_id = AgentSessionId(name=executor_id, key=context.instance_id)
-    thread = DurableAgentThread(session_id=session_id)
+    session = DurableAgentSession(durable_session_id=session_id)
 
     az_executor = AzureFunctionsAgentExecutor(context)
     agent = DurableAIAgent(az_executor, executor_id)
-    return agent.run(message_content, thread=thread)
+    return agent.run(message_content, session=session)
 
 
 def _prepare_activity_task(
