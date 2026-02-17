@@ -1,4 +1,7 @@
-# Red Teaming with Azure AI Foundry
+# Red Teaming with Azure AI Foundry (Classic)
+
+> [!IMPORTANT]
+> This sample uses the **classic Azure AI Foundry** red teaming API (`/redTeams/runs`) via `Azure.AI.Projects`. Results are viewable in the classic Foundry portal experience. The **new Foundry** portal's red teaming feature uses a different evaluation-based API that is not yet available in the .NET SDK.
 
 This sample demonstrates how to use Azure AI Foundry's Red Teaming service to assess the safety and resilience of an AI model against adversarial attacks.
 
@@ -73,14 +76,16 @@ The sample will:
 
 ### Interpreting Results
 
-- Results are available in the Azure AI Foundry portal (classic view) under the red teaming section
+- Results are available in the Azure AI Foundry portal (**classic view** — toggle at top-right) under the red teaming section
 - Lower Attack Success Rate (ASR) is better — target ASR < 5% for production
 - Review individual attack conversations to understand vulnerabilities
 
 ### Current Limitations
 
 > [!NOTE]
-> The .NET Red Teaming API (`Azure.AI.Projects` v1.2.0-beta.5) currently supports targeting **model deployments** via `AzureOpenAIModelConfiguration`. Agent-targeted red teaming (using `AzureAIAgentTarget`) with agent-specific risk categories (Prohibited actions, Sensitive data leakage, Task adherence) is documented in the [AI Red Teaming Agent concept docs](https://learn.microsoft.com/azure/ai-foundry/concepts/ai-red-teaming-agent) but is not yet available in the .NET SDK's `RedTeam` API. This sample will be updated when agent-targeted red teaming becomes available.
+> - The .NET Red Teaming API (`Azure.AI.Projects`) currently supports targeting **model deployments only** via `AzureOpenAIModelConfiguration`. The `AzureAIAgentTarget` type exists in the SDK but is consumed by the **Evaluation Taxonomy** API (`/evaluationtaxonomies`), not by the Red Teaming API (`/redTeams/runs`).
+> - Agent-targeted red teaming with agent-specific risk categories (Prohibited actions, Sensitive data leakage, Task adherence) is documented in the [concept docs](https://learn.microsoft.com/azure/ai-foundry/concepts/ai-red-teaming-agent) but is not yet available via the public REST API or .NET SDK.
+> - Results from this API appear in the **classic** Azure AI Foundry portal view. The new Foundry portal uses a separate evaluation-based system with `eval_*` identifiers.
 
 ## Related Resources
 
