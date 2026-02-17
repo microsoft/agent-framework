@@ -139,10 +139,11 @@ class AzureAISearchContextProvider(BaseContextProvider):
     """
 
     _DEFAULT_SEARCH_CONTEXT_PROMPT: ClassVar[str] = "Use the following context to answer the question:"
+    DEFAULT_SOURCE_ID: ClassVar[str] = "azure_ai_search"
 
     def __init__(
         self,
-        source_id: str,
+        source_id: str = DEFAULT_SOURCE_ID,
         endpoint: str | None = None,
         index_name: str | None = None,
         api_key: str | AzureKeyCredential | None = None,

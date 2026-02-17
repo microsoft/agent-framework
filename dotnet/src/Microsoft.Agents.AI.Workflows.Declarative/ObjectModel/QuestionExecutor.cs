@@ -44,18 +44,17 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
         await this._promptCount.WriteAsync(context, 0).ConfigureAwait(false);
 
         InitializablePropertyPath variable = Throw.IfNull(this.Model.Variable);
-        bool hasValue = context.ReadState(variable.Path) is BlankValue;
-        bool alwaysPrompt = this.Evaluator.GetValue(this.Model.AlwaysPrompt).Value;
+        bool isValueUndefined = context.ReadState(variable.Path) is BlankValue;
+        bool proceed = this.Evaluator.GetValue(this.Model.AlwaysPrompt).Value;
 
-        bool proceed = !alwaysPrompt || hasValue;
-        if (proceed)
+        if (!proceed)
         {
             SkipQuestionMode mode = this.Evaluator.GetValue(this.Model.SkipQuestionMode).Value;
             proceed =
                 mode switch
                 {
-                    SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue => !await this._hasExecuted.ReadAsync(context).ConfigureAwait(false),
-                    SkipQuestionMode.AlwaysSkipIfVariableHasValue => hasValue,
+                    SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue => isValueUndefined && !await this._hasExecuted.ReadAsync(context).ConfigureAwait(false),
+                    SkipQuestionMode.AlwaysSkipIfVariableHasValue => isValueUndefined,
                     SkipQuestionMode.AlwaysAsk => true,
                     _ => true,
                 };
@@ -86,7 +85,7 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
         FormulaValue? extractedValue = null;
         if (!response.HasMessages)
         {
-            string unrecognizedResponse = this.FormatPrompt(this.Model.UnrecognizedPrompt);
+            string unrecognizedResponse = this.Model.UnrecognizedPrompt is not null ? this.FormatPrompt(this.Model.UnrecognizedPrompt) : "Invalid response";
             await context.AddEventAsync(new MessageActivityEvent(unrecognizedResponse.Trim()), cancellationToken).ConfigureAwait(false);
         }
         else
@@ -128,7 +127,7 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
                 }
             }
 
-            await this.AssignAsync(this.Model.Variable?.Path, extractedValue, context).ConfigureAwait(false);
+            await this.AssignAsync(Throw.IfNull(this.Model.Variable).Path, extractedValue, context).ConfigureAwait(false);
             await this._hasExecuted.WriteAsync(context, true).ConfigureAwait(false);
             await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
         }
@@ -145,9 +144,13 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
         int actualCount = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
         if (actualCount >= repeatCount)
         {
-            ValueExpression defaultValueExpression = Throw.IfNull(this.Model.DefaultValue);
-            DataValue defaultValue = this.Evaluator.GetValue(defaultValueExpression).Value;
-            await this.AssignAsync(this.Model.Variable?.Path, defaultValue.ToFormula(), context).ConfigureAwait(false);
+            DataValue defaultValue = DataValue.Blank();
+            if (this.Model.DefaultValue is not null)
+            {
+                ValueExpression defaultValueExpression = Throw.IfNull(this.Model.DefaultValue);
+                defaultValue = this.Evaluator.GetValue(defaultValueExpression).Value;
+            }
+            await this.AssignAsync(Throw.IfNull(this.Model.Variable).Path, defaultValue.ToFormula(), context).ConfigureAwait(false);
             string defaultValueResponse = this.FormatPrompt(this.Model.DefaultValueResponse);
             await context.AddEventAsync(new MessageActivityEvent(defaultValueResponse.Trim()), cancellationToken).ConfigureAwait(false);
             await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);

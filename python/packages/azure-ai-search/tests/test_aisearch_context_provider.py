@@ -59,7 +59,7 @@ def mock_search_client_empty() -> AsyncMock:
 def _make_provider(**overrides) -> AzureAISearchContextProvider:
     """Create a semantic-mode provider with mocked internals (skips auto-discovery)."""
     defaults = {
-        "source_id": "aisearch",
+        "source_id": AzureAISearchContextProvider.DEFAULT_SOURCE_ID,
         "endpoint": "https://test.search.windows.net",
         "index_name": "test-index",
         "api_key": "test-key",
@@ -78,7 +78,7 @@ class TestInitSemantic:
 
     def test_valid_init(self) -> None:
         provider = _make_provider()
-        assert provider.source_id == "aisearch"
+        assert provider.source_id == AzureAISearchContextProvider.DEFAULT_SOURCE_ID
         assert provider.endpoint == "https://test.search.windows.net"
         assert provider.index_name == "test-index"
         assert provider.mode == "semantic"
@@ -182,10 +182,12 @@ class TestBeforeRunSemantic:
             input_messages=[Message(role="user", contents=["test query"])],
             session_id="s1",
         )
-        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+        await provider.before_run(
+            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
 
         mock_search_client.search.assert_awaited_once()
-        msgs = ctx.context_messages.get("aisearch", [])
+        msgs = ctx.context_messages.get(provider.source_id, [])
         assert len(msgs) >= 2  # context_prompt + at least one result
         assert msgs[0].text == provider.context_prompt
 
@@ -195,10 +197,12 @@ class TestBeforeRunSemantic:
 
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(input_messages=[], session_id="s1")
-        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+        await provider.before_run(
+            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
 
         mock_search_client.search.assert_not_awaited()
-        assert ctx.context_messages.get("aisearch") is None
+        assert ctx.context_messages.get(provider.source_id) is None
 
     async def test_no_results_no_messages(self, mock_search_client_empty: AsyncMock) -> None:
         provider = _make_provider()
@@ -209,10 +213,12 @@ class TestBeforeRunSemantic:
             input_messages=[Message(role="user", contents=["test query"])],
             session_id="s1",
         )
-        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+        await provider.before_run(
+            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
 
         mock_search_client_empty.search.assert_awaited_once()
-        assert ctx.context_messages.get("aisearch") is None
+        assert ctx.context_messages.get(provider.source_id) is None
 
     async def test_context_prompt_prepended(self, mock_search_client: AsyncMock) -> None:
         custom_prompt = "Custom search context:"
@@ -224,9 +230,11 @@ class TestBeforeRunSemantic:
             input_messages=[Message(role="user", contents=["test query"])],
             session_id="s1",
         )
-        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+        await provider.before_run(
+            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
 
-        msgs = ctx.context_messages["aisearch"]
+        msgs = ctx.context_messages[provider.source_id]
         assert msgs[0].text == custom_prompt
 
 
@@ -248,7 +256,9 @@ class TestBeforeRunFiltering:
             ],
             session_id="s1",
         )
-        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+        await provider.before_run(
+            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
 
         mock_search_client.search.assert_awaited_once()
         call_kwargs = mock_search_client.search.call_args[1]
@@ -265,7 +275,9 @@ class TestBeforeRunFiltering:
             input_messages=[Message(role="system", contents=["system prompt"])],
             session_id="s1",
         )
-        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+        await provider.before_run(
+            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )  # type: ignore[arg-type]
 
         mock_search_client.search.assert_not_awaited()
 

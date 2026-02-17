@@ -59,17 +59,17 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    # set the same context provider, with the same source_id, for both agents to share the thread
+    # set the same context provider (same default source_id) for both agents to share the thread
     writer = client.as_agent(
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
         name="writer",
-        context_providers=[InMemoryHistoryProvider("memory")],
+        context_providers=[InMemoryHistoryProvider()],
     )
 
     reviewer = client.as_agent(
         instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
         name="reviewer",
-        context_providers=[InMemoryHistoryProvider("memory")],
+        context_providers=[InMemoryHistoryProvider()],
     )
 
     # Create the shared session
@@ -96,7 +96,7 @@ async def main() -> None:
 
     # The shared session now contains the conversation between the writer and reviewer. Print it out.
     print("=== Shared Session Conversation ===")
-    memory_state = shared_session.state.get("memory", {})
+    memory_state = shared_session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {})
     for message in memory_state.get("messages", []):
         print(f"{message.author_name or message.role}: {message.text}")
 

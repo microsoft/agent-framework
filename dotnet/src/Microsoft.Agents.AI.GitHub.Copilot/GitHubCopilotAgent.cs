@@ -104,7 +104,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
         if (session is not GitHubCopilotAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(GitHubCopilotAgentSession)}' can be serialized by this agent.");
         }
 
         return new(typedSession.Serialize(jsonSerializerOptions));
@@ -139,7 +139,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         if (session is not GitHubCopilotAgentSession typedSession)
         {
             throw new InvalidOperationException(
-                $"The provided session type {session.GetType()} is not compatible with the agent. Only GitHub Copilot agent created sessions are supported.");
+                $"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(GitHubCopilotAgentSession)}' can be used by this agent.");
         }
 
         // Ensure the client is started

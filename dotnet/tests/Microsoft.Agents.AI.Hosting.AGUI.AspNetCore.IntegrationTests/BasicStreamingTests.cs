@@ -357,7 +357,7 @@ internal sealed class FakeMultiMessageAgent : AIAgent
     {
         if (session is not FakeAgentSession fakeSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(FakeAgentSession)}' can be serialized by this agent.");
         }
 
         return new(JsonSerializer.SerializeToElement(fakeSession, jsonSerializerOptions));
