@@ -28,15 +28,24 @@ Run:
 
 import asyncio
 import os
-import uuid
 
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.redis import RedisContextProvider
+from azure.identity import AzureCliCredential
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 
-# Please set the OPENAI_API_KEY and OPENAI_CHAT_MODEL_ID environment variables to use the OpenAI vectorizer
-# Recommend default for OPENAI_CHAT_MODEL_ID is gpt-4o-mini
+# Please set OPENAI_API_KEY to use the OpenAI vectorizer.
+# For chat responses, also set AZURE_AI_PROJECT_ENDPOINT and AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
+
+
+def create_chat_client() -> AzureOpenAIResponsesClient:
+    """Create an Azure OpenAI Responses client using a Foundry project endpoint."""
+    return AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
 
 async def example_global_thread_scope() -> None:
@@ -44,20 +53,15 @@ async def example_global_thread_scope() -> None:
     print("1. Global Thread Scope Example:")
     print("-" * 40)
 
-    global_thread_id = str(uuid.uuid4())
-
-    client = OpenAIChatClient(
-        model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
+    client = create_chat_client()
 
     provider = RedisContextProvider(
+        source_id="redis_context",
         redis_url="redis://localhost:6379",
         index_name="redis_threads_global",
         application_id="threads_demo_app",
         agent_id="threads_demo_agent",
         user_id="threads_demo_user",
-        thread_id=global_thread_id,
         scope_to_per_operation_thread_id=False,  # Share memories across all sessions
     )
 
@@ -97,10 +101,7 @@ async def example_per_operation_thread_scope() -> None:
     print("2. Per-Operation Thread Scope Example:")
     print("-" * 40)
 
-    client = OpenAIChatClient(
-        model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
+    client = create_chat_client()
 
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
@@ -109,6 +110,7 @@ async def example_per_operation_thread_scope() -> None:
     )
 
     provider = RedisContextProvider(
+        source_id="redis_context",
         redis_url="redis://localhost:6379",
         index_name="redis_threads_dynamic",
         # overwrite_redis_index=True,
@@ -165,10 +167,7 @@ async def example_multiple_agents() -> None:
     print("3. Multiple Agents with Different Thread Configurations:")
     print("-" * 40)
 
-    client = OpenAIChatClient(
-        model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
+    client = create_chat_client()
 
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
@@ -177,6 +176,7 @@ async def example_multiple_agents() -> None:
     )
 
     personal_provider = RedisContextProvider(
+        source_id="redis_context",
         redis_url="redis://localhost:6379",
         index_name="redis_threads_agents",
         application_id="threads_demo_app",
@@ -195,6 +195,7 @@ async def example_multiple_agents() -> None:
     )
 
     work_provider = RedisContextProvider(
+        source_id="redis_context",
         redis_url="redis://localhost:6379",
         index_name="redis_threads_agents",
         application_id="threads_demo_app",

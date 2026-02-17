@@ -12,6 +12,9 @@
 - Renamed serializedSession parameter to serializedState on DeserializeSessionAsync for consistency ([#3681](https://github.com/microsoft/agent-framework/pull/3681))
 - Introduce Core method pattern for Session management methods on AIAgent ([#3699](https://github.com/microsoft/agent-framework/pull/3699))
 - Changed AIAgent.SerializeSession to AIAgent.SerializeSessionAsync ([#3879](https://github.com/microsoft/agent-framework/pull/3879))
+- Changed ChatHistory and AIContext Providers to have pipeline semantics ([#3806](https://github.com/microsoft/agent-framework/pull/3806))
+- Marked all `RunAsync<T>` overloads as `new`, added missing ones, and added support for primitives and arrays ([#3803](https://github.com/microsoft/agent-framework/pull/3803))
+- Improve session cast error message quality and consistency ([#3973](https://github.com/microsoft/agent-framework/pull/3973))
 
 ## v1.0.0-preview.251204.1
 

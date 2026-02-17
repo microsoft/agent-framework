@@ -1,9 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Collections.Generic;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
@@ -39,17 +36,14 @@ public sealed class ChatClientAgentOptions
     public ChatOptions? ChatOptions { get; set; }
 
     /// <summary>
-    /// Gets or sets a factory function to create an instance of <see cref="ChatHistoryProvider"/>
-    /// which will be used to provide chat history for this agent.
+    /// Gets or sets the <see cref="ChatHistoryProvider"/> instance to use for providing chat history for this agent.
     /// </summary>
-    public Func<ChatHistoryProviderFactoryContext, CancellationToken, ValueTask<ChatHistoryProvider>>? ChatHistoryProviderFactory { get; set; }
+    public ChatHistoryProvider? ChatHistoryProvider { get; set; }
 
     /// <summary>
-    /// Gets or sets a factory function to create an instance of <see cref="AIContextProvider"/>
-    /// which will be used to create a context provider for each new thread, and can then
-    /// provide additional context for each agent run.
+    /// Gets or sets the list of <see cref="AIContextProvider"/> instances to use for providing additional context for each agent run.
     /// </summary>
-    public Func<AIContextProviderFactoryContext, CancellationToken, ValueTask<AIContextProvider>>? AIContextProviderFactory { get; set; }
+    public IEnumerable<AIContextProvider>? AIContextProviders { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether to use the provided <see cref="IChatClient"/> instance as is,
@@ -75,41 +69,7 @@ public sealed class ChatClientAgentOptions
             Name = this.Name,
             Description = this.Description,
             ChatOptions = this.ChatOptions?.Clone(),
-            ChatHistoryProviderFactory = this.ChatHistoryProviderFactory,
-            AIContextProviderFactory = this.AIContextProviderFactory,
+            ChatHistoryProvider = this.ChatHistoryProvider,
+            AIContextProviders = this.AIContextProviders is null ? null : new List<AIContextProvider>(this.AIContextProviders),
         };
-
-    /// <summary>
-    /// Context object passed to the <see cref="AIContextProviderFactory"/> to create a new instance of <see cref="AIContextProvider"/>.
-    /// </summary>
-    public sealed class AIContextProviderFactoryContext
-    {
-        /// <summary>
-        /// Gets or sets the serialized state of the <see cref="AIContextProvider"/>, if any.
-        /// </summary>
-        /// <value><see langword="default"/> if there is no state, e.g. when the <see cref="AIContextProvider"/> is first created.</value>
-        public JsonElement SerializedState { get; set; }
-
-        /// <summary>
-        /// Gets or sets the JSON serialization options to use when deserializing the <see cref="SerializedState"/>.
-        /// </summary>
-        public JsonSerializerOptions? JsonSerializerOptions { get; set; }
-    }
-
-    /// <summary>
-    /// Context object passed to the <see cref="ChatHistoryProviderFactory"/> to create a new instance of <see cref="ChatHistoryProvider"/>.
-    /// </summary>
-    public sealed class ChatHistoryProviderFactoryContext
-    {
-        /// <summary>
-        /// Gets or sets the serialized state of the <see cref="ChatHistoryProvider"/>, if any.
-        /// </summary>
-        /// <value><see langword="default"/> if there is no state, e.g. when the <see cref="ChatHistoryProvider"/> is first created.</value>
-        public JsonElement SerializedState { get; set; }
-
-        /// <summary>
-        /// Gets or sets the JSON serialization options to use when deserializing the <see cref="SerializedState"/>.
-        /// </summary>
-        public JsonSerializerOptions? JsonSerializerOptions { get; set; }
-    }
 }

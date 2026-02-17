@@ -10,13 +10,14 @@ and are injected into the shim.
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Generic, TypeVar
 
-from agent_framework import AgentResponse, AgentSession, Content, Message, get_logger
+from agent_framework import AgentResponse, AgentSession, Content, Message
 from durabletask.client import TaskHubGrpcClient
 from durabletask.entities import EntityInstanceId
 from durabletask.task import CompletableTask, CompositeTask, OrchestrationContext, Task
@@ -27,7 +28,7 @@ from ._durable_agent_state import DurableAgentState
 from ._models import AgentSessionId, DurableAgentSession, RunRequest
 from ._response_utils import ensure_response_format, load_agent_response
 
-logger = get_logger("agent_framework.durabletask.executors")
+logger = logging.getLogger("agent_framework.durabletask")
 
 # TypeVar for the task type returned by executors
 TaskT = TypeVar("TaskT")

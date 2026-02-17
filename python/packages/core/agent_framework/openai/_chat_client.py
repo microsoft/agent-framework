@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from datetime import datetime, timezone
@@ -20,13 +21,14 @@ from openai.types.chat.completion_create_params import WebSearchOptions
 from pydantic import BaseModel
 
 from .._clients import BaseChatClient
-from .._logging import get_logger
 from .._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from .._settings import load_settings
 from .._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
+    ToolTypes,
+    normalize_tools,
 )
 from .._types import (
     ChatOptions,
@@ -60,9 +62,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-__all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
-
-logger = get_logger("agent_framework.openai")
+logger = logging.getLogger("agent_framework.openai")
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
@@ -273,21 +273,24 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
     # region content creation
 
-    def _prepare_tools_for_openai(self, tools: Sequence[Any]) -> dict[str, Any]:
+    def _prepare_tools_for_openai(
+        self,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+    ) -> dict[str, Any]:
         """Prepare tools for the OpenAI Chat Completions API.
 
         Converts FunctionTool to JSON schema format. Web search tools are routed
         to web_search_options parameter. All other tools pass through unchanged.
 
         Args:
-            tools: Sequence of tools to prepare.
+            tools: Tool(s) to prepare.
 
         Returns:
             Dict containing tools and optionally web_search_options.
         """
         chat_tools: list[Any] = []
         web_search_options: dict[str, Any] | None = None
-        for tool in tools:
+        for tool in normalize_tools(tools):
             if isinstance(tool, FunctionTool):
                 chat_tools.append(tool.to_json_schema_spec())
             elif isinstance(tool, MutableMapping) and tool.get("type") == "web_search":
@@ -340,15 +343,16 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             run_options.pop("tool_choice", None)
         elif tool_choice := run_options.pop("tool_choice", None):
             tool_mode = validate_tool_mode(tool_choice)
-            if (mode := tool_mode.get("mode")) == "required" and (
-                func_name := tool_mode.get("required_function_name")
-            ) is not None:
-                run_options["tool_choice"] = {
-                    "type": "function",
-                    "function": {"name": func_name},
-                }
-            else:
-                run_options["tool_choice"] = mode
+            if tool_mode is not None:
+                if (mode := tool_mode.get("mode")) == "required" and (
+                    func_name := tool_mode.get("required_function_name")
+                ) is not None:
+                    run_options["tool_choice"] = {
+                        "type": "function",
+                        "function": {"name": func_name},
+                    }
+                else:
+                    run_options["tool_choice"] = mode
 
         # response format
         if response_format := options.get("response_format"):

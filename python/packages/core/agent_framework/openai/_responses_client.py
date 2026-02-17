@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -36,7 +37,6 @@ from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel
 
 from .._clients import BaseChatClient
-from .._logging import get_logger
 from .._middleware import ChatMiddlewareLayer
 from .._settings import load_settings
 from .._tools import (
@@ -90,10 +90,7 @@ if TYPE_CHECKING:
         FunctionMiddlewareCallable,
     )
 
-logger = get_logger("agent_framework.openai")
-
-
-__all__ = ["OpenAIContinuationToken", "OpenAIResponsesClient", "OpenAIResponsesOptions", "RawOpenAIResponsesClient"]
+logger = logging.getLogger("agent_framework.openai")
 
 
 class OpenAIContinuationToken(ContinuationToken):
@@ -782,8 +779,12 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
         # messages
         # Handle instructions by prepending to messages as system message
-        if instructions := options.get("instructions"):
+        # Only prepend instructions for the first turn (when no conversation/response ID exists)
+        conversation_id = self._get_current_conversation_id(options, **kwargs)
+        if (instructions := options.get("instructions")) and not conversation_id:
+            # First turn: prepend instructions as system message
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
+        # Continuation turn: instructions already exist in conversation context, skip prepending
         request_input = self._prepare_messages_for_openai(messages)
         if not request_input:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
@@ -821,15 +822,16 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             # tool_choice: convert ToolMode to appropriate format
             if tool_choice := options.get("tool_choice"):
                 tool_mode = validate_tool_mode(tool_choice)
-                if (mode := tool_mode.get("mode")) == "required" and (
-                    func_name := tool_mode.get("required_function_name")
-                ) is not None:
-                    run_options["tool_choice"] = {
-                        "type": "function",
-                        "name": func_name,
-                    }
-                else:
-                    run_options["tool_choice"] = mode
+                if tool_mode is not None:
+                    if (mode := tool_mode.get("mode")) == "required" and (
+                        func_name := tool_mode.get("required_function_name")
+                    ) is not None:
+                        run_options["tool_choice"] = {
+                            "type": "function",
+                            "name": func_name,
+                        }
+                    else:
+                        run_options["tool_choice"] = mode
         else:
             run_options.pop("parallel_tool_calls", None)
             run_options.pop("tool_choice", None)

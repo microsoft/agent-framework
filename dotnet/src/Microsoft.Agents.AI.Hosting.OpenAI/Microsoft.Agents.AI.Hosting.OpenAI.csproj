@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
-    <NoWarn>$(NoWarn);OPENAI001;MEAI001</NoWarn>
+    <NoWarn>$(NoWarn);MEAI001</NoWarn>
     <RootNamespace>Microsoft.Agents.AI.Hosting.OpenAI</RootNamespace>
     <VersionSuffix>alpha</VersionSuffix>
     <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.AspNetCore.Http.Generated</InterceptorsNamespaces>

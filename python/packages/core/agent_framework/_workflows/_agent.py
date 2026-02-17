@@ -12,10 +12,17 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 from .._agents import BaseAgent
-from .._sessions import AgentSession, BaseContextProvider, BaseHistoryProvider, SessionContext
+from .._sessions import (
+    AgentSession,
+    BaseContextProvider,
+    BaseHistoryProvider,
+    InMemoryHistoryProvider,
+    SessionContext,
+)
 from .._types import (
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     Content,
     Message,
     ResponseStream,
@@ -112,7 +119,17 @@ class WorkflowAgent(BaseAgent):
         if not any(is_type_compatible(list[Message], input_type) for input_type in start_executor.input_types):
             raise ValueError("Workflow's start executor cannot handle list[Message]")
 
-        super().__init__(id=id, name=name, description=description, context_providers=context_providers, **kwargs)
+        resolved_context_providers = list(context_providers) if context_providers is not None else []
+        if not resolved_context_providers:
+            resolved_context_providers.append(InMemoryHistoryProvider("memory"))
+
+        super().__init__(
+            id=id,
+            name=name,
+            description=description,
+            context_providers=resolved_context_providers,
+            **kwargs,
+        )
         self._workflow: Workflow = workflow
         self._pending_requests: dict[str, WorkflowEvent[Any]] = {}
 
@@ -129,7 +146,7 @@ class WorkflowAgent(BaseAgent):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -141,7 +158,7 @@ class WorkflowAgent(BaseAgent):
     @overload
     async def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -152,7 +169,7 @@ class WorkflowAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -198,7 +215,7 @@ class WorkflowAgent(BaseAgent):
 
     async def _run_impl(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: AgentRunInputs,
         response_id: str,
         session: AgentSession | None,
         checkpoint_id: str | None = None,
@@ -254,7 +271,7 @@ class WorkflowAgent(BaseAgent):
 
     async def _run_stream_impl(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: AgentRunInputs,
         response_id: str,
         session: AgentSession | None,
         checkpoint_id: str | None = None,

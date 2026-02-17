@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import re
 import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
@@ -29,7 +30,6 @@ from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, Field, create_model
 
 from ._clients import BaseChatClient, SupportsChatGetResponse
-from ._logging import get_logger
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._middleware import AgentMiddlewareLayer, MiddlewareTypes
 from ._serialization import SerializationMixin
@@ -37,10 +37,13 @@ from ._sessions import AgentSession, BaseContextProvider, BaseHistoryProvider, I
 from ._tools import (
     FunctionInvocationLayer,
     FunctionTool,
+    ToolTypes,
+    normalize_tools,
 )
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
     Message,
@@ -67,7 +70,7 @@ else:
 if TYPE_CHECKING:
     from ._types import ChatOptions
 
-logger = get_logger("agent_framework")
+logger = logging.getLogger("agent_framework")
 
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 OptionsCoT = TypeVar(
@@ -159,9 +162,6 @@ class _RunContext(TypedDict):
     finalize_kwargs: dict[str, Any]
 
 
-__all__ = ["Agent", "BaseAgent", "RawAgent", "SupportsAgentRun"]
-
-
 # region Agent Protocol
 
 
@@ -230,7 +230,7 @@ class SupportsAgentRun(Protocol):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -242,7 +242,7 @@ class SupportsAgentRun(Protocol):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -253,7 +253,7 @@ class SupportsAgentRun(Protocol):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -439,7 +439,7 @@ class BaseAgent(SerializationMixin):
         stream_callback: Callable[[AgentResponseUpdate], None]
         | Callable[[AgentResponseUpdate], Awaitable[None]]
         | None = None,
-    ) -> FunctionTool[BaseModel]:
+    ) -> FunctionTool:
         """Create a FunctionTool that wraps this agent.
 
         Keyword Args:
@@ -513,7 +513,7 @@ class BaseAgent(SerializationMixin):
             # Create final text from accumulated updates
             return AgentResponse.from_updates(response_updates).text
 
-        agent_tool: FunctionTool[BaseModel] = FunctionTool(
+        agent_tool: FunctionTool = FunctionTool(
             name=tool_name,
             description=tool_description,
             func=agent_wrapper,
@@ -616,12 +616,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         **kwargs: Any,
@@ -667,24 +662,14 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
-        tools_ = cast(
-            FunctionTool
-            | Callable[..., Any]
-            | MutableMapping[str, Any]
-            | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-            | None,
-            tools_,
-        )
 
         # Handle instructions - named parameter takes precedence over options
         instructions_ = instructions if instructions is not None else opts.pop("instructions", None)
 
         # We ignore the MCP Servers here and store them separately,
         # we add their functions to the tools list at runtime
-        normalized_tools: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
-            [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]  # type: ignore[list-item]
-        )
-        self.mcp_tools: list[MCPTool] = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]  # type: ignore[misc]
+        normalized_tools = normalize_tools(tools_)
+        self.mcp_tools: list[MCPTool] = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
 
         # Build chat options dict
@@ -763,16 +748,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[ResponseModelBoundT],
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[ResponseModelBoundT]]: ...
@@ -780,16 +760,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[None] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
@@ -797,32 +772,22 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
@@ -1000,14 +965,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     async def _prepare_run_context(
         self,
         *,
-        messages: str | Message | Sequence[str | Message] | None,
+        messages: AgentRunInputs | None,
         session: AgentSession | None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
         options: Mapping[str, Any] | None,
         kwargs: dict[str, Any],
     ) -> _RunContext:
@@ -1037,9 +997,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         )
 
         # Normalize tools
-        normalized_tools: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any] = (
-            [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]
-        )
+        normalized_tools = normalize_tools(tools_)
         agent_name = self._get_agent_name()
 
         # Resolve final tool list (runtime provided tools + local MCP server tools)
@@ -1258,17 +1216,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         @server.list_tools()  # type: ignore
         async def _list_tools() -> list[types.Tool]:  # type: ignore
             """List all tools in the agent."""
-            # Get the JSON schema from the Pydantic model
-            schema = agent_tool.input_model.model_json_schema()
+            schema = agent_tool.parameters()
 
             tool = types.Tool(
                 name=agent_tool.name,
                 description=agent_tool.description,
-                inputSchema={
-                    "type": "object",
-                    "properties": schema.get("properties", {}),
-                    "required": schema.get("required", []),
-                },
+                inputSchema=schema,
             )
 
             await _log(level="debug", data=f"Agent tool: {agent_tool}")
@@ -1291,7 +1244,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
             # Create an instance of the input model with the arguments
             try:
-                args_instance = agent_tool.input_model(**arguments)
+                args_instance: BaseModel | dict[str, Any] = (
+                    agent_tool.input_model(**arguments) if agent_tool.input_model is not None else arguments
+                )
                 result = await agent_tool.invoke(arguments=args_instance)
             except Exception as e:
                 raise McpError(
@@ -1348,12 +1303,7 @@ class Agent(
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,

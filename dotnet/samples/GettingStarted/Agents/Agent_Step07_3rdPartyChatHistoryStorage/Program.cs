@@ -3,7 +3,7 @@
 #pragma warning disable CA1869 // Cache and reuse 'JsonSerializerOptions' instances
 
 // This sample shows how to create and use a simple AI agent with custom ChatHistoryProvider that stores chat history in a custom storage location.
-// The state of the custom ChatHistoryProvider (SessionDbKey) is stored with the agent session, so that when the session is resumed later,
+// The state of the custom ChatHistoryProvider (SessionDbKey) is stored in the AgentSession's StateBag, so that when the session is resumed later,
 // the chat history can be retrieved from the custom storage location.
 
 using System.Text.Json;
@@ -36,11 +36,8 @@ AIAgent agent = new AzureOpenAIClient(
     {
         ChatOptions = new() { Instructions = "You are good at telling jokes." },
         Name = "Joker",
-        ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<ChatHistoryProvider>(
-            // Create a new ChatHistoryProvider for this agent that stores chat history in a vector store.
-            // Each session must get its own copy of the VectorChatHistoryProvider, since the provider
-            // also contains the id that the chat history is stored under.
-            new VectorChatHistoryProvider(vectorStore, ctx.SerializedState, ctx.JsonSerializerOptions))
+        // Create a new ChatHistoryProvider for this agent that stores chat history in a vector store.
+        ChatHistoryProvider = new VectorChatHistoryProvider(vectorStore)
     });
 
 // Start a new session for the agent conversation.
@@ -66,80 +63,90 @@ AgentSession resumedSession = await agent.DeserializeSessionAsync(serializedSess
 // Run the agent with the session that stores chat history in the vector store a second time.
 Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedSession));
 
-// We can access the VectorChatHistoryProvider via the session's GetService method if we need to read the key under which chat history is stored.
-var chatHistoryProvider = resumedSession.GetService<VectorChatHistoryProvider>()!;
-Console.WriteLine($"\nSession is stored in vector store under key: {chatHistoryProvider.SessionDbKey}");
+// We can access the VectorChatHistoryProvider via the agent's GetService method
+// if we need to read the key under which chat history is stored. The key is stored
+// in the session state, and therefore we need to provide the session when reading it.
+var chatHistoryProvider = agent.GetService<VectorChatHistoryProvider>()!;
+Console.WriteLine($"\nSession is stored in vector store under key: {chatHistoryProvider.GetSessionDbKey(resumedSession)}");
 
 namespace SampleApp
 {
     /// <summary>
     /// A sample implementation of <see cref="ChatHistoryProvider"/> that stores chat history in a vector store.
+    /// State (the session DB key) is stored in the <see cref="AgentSession.StateBag"/> so it roundtrips
+    /// automatically with session serialization.
     /// </summary>
     internal sealed class VectorChatHistoryProvider : ChatHistoryProvider
     {
+        private readonly ProviderSessionState<State> _sessionState;
         private readonly VectorStore _vectorStore;
 
-        public VectorChatHistoryProvider(VectorStore vectorStore, JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null)
+        public VectorChatHistoryProvider(
+            VectorStore vectorStore,
+            Func<AgentSession?, State>? stateInitializer = null,
+            string? stateKey = null)
+            : base(provideOutputMessageFilter: null, storeInputMessageFilter: null)
         {
+            this._sessionState = new ProviderSessionState<State>(
+                stateInitializer ?? (_ => new State(Guid.NewGuid().ToString("N"))),
+                stateKey ?? this.GetType().Name);
             this._vectorStore = vectorStore ?? throw new ArgumentNullException(nameof(vectorStore));
-
-            if (serializedState.ValueKind is JsonValueKind.String)
-            {
-                // Here we can deserialize the session id so that we can access the same messages as before the suspension.
-                this.SessionDbKey = serializedState.Deserialize<string>();
-            }
         }
 
-        public string? SessionDbKey { get; private set; }
+        public override string StateKey => this._sessionState.StateKey;
 
-        protected override async ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        public string GetSessionDbKey(AgentSession session)
+            => this._sessionState.GetOrInitializeState(session).SessionDbKey;
+
+        protected override async ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
+            var state = this._sessionState.GetOrInitializeState(context.Session);
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
 
             var records = await collection
                 .GetAsync(
-                    x => x.SessionId == this.SessionDbKey, 10,
+                    x => x.SessionId == state.SessionDbKey, 10,
                     new() { OrderBy = x => x.Descending(y => y.Timestamp) },
                     cancellationToken)
                 .ToListAsync(cancellationToken);
 
-            var messages = records.ConvertAll(x => JsonSerializer.Deserialize<ChatMessage>(x.SerializedMessage!)!)
-;
+            var messages = records.ConvertAll(x => JsonSerializer.Deserialize<ChatMessage>(x.SerializedMessage!)!);
             messages.Reverse();
             return messages;
         }
 
-        protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        protected override async ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
-            // Don't store messages if the request failed.
-            if (context.InvokeException is not null)
-            {
-                return;
-            }
-
-            this.SessionDbKey ??= Guid.NewGuid().ToString("N");
+            var state = this._sessionState.GetOrInitializeState(context.Session);
 
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
 
-            // Add both request and response messages to the store
-            // Optionally messages produced by the AIContextProvider can also be persisted (not shown).
             var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);
 
             await collection.UpsertAsync(allNewMessages.Select(x => new ChatHistoryItem()
             {
-                Key = this.SessionDbKey + x.MessageId,
+                Key = state.SessionDbKey + x.MessageId,
                 Timestamp = DateTimeOffset.UtcNow,
-                SessionId = this.SessionDbKey,
+                SessionId = state.SessionDbKey,
                 SerializedMessage = JsonSerializer.Serialize(x),
                 MessageText = x.Text
             }), cancellationToken);
         }
 
-        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null) =>
-            // We have to serialize the session id, so that on deserialization we can retrieve the messages using the same session id.
-            JsonSerializer.SerializeToElement(this.SessionDbKey);
+        /// <summary>
+        /// Represents the per-session state stored in the <see cref="AgentSession.StateBag"/>.
+        /// </summary>
+        public sealed class State
+        {
+            public State(string sessionDbKey)
+            {
+                this.SessionDbKey = sessionDbKey ?? throw new ArgumentNullException(nameof(sessionDbKey));
+            }
+
+            public string SessionDbKey { get; }
+        }
 
         /// <summary>
         /// The data structure used to store chat history items in the vector store.

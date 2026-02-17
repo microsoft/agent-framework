@@ -36,7 +36,7 @@ ChatClient chatClient = new AzureOpenAIClient(
 AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
 {
     ChatOptions = new() { Instructions = "You are a friendly assistant. Always address the user by their name." },
-    AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new UserInfoMemory(chatClient.AsIChatClient(), ctx.SerializedState, ctx.JsonSerializerOptions))
+    AIContextProviders = [new UserInfoMemory(chatClient.AsIChatClient())]
 });
 
 // Create a new session for the conversation.
@@ -58,10 +58,10 @@ Console.WriteLine("\n>> Use deserialized session with previously created memorie
 var deserializedSession = await agent.DeserializeSessionAsync(sesionElement);
 Console.WriteLine(await agent.RunAsync("What is my name and age?", deserializedSession));
 
-Console.WriteLine("\n>> Read memories from memory component\n");
+Console.WriteLine("\n>> Read memories using memory component\n");
 
-// It's possible to access the memory component via the session's GetService method.
-var userInfo = deserializedSession.GetService<UserInfoMemory>()?.UserInfo;
+// It's possible to access the memory component via the agent's GetService method.
+var userInfo = agent.GetService<UserInfoMemory>()?.GetUserInfo(deserializedSession);
 
 // Output the user info that was captured by the memory component.
 Console.WriteLine($"MEMORY - User Name: {userInfo?.UserName}");
@@ -69,12 +69,12 @@ Console.WriteLine($"MEMORY - User Age: {userInfo?.UserAge}");
 
 Console.WriteLine("\n>> Use new session with previously created memories\n");
 
-// It is also possible to set the memories in a memory component on an individual session.
+// It is also possible to set the memories using a memory component on an individual session.
 // This is useful if we want to start a new session, but have it share the same memories as a previous session.
 var newSession = await agent.CreateSessionAsync();
-if (userInfo is not null && newSession.GetService<UserInfoMemory>() is UserInfoMemory newSessionMemory)
+if (userInfo is not null && agent.GetService<UserInfoMemory>() is UserInfoMemory newSessionMemory)
 {
-    newSessionMemory.UserInfo = userInfo;
+    newSessionMemory.SetUserInfo(newSession, userInfo);
 }
 
 // Invoke the agent and output the text result.
@@ -88,29 +88,32 @@ namespace SampleApp
     /// </summary>
     internal sealed class UserInfoMemory : AIContextProvider
     {
+        private readonly ProviderSessionState<UserInfo> _sessionState;
         private readonly IChatClient _chatClient;
 
-        public UserInfoMemory(IChatClient chatClient, UserInfo? userInfo = null)
+        public UserInfoMemory(IChatClient chatClient, Func<AgentSession?, UserInfo>? stateInitializer = null)
+            : base(null, null)
         {
+            this._sessionState = new ProviderSessionState<UserInfo>(
+                stateInitializer ?? (_ => new UserInfo()),
+                this.GetType().Name);
             this._chatClient = chatClient;
-            this.UserInfo = userInfo ?? new UserInfo();
         }
 
-        public UserInfoMemory(IChatClient chatClient, JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null)
+        public override string StateKey => this._sessionState.StateKey;
+
+        public UserInfo GetUserInfo(AgentSession session)
+            => this._sessionState.GetOrInitializeState(session);
+
+        public void SetUserInfo(AgentSession session, UserInfo userInfo)
+            => this._sessionState.SaveState(session, userInfo);
+
+        protected override async ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
-            this._chatClient = chatClient;
+            var userInfo = this._sessionState.GetOrInitializeState(context.Session);
 
-            this.UserInfo = serializedState.ValueKind == JsonValueKind.Object ?
-                serializedState.Deserialize<UserInfo>(jsonSerializerOptions)! :
-                new UserInfo();
-        }
-
-        public UserInfo UserInfo { get; set; }
-
-        protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
-        {
             // Try and extract the user name and age from the message if we don't have it already and it's a user message.
-            if ((this.UserInfo.UserName is null || this.UserInfo.UserAge is null) && context.RequestMessages.Any(x => x.Role == ChatRole.User))
+            if ((userInfo.UserName is null || userInfo.UserAge is null) && context.RequestMessages.Any(x => x.Role == ChatRole.User))
             {
                 var result = await this._chatClient.GetResponseAsync<UserInfo>(
                     context.RequestMessages,
@@ -120,35 +123,34 @@ namespace SampleApp
                     },
                     cancellationToken: cancellationToken);
 
-                this.UserInfo.UserName ??= result.Result.UserName;
-                this.UserInfo.UserAge ??= result.Result.UserAge;
+                userInfo.UserName ??= result.Result.UserName;
+                userInfo.UserAge ??= result.Result.UserAge;
             }
+
+            this._sessionState.SaveState(context.Session, userInfo);
         }
 
-        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
+            var userInfo = this._sessionState.GetOrInitializeState(context.Session);
+
             StringBuilder instructions = new();
 
             // If we don't already know the user's name and age, add instructions to ask for them, otherwise just provide what we have to the context.
             instructions
                 .AppendLine(
-                    this.UserInfo.UserName is null ?
+                    userInfo.UserName is null ?
                         "Ask the user for their name and politely decline to answer any questions until they provide it." :
-                        $"The user's name is {this.UserInfo.UserName}.")
+                        $"The user's name is {userInfo.UserName}.")
                 .AppendLine(
-                    this.UserInfo.UserAge is null ?
+                    userInfo.UserAge is null ?
                         "Ask the user for their age and politely decline to answer any questions until they provide it." :
-                        $"The user's age is {this.UserInfo.UserAge}.");
+                        $"The user's age is {userInfo.UserAge}.");
 
             return new ValueTask<AIContext>(new AIContext
             {
                 Instructions = instructions.ToString()
             });
-        }
-
-        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
-        {
-            return JsonSerializer.SerializeToElement(this.UserInfo, jsonSerializerOptions);
         }
     }
 
