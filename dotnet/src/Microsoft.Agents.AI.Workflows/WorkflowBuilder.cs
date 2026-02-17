@@ -152,10 +152,11 @@ public class WorkflowBuilder
     /// </summary>
     /// <param name="configure">An action to configure the behavior options.</param>
     /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="configure"/> is <see langword="null"/>.</exception>
     public WorkflowBuilder WithBehaviors(Action<WorkflowBehaviorOptions> configure)
     {
         this._behaviorOptions ??= new WorkflowBehaviorOptions();
-        configure?.Invoke(this._behaviorOptions);
+        Throw.IfNull(configure).Invoke(this._behaviorOptions);
         return this;
     }
 
