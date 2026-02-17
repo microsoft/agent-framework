@@ -187,7 +187,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
         await this.Workflow.BehaviorPipeline!.ExecuteWorkflowPipelineAsync(
             context,
-            (ct) => ValueTask.CompletedTask,
+            (ct) => default,
             cancellationToken
         ).ConfigureAwait(false);
 
@@ -214,7 +214,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
             await this.Workflow.BehaviorPipeline.ExecuteWorkflowPipelineAsync(
                 context,
-                (ct) => ValueTask.CompletedTask,
+                (ct) => default,
                 cancellationToken
             ).ConfigureAwait(false);
         }

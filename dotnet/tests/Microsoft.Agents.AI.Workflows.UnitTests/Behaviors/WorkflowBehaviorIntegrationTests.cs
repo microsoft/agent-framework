@@ -69,6 +69,65 @@ public class WorkflowBehaviorIntegrationTests
     }
 
     [Fact]
+    public async Task Workflow_WithWorkflowBehavior_BehaviorExecutesAtEndAsync()
+    {
+        // Arrange
+        var executionLog = new List<string>();
+        var behavior = new LoggingWorkflowBehavior(executionLog);
+        var executor = new SimpleExecutor("executor");
+
+        var workflow = new WorkflowBuilder(executor)
+            .WithBehaviors(options => options.AddWorkflowBehavior(behavior))
+            .Build();
+
+        // Act - dispose triggers the Ending stage
+        await using (await InProcessExecution.RunAsync(workflow, "test-input"))
+        {
+        }
+
+        // Assert - both Starting and Ending stages should execute, in order
+        executionLog.Should().Contain("WorkflowBehavior:Starting");
+        executionLog.Should().Contain("WorkflowBehavior:Ending");
+
+        var startIndex = executionLog.IndexOf("WorkflowBehavior:Starting");
+        var endIndex = executionLog.IndexOf("WorkflowBehavior:Ending");
+        startIndex.Should().BeLessThan(endIndex);
+    }
+
+    [Fact]
+    public async Task Workflow_WithBehaviors_RunIdIsConsistentAcrossContextsAsync()
+    {
+        // Arrange
+        string? workflowBehaviorRunId = null;
+        string? executorBehaviorRunId = null;
+
+        var workflowBehavior = new CapturingWorkflowBehavior(ctx => workflowBehaviorRunId = ctx.RunId);
+        var executorBehavior = new CapturingExecutorBehavior(ctx => executorBehaviorRunId = ctx.RunId);
+
+        var executor = new SimpleExecutor("executor");
+        var workflow = new WorkflowBuilder(executor)
+            .WithBehaviors(options =>
+            {
+                options.AddWorkflowBehavior(workflowBehavior);
+                options.AddExecutorBehavior(executorBehavior);
+            })
+            .Build();
+
+        // Act
+        string runId;
+        await using (var run = await InProcessExecution.RunAsync(workflow, "test-input"))
+        {
+            runId = run.RunId;
+        }
+
+        // Assert - all behavior contexts share the same RunId as the run itself
+        workflowBehaviorRunId.Should().NotBeNullOrEmpty();
+        executorBehaviorRunId.Should().NotBeNullOrEmpty();
+        workflowBehaviorRunId.Should().Be(runId);
+        executorBehaviorRunId.Should().Be(runId);
+    }
+
+    [Fact]
     public async Task Workflow_WithMultipleBehaviors_AllBehaviorsExecuteAsync()
     {
         // Arrange
@@ -333,5 +392,47 @@ public class WorkflowBehaviorIntegrationTests
             ExecutorBehaviorContinuation continuation,
             CancellationToken cancellationToken) =>
             throw new InvalidOperationException("Intentional behavior failure for testing");
+    }
+
+    private sealed class CapturingWorkflowBehavior : IWorkflowBehavior
+    {
+        private readonly Action<WorkflowBehaviorContext> _capture;
+
+        public CapturingWorkflowBehavior(Action<WorkflowBehaviorContext> capture)
+        {
+            this._capture = capture;
+        }
+
+        public async ValueTask<TResult> HandleAsync<TResult>(
+            WorkflowBehaviorContext context,
+            WorkflowBehaviorContinuation<TResult> continuation,
+            CancellationToken cancellationToken)
+        {
+            if (context.Stage == WorkflowStage.Starting)
+            {
+                this._capture(context);
+            }
+
+            return await continuation(cancellationToken);
+        }
+    }
+
+    private sealed class CapturingExecutorBehavior : IExecutorBehavior
+    {
+        private readonly Action<ExecutorBehaviorContext> _capture;
+
+        public CapturingExecutorBehavior(Action<ExecutorBehaviorContext> capture)
+        {
+            this._capture = capture;
+        }
+
+        public async ValueTask<object?> HandleAsync(
+            ExecutorBehaviorContext context,
+            ExecutorBehaviorContinuation continuation,
+            CancellationToken cancellationToken)
+        {
+            this._capture(context);
+            return await continuation(cancellationToken);
+        }
     }
 }
