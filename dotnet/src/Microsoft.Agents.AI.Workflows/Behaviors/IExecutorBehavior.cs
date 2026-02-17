@@ -22,7 +22,9 @@ public interface IExecutorBehavior
     /// Handles executor execution with the ability to execute logic before and after the next behavior in the pipeline.
     /// </summary>
     /// <param name="context">The context containing information about the current executor execution.</param>
-    /// <param name="continuation">The delegate to invoke the next behavior in the pipeline or the actual executor operation.</param>
+    /// <param name="continuation">The delegate to invoke the next behavior in the pipeline or the actual executor operation.
+    /// Should be called exactly once. Calling it multiple times will re-execute downstream behaviors and the executor.
+    /// Logic placed before the call runs before the executor; logic placed after runs once the executor completes.</param>
     /// <param name="cancellationToken">The cancellation token to monitor for cancellation requests.</param>
     /// <returns>A task representing the asynchronous operation, with the result of the executor operation.</returns>
     ValueTask<object?> HandleAsync(
