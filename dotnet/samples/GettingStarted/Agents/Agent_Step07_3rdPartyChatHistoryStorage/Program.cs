@@ -76,45 +76,23 @@ namespace SampleApp
     /// State (the session DB key) is stored in the <see cref="AgentSession.StateBag"/> so it roundtrips
     /// automatically with session serialization.
     /// </summary>
-    internal sealed class VectorChatHistoryProvider : ChatHistoryProvider
+    internal sealed class VectorChatHistoryProvider : ChatHistoryProvider<VectorChatHistoryProvider.State>
     {
         private readonly VectorStore _vectorStore;
-        private readonly Func<AgentSession?, State> _stateInitializer;
-        private readonly string _stateKey;
-
-        /// <inheritdoc />
-        public override string StateKey => this._stateKey;
 
         public VectorChatHistoryProvider(
             VectorStore vectorStore,
             Func<AgentSession?, State>? stateInitializer = null,
             string? stateKey = null)
+            : base(stateInitializer: stateInitializer ?? (_ => new State(Guid.NewGuid().ToString("N"))), stateKey: stateKey, jsonSerializerOptions: null, provideOutputMessageFilter: null, storeInputMessageFilter: null)
         {
             this._vectorStore = vectorStore ?? throw new ArgumentNullException(nameof(vectorStore));
-            this._stateInitializer = stateInitializer ?? (_ => new State(Guid.NewGuid().ToString("N")));
-            this._stateKey = stateKey ?? base.StateKey;
         }
 
         public string GetSessionDbKey(AgentSession session)
             => this.GetOrInitializeState(session).SessionDbKey;
 
-        private State GetOrInitializeState(AgentSession? session)
-        {
-            if (session?.StateBag.TryGetValue<State>(this._stateKey, out var state) is true && state is not null)
-            {
-                return state;
-            }
-
-            state = this._stateInitializer(session);
-            if (session is not null)
-            {
-                session.StateBag.SetValue(this._stateKey, state);
-            }
-
-            return state;
-        }
-
-        protected override async ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override async ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             var state = this.GetOrInitializeState(context.Session);
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
@@ -129,29 +107,17 @@ namespace SampleApp
 
             var messages = records.ConvertAll(x => JsonSerializer.Deserialize<ChatMessage>(x.SerializedMessage!)!);
             messages.Reverse();
-            return messages
-                .Select(message => message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, this.GetType().FullName!))
-                .Concat(context.RequestMessages);
+            return messages;
         }
 
-        protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        protected override async ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
-            // Don't store messages if the request failed.
-            if (context.InvokeException is not null)
-            {
-                return;
-            }
-
             var state = this.GetOrInitializeState(context.Session);
 
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
 
-            // Add both request and response messages to the store, excluding messages that came from chat history.
-            // Optionally messages produced by the AIContextProvider can also be persisted (not shown).
-            var allNewMessages = context.RequestMessages
-                .Where(m => m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory)
-                .Concat(context.ResponseMessages ?? []);
+            var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);
 
             await collection.UpsertAsync(allNewMessages.Select(x => new ChatHistoryItem()
             {
