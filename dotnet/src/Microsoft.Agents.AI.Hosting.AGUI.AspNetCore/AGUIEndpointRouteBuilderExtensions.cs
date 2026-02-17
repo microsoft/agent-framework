@@ -63,9 +63,13 @@ public static class AGUIEndpointRouteBuilderExtensions
                 }
             };
 
+            // Create a session so middleware can access it (fixes #3823)
+            var session = await aiAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
             // Run the agent and convert to AG-UI events
             var events = aiAgent.RunStreamingAsync(
                 messages,
+                session,
                 options: runOptions,
                 cancellationToken: cancellationToken)
                 .AsChatResponseUpdatesAsync()
