@@ -1,11 +1,16 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Linq;
+using System;
+using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
-using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
+using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Extensions.AI;
+using Microsoft.PowerFx.Types;
 using Moq;
 using Xunit.Abstractions;
 
@@ -27,68 +32,71 @@ public sealed class RequestExternalInputExecutorTest(ITestOutputHelper output) :
         string captureStep = RequestExternalInputExecutor.Steps.Capture(testId);
 
         // Assert
-        Assert.Equal($"{testId}_{nameof(RequestExternalInputExecutor.Steps.Input)}", inputStep);
-        Assert.Equal($"{testId}_{nameof(RequestExternalInputExecutor.Steps.Capture)}", captureStep);
+        Assert.Equal($"{testId}_{nameof(QuestionExecutor.Steps.Input)}", inputStep);
+        Assert.Equal($"{testId}_{nameof(QuestionExecutor.Steps.Capture)}", captureStep);
     }
 
     [Fact]
-    public async Task RequestExternalInputWithoutVariableAsync()
-    {
-        // Arrange & Act & Assert
-        await this.ExecuteTestAsync(
-            displayName: nameof(RequestExternalInputWithoutVariableAsync),
-            variablePath: null);
-    }
-
-    [Fact]
-    public async Task RequestExternalInputWithVariableAsync()
-    {
-        // Arrange & Act & Assert
-        await this.ExecuteTestAsync(
-            displayName: nameof(RequestExternalInputWithVariableAsync),
-            variablePath: "InputVariable");
-    }
-
-    [Fact]
-    public async Task ExecuteIsNotDiscreteActionAsync()
+    public async Task ExecuteRequestsExternalInputAsync()
     {
         // Arrange
-        RequestExternalInput model = this.CreateModel(
-            nameof(ExecuteIsNotDiscreteActionAsync),
-            null);
-        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Strict);
-        RequestExternalInputExecutor action = new(model, mockProvider.Object, this.State);
+        RequestExternalInput model = this.CreateModel(nameof(ExecuteRequestsExternalInputAsync), "TestVariable");
 
-        // Act
-        WorkflowEvent[] events = await this.ExecuteAsync(action, isDiscrete: false);
+        // Act & Assert
+        await this.ExecuteTestAsync(
+            displayName: nameof(ExecuteRequestsExternalInputAsync),
+            variableName: "TestVariable");
+    }
 
-        // Assert
-        VerifyModel(model, action);
-        VerifyInvocationEvent(events);
+    [Fact]
+    public async Task CaptureResponseWithVariableAsync()
+    {
+        // Arrange, Act & Assert
+        await this.CaptureResponseTestAsync(
+            displayName: nameof(CaptureResponseWithVariableAsync),
+            variableName: "TestVariable");
+    }
 
-        // Verify IsDiscreteAction is false
-        Assert.Equal(
-            false,
-            action.GetType().BaseType?
-                .GetProperty("IsDiscreteAction", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
-                .GetValue(action));
+    [Fact]
+    public async Task CaptureResponseWithoutVariableAsync()
+    {
+        // Arrange, Act & Assert
+        await this.CaptureResponseTestAsync(
+            displayName: nameof(CaptureResponseWithoutVariableAsync),
+            variableName: null);
+    }
 
-        // Verify EmitResultEvent is false
-        Assert.Equal(
-            false,
-            action.GetType().BaseType?
-                .GetProperty("EmitResultEvent", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
-                .GetValue(action));
+    [Fact]
+    public async Task CaptureResponseWithMultipleMessagesAsync()
+    {
+        // Arrange, Act & Assert
+        await this.CaptureResponseTestAsync(
+            displayName: nameof(CaptureResponseWithMultipleMessagesAsync),
+            variableName: "TestVariable",
+            messageCount: 3);
+    }
+
+    [Fact]
+    public async Task CaptureResponseWithWorkflowConversationAsync()
+    {
+        // Arrange
+        this.State.Set(SystemScope.Names.ConversationId, FormulaValue.New("WorkflowConversationId"), VariableScopeNames.System);
+
+        // Act & Assert
+        await this.CaptureResponseTestAsync(
+            displayName: nameof(CaptureResponseWithWorkflowConversationAsync),
+            variableName: "TestVariable",
+            messageCount: 2,
+            expectMessagesCreated: true);
     }
 
     private async Task ExecuteTestAsync(
         string displayName,
-        string? variablePath)
+        string variableName)
     {
-        // Arrange
-        RequestExternalInput model = this.CreateModel(displayName, variablePath);
-        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Strict);
-        RequestExternalInputExecutor action = new(model, mockProvider.Object, this.State);
+        MockAgentProvider mockAgentProvider = new();
+        RequestExternalInput model = this.CreateModel(nameof(displayName), variableName);
+        RequestExternalInputExecutor action = new(model, mockAgentProvider.Object, this.State);
 
         // Act
         WorkflowEvent[] events = await this.ExecuteAsync(action, isDiscrete: false);
@@ -98,18 +106,58 @@ public sealed class RequestExternalInputExecutorTest(ITestOutputHelper output) :
         VerifyInvocationEvent(events);
     }
 
+    private async Task CaptureResponseTestAsync(
+        string displayName,
+        string? variableName = null,
+        int messageCount = 1,
+        bool expectMessagesCreated = false)
+    {
+        // Arrange
+        RequestExternalInput model = this.CreateModel(this.FormatDisplayName(displayName), variableName);
+        MockAgentProvider mockAgentProvider = new();
+        RequestExternalInputExecutor action = new(model, mockAgentProvider.Object, this.State);
+
+        // Create test messages
+        List<ChatMessage> testMessages = [];
+        for (int i = 0; i < messageCount; i++)
+        {
+            testMessages.Add(new ChatMessage(ChatRole.User, $"Test message {i + 1}"));
+        }
+
+        ExternalInputResponse response = new(testMessages);
+
+        // Act
+        WorkflowEvent[] events =
+            await this.ExecuteAsync(
+                RequestExternalInputExecutor.Steps.Capture(action.Id),
+                (context, message, cancellationToken) => action.CaptureResponseAsync(context, response, cancellationToken));
+
+        // Assert
+        VerifyModel(model, action);
+        VerifyCompletionEvent(events);
+
+        // Verify messages were created in the workflow conversation if expected
+        mockAgentProvider.Verify(p => p.CreateMessageAsync(
+            It.IsAny<string>(),
+            It.IsAny<ChatMessage>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(expectMessagesCreated ? messageCount : 0));
+
+        // Verify the variable was set correctly
+        if (variableName is not null)
+        {
+            this.VerifyState(variableName, testMessages.ToTable());
+        }
+    }
+
     private RequestExternalInput CreateModel(string displayName, string? variablePath)
     {
-        RequestExternalInput.Builder actionBuilder = new()
-        {
-            Id = this.CreateActionId(),
-            DisplayName = this.FormatDisplayName(displayName),
-        };
-
-        if (variablePath != null)
-        {
-            actionBuilder.Variable = PropertyPath.Create(FormatVariablePath(variablePath));
-        }
+        RequestExternalInput.Builder actionBuilder =
+            new()
+            {
+                Id = this.CreateActionId(),
+                DisplayName = this.FormatDisplayName(displayName),
+                Variable = variablePath is null ? null : (InitializablePropertyPath?)PropertyPath.Create(FormatVariablePath(variablePath)),
+            };
 
         return AssignParent<RequestExternalInput>(actionBuilder);
     }
