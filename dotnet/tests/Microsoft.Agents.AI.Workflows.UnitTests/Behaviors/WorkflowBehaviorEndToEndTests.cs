@@ -95,6 +95,37 @@ public class WorkflowBehaviorEndToEndTests
     }
 
     [Fact]
+    public async Task Workflow_WithBothBehaviorTypes_ExecutesInCorrectOrderAsync()
+    {
+        // Arrange
+        var executionLog = new List<string>();
+        var workflowBehavior = new LoggingWorkflowBehavior(executionLog);
+        var executorBehavior = new LoggingExecutorBehavior(executionLog);
+        var executor = new LoggingExecutor("executor", executionLog);
+
+        var workflow = new WorkflowBuilder(executor)
+            .WithBehaviors(options =>
+            {
+                options.AddWorkflowBehavior(workflowBehavior);
+                options.AddExecutorBehavior(executorBehavior);
+            })
+            .Build();
+
+        // Act
+        await using (await InProcessExecution.RunAsync(workflow, "test-input"))
+        {
+        }
+
+        // Assert - Starting → PreExecution (with executor) → Ending
+        executionLog.Should().ContainInOrder(
+            "WorkflowBehavior:Starting",
+            "Behavior:PreExecution:executor",
+            "Executor:executor",
+            "WorkflowBehavior:Ending"
+        );
+    }
+
+    [Fact]
     public async Task Workflow_WithBehaviors_RunIdIsConsistentAcrossContextsAsync()
     {
         // Arrange
