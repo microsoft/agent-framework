@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ClientModel;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI.OpenAI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Chat;
 using OpenAI.Responses;
@@ -18,6 +20,7 @@ namespace Microsoft.Agents.AI;
 /// The methods handle the conversion between OpenAI chat message types and Microsoft Extensions AI types,
 /// and return OpenAI <see cref="ChatCompletion"/> objects directly from the agent's <see cref="AgentResponse"/>.
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public static class AIAgentWithOpenAIExtensions
 {
     /// <summary>

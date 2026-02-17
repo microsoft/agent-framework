@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Workflows;
 
 internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
 {
-    private readonly JsonSerializerOptions _jsonSerializerOptions;
+    private readonly ProviderSessionState<StoreState> _sessionState;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="WorkflowChatHistoryProvider"/> class.
@@ -22,9 +22,16 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
     /// and source generated serializers are required, or Native AOT / Trimming is required.
     /// </param>
     public WorkflowChatHistoryProvider(JsonSerializerOptions? jsonSerializerOptions = null)
+        : base(provideOutputMessageFilter: null, storeInputMessageFilter: null)
     {
-        this._jsonSerializerOptions = jsonSerializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions;
+        this._sessionState = new ProviderSessionState<StoreState>(
+            _ => new StoreState(),
+            this.GetType().Name,
+            jsonSerializerOptions);
     }
+
+    /// <inheritdoc />
+    public override string StateKey => this._sessionState.StateKey;
 
     internal sealed class StoreState
     {
@@ -32,49 +39,22 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
         public List<ChatMessage> Messages { get; set; } = [];
     }
 
-    private StoreState GetOrInitializeState(AgentSession? session)
-    {
-        if (session?.StateBag.TryGetValue<StoreState>(this.StateKey, out var state, this._jsonSerializerOptions) is true && state is not null)
-        {
-            return state;
-        }
-
-        state = new();
-        if (session is not null)
-        {
-            session.StateBag.SetValue(this.StateKey, state, this._jsonSerializerOptions);
-        }
-
-        return state;
-    }
-
     internal void AddMessages(AgentSession session, params IEnumerable<ChatMessage> messages)
-        => this.GetOrInitializeState(session).Messages.AddRange(messages);
+        => this._sessionState.GetOrInitializeState(session).Messages.AddRange(messages);
 
-    protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
-        => new(this.GetOrInitializeState(context.Session)
-            .Messages
-            .Select(message => message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, this.GetType().FullName!))
-            .Concat(context.RequestMessages));
+    protected override ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        => new(this._sessionState.GetOrInitializeState(context.Session).Messages);
 
-    protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        if (context.InvokeException is not null)
-        {
-            return default;
-        }
-
-        var allNewMessages = context.RequestMessages
-            .Where(m => m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory)
-            .Concat(context.ResponseMessages ?? []);
-        this.GetOrInitializeState(context.Session).Messages.AddRange(allNewMessages);
-
+        var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);
+        this._sessionState.GetOrInitializeState(context.Session).Messages.AddRange(allNewMessages);
         return default;
     }
 
     public IEnumerable<ChatMessage> GetFromBookmark(AgentSession session)
     {
-        var state = this.GetOrInitializeState(session);
+        var state = this._sessionState.GetOrInitializeState(session);
 
         for (int i = state.Bookmark; i < state.Messages.Count; i++)
         {
@@ -84,7 +64,7 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
 
     public void UpdateBookmark(AgentSession session)
     {
-        var state = this.GetOrInitializeState(session);
+        var state = this._sessionState.GetOrInitializeState(session);
         state.Bookmark = state.Messages.Count;
     }
 }

@@ -8,6 +8,11 @@
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
+  <PropertyGroup>
+    <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
+    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Azure.AI.Projects.OpenAI" />
