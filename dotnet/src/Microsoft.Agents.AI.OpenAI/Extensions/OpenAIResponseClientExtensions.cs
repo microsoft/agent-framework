@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace OpenAI.Responses;
@@ -17,6 +19,7 @@ namespace OpenAI.Responses;
 /// The methods handle the conversion from OpenAI clients to <see cref="IChatClient"/> instances and then wrap them
 /// in <see cref="ChatClientAgent"/> objects that implement the <see cref="AIAgent"/> interface.
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public static class OpenAIResponseClientExtensions
 {
     /// <summary>
