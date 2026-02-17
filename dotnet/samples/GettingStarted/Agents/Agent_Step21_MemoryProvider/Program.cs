@@ -381,7 +381,7 @@ namespace SampleApp
             // Set the resolved outline on the delta so Merge() handles all fields uniformly.
             delta = delta with { Outline = outlineToStore };
             var newState = Merge(state, delta) with { OutlineSource = outlineSource };
-            this.SaveState(context.Session, newState);
+            _sessionState.SaveState(context.Session, newState);
         }
 
         private static string? ExtractOutlineBetweenDelimiters(IEnumerable<ChatMessage> messages)
