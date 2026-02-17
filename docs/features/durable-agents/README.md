@@ -57,7 +57,7 @@ Key types:
 
 ### Python
 
-The Python implementation is in the `agent-framework-durabletask` package (`python/packages/durabletask`).
+The core Python implementation is in the `agent-framework-durabletask` package (`python/packages/durabletask`). Azure Functions hosting (including `AgentFunctionApp`) is in the separate `agent-framework-azurefunctions` package (`python/packages/azurefunctions`).
 
 Key types:
 
@@ -229,6 +229,7 @@ When using the [Durable Task Scheduler](https://learn.microsoft.com/azure/azure-
 | .NET | `Microsoft.Agents.AI.DurableTask` | [`dotnet/src/Microsoft.Agents.AI.DurableTask`](../../../dotnet/src/Microsoft.Agents.AI.DurableTask) |
 | .NET | `Microsoft.Agents.AI.Hosting.AzureFunctions` | [`dotnet/src/Microsoft.Agents.AI.Hosting.AzureFunctions`](../../../dotnet/src/Microsoft.Agents.AI.Hosting.AzureFunctions) |
 | Python | `agent-framework-durabletask` | [`python/packages/durabletask`](../../../python/packages/durabletask) |
+| Python | `agent-framework-azurefunctions` | [`python/packages/azurefunctions`](../../../python/packages/azurefunctions) |
 
 ## Further reading
 
