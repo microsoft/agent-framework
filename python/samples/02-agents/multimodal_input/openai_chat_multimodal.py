@@ -19,7 +19,7 @@ def load_sample_pdf() -> bytes:
 
 def create_sample_image() -> str:
     """Create a simple 1x1 pixel PNG image for testing."""
-    # This is a tiny red pixel in PNG format
+    # This is a tiny yellow pixel in PNG format
     png_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
     return f"data:image/png;base64,{png_data}"
 
