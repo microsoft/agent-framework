@@ -771,7 +771,7 @@ class TestSemanticSearch:
         mock_client.search = AsyncMock(side_effect=_search)
         provider._search_client = mock_client
 
-        results = await provider._semantic_search("sem query")
+        await provider._semantic_search("sem query")
         call_kwargs = mock_client.search.call_args[1]
         assert call_kwargs["query_type"] == "semantic"
         assert call_kwargs["semantic_configuration_name"] == "my-semantic-config"
