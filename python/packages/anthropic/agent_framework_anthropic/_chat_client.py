@@ -43,9 +43,11 @@ from anthropic.types.beta import (
 from anthropic.types.beta.beta_bash_code_execution_tool_result_error import (
     BetaBashCodeExecutionToolResultError,
 )
+from anthropic.types.beta.beta_code_execution_result_block import BetaCodeExecutionResultBlock
 from anthropic.types.beta.beta_code_execution_tool_result_error import (
     BetaCodeExecutionToolResultError,
 )
+from anthropic.types.beta.beta_encrypted_code_execution_result_block import BetaEncryptedCodeExecutionResultBlock
 from pydantic import BaseModel
 
 if sys.version_info >= (3, 11):
@@ -934,10 +936,23 @@ class AnthropicClient(
                                 )
                             )
                         else:
-                            if content_block.content.stdout:
+                            if (
+                                isinstance(content_block.content, BetaCodeExecutionResultBlock)
+                                and content_block.content.stdout
+                            ):
                                 code_outputs.append(
                                     Content.from_text(
                                         text=content_block.content.stdout,
+                                        raw_representation=content_block.content,
+                                    )
+                                )
+                            if (
+                                isinstance(content_block.content, BetaEncryptedCodeExecutionResultBlock)
+                                and content_block.content.encrypted_stdout
+                            ):
+                                code_outputs.append(
+                                    Content.from_text(
+                                        text=content_block.content.encrypted_stdout,
                                         raw_representation=content_block.content,
                                     )
                                 )
