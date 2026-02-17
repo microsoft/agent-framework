@@ -55,7 +55,7 @@ internal sealed class DurableWorkflowRun : IAwaitableWorkflowRun
 
         if (metadata.RuntimeStatus == OrchestrationRuntimeStatus.Completed)
         {
-            return metadata.ReadOutputAs<TResult>();
+            return DurableStreamingWorkflowRun.ExtractResult<TResult>(metadata.SerializedOutput);
         }
 
         if (metadata.RuntimeStatus == OrchestrationRuntimeStatus.Failed)

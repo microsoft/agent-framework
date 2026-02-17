@@ -182,6 +182,200 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
     }
 
     [Fact]
+    public async Task WorkflowEventsSampleValidationAsync()
+    {
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+        string samplePath = Path.Combine(s_samplesPath, "05_WorkflowEvents");
+
+        await this.RunSampleTestAsync(samplePath, async (process, logs) =>
+        {
+            bool inputSent = false;
+            bool foundStartedRun = false;
+            bool foundExecutorInvoked = false;
+            bool foundExecutorCompleted = false;
+            bool foundLookupStarted = false;
+            bool foundOrderFound = false;
+            bool foundCancelProgress = false;
+            bool foundOrderCancelled = false;
+            bool foundEmailSent = false;
+            bool foundYieldedOutput = false;
+            bool foundWorkflowCompleted = false;
+            bool foundCompletionResult = false;
+            List<string> eventLines = [];
+
+            string? line;
+            while ((line = this.ReadLogLine(logs, testTimeoutCts.Token)) != null)
+            {
+                if (!inputSent && line.Contains("Enter order ID", StringComparison.OrdinalIgnoreCase))
+                {
+                    await this.WriteInputAsync(process, "12345", testTimeoutCts.Token);
+                    inputSent = true;
+                }
+
+                if (inputSent)
+                {
+                    foundStartedRun |= line.Contains("Started run:", StringComparison.Ordinal);
+                    foundExecutorInvoked |= line.Contains("ExecutorInvokedEvent", StringComparison.Ordinal);
+                    foundExecutorCompleted |= line.Contains("ExecutorCompletedEvent", StringComparison.Ordinal);
+                    foundLookupStarted |= line.Contains("[Lookup] Looking up order", StringComparison.Ordinal);
+                    foundOrderFound |= line.Contains("[Lookup] Found:", StringComparison.Ordinal);
+                    foundCancelProgress |= line.Contains("[Cancel]", StringComparison.Ordinal) && line.Contains('%');
+                    foundOrderCancelled |= line.Contains("[Cancel] Done", StringComparison.Ordinal);
+                    foundEmailSent |= line.Contains("[Email] Sent to", StringComparison.Ordinal);
+                    foundYieldedOutput |= line.Contains("[Output]", StringComparison.Ordinal);
+                    foundWorkflowCompleted |= line.Contains("DurableWorkflowCompletedEvent", StringComparison.Ordinal);
+
+                    if (line.Contains("Completed:", StringComparison.Ordinal))
+                    {
+                        foundCompletionResult = line.Contains("12345", StringComparison.Ordinal);
+                        break;
+                    }
+
+                    // Collect event lines for ordering verification
+                    if (line.Contains("[Lookup]", StringComparison.Ordinal)
+                        || line.Contains("[Cancel]", StringComparison.Ordinal)
+                        || line.Contains("[Email]", StringComparison.Ordinal)
+                        || line.Contains("[Output]", StringComparison.Ordinal))
+                    {
+                        eventLines.Add(line);
+                    }
+                }
+
+                this.AssertNoError(line);
+            }
+
+            Assert.True(inputSent, "Input was not sent to the workflow.");
+            Assert.True(foundStartedRun, "Streaming run was not started.");
+            Assert.True(foundExecutorInvoked, "ExecutorInvokedEvent not found in stream.");
+            Assert.True(foundExecutorCompleted, "ExecutorCompletedEvent not found in stream.");
+            Assert.True(foundLookupStarted, "OrderLookupStartedEvent not found in stream.");
+            Assert.True(foundOrderFound, "OrderFoundEvent not found in stream.");
+            Assert.True(foundCancelProgress, "CancellationProgressEvent not found in stream.");
+            Assert.True(foundOrderCancelled, "OrderCancelledEvent not found in stream.");
+            Assert.True(foundEmailSent, "EmailSentEvent not found in stream.");
+            Assert.True(foundYieldedOutput, "WorkflowOutputEvent not found in stream.");
+            Assert.True(foundWorkflowCompleted, "DurableWorkflowCompletedEvent not found in stream.");
+            Assert.True(foundCompletionResult, "Completion result does not contain the order ID.");
+
+            // Verify event ordering: lookup events appear before cancel events, which appear before email events
+            int lastLookupIndex = eventLines.FindLastIndex(l => l.Contains("[Lookup]", StringComparison.Ordinal));
+            int firstCancelIndex = eventLines.FindIndex(l => l.Contains("[Cancel]", StringComparison.Ordinal));
+            int lastCancelIndex = eventLines.FindLastIndex(l => l.Contains("[Cancel]", StringComparison.Ordinal));
+            int firstEmailIndex = eventLines.FindIndex(l => l.Contains("[Email]", StringComparison.Ordinal));
+
+            if (lastLookupIndex >= 0 && firstCancelIndex >= 0)
+            {
+                Assert.True(lastLookupIndex < firstCancelIndex, "Lookup events should appear before cancel events.");
+            }
+
+            if (lastCancelIndex >= 0 && firstEmailIndex >= 0)
+            {
+                Assert.True(lastCancelIndex < firstEmailIndex, "Cancel events should appear before email events.");
+            }
+
+            await this.WriteInputAsync(process, "exit", testTimeoutCts.Token);
+        });
+    }
+
+    [Fact]
+    public async Task WorkflowSharedStateSampleValidationAsync()
+    {
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+        string samplePath = Path.Combine(s_samplesPath, "07_WorkflowSharedState");
+
+        await this.RunSampleTestAsync(samplePath, async (process, logs) =>
+        {
+            bool inputSent = false;
+            bool foundStartedRun = false;
+            bool foundValidateOutput = false;
+            bool foundEnrichOutput = false;
+            bool foundPaymentOutput = false;
+            bool foundInvoiceOutput = false;
+            bool foundTaxCalculation = false;
+            bool foundAuditTrail = false;
+            bool foundWorkflowCompleted = false;
+            List<string> outputLines = [];
+
+            string? line;
+            while ((line = this.ReadLogLine(logs, testTimeoutCts.Token)) != null)
+            {
+                if (!inputSent && line.Contains("Enter an order ID", StringComparison.OrdinalIgnoreCase))
+                {
+                    await this.WriteInputAsync(process, "ORD-001", testTimeoutCts.Token);
+                    inputSent = true;
+                }
+
+                if (inputSent)
+                {
+                    foundStartedRun |= line.Contains("Started run:", StringComparison.Ordinal);
+
+                    if (line.Contains("[Output]", StringComparison.Ordinal))
+                    {
+                        foundValidateOutput |= line.Contains("ValidateOrder:", StringComparison.Ordinal) && line.Contains("validated", StringComparison.OrdinalIgnoreCase);
+                        foundEnrichOutput |= line.Contains("EnrichOrder:", StringComparison.Ordinal) && line.Contains("enriched", StringComparison.OrdinalIgnoreCase);
+                        foundPaymentOutput |= line.Contains("ProcessPayment:", StringComparison.Ordinal) && line.Contains("Payment processed", StringComparison.OrdinalIgnoreCase);
+                        foundInvoiceOutput |= line.Contains("GenerateInvoice:", StringComparison.Ordinal) && line.Contains("Invoice complete", StringComparison.OrdinalIgnoreCase);
+
+                        // Verify shared state: tax rate was read by ProcessPayment
+                        foundTaxCalculation |= line.Contains("tax:", StringComparison.OrdinalIgnoreCase);
+
+                        // Verify shared state: audit trail was accumulated across executors
+                        foundAuditTrail |= line.Contains("Audit trail:", StringComparison.Ordinal)
+                            && line.Contains("ValidateOrder", StringComparison.Ordinal)
+                            && line.Contains("EnrichOrder", StringComparison.Ordinal)
+                            && line.Contains("ProcessPayment", StringComparison.Ordinal);
+
+                        outputLines.Add(line);
+                    }
+
+                    foundWorkflowCompleted |= line.Contains("DurableWorkflowCompletedEvent", StringComparison.Ordinal)
+                        || line.Contains("Completed:", StringComparison.Ordinal);
+
+                    if (line.Contains("Completed:", StringComparison.Ordinal))
+                    {
+                        break;
+                    }
+                }
+
+                this.AssertNoError(line);
+            }
+
+            Assert.True(inputSent, "Input was not sent to the workflow.");
+            Assert.True(foundStartedRun, "Streaming run was not started.");
+            Assert.True(foundValidateOutput, "ValidateOrder output not found in stream.");
+            Assert.True(foundEnrichOutput, "EnrichOrder output not found in stream.");
+            Assert.True(foundPaymentOutput, "ProcessPayment output not found in stream.");
+            Assert.True(foundInvoiceOutput, "GenerateInvoice output not found in stream.");
+            Assert.True(foundTaxCalculation, "Tax calculation (shared state read) not found.");
+            Assert.True(foundAuditTrail, "Audit trail (shared state accumulation) not found.");
+            Assert.True(foundWorkflowCompleted, "Workflow completion not found in stream.");
+
+            // Verify output ordering: ValidateOrder -> EnrichOrder -> ProcessPayment -> GenerateInvoice
+            int validateIndex = outputLines.FindIndex(l => l.Contains("ValidateOrder:", StringComparison.Ordinal) && l.Contains("validated", StringComparison.OrdinalIgnoreCase));
+            int enrichIndex = outputLines.FindIndex(l => l.Contains("EnrichOrder:", StringComparison.Ordinal));
+            int paymentIndex = outputLines.FindIndex(l => l.Contains("ProcessPayment:", StringComparison.Ordinal));
+            int invoiceIndex = outputLines.FindIndex(l => l.Contains("GenerateInvoice:", StringComparison.Ordinal));
+
+            if (validateIndex >= 0 && enrichIndex >= 0)
+            {
+                Assert.True(validateIndex < enrichIndex, "ValidateOrder output should appear before EnrichOrder.");
+            }
+
+            if (enrichIndex >= 0 && paymentIndex >= 0)
+            {
+                Assert.True(enrichIndex < paymentIndex, "EnrichOrder output should appear before ProcessPayment.");
+            }
+
+            if (paymentIndex >= 0 && invoiceIndex >= 0)
+            {
+                Assert.True(paymentIndex < invoiceIndex, "ProcessPayment output should appear before GenerateInvoice.");
+            }
+
+            await this.WriteInputAsync(process, "exit", testTimeoutCts.Token);
+        });
+    }
+
+    [Fact]
     public async Task WorkflowAndAgentsSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();

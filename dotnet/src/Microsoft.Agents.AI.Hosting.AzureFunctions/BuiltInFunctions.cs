@@ -48,9 +48,7 @@ internal static class BuiltInFunctions
 
         if (string.IsNullOrEmpty(inputMessage))
         {
-            HttpResponseData errorResponse = req.CreateResponse(HttpStatusCode.BadRequest);
-            await errorResponse.WriteStringAsync("Workflow input cannot be empty.");
-            return errorResponse;
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest, "Workflow input cannot be empty.");
         }
 
         DurableWorkflowInput<string> orchestrationInput = new() { Input = inputMessage };

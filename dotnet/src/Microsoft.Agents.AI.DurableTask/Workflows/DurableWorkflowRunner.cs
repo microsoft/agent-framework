@@ -171,25 +171,43 @@ internal sealed class DurableWorkflowRunner
                 logger.LogSuperstepExecutors(superstep, string.Join(", ", executorInputs.Select(e => e.ExecutorId)));
             }
 
-            string[] results = await DispatchExecutorsInParallelAsync(context, executorInputs, logger).ConfigureAwait(true);
+            string[] results = await DispatchExecutorsInParallelAsync(context, executorInputs, state.SharedState, logger).ConfigureAwait(true);
 
-            ProcessSuperstepResults(executorInputs, results, state, logger);
+            bool haltRequested = ProcessSuperstepResults(executorInputs, results, state, context, logger);
+
+            if (haltRequested)
+            {
+                logger.LogWorkflowCompleted();
+                break;
+            }
 
             // Check if we've reached the limit and still have work remaining
-            if (superstep == MaxSupersteps)
+            int remainingExecutors = CountRemainingExecutors(state.MessageQueues);
+            if (superstep == MaxSupersteps && remainingExecutors > 0)
             {
-                int remainingExecutors = CountRemainingExecutors(state.MessageQueues);
-                if (remainingExecutors > 0)
-                {
-                    logger.LogWorkflowMaxSuperstepsExceeded(context.InstanceId, MaxSupersteps, remainingExecutors);
-                }
+                logger.LogWorkflowMaxSuperstepsExceeded(context.InstanceId, MaxSupersteps, remainingExecutors);
             }
+        }
+
+        // Publish final events for live streaming (skip during replay)
+        if (!context.IsReplaying)
+        {
+            PublishEventsToCustomStatus(context, state);
         }
 
         string finalResult = GetFinalResult(state.LastResults);
         logger.LogWorkflowCompleted();
 
-        return finalResult;
+        // Return wrapper with both result and events so streaming clients can
+        // retrieve events from SerializedOutput after the orchestration completes
+        // (SerializedCustomStatus is cleared by the framework on completion).
+        DurableWorkflowResult workflowResult = new()
+        {
+            Result = finalResult,
+            Events = state.AccumulatedEvents
+        };
+
+        return JsonSerializer.Serialize(workflowResult, DurableWorkflowJsonContext.Default.DurableWorkflowResult);
     }
 
     /// <summary>
@@ -203,10 +221,11 @@ internal sealed class DurableWorkflowRunner
     private static async Task<string[]> DispatchExecutorsInParallelAsync(
         TaskOrchestrationContext context,
         List<ExecutorInput> executorInputs,
+        Dictionary<string, string> sharedState,
         ILogger logger)
     {
         Task<string>[] dispatchTasks = executorInputs
-            .Select(input => DurableExecutorDispatcher.DispatchAsync(context, input.Info, input.Envelope, logger))
+            .Select(input => DurableExecutorDispatcher.DispatchAsync(context, input.Info, input.Envelope, sharedState, logger))
             .ToArray();
 
         return await Task.WhenAll(dispatchTasks).ConfigureAwait(true);
@@ -242,6 +261,16 @@ internal sealed class DurableWorkflowRunner
         public Dictionary<string, Queue<DurableMessageEnvelope>> MessageQueues { get; } = [];
 
         public Dictionary<string, string> LastResults { get; } = [];
+
+        /// <summary>
+        /// Shared state dictionary across supersteps (scope-prefixed key -> serialized value).
+        /// </summary>
+        public Dictionary<string, string> SharedState { get; } = [];
+
+        /// <summary>
+        /// Accumulated workflow events for custom status (streaming consumption).
+        /// </summary>
+        public List<string> AccumulatedEvents { get; } = [];
     }
 
     /// <summary>
@@ -322,22 +351,128 @@ internal sealed class DurableWorkflowRunner
     /// <summary>
     /// Processes results from a superstep, updating state and routing messages to successors.
     /// </summary>
-    private static void ProcessSuperstepResults(
+    /// <returns><c>true</c> if a halt was requested by any executor; otherwise, <c>false</c>.</returns>
+    private static bool ProcessSuperstepResults(
         List<ExecutorInput> inputs,
         string[] rawResults,
         SuperstepState state,
+        TaskOrchestrationContext context,
         ILogger logger)
     {
+        bool haltRequested = false;
+
         for (int i = 0; i < inputs.Count; i++)
         {
             string executorId = inputs[i].ExecutorId;
-            (string result, List<SentMessageInfo> sentMessages) = ParseActivityResult(rawResults[i]);
+            ExecutorResultInfo resultInfo = ParseActivityResult(rawResults[i]);
 
-            logger.LogExecutorResultReceived(executorId, result.Length, sentMessages.Count);
+            logger.LogExecutorResultReceived(executorId, resultInfo.Result.Length, resultInfo.SentMessages.Count);
 
-            state.LastResults[executorId] = result;
-            RouteOutputToSuccessors(executorId, result, sentMessages, state, logger);
+            state.LastResults[executorId] = resultInfo.Result;
+
+            // Merge state updates from activity into shared state
+            MergeStateUpdates(state, resultInfo.StateUpdates, resultInfo.ClearedScopes);
+
+            // Accumulate events for custom status (streaming)
+            state.AccumulatedEvents.AddRange(resultInfo.Events);
+
+            // Check for halt request
+            haltRequested |= resultInfo.HaltRequested;
+
+            // Publish events for live streaming (skip during replay)
+            if (!context.IsReplaying)
+            {
+                PublishEventsToCustomStatus(context, state);
+            }
+
+            RouteOutputToSuccessors(executorId, resultInfo.Result, resultInfo.SentMessages, state, logger);
         }
+
+        return haltRequested;
+    }
+
+    /// <summary>
+    /// Merges state updates from an executor into the shared state.
+    /// </summary>
+    private static void MergeStateUpdates(
+        SuperstepState state,
+        Dictionary<string, string?> stateUpdates,
+        List<string> clearedScopes)
+    {
+        Dictionary<string, string> shared = state.SharedState;
+
+        ApplyClearedScopes(shared, clearedScopes);
+
+        // Apply individual state updates
+        foreach ((string key, string? value) in stateUpdates)
+        {
+            if (value is null)
+            {
+                shared.Remove(key);
+            }
+            else
+            {
+                shared[key] = value;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes all keys belonging to the specified scopes from the shared state dictionary.
+    /// </summary>
+    private static void ApplyClearedScopes(Dictionary<string, string> shared, List<string> clearedScopes)
+    {
+        if (clearedScopes.Count == 0 || shared.Count == 0)
+        {
+            return;
+        }
+
+        List<string> keysToRemove = [];
+
+        foreach (string clearedScope in clearedScopes)
+        {
+            string scopePrefix = string.Concat(clearedScope, ":");
+            keysToRemove.Clear();
+
+            foreach (string key in shared.Keys)
+            {
+                if (key.StartsWith(scopePrefix, StringComparison.Ordinal))
+                {
+                    keysToRemove.Add(key);
+                }
+            }
+
+            foreach (string key in keysToRemove)
+            {
+                shared.Remove(key);
+            }
+
+            if (shared.Count == 0)
+            {
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Publishes accumulated workflow events to the orchestration's custom status,
+    /// making them available to <see cref="DurableStreamingWorkflowRun"/> for live streaming.
+    /// </summary>
+    /// <remarks>
+    /// Custom status is the only orchestration metadata readable by external clients while
+    /// the orchestration is still running. It is cleared by the framework on completion,
+    /// so events are also included in <see cref="DurableWorkflowResult"/> for final retrieval.
+    /// </remarks>
+    private static void PublishEventsToCustomStatus(TaskOrchestrationContext context, SuperstepState state)
+    {
+        DurableWorkflowCustomStatus customStatus = new()
+        {
+            Events = state.AccumulatedEvents
+        };
+
+        // Pass the object directly — the framework's DataConverter handles serialization.
+        // Pre-serializing would cause double-serialization (string wrapped in JSON quotes).
+        context.SetCustomStatus(customStatus);
     }
 
     /// <summary>
@@ -346,16 +481,16 @@ internal sealed class DurableWorkflowRunner
     private static void RouteOutputToSuccessors(
         string executorId,
         string result,
-        List<SentMessageInfo> sentMessages,
+        List<TypedPayload> sentMessages,
         SuperstepState state,
         ILogger logger)
     {
         if (sentMessages.Count > 0)
         {
             // Only route messages that have content
-            foreach (SentMessageInfo message in sentMessages.Where(m => !string.IsNullOrEmpty(m.Message)))
+            foreach (TypedPayload message in sentMessages.Where(m => !string.IsNullOrEmpty(m.Data)))
             {
-                state.EdgeMap.RouteMessage(executorId, message.Message!, message.TypeName, state.MessageQueues, logger);
+                state.EdgeMap.RouteMessage(executorId, message.Data!, message.TypeName, state.MessageQueues, logger);
             }
 
             return;
@@ -406,13 +541,25 @@ internal sealed class DurableWorkflowRunner
     }
 
     /// <summary>
-    /// Parses the raw activity result to extract the result string and any sent messages.
+    /// Output from an executor invocation, including its result,
+    /// messages, state updates, and emitted workflow events.
     /// </summary>
-    private static (string Result, List<SentMessageInfo> SentMessages) ParseActivityResult(string rawResult)
+    private sealed record ExecutorResultInfo(
+        string Result,
+        List<TypedPayload> SentMessages,
+        Dictionary<string, string?> StateUpdates,
+        List<string> ClearedScopes,
+        List<string> Events,
+        bool HaltRequested);
+
+    /// <summary>
+    /// Parses the raw activity result to extract result, messages, events, and state updates.
+    /// </summary>
+    private static ExecutorResultInfo ParseActivityResult(string rawResult)
     {
         if (string.IsNullOrEmpty(rawResult))
         {
-            return (rawResult, []);
+            return new ExecutorResultInfo(rawResult, [], [], [], [], false);
         }
 
         try
@@ -423,14 +570,20 @@ internal sealed class DurableWorkflowRunner
 
             if (output is null || !HasMeaningfulContent(output))
             {
-                return (rawResult, []);
+                return new ExecutorResultInfo(rawResult, [], [], [], [], false);
             }
 
-            return (output.Result ?? string.Empty, output.SentMessages);
+            return new ExecutorResultInfo(
+                output.Result ?? string.Empty,
+                output.SentMessages,
+                output.StateUpdates,
+                output.ClearedScopes,
+                output.Events,
+                output.HaltRequested);
         }
         catch (JsonException)
         {
-            return (rawResult, []);
+            return new ExecutorResultInfo(rawResult, [], [], [], [], false);
         }
     }
 
@@ -443,6 +596,11 @@ internal sealed class DurableWorkflowRunner
     /// </remarks>
     private static bool HasMeaningfulContent(DurableActivityOutput output)
     {
-        return output.Result is not null || output.SentMessages.Count > 0;
+        return output.Result is not null
+            || output.SentMessages.Count > 0
+            || output.Events.Count > 0
+            || output.StateUpdates.Count > 0
+            || output.ClearedScopes.Count > 0
+            || output.HaltRequested;
     }
 }
