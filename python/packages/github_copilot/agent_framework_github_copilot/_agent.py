@@ -21,6 +21,7 @@ from agent_framework import (
     ResponseStream,
     normalize_messages,
 )
+from agent_framework._sessions import BaseHistoryProvider, SessionContext
 from agent_framework._settings import load_settings
 from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
@@ -352,9 +353,35 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         opts: dict[str, Any] = dict(options) if options else {}
         timeout = opts.pop("timeout", None) or self._settings["timeout"] or DEFAULT_TIMEOUT_SECONDS
 
-        copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
         input_messages = normalize_messages(messages)
-        prompt = "\n".join([message.text for message in input_messages])
+
+        # Run context provider before_run hooks
+        session_context = SessionContext(
+            session_id=session.session_id,
+            service_session_id=session.service_session_id,
+            input_messages=input_messages,
+            options=opts,
+        )
+        state = session.state
+        for provider in self.context_providers:
+            if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
+                continue
+            await provider.before_run(
+                agent=self,  # type: ignore[arg-type]
+                session=session,  # type: ignore[arg-type]
+                context=session_context,
+                state=state,
+            )
+
+        # Combine messages from context providers with input
+        all_messages = session_context.get_messages(include_input=True)
+        prompt_parts = []
+        if session_context.instructions:
+            prompt_parts.extend(session_context.instructions)
+        prompt_parts.append("\n".join([msg.text for msg in all_messages]))
+        prompt = "\n".join(prompt_parts)
+
+        copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
 
         try:
             response_event = await copilot_session.send_and_wait({"prompt": prompt}, timeout=timeout)
@@ -380,7 +407,12 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 )
             response_id = message_id
 
-        return AgentResponse(messages=response_messages, response_id=response_id)
+        # Build response and run after_run hooks
+        result = AgentResponse(messages=response_messages, response_id=response_id)
+        session_context._response = result
+        await self._run_after_providers(session=session, context=session_context)
+
+        return result
 
     async def _stream_updates(
         self,
@@ -613,3 +645,24 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             config["mcp_servers"] = self._mcp_servers
 
         return await self._client.resume_session(session_id, config)
+
+    async def _run_after_providers(
+        self,
+        *,
+        session: AgentSession | None,
+        context: SessionContext,
+    ) -> None:
+        """Run after_run on all context providers in reverse order.
+
+        Keyword Args:
+            session: The conversation session.
+            context: The invocation context with response populated.
+        """
+        state = session.state if session else {}
+        for provider in reversed(self.context_providers):
+            await provider.after_run(
+                agent=self,  # type: ignore[arg-type]
+                session=session,  # type: ignore[arg-type]
+                context=context,
+                state=state,
+            )

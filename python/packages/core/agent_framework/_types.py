@@ -2871,12 +2871,7 @@ class _ChatOptionsBase(TypedDict, total=False):
     presence_penalty: float
 
     # Tool configuration (forward reference to avoid circular import)
-    tools: (
-        ToolTypes
-        | Callable[..., Any]
-        | Sequence[ToolTypes | Callable[..., Any]]
-        | None
-    )
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None
     tool_choice: ToolMode | Literal["auto", "required", "none"]
     allow_multiple_tool_calls: bool
 
