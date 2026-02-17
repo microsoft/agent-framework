@@ -76,25 +76,31 @@ namespace SampleApp
     /// State (the session DB key) is stored in the <see cref="AgentSession.StateBag"/> so it roundtrips
     /// automatically with session serialization.
     /// </summary>
-    internal sealed class VectorChatHistoryProvider : ChatHistoryProvider<VectorChatHistoryProvider.State>
+    internal sealed class VectorChatHistoryProvider : ChatHistoryProvider
     {
+        private readonly ProviderSessionState<State> _sessionState;
         private readonly VectorStore _vectorStore;
 
         public VectorChatHistoryProvider(
             VectorStore vectorStore,
             Func<AgentSession?, State>? stateInitializer = null,
             string? stateKey = null)
-            : base(stateInitializer: stateInitializer ?? (_ => new State(Guid.NewGuid().ToString("N"))), stateKey: stateKey, jsonSerializerOptions: null, provideOutputMessageFilter: null, storeInputMessageFilter: null)
+            : base(provideOutputMessageFilter: null, storeInputMessageFilter: null)
         {
+            this._sessionState = new ProviderSessionState<State>(
+                stateInitializer ?? (_ => new State(Guid.NewGuid().ToString("N"))),
+                stateKey ?? this.GetType().Name);
             this._vectorStore = vectorStore ?? throw new ArgumentNullException(nameof(vectorStore));
         }
 
+        public override string StateKey => this._sessionState.StateKey;
+
         public string GetSessionDbKey(AgentSession session)
-            => this.GetOrInitializeState(session).SessionDbKey;
+            => this._sessionState.GetOrInitializeState(session).SessionDbKey;
 
         protected override async ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
-            var state = this.GetOrInitializeState(context.Session);
+            var state = this._sessionState.GetOrInitializeState(context.Session);
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
 
@@ -112,7 +118,7 @@ namespace SampleApp
 
         protected override async ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
-            var state = this.GetOrInitializeState(context.Session);
+            var state = this._sessionState.GetOrInitializeState(context.Session);
 
             var collection = this._vectorStore.GetCollection<string, ChatHistoryItem>("ChatHistory");
             await collection.EnsureCollectionExistsAsync(cancellationToken);
