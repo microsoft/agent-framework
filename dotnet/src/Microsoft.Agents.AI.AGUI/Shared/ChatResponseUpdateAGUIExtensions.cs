@@ -216,6 +216,9 @@ internal static class ChatResponseUpdateAGUIExtensions
         {
             ConversationId = conversationId,
             ResponseId = responseId,
+            FinishReason = !string.IsNullOrEmpty(runFinished.FinishReason)
+                ? new ChatFinishReason(runFinished.FinishReason)
+                : null,
             CreatedAt = DateTimeOffset.UtcNow
         };
     }
@@ -341,8 +344,13 @@ internal static class ChatResponseUpdateAGUIExtensions
         };
 
         string? currentMessageId = null;
+        ChatFinishReason? lastFinishReason = null;
         await foreach (var chatResponse in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
+            if (chatResponse.FinishReason is not null)
+            {
+                lastFinishReason = chatResponse.FinishReason;
+            }
             if (chatResponse is { Contents.Count: > 0 } &&
                 chatResponse.Contents[0] is TextContent &&
                 !string.Equals(currentMessageId, chatResponse.MessageId, StringComparison.Ordinal))
@@ -480,6 +488,7 @@ internal static class ChatResponseUpdateAGUIExtensions
         {
             ThreadId = threadId,
             RunId = runId,
+            FinishReason = lastFinishReason?.Value,
         };
     }
 

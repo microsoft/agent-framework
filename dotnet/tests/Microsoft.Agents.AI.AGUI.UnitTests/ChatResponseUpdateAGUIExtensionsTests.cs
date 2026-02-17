@@ -69,6 +69,77 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
     }
 
     [Fact]
+    public async Task AsChatResponseUpdatesAsync_RunFinishedEvent_WithFinishReasonStop_MapsToFinishReasonAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1", FinishReason = "stop" }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.Equal(2, updates.Count);
+        ChatResponseUpdate finishUpdate = updates[1];
+        Assert.NotNull(finishUpdate.FinishReason);
+        Assert.Equal(ChatFinishReason.Stop.Value, finishUpdate.FinishReason.Value.Value);
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_RunFinishedEvent_WithFinishReasonToolCalls_MapsToFinishReasonAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1", FinishReason = "tool_calls" }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.Equal(2, updates.Count);
+        ChatResponseUpdate finishUpdate = updates[1];
+        Assert.NotNull(finishUpdate.FinishReason);
+        Assert.Equal(ChatFinishReason.ToolCalls.Value, finishUpdate.FinishReason.Value.Value);
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_RunFinishedEvent_WithNullFinishReason_MapsToNullFinishReasonAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1", FinishReason = null }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.Equal(2, updates.Count);
+        ChatResponseUpdate finishUpdate = updates[1];
+        Assert.Null(finishUpdate.FinishReason);
+    }
+
+    [Fact]
     public async Task AsChatResponseUpdatesAsync_ConvertsRunErrorEvent_ToErrorContentAsync()
     {
         // Arrange
