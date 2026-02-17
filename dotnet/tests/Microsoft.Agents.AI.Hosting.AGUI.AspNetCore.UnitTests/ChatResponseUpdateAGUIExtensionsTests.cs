@@ -12,6 +12,88 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests;
 public sealed class ChatResponseUpdateAGUIExtensionsTests
 {
     [Fact]
+    public async Task Regression_3962_ConsecutiveToolCallResults_HaveDistinctMessageIdsAsync()
+    {
+        // Arrange — two FunctionResultContent items in the same ChatResponseUpdate,
+        // simulating consecutive tool call results sharing the same source MessageId.
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        FunctionResultContent result1 = new("call_1", "result_value_1");
+        FunctionResultContent result2 = new("call_2", "result_value_2");
+        ChatResponseUpdate response = new(ChatRole.Tool, [result1, result2]) { MessageId = "shared_msg" };
+        List<ChatResponseUpdate> updates = [response];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert — each TOOL_CALL_RESULT event must have a distinct messageId
+        List<ToolCallResultEvent> toolCallResults = events.OfType<ToolCallResultEvent>().ToList();
+        Assert.Equal(2, toolCallResults.Count);
+        Assert.Equal("result_call_1", toolCallResults[0].MessageId);
+        Assert.Equal("result_call_2", toolCallResults[1].MessageId);
+        Assert.NotEqual(toolCallResults[0].MessageId, toolCallResults[1].MessageId);
+    }
+
+    [Fact]
+    public async Task Regression_3962_ConsecutiveToolCallResultsAcrossUpdates_HaveDistinctMessageIdsAsync()
+    {
+        // Arrange — two separate ChatResponseUpdate objects each with a FunctionResultContent,
+        // both sharing the same MessageId (as happens with some providers).
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        FunctionResultContent result1 = new("call_1", "result_value_1");
+        FunctionResultContent result2 = new("call_2", "result_value_2");
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Tool, [result1]) { MessageId = "shared_msg" },
+            new ChatResponseUpdate(ChatRole.Tool, [result2]) { MessageId = "shared_msg" }
+        ];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert — each TOOL_CALL_RESULT event must have a distinct messageId
+        List<ToolCallResultEvent> toolCallResults = events.OfType<ToolCallResultEvent>().ToList();
+        Assert.Equal(2, toolCallResults.Count);
+        Assert.Equal("result_call_1", toolCallResults[0].MessageId);
+        Assert.Equal("result_call_2", toolCallResults[1].MessageId);
+        Assert.NotEqual(toolCallResults[0].MessageId, toolCallResults[1].MessageId);
+    }
+
+    [Fact]
+    public async Task Regression_3962_ToolCallResult_MessageIdDistinctFromToolCallIdAsync()
+    {
+        // Arrange — verify that MessageId and ToolCallId are semantically separate:
+        // MessageId identifies the result message, ToolCallId correlates to the original call.
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        FunctionResultContent result = new("call_abc", "some_result");
+        ChatResponseUpdate response = new(ChatRole.Tool, [result]) { MessageId = "original_msg" };
+        List<ChatResponseUpdate> updates = [response];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert — MessageId is derived from CallId but distinct from ToolCallId
+        ToolCallResultEvent toolCallResult = Assert.Single(events.OfType<ToolCallResultEvent>());
+        Assert.Equal("call_abc", toolCallResult.ToolCallId);
+        Assert.Equal("result_call_abc", toolCallResult.MessageId);
+        Assert.NotEqual(toolCallResult.ToolCallId, toolCallResult.MessageId);
+    }
+
+    [Fact]
     public async Task AsAGUIEventStreamAsync_YieldsRunStartedEvent_AtBeginningWithCorrectIdsAsync()
     {
         // Arrange

@@ -408,7 +408,7 @@ internal static class ChatResponseUpdateAGUIExtensions
                     {
                         yield return new ToolCallResultEvent
                         {
-                            MessageId = chatResponse.MessageId,
+                            MessageId = $"result_{functionResultContent.CallId}",
                             ToolCallId = functionResultContent.CallId,
                             Content = SerializeResultContent(functionResultContent, jsonSerializerOptions) ?? "",
                             Role = AGUIRoles.Tool
