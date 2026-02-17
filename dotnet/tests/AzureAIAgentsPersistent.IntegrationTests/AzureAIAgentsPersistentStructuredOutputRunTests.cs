@@ -7,7 +7,7 @@ namespace AzureAIAgentsPersistent.IntegrationTests;
 
 public class AzureAIAgentsPersistentStructuredOutputRunTests() : StructuredOutputRunTests<AzureAIAgentsPersistentFixture>(() => new())
 {
-    private const string SkipReason = "Fails intermittently, at build agent";
+    private const string SkipReason = "Fails intermittently on the build agent/CI";
 
     [Fact(Skip = SkipReason)]
     public override Task RunWithResponseFormatReturnsExpectedResultAsync() =>
