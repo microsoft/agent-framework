@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, Mock
+import os
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from agent_framework import AgentResponse, Message
+from agent_framework import AGENT_FRAMEWORK_USER_AGENT, AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import ServiceInitializationError
 
@@ -23,6 +24,12 @@ def mock_project_client() -> AsyncMock:
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock()
     return mock_client
+
+
+@pytest.fixture
+def mock_credential() -> Mock:
+    """Create a mock Azure credential."""
+    return Mock()
 
 
 # -- Initialization tests ------------------------------------------------------
@@ -71,10 +78,40 @@ class TestInit:
         )
         assert provider.update_delay == 300
 
-    def test_init_requires_project_client(self) -> None:
-        with pytest.raises(ServiceInitializationError, match="project_client is required"):
+    def test_init_with_project_endpoint_and_credential(
+        self, mock_project_client: AsyncMock, mock_credential: Mock
+    ) -> None:
+        with patch("agent_framework_azure_ai._foundry_memory_provider.AIProjectClient") as mock_ai_project_client:
+            mock_ai_project_client.return_value = mock_project_client
+            provider = FoundryMemoryProvider(
+                project_endpoint="https://test.project.endpoint",
+                credential=mock_credential,  # type: ignore[arg-type]
+                memory_store_name="test_store",
+                scope="user_123",
+            )
+            assert provider.project_client is mock_project_client
+            mock_ai_project_client.assert_called_once_with(
+                endpoint="https://test.project.endpoint",
+                credential=mock_credential,
+                user_agent=AGENT_FRAMEWORK_USER_AGENT,
+            )
+
+    def test_init_requires_project_endpoint_without_project_client(self) -> None:
+        with (
+            patch("agent_framework_azure_ai._foundry_memory_provider.load_settings") as mock_load_settings,
+            patch.dict(os.environ, {}, clear=True),
+            pytest.raises(ServiceInitializationError, match="project endpoint is required"),
+        ):
+            mock_load_settings.return_value = {"project_endpoint": None}
             FoundryMemoryProvider(
-                project_client=None,  # type: ignore[arg-type]
+                memory_store_name="test_store",
+                scope="user_123",
+            )
+
+    def test_init_requires_credential_without_project_client(self) -> None:
+        with pytest.raises(ServiceInitializationError, match="Azure credential is required"):
+            FoundryMemoryProvider(
+                project_endpoint="https://test.project.endpoint",
                 memory_store_name="test_store",
                 scope="user_123",
             )
