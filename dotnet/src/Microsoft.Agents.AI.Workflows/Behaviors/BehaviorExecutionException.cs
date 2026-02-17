@@ -53,8 +53,8 @@ public sealed class BehaviorExecutionException : Exception
         : base($"Error executing behavior '{behaviorType}' at stage '{stage}'", innerException)
     {
         Throw.IfNull(innerException);
-        this.BehaviorType = Throw.IfNull(behaviorType);
-        this.Stage = Throw.IfNull(stage);
+        this.BehaviorType = Throw.IfNullOrEmpty(behaviorType);
+        this.Stage = Throw.IfNullOrEmpty(stage);
     }
 
     /// <summary>
