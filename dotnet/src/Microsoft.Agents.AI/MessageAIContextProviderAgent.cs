@@ -27,7 +27,7 @@ internal sealed class MessageAIContextProviderAgent : DelegatingAIAgent
         : base(innerAgent)
     {
         Throw.IfNull(providers);
-        Throw.IfLessThanOrEqual(providers.Count, 0, "At least one MessageAIContextProvider must be provided.");
+        Throw.IfLessThanOrEqual(providers.Count, 0, nameof(providers));
 
         this._providers = providers;
     }

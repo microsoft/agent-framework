@@ -160,7 +160,7 @@ public abstract class MessageAIContextProvider : AIContextProvider
         /// <param name="agent">The agent being invoked.</param>
         /// <param name="session">The session associated with the agent invocation.</param>
         /// <param name="requestMessages">The messages to be used by the agent for this invocation.</param>
-        /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
+        /// <exception cref="ArgumentNullException"><paramref name="agent"/> or <paramref name="requestMessages"/> is <see langword="null"/>.</exception>
         public InvokingContext(
             AIAgent agent,
             AgentSession? session,
@@ -182,7 +182,7 @@ public abstract class MessageAIContextProvider : AIContextProvider
         public AgentSession? Session { get; }
 
         /// <summary>
-        /// Gets the messages that will be used by the agent for this invocation. <see cref="ChatHistoryProvider"/> instances can modify
+        /// Gets the messages that will be used by the agent for this invocation. <see cref="MessageAIContextProvider"/> instances can modify
         /// and return or return a new message list to add additional messages for the invocation.
         /// </summary>
         /// <value>
@@ -190,11 +190,11 @@ public abstract class MessageAIContextProvider : AIContextProvider
         /// </value>
         /// <remarks>
         /// <para>
-        /// If multiple <see cref="ChatHistoryProvider"/> instances are used in the same invocation, each <see cref="ChatHistoryProvider"/>
-        /// will receive the messages returned by the previous <see cref="ChatHistoryProvider"/> allowing them to build on top of each other's context.
+        /// If multiple <see cref="MessageAIContextProvider"/> instances are used in the same invocation, each <see cref="MessageAIContextProvider"/>
+        /// will receive the messages returned by the previous <see cref="MessageAIContextProvider"/> allowing them to build on top of each other's context.
         /// </para>
         /// <para>
-        /// The first <see cref="ChatHistoryProvider"/> in the invocation pipeline will receive the
+        /// The first <see cref="MessageAIContextProvider"/> in the invocation pipeline will receive the
         /// caller provided messages.
         /// </para>
         /// </remarks>
