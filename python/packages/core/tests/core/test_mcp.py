@@ -2591,3 +2591,70 @@ async def test_mcp_tool_filters_framework_kwargs():
         assert "thread" not in arguments
         assert "conversation_id" not in arguments
         assert "options" not in arguments
+
+
+# region: OTel trace context propagation via _meta
+
+
+@pytest.mark.parametrize(
+    "use_span,expect_traceparent",
+    [
+        (True, True),
+        (False, False),
+    ],
+)
+async def test_mcp_tool_call_tool_otel_meta(use_span, expect_traceparent, span_exporter):
+    """call_tool propagates OTel trace context via meta only when a span is active."""
+    from opentelemetry import trace
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="result")])
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+
+        if use_span:
+            tracer = trace.get_tracer("test")
+            with tracer.start_as_current_span("test_span"):
+                await server.functions[0].invoke(param="test_value")
+        else:
+            # Use an invalid span to ensure no trace context is injected;
+            # call server.call_tool directly to bypass FunctionTool.invoke's own span.
+            with trace.use_span(trace.NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)):
+                await server.call_tool("test_tool", param="test_value")
+
+        meta = server.session.call_tool.call_args.kwargs.get("meta")
+        if expect_traceparent:
+            # When a valid span is active, we expect some propagation fields to be injected,
+            # but we do not assume any specific header name to keep this test propagator-agnostic.
+            assert meta is not None
+            assert isinstance(meta, dict)
+            assert len(meta) > 0
+        else:
+            assert meta is None
+
+
+# endregion

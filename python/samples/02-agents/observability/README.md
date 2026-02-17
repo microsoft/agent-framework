@@ -22,6 +22,10 @@ The Agent Framework Python SDK is designed to efficiently generate comprehensive
 
 Next to what happens in the code when you run, we also make setting up observability as easy as possible. By calling a single function `configure_otel_providers()` from the `agent_framework.observability` module, you can enable telemetry for traces, logs, and metrics. The function automatically reads standard OpenTelemetry environment variables to configure exporters and providers, making it simple to get started.
 
+### MCP trace propagation
+
+Whenever there is an active OpenTelemetry span context, Agent Framework automatically propagates trace context to MCP servers via the `params._meta` field of `tools/call` requests. It uses the globally-configured OpenTelemetry propagator(s) (W3C Trace Context by default, producing `traceparent` and `tracestate`), so custom propagators (B3, Jaeger, etc.) are also supported. This enables distributed tracing across agent-to-MCP-server boundaries for all transports (stdio, HTTP, WebSocket), compliant with the [MCP `_meta` specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta).
+
 ### Five patterns for configuring observability
 
 We've identified multiple ways to configure observability in your application, depending on your needs:

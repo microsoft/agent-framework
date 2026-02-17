@@ -86,25 +86,31 @@ namespace SampleApp
     /// <summary>
     /// Sample memory component that can remember a user's name and age.
     /// </summary>
-    internal sealed class UserInfoMemory : AIContextProvider<UserInfo>
+    internal sealed class UserInfoMemory : AIContextProvider
     {
+        private readonly ProviderSessionState<UserInfo> _sessionState;
         private readonly IChatClient _chatClient;
 
         public UserInfoMemory(IChatClient chatClient, Func<AgentSession?, UserInfo>? stateInitializer = null)
-            : base(stateInitializer ?? (_ => new UserInfo()), null, null, null, null)
+            : base(null, null)
         {
+            this._sessionState = new ProviderSessionState<UserInfo>(
+                stateInitializer ?? (_ => new UserInfo()),
+                this.GetType().Name);
             this._chatClient = chatClient;
         }
 
+        public override string StateKey => this._sessionState.StateKey;
+
         public UserInfo GetUserInfo(AgentSession session)
-            => this.GetOrInitializeState(session);
+            => this._sessionState.GetOrInitializeState(session);
 
         public void SetUserInfo(AgentSession session, UserInfo userInfo)
-            => this.SaveState(session, userInfo);
+            => this._sessionState.SaveState(session, userInfo);
 
         protected override async ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
-            var userInfo = this.GetOrInitializeState(context.Session);
+            var userInfo = this._sessionState.GetOrInitializeState(context.Session);
 
             // Try and extract the user name and age from the message if we don't have it already and it's a user message.
             if ((userInfo.UserName is null || userInfo.UserAge is null) && context.RequestMessages.Any(x => x.Role == ChatRole.User))
@@ -121,12 +127,12 @@ namespace SampleApp
                 userInfo.UserAge ??= result.Result.UserAge;
             }
 
-            this.SaveState(context.Session, userInfo);
+            this._sessionState.SaveState(context.Session, userInfo);
         }
 
         protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
-            var userInfo = this.GetOrInitializeState(context.Session);
+            var userInfo = this._sessionState.GetOrInitializeState(context.Session);
 
             StringBuilder instructions = new();
 

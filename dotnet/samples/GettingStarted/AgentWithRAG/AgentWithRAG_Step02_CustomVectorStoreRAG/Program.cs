@@ -62,7 +62,7 @@ TextSearchProviderOptions textSearchOptions = new()
 {
     // Run the search prior to every model invocation.
     SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
-    // Use up to 4 recent messages when searching so that searches
+    // Use up to 5 recent messages when searching so that searches
     // still produce valuable results even when the user is referring
     // back to previous messages in their request.
     RecentMessageMemoryLimit = 5
@@ -74,7 +74,14 @@ AIAgent agent = azureOpenAIClient
     .AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new() { Instructions = "You are a helpful support specialist for the Microsoft Agent Framework. Answer questions using the provided context and cite the source document when available. Keep responses brief." },
-        AIContextProviders = [new TextSearchProvider(SearchAdapter, textSearchOptions)]
+        AIContextProviders = [new TextSearchProvider(SearchAdapter, textSearchOptions)],
+        // Configure a filter on the InMemoryChatHistoryProvider so that we don't persist the messages produced by the TextSearchProvider in chat history.
+        // The default is to persist all messages except those that came from chat history in the first place.
+        // You may choose to persist the TextSearchProvider messages, if you want the search output to be provided to the model in future interactions as well.
+        ChatHistoryProvider = new InMemoryChatHistoryProvider(new InMemoryChatHistoryProviderOptions()
+        {
+            StorageInputMessageFilter = msgs => msgs.Where(m => m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory && m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.AIContextProvider)
+        })
     });
 
 AgentSession session = await agent.CreateSessionAsync();

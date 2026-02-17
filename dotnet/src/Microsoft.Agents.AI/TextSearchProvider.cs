@@ -32,13 +32,14 @@ namespace Microsoft.Agents.AI;
 /// multi-turn context to the retrieval layer without permanently altering the conversation history.
 /// </para>
 /// </remarks>
-public sealed class TextSearchProvider : AIContextProvider<TextSearchProvider.TextSearchProviderState>
+public sealed class TextSearchProvider : AIContextProvider
 {
     private const string DefaultPluginSearchFunctionName = "Search";
     private const string DefaultPluginSearchFunctionDescription = "Allows searching for additional information to help answer the user question.";
     private const string DefaultContextPrompt = "## Additional Context\nConsider the following information from source documents when responding to the user:";
     private const string DefaultCitationsPrompt = "Include citations to the source document with document name and link if document name and link is available.";
 
+    private readonly ProviderSessionState<TextSearchProviderState> _sessionState;
     private readonly Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> _searchAsync;
     private readonly ILogger<TextSearchProvider>? _logger;
     private readonly AITool[] _tools;
@@ -60,8 +61,12 @@ public sealed class TextSearchProvider : AIContextProvider<TextSearchProvider.Te
         Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> searchAsync,
         TextSearchProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : base(_ => new TextSearchProviderState(), options?.StateKey, AgentJsonUtilities.DefaultOptions, options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
     {
+        this._sessionState = new ProviderSessionState<TextSearchProviderState>(
+            _ => new TextSearchProviderState(),
+            options?.StateKey ?? this.GetType().Name,
+            AgentJsonUtilities.DefaultOptions);
         // Validate and assign parameters
         this._searchAsync = Throw.IfNull(searchAsync);
         this._logger = loggerFactory?.CreateLogger<TextSearchProvider>();
@@ -83,6 +88,9 @@ public sealed class TextSearchProvider : AIContextProvider<TextSearchProvider.Te
     }
 
     /// <inheritdoc />
+    public override string StateKey => this._sessionState.StateKey;
+
+    /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         if (this._searchTime != TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke)
@@ -95,7 +103,7 @@ public sealed class TextSearchProvider : AIContextProvider<TextSearchProvider.Te
         }
 
         // Retrieve recent messages from the session state.
-        var recentMessagesText = this.GetOrInitializeState(context.Session).RecentMessagesText
+        var recentMessagesText = this._sessionState.GetOrInitializeState(context.Session).RecentMessagesText
             ?? [];
 
         // Aggregate text from memory + current request messages.
@@ -165,7 +173,7 @@ public sealed class TextSearchProvider : AIContextProvider<TextSearchProvider.Te
         }
 
         // Retrieve existing recent messages from the session state.
-        var recentMessagesText = this.GetOrInitializeState(context.Session).RecentMessagesText
+        var recentMessagesText = this._sessionState.GetOrInitializeState(context.Session).RecentMessagesText
             ?? [];
 
         var newMessagesText = context.RequestMessages
@@ -182,7 +190,7 @@ public sealed class TextSearchProvider : AIContextProvider<TextSearchProvider.Te
             : allMessages;
 
         // Store updated state back to the session.
-        this.SaveState(
+        this._sessionState.SaveState(
             context.Session,
             new TextSearchProviderState { RecentMessagesText = updatedMessages });
 
