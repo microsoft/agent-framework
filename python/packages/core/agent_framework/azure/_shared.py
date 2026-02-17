@@ -9,6 +9,7 @@ from copy import copy
 from typing import Any, ClassVar, Final
 
 from azure.core.credentials import TokenCredential
+from azure.identity import get_bearer_token_provider
 from openai import AsyncOpenAI
 from openai.lib.azure import AsyncAzureOpenAI
 
@@ -16,7 +17,6 @@ from .._settings import SecretString
 from .._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
 from ..exceptions import ServiceInitializationError
 from ..openai._shared import OpenAIBase
-from ._entra_id_authentication import get_entra_auth_token
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -174,10 +174,10 @@ class AzureOpenAIConfigMixin(OpenAIBase):
             merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
         if not client:
             # If the client is None, the api_key is none, the ad_token is none, and the ad_token_provider is none,
-            # then we will attempt to get the ad_token using the default endpoint specified in the Azure OpenAI
+            # then we will set the ad_token_provider using the default endpoint specified in the Azure OpenAI
             # settings.
             if not api_key and not ad_token_provider and not ad_token and token_endpoint and credential:
-                ad_token = get_entra_auth_token(credential, token_endpoint)
+                ad_token_provider = get_bearer_token_provider(credential, token_endpoint)
 
             if not api_key and not ad_token and not ad_token_provider:
                 raise ServiceInitializationError(

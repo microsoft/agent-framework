@@ -167,6 +167,18 @@ def test_init_with_project_endpoint(azure_openai_unit_test_env: dict[str, str]) 
     assert isinstance(azure_responses_client, SupportsChatGetResponse)
 
 
+@pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_API_KEY"]], indirect=True)
+def test_init_with_credential(azure_openai_unit_test_env: dict[str, str]) -> None:
+    from unittest.mock import patch
+
+    credential = AzureCliCredential()
+    with patch("agent_framework.azure._shared.get_bearer_token_provider") as mock_get_bearer_token_provider:
+        azure_responses_client = AzureOpenAIResponsesClient(credential=credential)
+
+    assert azure_responses_client.model_id == "test_chat_deployment"
+    mock_get_bearer_token_provider.assert_called_once_with(credential, "https://test-token-endpoint.com")
+
+
 def test_create_client_from_project_with_project_client() -> None:
     """Test _create_client_from_project with an existing project client."""
     from openai import AsyncOpenAI
