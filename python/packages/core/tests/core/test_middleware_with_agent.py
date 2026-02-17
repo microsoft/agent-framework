@@ -27,6 +27,7 @@ from agent_framework import (
     chat_middleware,
     function_middleware,
 )
+from agent_framework._sessions import InMemoryHistoryProvider
 
 from .conftest import MockBaseChatClient, MockChatClient
 
@@ -1416,8 +1417,10 @@ class TestChatAgentSessionBehavior:
             async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 # Capture state before next() call
                 thread_messages = []
-                if context.session and context.session.state.get("memory"):
-                    thread_messages = context.session.state.get("memory", {}).get("messages", [])
+                if context.session and context.session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID):
+                    thread_messages = context.session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {}).get(
+                        "messages", []
+                    )
 
                 before_state = {
                     "before_next": True,
@@ -1432,8 +1435,10 @@ class TestChatAgentSessionBehavior:
 
                 # Capture state after next() call
                 thread_messages_after = []
-                if context.session and context.session.state.get("memory"):
-                    thread_messages_after = context.session.state.get("memory", {}).get("messages", [])
+                if context.session and context.session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID):
+                    thread_messages_after = context.session.state.get(
+                        InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {}
+                    ).get("messages", [])
 
                 after_state = {
                     "before_next": False,

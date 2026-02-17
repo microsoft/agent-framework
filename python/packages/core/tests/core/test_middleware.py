@@ -74,7 +74,7 @@ class TestAgentContext:
 class TestFunctionInvocationContext:
     """Test cases for FunctionInvocationContext."""
 
-    def test_init_with_defaults(self, mock_function: FunctionTool[Any]) -> None:
+    def test_init_with_defaults(self, mock_function: FunctionTool) -> None:
         """Test FunctionInvocationContext initialization with default values."""
         arguments = FunctionTestArgs(name="test")
         context = FunctionInvocationContext(function=mock_function, arguments=arguments)
@@ -83,7 +83,7 @@ class TestFunctionInvocationContext:
         assert context.arguments == arguments
         assert context.metadata == {}
 
-    def test_init_with_custom_metadata(self, mock_function: FunctionTool[Any]) -> None:
+    def test_init_with_custom_metadata(self, mock_function: FunctionTool) -> None:
         """Test FunctionInvocationContext initialization with custom metadata."""
         arguments = FunctionTestArgs(name="test")
         metadata = {"key": "value"}
@@ -420,7 +420,7 @@ class TestFunctionMiddlewarePipeline:
             await call_next()
             raise MiddlewareTermination
 
-    async def test_execute_with_pre_next_termination(self, mock_function: FunctionTool[Any]) -> None:
+    async def test_execute_with_pre_next_termination(self, mock_function: FunctionTool) -> None:
         """Test pipeline execution with termination before next() raises MiddlewareTermination."""
         middleware = self.PreNextTerminateFunctionMiddleware()
         pipeline = FunctionMiddlewarePipeline(middleware)
@@ -439,7 +439,7 @@ class TestFunctionMiddlewarePipeline:
         # Handler should not be called when terminated before next()
         assert execution_order == []
 
-    async def test_execute_with_post_next_termination(self, mock_function: FunctionTool[Any]) -> None:
+    async def test_execute_with_post_next_termination(self, mock_function: FunctionTool) -> None:
         """Test pipeline execution with termination after next() raises MiddlewareTermination."""
         middleware = self.PostNextTerminateFunctionMiddleware()
         pipeline = FunctionMiddlewarePipeline(middleware)
@@ -480,7 +480,7 @@ class TestFunctionMiddlewarePipeline:
         pipeline = FunctionMiddlewarePipeline(test_middleware)
         assert pipeline.has_middlewares
 
-    async def test_execute_no_middleware(self, mock_function: FunctionTool[Any]) -> None:
+    async def test_execute_no_middleware(self, mock_function: FunctionTool) -> None:
         """Test pipeline execution with no middleware."""
         pipeline = FunctionMiddlewarePipeline()
         arguments = FunctionTestArgs(name="test")
@@ -494,7 +494,7 @@ class TestFunctionMiddlewarePipeline:
         result = await pipeline.execute(context, final_handler)
         assert result == expected_result
 
-    async def test_execute_with_middleware(self, mock_function: FunctionTool[Any]) -> None:
+    async def test_execute_with_middleware(self, mock_function: FunctionTool) -> None:
         """Test pipeline execution with middleware."""
         execution_order: list[str] = []
 
@@ -787,7 +787,7 @@ class TestClassBasedMiddleware:
         assert context.metadata["after"] is True
         assert metadata_updates == ["before", "handler", "after"]
 
-    async def test_function_middleware_execution(self, mock_function: FunctionTool[Any]) -> None:
+    async def test_function_middleware_execution(self, mock_function: FunctionTool) -> None:
         """Test class-based function middleware execution."""
         metadata_updates: list[str] = []
 
@@ -847,7 +847,7 @@ class TestFunctionBasedMiddleware:
         assert context.metadata["function_middleware"] is True
         assert execution_order == ["function_before", "handler", "function_after"]
 
-    async def test_function_function_middleware(self, mock_function: FunctionTool[Any]) -> None:
+    async def test_function_function_middleware(self, mock_function: FunctionTool) -> None:
         """Test function-based function middleware."""
         execution_order: list[str] = []
 
@@ -905,7 +905,7 @@ class TestMixedMiddleware:
         assert result is not None
         assert execution_order == ["class_before", "function_before", "handler", "function_after", "class_after"]
 
-    async def test_mixed_function_middleware(self, mock_function: FunctionTool[Any]) -> None:
+    async def test_mixed_function_middleware(self, mock_function: FunctionTool) -> None:
         """Test mixed class and function-based function middleware."""
         execution_order: list[str] = []
 
@@ -1017,7 +1017,7 @@ class TestMultipleMiddlewareOrdering:
         ]
         assert execution_order == expected_order
 
-    async def test_function_middleware_execution_order(self, mock_function: FunctionTool[Any]) -> None:
+    async def test_function_middleware_execution_order(self, mock_function: FunctionTool) -> None:
         """Test that multiple function middleware execute in registration order."""
         execution_order: list[str] = []
 
@@ -1143,7 +1143,7 @@ class TestContextContentValidation:
         result = await pipeline.execute(context, final_handler)
         assert result is not None
 
-    async def test_function_context_validation(self, mock_function: FunctionTool[Any]) -> None:
+    async def test_function_context_validation(self, mock_function: FunctionTool) -> None:
         """Test that function context contains expected data."""
 
         class ContextValidationMiddleware(FunctionMiddleware):
@@ -1489,7 +1489,7 @@ class TestMiddlewareExecutionControl:
         assert not handler_called
         assert context.result is None
 
-    async def test_function_middleware_no_next_no_execution(self, mock_function: FunctionTool[Any]) -> None:
+    async def test_function_middleware_no_next_no_execution(self, mock_function: FunctionTool) -> None:
         """Test that when function middleware doesn't call next(), no execution happens."""
 
         class FunctionTestArgs(BaseModel):
@@ -1666,9 +1666,9 @@ def mock_agent() -> SupportsAgentRun:
 
 
 @pytest.fixture
-def mock_function() -> FunctionTool[Any]:
+def mock_function() -> FunctionTool:
     """Mock function for testing."""
-    function = MagicMock(spec=FunctionTool[Any])
+    function = MagicMock(spec=FunctionTool)
     function.name = "test_function"
     return function
 

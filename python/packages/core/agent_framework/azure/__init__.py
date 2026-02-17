@@ -1,5 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Azure integration namespace for optional Agent Framework connectors.
+
+This module lazily re-exports objects from optional Azure connector packages and
+built-in core Azure OpenAI modules.
+
+Supported classes include:
+- AzureAIClient
+- AzureAIAgentClient
+- AzureOpenAIChatClient
+- AzureOpenAIResponsesClient
+- AzureAISearchContextProvider
+- DurableAIAgent
+"""
+
 import importlib
 from typing import Any
 

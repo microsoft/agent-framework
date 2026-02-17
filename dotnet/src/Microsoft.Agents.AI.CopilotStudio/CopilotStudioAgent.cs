@@ -60,7 +60,7 @@ public class CopilotStudioAgent : AIAgent
 
         if (session is not CopilotStudioAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(CopilotStudioAgentSession)}' can be serialized by this agent.");
         }
 
         return new(typedSession.Serialize(jsonSerializerOptions));
@@ -84,7 +84,7 @@ public class CopilotStudioAgent : AIAgent
         session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not CopilotStudioAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be used.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(CopilotStudioAgentSession)}' can be used by this agent.");
         }
 
         typedSession.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
@@ -123,7 +123,7 @@ public class CopilotStudioAgent : AIAgent
         session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not CopilotStudioAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be used.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(CopilotStudioAgentSession)}' can be used by this agent.");
         }
 
         typedSession.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);

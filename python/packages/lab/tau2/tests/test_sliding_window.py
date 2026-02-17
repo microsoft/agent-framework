@@ -4,6 +4,7 @@
 
 from unittest.mock import patch
 
+from agent_framework import InMemoryHistoryProvider
 from agent_framework._types import Content, Message
 from agent_framework_lab_tau2._sliding_window import SlidingWindowHistoryProvider
 
@@ -12,7 +13,7 @@ def _make_state(provider: SlidingWindowHistoryProvider, messages: list[Message] 
     """Helper to create a session state dict with messages pre-loaded."""
     state: dict = {}
     if messages:
-        state[provider.source_id] = {"messages": list(messages)}
+        state["messages"] = list(messages)
     return state
 
 
@@ -27,7 +28,7 @@ def test_initialization():
     assert provider.max_tokens == 2000
     assert provider.system_message == "You are a helpful assistant"
     assert provider.tool_definitions == [{"name": "test_tool"}]
-    assert provider.source_id == "memory"
+    assert provider.source_id == InMemoryHistoryProvider.DEFAULT_SOURCE_ID
 
 
 async def test_get_messages_empty():
@@ -66,7 +67,7 @@ async def test_save_and_get_messages():
     # get_messages returns truncated
     truncated = await provider.get_messages(None, state=state)
     # Full history is in session state
-    all_msgs = state[provider.source_id]["messages"]
+    all_msgs = state["messages"]
 
     assert len(all_msgs) == 10
     assert len(truncated) < len(all_msgs)
@@ -196,7 +197,7 @@ async def test_real_world_scenario():
     await provider.save_messages(None, conversation, state=state)
 
     truncated = await provider.get_messages(None, state=state)
-    all_msgs = state[provider.source_id]["messages"]
+    all_msgs = state["messages"]
 
     assert len(all_msgs) == 6
     assert len(truncated) <= 6

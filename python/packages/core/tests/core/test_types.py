@@ -921,8 +921,8 @@ def test_chat_options_tool_choice_validation():
     }
     assert validate_tool_mode({"mode": "none"}) == {"mode": "none"}
 
-    # None should return mode==none
-    assert validate_tool_mode(None) == {"mode": "none"}
+    # None should remain unset
+    assert validate_tool_mode(None) is None
 
     with raises(ContentError):
         validate_tool_mode("invalid_mode")

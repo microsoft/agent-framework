@@ -47,10 +47,10 @@ async def github_mcp_example() -> None:
     # Set approval_mode="never_require" to allow the MCP tool to execute without approval
     client = OpenAIResponsesClient()
     github_mcp_tool = client.get_mcp_tool(
-        server_label="GitHub",
-        server_url="https://api.githubcopilot.com/mcp/",
+        name="GitHub",
+        url="https://api.githubcopilot.com/mcp/",
         headers=auth_headers,
-        require_approval="never",
+        approval_mode="never_require",
     )
 
     # 5. Create agent with the GitHub MCP tool

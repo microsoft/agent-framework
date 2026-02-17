@@ -88,25 +88,29 @@ namespace SampleApp
     /// </summary>
     internal sealed class UserInfoMemory : AIContextProvider
     {
+        private readonly ProviderSessionState<UserInfo> _sessionState;
         private readonly IChatClient _chatClient;
-        private readonly Func<AgentSession?, UserInfo> _stateInitializer;
 
         public UserInfoMemory(IChatClient chatClient, Func<AgentSession?, UserInfo>? stateInitializer = null)
+            : base(null, null)
         {
+            this._sessionState = new ProviderSessionState<UserInfo>(
+                stateInitializer ?? (_ => new UserInfo()),
+                this.GetType().Name);
             this._chatClient = chatClient;
-            this._stateInitializer = stateInitializer ?? (_ => new UserInfo());
         }
 
+        public override string StateKey => this._sessionState.StateKey;
+
         public UserInfo GetUserInfo(AgentSession session)
-            => session.StateBag.GetValue<UserInfo>(nameof(UserInfoMemory)) ?? new UserInfo();
+            => this._sessionState.GetOrInitializeState(session);
 
         public void SetUserInfo(AgentSession session, UserInfo userInfo)
-            => session.StateBag.SetValue(nameof(UserInfoMemory), userInfo);
+            => this._sessionState.SaveState(session, userInfo);
 
-        protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+        protected override async ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default)
         {
-            var userInfo = context.Session?.StateBag.GetValue<UserInfo>(nameof(UserInfoMemory))
-                ?? this._stateInitializer.Invoke(context.Session);
+            var userInfo = this._sessionState.GetOrInitializeState(context.Session);
 
             // Try and extract the user name and age from the message if we don't have it already and it's a user message.
             if ((userInfo.UserName is null || userInfo.UserAge is null) && context.RequestMessages.Any(x => x.Role == ChatRole.User))
@@ -123,20 +127,14 @@ namespace SampleApp
                 userInfo.UserAge ??= result.Result.UserAge;
             }
 
-            context.Session?.StateBag.SetValue(nameof(UserInfoMemory), userInfo);
+            this._sessionState.SaveState(context.Session, userInfo);
         }
 
-        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
-            var inputContext = context.AIContext;
-            var userInfo = context.Session?.StateBag.GetValue<UserInfo>(nameof(UserInfoMemory))
-                ?? this._stateInitializer.Invoke(context.Session);
+            var userInfo = this._sessionState.GetOrInitializeState(context.Session);
 
             StringBuilder instructions = new();
-            if (!string.IsNullOrEmpty(inputContext.Instructions))
-            {
-                instructions.AppendLine(inputContext.Instructions);
-            }
 
             // If we don't already know the user's name and age, add instructions to ask for them, otherwise just provide what we have to the context.
             instructions
@@ -151,9 +149,7 @@ namespace SampleApp
 
             return new ValueTask<AIContext>(new AIContext
             {
-                Instructions = instructions.ToString(),
-                Messages = inputContext.Messages,
-                Tools = inputContext.Tools
+                Instructions = instructions.ToString()
             });
         }
     }

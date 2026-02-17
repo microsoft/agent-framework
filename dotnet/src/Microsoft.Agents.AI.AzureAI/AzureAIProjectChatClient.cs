@@ -1,13 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
-
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
 namespace Microsoft.Agents.AI.AzureAI;
 
@@ -15,6 +15,7 @@ namespace Microsoft.Agents.AI.AzureAI;
 /// Provides a chat client implementation that integrates with Azure AI Agents, enabling chat interactions using
 /// Azure-specific agent capabilities.
 /// </summary>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 internal sealed class AzureAIProjectChatClient : DelegatingChatClient
 {
     private readonly ChatClientMetadata? _metadata;

@@ -74,7 +74,7 @@ internal sealed class WorkflowHostAgent : AIAgent
 
         if (session is not WorkflowSession workflowSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(WorkflowSession)}' can be serialized by this agent.");
         }
 
         return new(workflowSession.Serialize(jsonSerializerOptions));

@@ -7,7 +7,7 @@ import asyncio
 from random import randint
 from typing import TYPE_CHECKING, Annotated
 
-from agent_framework_foundry_local import FoundryLocalClient
+from agent_framework.microsoft import FoundryLocalClient
 
 if TYPE_CHECKING:
     from agent_framework import Agent

@@ -71,7 +71,7 @@ public sealed class InMemoryChatHistoryProviderOptions
     /// <value>
     /// When <see langword="null"/>, no filtering is applied to the output messages.
     /// </value>
-    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? RetrievalOutputMessageFilter { get; set; }
+    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? ProvideOutputMessageFilter { get; set; }
 
     /// <summary>
     /// Defines the events that can trigger a reducer in the <see cref="InMemoryChatHistoryProvider"/>.

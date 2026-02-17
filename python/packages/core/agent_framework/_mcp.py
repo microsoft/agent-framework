@@ -24,11 +24,10 @@ from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
-from pydantic import BaseModel, create_model
+from opentelemetry import propagate
 
 from ._tools import (
     FunctionTool,
-    _build_pydantic_model_from_json_schema,
 )
 from ._types import (
     Content,
@@ -73,12 +72,6 @@ LOG_LEVEL_MAPPING: dict[types.LoggingLevel, int] = {
     "alert": logging.CRITICAL,
     "emergency": logging.CRITICAL,
 }
-
-__all__ = [
-    "MCPStdioTool",
-    "MCPStreamableHTTPTool",
-    "MCPWebsocketTool",
-]
 
 
 def _parse_prompt_result_from_mcp(
@@ -355,11 +348,14 @@ def _prepare_message_for_mcp(
     return messages
 
 
-def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> type[BaseModel]:
-    """Creates a Pydantic model from a prompt's parameters."""
+def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any]:
+    """Get the input model from an MCP prompt.
+
+    Returns a JSON schema dictionary for prompt arguments.
+    """
     # Check if 'arguments' is missing or empty
     if not prompt.arguments:
-        return create_model(f"{prompt.name}_input")
+        return {"type": "object", "properties": {}}
 
     # Convert prompt arguments to JSON schema format
     properties: dict[str, Any] = {}
@@ -374,18 +370,31 @@ def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> type[BaseModel]:
         if prompt_argument.required:
             required.append(prompt_argument.name)
 
-    schema = {"properties": properties, "required": required}
-    return _build_pydantic_model_from_json_schema(prompt.name, schema)
-
-
-def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
-    """Creates a Pydantic model from a tools parameters."""
-    return _build_pydantic_model_from_json_schema(tool.name, tool.inputSchema)
+    schema: dict[str, Any] = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return schema
 
 
 def _normalize_mcp_name(name: str) -> str:
     """Normalize MCP tool/prompt names to allowed identifier pattern (A-Za-z0-9_.-)."""
     return re.sub(r"[^A-Za-z0-9_.-]", "-", name)
+
+
+def _inject_otel_into_mcp_meta(meta: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Inject OpenTelemetry trace context into MCP request _meta via the global propagator(s)."""
+    carrier: dict[str, str] = {}
+    propagate.inject(carrier)
+    if not carrier:
+        return meta
+
+    if meta is None:
+        meta = {}
+    for key, value in carrier.items():
+        if key not in meta:
+            meta[key] = value
+
+    return meta
 
 
 # region: MCP Plugin
@@ -467,7 +476,7 @@ class MCPTool:
         self.session = session
         self.request_timeout = request_timeout
         self.client = client
-        self._functions: list[FunctionTool[Any]] = []
+        self._functions: list[FunctionTool] = []
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
@@ -476,7 +485,7 @@ class MCPTool:
         return f"MCPTool(name={self.name}, description={self.description})"
 
     @property
-    def functions(self) -> list[FunctionTool[Any]]:
+    def functions(self) -> list[FunctionTool]:
         """Get the list of functions that are allowed."""
         if not self.allowed_tools:
             return self._functions
@@ -744,7 +753,7 @@ class MCPTool:
 
                 input_model = _get_input_model_from_mcp_prompt(prompt)
                 approval_mode = self._determine_approval_mode(local_name)
-                func: FunctionTool[BaseModel] = FunctionTool(
+                func: FunctionTool = FunctionTool(
                     func=partial(self.get_prompt, prompt.name),
                     name=local_name,
                     description=prompt.description or "",
@@ -785,15 +794,14 @@ class MCPTool:
                 if local_name in existing_names:
                     continue
 
-                input_model = _get_input_model_from_mcp_tool(tool)
                 approval_mode = self._determine_approval_mode(local_name)
                 # Create FunctionTools out of each tool
-                func: FunctionTool[BaseModel] = FunctionTool(
+                func: FunctionTool = FunctionTool(
                     func=partial(self.call_tool, tool.name),
                     name=local_name,
                     description=tool.description or "",
                     approval_mode=approval_mode,
-                    input_model=input_model,
+                    input_model=tool.inputSchema,
                 )
                 self._functions.append(func)
                 existing_names.add(local_name)
@@ -884,12 +892,15 @@ class MCPTool:
             }
         }
 
+        # Inject OpenTelemetry trace context into MCP _meta for distributed tracing.
+        otel_meta = _inject_otel_into_mcp_meta()
+
         parser = self.parse_tool_results or _parse_tool_result_from_mcp
 
         # Try the operation, reconnecting once if the connection is closed
         for attempt in range(2):
             try:
-                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs)  # type: ignore
+                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=otel_meta)  # type: ignore
                 return parser(result)
             except ClosedResourceError as cl_ex:
                 if attempt == 0:
