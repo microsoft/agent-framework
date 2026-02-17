@@ -17,7 +17,9 @@ class UserInfo(BaseModel):
 
 
 class UserInfoMemory(BaseContextProvider):
-    def __init__(self, source_id: str = "user-info-memory", *, client: SupportsChatGetResponse, **kwargs: Any):
+    DEFAULT_SOURCE_ID = "user_info_memory"
+
+    def __init__(self, source_id: str = DEFAULT_SOURCE_ID, *, client: SupportsChatGetResponse, **kwargs: Any):
         """Create the memory.
 
         If you pass in kwargs, they will be attempted to be used to create a UserInfo object.
@@ -39,9 +41,7 @@ class UserInfoMemory(BaseContextProvider):
         # Check if we need to extract user info from user messages
         user_messages = [msg for msg in request_messages if hasattr(msg, "role") and msg.role == "user"]  # type: ignore
 
-        if (
-            state[self.source_id]["user_info"].name is None or state[self.source_id]["user_info"].age is None
-        ) and user_messages:
+        if (state["user_info"].name is None or state["user_info"].age is None) and user_messages:
             with suppress(Exception):
                 # Use the chat client to extract structured information
                 result = await self._chat_client.get_response(
@@ -54,10 +54,10 @@ class UserInfoMemory(BaseContextProvider):
                 # Update user info with extracted data
                 with suppress(Exception):
                     extracted = result.value
-                    if state[self.source_id]["user_info"].name is None and extracted.name:
-                        state[self.source_id]["user_info"].name = extracted.name
-                    if state[self.source_id]["user_info"].age is None and extracted.age:
-                        state[self.source_id]["user_info"].age = extracted.age
+                    if state["user_info"].name is None and extracted.name:
+                        state["user_info"].name = extracted.name
+                    if state["user_info"].age is None and extracted.age:
+                        state["user_info"].age = extracted.age
 
     async def before_run(
         self,
@@ -68,20 +68,19 @@ class UserInfoMemory(BaseContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Provide user information context before each agent call."""
-        if state.setdefault(self.source_id, None) is None:
-            state[self.source_id] = {"user_info": UserInfo()}
+        state.setdefault("user_info", UserInfo())
 
         context.extend_instructions(
             self.source_id,
             "Ask the user for their name and politely decline to answer any questions until they provide it."
-            if state[self.source_id]["user_info"].name is None
-            else f"The user's name is {state[self.source_id]['user_info'].name}.",
+            if state["user_info"].name is None
+            else f"The user's name is {state['user_info'].name}.",
         )
         context.extend_instructions(
             self.source_id,
             "Ask the user for their age and politely decline to answer any questions until they provide it."
-            if state[self.source_id]["user_info"].age is None
-            else f"The user's age is {state[self.source_id]['user_info'].age}.",
+            if state["user_info"].age is None
+            else f"The user's age is {state['user_info'].age}.",
         )
 
 
@@ -92,7 +91,7 @@ async def main():
         credential=AzureCliCredential(),
     )
 
-    context_name = "user-info-memory"
+    context_name = UserInfoMemory.DEFAULT_SOURCE_ID
 
     # Create the memory provider
     memory_provider = UserInfoMemory(context_name, client=client)

@@ -24,6 +24,7 @@ from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
+from opentelemetry import propagate
 
 from ._tools import (
     FunctionTool,
@@ -378,6 +379,22 @@ def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any]:
 def _normalize_mcp_name(name: str) -> str:
     """Normalize MCP tool/prompt names to allowed identifier pattern (A-Za-z0-9_.-)."""
     return re.sub(r"[^A-Za-z0-9_.-]", "-", name)
+
+
+def _inject_otel_into_mcp_meta(meta: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Inject OpenTelemetry trace context into MCP request _meta via the global propagator(s)."""
+    carrier: dict[str, str] = {}
+    propagate.inject(carrier)
+    if not carrier:
+        return meta
+
+    if meta is None:
+        meta = {}
+    for key, value in carrier.items():
+        if key not in meta:
+            meta[key] = value
+
+    return meta
 
 
 # region: MCP Plugin
@@ -875,12 +892,15 @@ class MCPTool:
             }
         }
 
+        # Inject OpenTelemetry trace context into MCP _meta for distributed tracing.
+        otel_meta = _inject_otel_into_mcp_meta()
+
         parser = self.parse_tool_results or _parse_tool_result_from_mcp
 
         # Try the operation, reconnecting once if the connection is closed
         for attempt in range(2):
             try:
-                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs)  # type: ignore
+                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=otel_meta)  # type: ignore
                 return parser(result)
             except ClosedResourceError as cl_ex:
                 if attempt == 0:

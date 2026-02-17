@@ -121,7 +121,7 @@ class WorkflowAgent(BaseAgent):
 
         resolved_context_providers = list(context_providers) if context_providers is not None else []
         if not resolved_context_providers:
-            resolved_context_providers.append(InMemoryHistoryProvider("memory"))
+            resolved_context_providers.append(InMemoryHistoryProvider())
 
         super().__init__(
             id=id,
@@ -237,23 +237,27 @@ class WorkflowAgent(BaseAgent):
             An AgentResponse representing the workflow execution results.
         """
         input_messages = normalize_messages_input(messages)
+        provider_session = session
+        if provider_session is None and self.context_providers:
+            provider_session = AgentSession()
 
         # run the context providers with the session
         session_context = SessionContext(
-            session_id=session.session_id if session else None,
-            service_session_id=session.service_session_id if session else None,
+            session_id=provider_session.session_id if provider_session else None,
+            service_session_id=provider_session.service_session_id if provider_session else None,
             input_messages=input_messages or [],
             options={},
         )
-        state = session.state if session else {}
         for provider in self.context_providers:
             if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
                 continue
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
                 agent=self,  # type: ignore[arg-type]
-                session=session,  # type: ignore[arg-type]
+                session=provider_session,
                 context=session_context,
-                state=state,
+                state=provider_session.state.setdefault(provider.source_id, {}),
             )
         # combine the messages
         session_messages: list[Message] = session_context.get_messages(include_input=True)
@@ -266,7 +270,7 @@ class WorkflowAgent(BaseAgent):
                 output_events.append(event)
 
         result = self._convert_workflow_events_to_agent_response(response_id, output_events)
-        await self._run_after_providers(session=session, context=session_context)
+        await self._run_after_providers(session=provider_session, context=session_context)
         return result
 
     async def _run_stream_impl(
@@ -293,23 +297,27 @@ class WorkflowAgent(BaseAgent):
             AgentResponseUpdate objects representing the workflow execution progress.
         """
         input_messages = normalize_messages_input(messages)
+        provider_session = session
+        if provider_session is None and self.context_providers:
+            provider_session = AgentSession()
 
         # run the context providers with the session
         session_context = SessionContext(
-            session_id=session.session_id if session else None,
-            service_session_id=session.service_session_id if session else None,
+            session_id=provider_session.session_id if provider_session else None,
+            service_session_id=provider_session.service_session_id if provider_session else None,
             input_messages=input_messages or [],
             options={},
         )
-        state = session.state if session else {}
         for provider in self.context_providers:
             if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
                 continue
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
                 agent=self,  # type: ignore[arg-type]
-                session=session,  # type: ignore[arg-type]
+                session=provider_session,
                 context=session_context,
-                state=state,
+                state=provider_session.state.setdefault(provider.source_id, {}),
             )
         # combine the messages
 
@@ -320,7 +328,7 @@ class WorkflowAgent(BaseAgent):
             updates = self._convert_workflow_event_to_agent_response_updates(response_id, event)
             for update in updates:
                 yield update
-        await self._run_after_providers(session=session, context=session_context)
+        await self._run_after_providers(session=provider_session, context=session_context)
 
     async def _run_core(
         self,

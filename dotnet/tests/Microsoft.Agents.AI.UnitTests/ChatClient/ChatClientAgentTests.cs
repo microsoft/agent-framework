@@ -488,7 +488,7 @@ public partial class ChatClientAgentTests
             })
             .ReturnsAsync(new ChatResponse(responseMessages));
 
-        var mockProvider = new Mock<AIContextProvider>();
+        var mockProvider = new Mock<AIContextProvider>(null, null);
         mockProvider
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -559,7 +559,7 @@ public partial class ChatClientAgentTests
                 It.IsAny<CancellationToken>()))
             .Throws(new InvalidOperationException("downstream failure"));
 
-        var mockProvider = new Mock<AIContextProvider>();
+        var mockProvider = new Mock<AIContextProvider>(null, null);
         mockProvider
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -617,7 +617,7 @@ public partial class ChatClientAgentTests
             })
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        var mockProvider = new Mock<AIContextProvider>();
+        var mockProvider = new Mock<AIContextProvider>(null, null);
         mockProvider
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -677,7 +677,7 @@ public partial class ChatClientAgentTests
             .ReturnsAsync(new ChatResponse(responseMessages));
 
         // Provider 1: adds a system message and a tool
-        var mockProvider1 = new Mock<AIContextProvider>();
+        var mockProvider1 = new Mock<AIContextProvider>(null, null);
         mockProvider1.SetupGet(p => p.StateKey).Returns("Provider1");
         mockProvider1
             .Protected()
@@ -696,7 +696,7 @@ public partial class ChatClientAgentTests
 
         // Provider 2: adds another system message and verifies it receives accumulated context from provider 1
         AIContext? provider2ReceivedContext = null;
-        var mockProvider2 = new Mock<AIContextProvider>();
+        var mockProvider2 = new Mock<AIContextProvider>(null, null);
         mockProvider2.SetupGet(p => p.StateKey).Returns("Provider2");
         mockProvider2
             .Protected()
@@ -784,7 +784,7 @@ public partial class ChatClientAgentTests
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("downstream failure"));
 
-        var mockProvider1 = new Mock<AIContextProvider>();
+        var mockProvider1 = new Mock<AIContextProvider>(null, null);
         mockProvider1.SetupGet(p => p.StateKey).Returns("Provider1");
         mockProvider1
             .Protected()
@@ -801,7 +801,7 @@ public partial class ChatClientAgentTests
             .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<AIContextProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
             .Returns(new ValueTask());
 
-        var mockProvider2 = new Mock<AIContextProvider>();
+        var mockProvider2 = new Mock<AIContextProvider>(null, null);
         mockProvider2.SetupGet(p => p.StateKey).Returns("Provider2");
         mockProvider2
             .Protected()
@@ -869,7 +869,7 @@ public partial class ChatClientAgentTests
             })
             .Returns(ToAsyncEnumerableAsync(responseUpdates));
 
-        var mockProvider1 = new Mock<AIContextProvider>();
+        var mockProvider1 = new Mock<AIContextProvider>(null, null);
         mockProvider1.SetupGet(p => p.StateKey).Returns("Provider1");
         mockProvider1
             .Protected()
@@ -886,7 +886,7 @@ public partial class ChatClientAgentTests
             .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<AIContextProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
             .Returns(new ValueTask());
 
-        var mockProvider2 = new Mock<AIContextProvider>();
+        var mockProvider2 = new Mock<AIContextProvider>(null, null);
         mockProvider2.SetupGet(p => p.StateKey).Returns("Provider2");
         mockProvider2
             .Protected()
@@ -1828,7 +1828,7 @@ public partial class ChatClientAgentTests
             })
             .Returns(ToAsyncEnumerableAsync(responseUpdates));
 
-        var mockProvider = new Mock<AIContextProvider>();
+        var mockProvider = new Mock<AIContextProvider>(null, null);
         mockProvider
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -1907,7 +1907,7 @@ public partial class ChatClientAgentTests
                 It.IsAny<CancellationToken>()))
             .Throws(new InvalidOperationException("downstream failure"));
 
-        var mockProvider = new Mock<AIContextProvider>();
+        var mockProvider = new Mock<AIContextProvider>(null, null);
         mockProvider
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())

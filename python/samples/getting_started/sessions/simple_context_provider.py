@@ -23,12 +23,14 @@ class UserInfo(BaseModel):
 class UserInfoMemory(BaseContextProvider):
     """Context provider that extracts and remembers user info (name, age).
 
-    State is stored in ``session.state["user-info-memory"]`` so it survives
+    State is stored in ``session.state["user_info_memory"]`` so it survives
     serialization via ``session.to_dict()`` / ``AgentSession.from_dict()``.
     """
 
+    DEFAULT_SOURCE_ID = "user_info_memory"
+
     def __init__(self, client: SupportsChatGetResponse):
-        super().__init__("user-info-memory")
+        super().__init__(self.DEFAULT_SOURCE_ID)
         self._chat_client = client
 
     async def before_run(
@@ -40,8 +42,7 @@ class UserInfoMemory(BaseContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Provide user information context before each agent call."""
-        my_state = state.setdefault(self.source_id, {})
-        user_info = my_state.setdefault("user_info", UserInfo())
+        user_info = state.setdefault("user_info", UserInfo())
 
         instructions: list[str] = []
 
@@ -70,8 +71,7 @@ class UserInfoMemory(BaseContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Extract user information from messages after each agent call."""
-        my_state = state.setdefault(self.source_id, {})
-        user_info = my_state.setdefault("user_info", UserInfo())
+        user_info = state.setdefault("user_info", UserInfo())
         if user_info.name is not None and user_info.age is not None:
             return  # Already have everything
 
@@ -92,7 +92,7 @@ class UserInfoMemory(BaseContextProvider):
                 user_info.name = extracted.name
             if extracted and user_info.age is None and extracted.age:
                 user_info.age = extracted.age
-            state.setdefault(self.source_id, {})["user_info"] = user_info
+            state["user_info"] = user_info
         except Exception:
             pass  # Failed to extract, continue without updating
 
@@ -113,7 +113,7 @@ async def main():
         print(await agent.run("I am 20 years old", session=session))
 
         # Inspect extracted user info from session state
-        user_info = session.state.get("user-info-memory", {}).get("user_info", UserInfo())
+        user_info = session.state.get(UserInfoMemory.DEFAULT_SOURCE_ID, {}).get("user_info", UserInfo())
         print()
         print(f"MEMORY - User Name: {user_info.name}")
         print(f"MEMORY - User Age: {user_info.age}")

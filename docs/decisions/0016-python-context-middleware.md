@@ -1072,6 +1072,50 @@ Rationale for B1 over B2: Simpler is better. The whole state dict is passed to e
 > **Note on trust:** Since all `ContextProvider` instances reason over conversation messages (which may contain sensitive user data), they should be **trusted by default**. This is also why we allow all plugins to see all state - if a plugin is untrusted, it shouldn't be in the pipeline at all. The whole state dict is passed rather than isolated slices because plugins that handle messages already have access to the full conversation context.
 
 
+### Addendum (2026-02-17): Provider-scoped hook state and default source IDs
+
+This addendum introduces a **breaking change** that supersedes earlier references in this ADR where hooks received the
+entire `session.state` object as their `state` parameter.
+
+#### Hook state contract
+
+- `before_run` and `after_run` now receive a **provider-scoped** mutable state dict.
+- The framework passes `session.state.setdefault(provider.source_id, {})` to hook `state`.
+- Cross-provider/global inspection remains available through `session.state` on `AgentSession`.
+
+#### Session requirement and fallback behavior
+
+- Provider hooks must use session-backed scoped state; there is no ad-hoc `{}` fallback state.
+- If providers run without a caller-supplied session, the framework creates an internal run-scoped `AgentSession` and
+  passes provider-scoped state from that session.
+
+#### Migration guidance
+
+Migrate provider implementations and samples from nested access to scoped access:
+
+- `state[self.source_id]["key"]` → `state["key"]`
+- `state.setdefault(self.source_id, {})["key"]` → `state["key"]`
+
+#### DEFAULT_SOURCE_ID standardization
+
+Aligned with and extending [PR #3944](https://github.com/microsoft/agent-framework/pull/3944), all built-in/connector
+providers in this surface now define a `DEFAULT_SOURCE_ID` and allow constructor override via `source_id`.
+
+Naming convention:
+
+- snake_case
+- close to the provider class name
+- history providers may use `*_memory` where differentiation is useful
+
+Defaults introduced by this change:
+
+- `InMemoryHistoryProvider.DEFAULT_SOURCE_ID = "in_memory"`
+- `Mem0ContextProvider.DEFAULT_SOURCE_ID = "mem0"`
+- `RedisContextProvider.DEFAULT_SOURCE_ID = "redis"`
+- `RedisHistoryProvider.DEFAULT_SOURCE_ID = "redis_memory"`
+- `AzureAISearchContextProvider.DEFAULT_SOURCE_ID = "azure_ai_search"`
+
+
 ## Comparison to .NET Implementation
 
 The .NET Agent Framework provides equivalent functionality through a different structure. Both implementations achieve the same goals using idioms natural to their respective languages.
