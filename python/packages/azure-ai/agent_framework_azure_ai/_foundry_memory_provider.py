@@ -18,7 +18,7 @@ from agent_framework._sessions import AgentSession, BaseContextProvider, Session
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import ItemParam
+from azure.ai.projects.models import ItemParam, ResponsesAssistantMessageItemParam, ResponsesUserMessageItemParam
 from azure.core.credentials_async import AsyncTokenCredential
 
 from ._shared import AzureAISettings
@@ -61,7 +61,7 @@ class FoundryMemoryProvider(BaseContextProvider):
         project_endpoint: str | None = None,
         credential: AsyncTokenCredential | None = None,
         memory_store_name: str,
-        scope: str,
+        scope: str | None = None,
         context_prompt: str | None = None,
         update_delay: int = 300,
         env_file_path: str | None = None,
@@ -76,6 +76,7 @@ class FoundryMemoryProvider(BaseContextProvider):
             credential: Azure credential for authentication. Required when project_client is not provided.
             memory_store_name: The name of the memory store to use.
             scope: The namespace that logically groups and isolates memories (e.g., user ID).
+                If None, `session_id` will be used.
             context_prompt: The prompt to prepend to retrieved memories.
             update_delay: Timeout period before processing memory update in seconds.
             env_file_path: Path to environment file for loading settings.
@@ -149,13 +150,9 @@ class FoundryMemoryProvider(BaseContextProvider):
             try:
                 static_search_result = await self.project_client.memory_stores.search_memories(
                     name=self.memory_store_name,
-                    scope=self.scope,
+                    scope=self.scope or context.session_id,
                 )
-                static_memories = [
-                    {"content": memory.get("content", "")}
-                    for memory in getattr(static_search_result, "memories", [])
-                    if memory.get("content")
-                ]
+                static_memories = [{"content": memory.memory_item.content} for memory in static_search_result.memories]
                 state["static_memories"] = static_memories
             except Exception as e:
                 # Log but don't fail - memory retrieval is non-critical
@@ -181,21 +178,17 @@ class FoundryMemoryProvider(BaseContextProvider):
         try:
             search_result = await self.project_client.memory_stores.search_memories(
                 name=self.memory_store_name,
-                scope=self.scope,
+                scope=self.scope or context.session_id,
                 items=items,
                 previous_search_id=state.get("previous_search_id"),
             )
 
             # Extract search_id for next incremental search
-            if hasattr(search_result, "search_id"):
-                state["previous_search_id"] = getattr(search_result, "search_id", None)
+            if search_result.memories:
+                state["previous_search_id"] = search_result.search_id
 
             # Combine static and contextual memories
-            contextual_memories = [
-                {"content": memory.get("content", "")}
-                for memory in getattr(search_result, "memories", [])
-                if memory.get("content")
-            ]
+            contextual_memories = [{"content": memory.memory_item.content} for memory in search_result.memories]
 
             all_memories = state.get("static_memories", []) + contextual_memories
 
@@ -231,10 +224,13 @@ class FoundryMemoryProvider(BaseContextProvider):
             messages_to_store.extend(context.response.messages)
 
         # Filter and convert messages to ItemParam format
-        items: list[ItemParam] = []
+        items: list[ResponsesUserMessageItemParam | ResponsesAssistantMessageItemParam] = []
         for message in messages_to_store:
             if message.role in {"user", "assistant", "system"} and message.text and message.text.strip():
-                items.append(ItemParam({"type": "text", "text": message.text}))
+                if message.role == "user":
+                    items.append(ResponsesUserMessageItemParam(content=message.text))
+                elif message.role == "assistant":
+                    items.append(ResponsesAssistantMessageItemParam(content=message.text))
 
         if not items:
             return
@@ -243,15 +239,15 @@ class FoundryMemoryProvider(BaseContextProvider):
             # Fire and forget - don't wait for the update to complete
             update_poller = await self.project_client.memory_stores.begin_update_memories(
                 name=self.memory_store_name,
-                scope=self.scope,
+                scope=self.scope or context.session_id,
                 items=items,
                 previous_update_id=state.get("previous_update_id"),
                 update_delay=self.update_delay,
             )
+            update_result = await update_poller.result()  # Wait for the update to complete
 
             # Store the update_id for next incremental update
-            if hasattr(update_poller, "update_id"):
-                state["previous_update_id"] = getattr(update_poller, "update_id", None)
+            state["previous_update_id"] = update_poller.update_id
 
         except Exception as e:
             # Log but don't fail - memory storage is non-critical
