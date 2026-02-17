@@ -53,7 +53,7 @@ async def test_image() -> None:
         ],
     )
 
-    response = await client.get_response(message)
+    response = await client.get_response([message])
     print(f"Image Response: {response}")
 
 
@@ -70,7 +70,7 @@ async def test_audio() -> None:
         ],
     )
 
-    response = await client.get_response(message)
+    response = await client.get_response([message])
     print(f"Audio Response: {response}")
 
 
@@ -89,7 +89,7 @@ async def test_pdf() -> None:
         ],
     )
 
-    response = await client.get_response(message)
+    response = await client.get_response([message])
     print(f"PDF Response: {response}")
 
 
