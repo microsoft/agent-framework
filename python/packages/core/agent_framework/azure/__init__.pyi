@@ -7,7 +7,6 @@ from agent_framework_azure_ai import (
     AzureAIProjectAgentOptions,
     AzureAIProjectAgentProvider,
     AzureAISettings,
-    FoundryMemoryProvider,
 )
 from agent_framework_azure_ai_search import AzureAISearchContextProvider, AzureAISearchSettings
 from agent_framework_azurefunctions import AgentFunctionApp
@@ -46,6 +45,5 @@ __all__ = [
     "DurableAIAgentClient",
     "DurableAIAgentOrchestrationContext",
     "DurableAIAgentWorker",
-    "FoundryMemoryProvider",
     "get_entra_auth_token",
 ]
