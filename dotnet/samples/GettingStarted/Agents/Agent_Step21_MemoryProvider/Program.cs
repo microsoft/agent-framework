@@ -47,6 +47,8 @@ AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine("Novel Seed Architect (with memory)");
 Console.WriteLine("Commands: /ctx (show memory), /exit\n");
 
+bool serializedOnce = false;
+
 while (true)
 {
     Console.Write("You: ");
@@ -72,16 +74,27 @@ while (true)
     Console.WriteLine("\n");
 
     // Print memory after each turn so we can see what was extracted.
-    PrintMemory(session, novelMemory);
+    PrintMemory(session);
+
+    // After the first turn, demonstrate that NovelContext state survives session serialization.
+    if (!serializedOnce)
+    {
+        serializedOnce = true;
+        Console.WriteLine("[Demo] Verifying session serialization roundtrip...");
+        var serialized = await agent.SerializeSessionAsync(session);
+        session = await agent.DeserializeSessionAsync(serialized);
+        var restored = session.StateBag.GetValue<NovelContext>(nameof(NovelContextMemory));
+        Console.WriteLine($"[Demo] Roundtrip OK — Title after restore: {restored?.Title ?? "(null)"}\n");
+    }
 }
 
-static void PrintMemory(AgentSession session, NovelContextMemory memory)
+static void PrintMemory(AgentSession session)
 {
     var ctx = session.StateBag.GetValue<NovelContext>(nameof(NovelContextMemory));
     Console.WriteLine("===========================================");
     Console.WriteLine(ctx?.ToPrettyString() ?? "(empty)");
-    if (memory.OutlineSource is not null)
-        Console.WriteLine($"  Outline source: ({memory.OutlineSource})");
+    if (ctx?.OutlineSource is not null)
+        Console.WriteLine($"  Outline source: ({ctx.OutlineSource})");
     Console.WriteLine("===========================================\n");
 }
 
@@ -174,9 +187,10 @@ namespace SampleApp
         string? Protagonist,
         string? Antagonist,
         string? Theme,
-        string? Outline)
+        string? Outline,
+        string? OutlineSource)
     {
-        public static NovelContext Empty => new(null, null, null, null, null, null, null);
+        public static NovelContext Empty => new(null, null, null, null, null, null, null, null);
 
         public string ToPrettyString()
         {
@@ -208,7 +222,8 @@ namespace SampleApp
     }
 
     /// <summary>
-    /// Delta record used for structured extraction of novel context from conversation messages.
+    /// Delta record used for structured extraction from LLM responses.
+    /// Internal (not public) because it is only used by <see cref="NovelContextMemory"/> for JSON deserialization.
     /// </summary>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated by JSON deserialization.")]
     internal sealed record NovelContextDelta(
@@ -224,7 +239,6 @@ namespace SampleApp
     internal sealed class NovelContextMemory : AIContextProvider<NovelContext>
     {
         private readonly IChatClient _chatClient;
-        public string? OutlineSource { get; private set; }
 
         public NovelContextMemory(IChatClient chatClient)
             : base(
@@ -300,52 +314,73 @@ namespace SampleApp
                     IMPORTANT: DO NOT INCLUDE THE DELIMITER LINES THEMSELVES.
                     """;
 
-            var extraction = await this._chatClient.GetResponseAsync<NovelContextDelta>(
-                allMessages,
-                new ChatOptions
-                {
-                    Instructions = $"""
-                        You are a precise information extraction assistant.
-                        Extract structured data from the conversation messages.
+            NovelContextDelta delta;
+            try
+            {
+                var extraction = await this._chatClient.GetResponseAsync<NovelContextDelta>(
+                    allMessages,
+                    new ChatOptions
+                    {
+                        Instructions = $"""
+                            You are a precise information extraction assistant.
+                            Extract structured data from the conversation messages.
 
-                        ## Novel Facts (from USER messages):
-                        - Title: the working title of the novel (null if not mentioned by the user)
-                        - Genre: genre and subgenres mentioned (null if not mentioned by the user)
-                        - Setting: time period, world, locations (null if not mentioned by the user)
-                        - Protagonist: name, traits, motivation (null if not mentioned by the user)
-                        - Antagonist: name or force, nature, motivation (null if not mentioned by the user)
-                        - Theme: central theme or message (null if not mentioned by the user)
-                        For the six fields above, return null if not mentioned.
-                        Do NOT apply this null rule to Outline — that field has its own rules below.
-                        {outlineInstruction}
-                        """
-                },
-                cancellationToken: cancellationToken);
+                            ## Novel Facts (from USER messages):
+                            - Title: the working title of the novel (null if not mentioned by the user)
+                            - Genre: genre and subgenres mentioned (null if not mentioned by the user)
+                            - Setting: time period, world, locations (null if not mentioned by the user)
+                            - Protagonist: name, traits, motivation (null if not mentioned by the user)
+                            - Antagonist: name or force, nature, motivation (null if not mentioned by the user)
+                            - Theme: central theme or message (null if not mentioned by the user)
+                            For the six fields above, return null if not mentioned.
+                            Do NOT apply this null rule to Outline — that field has its own rules below.
+                            {outlineInstruction}
+                            """
+                    },
+                    cancellationToken: cancellationToken);
 
-            var delta = extraction.Result;
+                delta = extraction.Result;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // LLM extraction failed — fall back to delimiter parsing only.
+                // Memory update is best-effort; failures should not break the agent interaction.
+                Console.WriteLine($"[NovelContextMemory] Extraction failed, falling back to delimiter parsing: {ex.Message}");
+                delta = new NovelContextDelta(null, null, null, null, null, null, null);
+            }
+
+            // Outline extraction uses a two-phase strategy:
+            // 1. Primary: the LLM structured extraction (above) should capture the outline.
+            // 2. Fallback: if the LLM missed it, parse the raw response for <<<NOVEL_OUTLINE>>> delimiters.
+            // This ensures the outline is captured even when the LLM's structured output omits it.
             var llmOutlineFound = !string.IsNullOrWhiteSpace(delta.Outline);
 
             string? outlineToStore;
+            string? outlineSource = null;
             if (llmOutlineFound)
             {
                 outlineToStore = delta.Outline;
-                this.OutlineSource = "llm";
+                outlineSource = "llm";
             }
             else
             {
+                // Fallback: parse delimiters directly from the assistant's response text.
                 var delimiterOutline = ExtractOutlineBetweenDelimiters(responseMessages);
                 if (delimiterOutline is not null)
                 {
                     outlineToStore = delimiterOutline;
-                    this.OutlineSource = "delimiter";
+                    outlineSource = "delimiter";
                 }
                 else
                 {
                     outlineToStore = currentOutline;
+                    outlineSource = state.OutlineSource;
                 }
             }
 
-            var newState = Merge(state, delta) with { Outline = outlineToStore };
+            // Set the resolved outline on the delta so Merge() handles all fields uniformly.
+            delta = delta with { Outline = outlineToStore };
+            var newState = Merge(state, delta) with { OutlineSource = outlineSource };
             this.SaveState(context.Session, newState);
         }
 
