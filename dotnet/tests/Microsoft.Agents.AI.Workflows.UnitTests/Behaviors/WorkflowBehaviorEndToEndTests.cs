@@ -12,9 +12,9 @@ using Microsoft.Agents.AI.Workflows.Behaviors;
 namespace Microsoft.Agents.AI.Workflows.UnitTests.Behaviors;
 
 /// <summary>
-/// Integration tests that validate pipeline behaviors work end-to-end with actual workflows.
+/// End-to-end tests that validate pipeline behaviors work with actual workflows.
 /// </summary>
-public class WorkflowBehaviorIntegrationTests
+public class WorkflowBehaviorEndToEndTests
 {
     [Fact]
     public async Task Workflow_WithExecutorBehavior_BehaviorExecutesBeforeAndAfterExecutorAsync()
