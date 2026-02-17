@@ -113,7 +113,7 @@ public sealed class RequestExternalInputExecutorTest(ITestOutputHelper output) :
         bool expectMessagesCreated = false)
     {
         // Arrange
-        RequestExternalInput model = this.CreateModel(this.FormatDisplayName(displayName), variableName);
+        RequestExternalInput model = this.CreateModel(displayName, variableName);
         MockAgentProvider mockAgentProvider = new();
         RequestExternalInputExecutor action = new(model, mockAgentProvider.Object, this.State);
 
