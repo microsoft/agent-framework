@@ -56,6 +56,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
         this.Workflow = Throw.IfNull(workflow);
         this.RunContext = new InProcessRunnerContext(workflow, this.RunId, withCheckpointing: checkpointManager != null, this.OutgoingEvents, this.StepTracer, existingOwnerSignoff, subworkflow, enableConcurrentRuns);
+        this.RunContext.SetRunEndingCallback(this.ExecuteWorkflowEndBehaviorsAsync);
         this.CheckpointManager = checkpointManager;
 
         this._knownValidInputTypes = knownValidInputTypes != null

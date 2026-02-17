@@ -38,6 +38,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     private readonly ConcurrentDictionary<string, ExternalRequest> _externalRequests = new();
 
+    private Func<CancellationToken, ValueTask>? _onRunEnding;
+
     public InProcessRunnerContext(
         Workflow workflow,
         string runId,
@@ -70,6 +72,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         this.ConcurrentRunsEnabled = enableConcurrentRuns;
         this.OutgoingEvents = outgoingEvents;
     }
+    internal void SetRunEndingCallback(Func<CancellationToken, ValueTask> callback) => this._onRunEnding = callback;
+
     public WorkflowTelemetryContext TelemetryContext => this._workflow.TelemetryContext;
 
     public IExternalRequestSink RegisterPort(string executorId, RequestPort port)
@@ -423,6 +427,11 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     {
         if (Interlocked.Exchange(ref this._runEnded, 1) == 0)
         {
+            if (this._onRunEnding is not null)
+            {
+                await this._onRunEnding(CancellationToken.None).ConfigureAwait(false);
+            }
+
             foreach (string executorId in this._executors.Keys)
             {
                 Task<Executor> executorTask = this._executors[executorId];
