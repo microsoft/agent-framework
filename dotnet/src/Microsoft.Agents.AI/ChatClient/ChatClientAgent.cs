@@ -366,7 +366,7 @@ public sealed partial class ChatClientAgent : AIAgent
 
         if (session is not ChatClientAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(ChatClientAgentSession)}' can be serialized by this agent.");
         }
 
         return new(typedSession.Serialize(jsonSerializerOptions));
@@ -674,7 +674,7 @@ public sealed partial class ChatClientAgent : AIAgent
         session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not ChatClientAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be used.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(ChatClientAgentSession)}' can be used by this agent.");
         }
 
         // Supplying messages when continuing a background response is not allowed.

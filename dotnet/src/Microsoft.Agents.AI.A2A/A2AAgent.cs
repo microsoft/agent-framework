@@ -81,7 +81,7 @@ public sealed class A2AAgent : AIAgent
 
         if (session is not A2AAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(A2AAgentSession)}' can be serialized by this agent.");
         }
 
         return new(typedSession.Serialize(jsonSerializerOptions));
@@ -256,7 +256,7 @@ public sealed class A2AAgent : AIAgent
 
         if (session is not A2AAgentSession typedSession)
         {
-            throw new InvalidOperationException($"The provided session type {session.GetType()} is not compatible with the agent. Only A2A agent created sessions are supported.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(A2AAgentSession)}' can be used by this agent.");
         }
 
         return typedSession;

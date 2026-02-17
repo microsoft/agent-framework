@@ -34,12 +34,14 @@ namespace Microsoft.Agents.AI;
 /// injecting them automatically on each invocation.
 /// </para>
 /// </remarks>
-public sealed class ChatHistoryMemoryProvider : AIContextProvider<ChatHistoryMemoryProvider.State>, IDisposable
+public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
 {
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
     private const int DefaultMaxResults = 3;
     private const string DefaultFunctionToolName = "Search";
     private const string DefaultFunctionToolDescription = "Allows searching for related previous chat history to help answer the user question.";
+
+    private readonly ProviderSessionState<State> _sessionState;
 
 #pragma warning disable CA2213 // VectorStore is not owned by this class - caller is responsible for disposal
     private readonly VectorStore _vectorStore;
@@ -74,8 +76,12 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider<ChatHistoryMem
         Func<AgentSession?, State> stateInitializer,
         ChatHistoryMemoryProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : base(Throw.IfNull(stateInitializer), options?.StateKey, AgentJsonUtilities.DefaultOptions, options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
     {
+        this._sessionState = new ProviderSessionState<State>(
+            Throw.IfNull(stateInitializer),
+            options?.StateKey ?? this.GetType().Name,
+            AgentJsonUtilities.DefaultOptions);
         this._vectorStore = Throw.IfNull(vectorStore);
 
         options ??= new ChatHistoryMemoryProviderOptions();
@@ -110,11 +116,14 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider<ChatHistoryMem
     }
 
     /// <inheritdoc />
+    public override string StateKey => this._sessionState.StateKey;
+
+    /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(context);
 
-        var state = this.GetOrInitializeState(context.Session);
+        var state = this._sessionState.GetOrInitializeState(context.Session);
         var searchScope = state.SearchScope;
 
         if (this._searchTime == ChatHistoryMemoryProviderOptions.SearchBehavior.OnDemandFunctionCalling)
@@ -186,7 +195,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider<ChatHistoryMem
     {
         _ = Throw.IfNull(context);
 
-        var state = this.GetOrInitializeState(context.Session);
+        var state = this._sessionState.GetOrInitializeState(context.Session);
         var storageScope = state.StorageScope;
 
         try

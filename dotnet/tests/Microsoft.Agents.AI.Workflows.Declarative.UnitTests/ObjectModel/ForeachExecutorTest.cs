@@ -227,11 +227,7 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
         VerifyInvocationEvent(events);
 
         // IsDiscreteAction should be false for Foreach
-        Assert.Equal(
-            false,
-            action.GetType().BaseType?
-                .GetProperty("IsDiscreteAction", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
-                .GetValue(action));
+        VerifyIsDiscrete(action, isDiscrete: false);
 
         // Verify HasValue state after execution
         Assert.Equal(expectValue, action.HasValue);
