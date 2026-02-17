@@ -429,6 +429,11 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         {
             if (this._onRunEnding is not null)
             {
+                // CancellationToken.None is intentional here. This call originates from IAsyncDisposable.DisposeAsync()
+                // (token-less by contract), flows through ISuperStepRunner.RequestEndRunAsync() (also token-less),
+                // and reaches this point with no token in scope. As a result, behaviors registered for
+                // WorkflowStage.Ending cannot observe cancellation. A proper fix would require adding a
+                // CancellationToken overload to ISuperStepRunner.RequestEndRunAsync and threading it through.
                 await this._onRunEnding(CancellationToken.None).ConfigureAwait(false);
             }
 
