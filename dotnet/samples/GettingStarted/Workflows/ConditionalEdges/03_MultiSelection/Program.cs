@@ -92,14 +92,27 @@ public static class Program
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
-            if (evt is WorkflowOutputEvent outputEvent)
+            switch (evt)
             {
-                Console.WriteLine($"{outputEvent}");
-            }
+                case WorkflowOutputEvent outputEvent:
+                    Console.WriteLine($"{outputEvent}");
+                    break;
 
-            if (evt is DatabaseEvent databaseEvent)
-            {
-                Console.WriteLine($"{databaseEvent}");
+                case DatabaseEvent databaseEvent:
+                    Console.WriteLine($"{databaseEvent}");
+                    break;
+
+                case ExecutorFailedEvent failureEvent:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"Executor failed [{failureEvent.ExecutorId}]: {failureEvent.Data?.Message ?? "Unknown error"}");
+                    Console.ResetColor();
+                    break;
+
+                case WorkflowErrorEvent errorEvent:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"Workflow error: {errorEvent.Exception?.Message ?? "Unknown error"}");
+                    Console.ResetColor();
+                    throw errorEvent.Exception ?? new InvalidOperationException("Workflow encountered an error.");
             }
         }
     }

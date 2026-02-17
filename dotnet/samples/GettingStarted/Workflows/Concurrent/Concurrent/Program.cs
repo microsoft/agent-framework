@@ -64,9 +64,23 @@ public static class Program
         await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input: "What is temperature?");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
-            if (evt is WorkflowOutputEvent output)
+            switch (evt)
             {
-                Console.WriteLine($"Workflow completed with results:\n{output.Data}");
+                case WorkflowOutputEvent output:
+                    Console.WriteLine($"Workflow completed with results:\n{output.Data}");
+                    break;
+
+                case ExecutorFailedEvent failureEvent:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"Executor failed [{failureEvent.ExecutorId}]: {failureEvent.Data?.Message ?? "Unknown error"}");
+                    Console.ResetColor();
+                    break;
+
+                case WorkflowErrorEvent errorEvent:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"Workflow error: {errorEvent.Exception?.Message ?? "Unknown error"}");
+                    Console.ResetColor();
+                    throw errorEvent.Exception ?? new InvalidOperationException("Workflow encountered an error.");
             }
         }
     }
