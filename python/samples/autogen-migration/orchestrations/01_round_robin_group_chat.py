@@ -93,14 +93,16 @@ async def run_agent_framework() -> None:
     print("[Agent Framework] Sequential conversation:")
     current_executor = None
     async for event in workflow.run("Create a brief summary about electric vehicles", stream=True):
-        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
-            # Print executor name header when switching to a new agent
-            if current_executor != event.executor_id:
-                if current_executor is not None:
-                    print()  # Newline after previous agent's message
-                print(f"---------- {event.executor_id} ----------")
-                current_executor = event.executor_id
-            print(event.data.text, end="", flush=True)
+        if event.type == "executor_completed" and isinstance(event.data, list):
+            for item in event.data:
+                if isinstance(item, AgentResponseUpdate) and item.text:
+                    # Print executor name header when switching to a new agent
+                    if current_executor != event.executor_id:
+                        if current_executor is not None:
+                            print()  # Newline after previous agent's message
+                        print(f"---------- {event.executor_id} ----------")
+                        current_executor = event.executor_id
+                    print(item.text, end="", flush=True)
     print()  # Final newline after conversation
 
 
