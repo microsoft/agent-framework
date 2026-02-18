@@ -8,10 +8,6 @@ from agent_framework import AgentSession
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.redis import RedisHistoryProvider
 
-# Default Redis URL for local Redis Stack (docker run -d -p 6379:6379 redis/redis-stack:latest).
-# Override via the REDIS_URL environment variable for remote or authenticated instances.
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-
 """
 Redis History Provider Session Example
 
@@ -28,7 +24,7 @@ async def example_manual_memory_store() -> None:
     # Create Redis history provider
     redis_provider = RedisHistoryProvider(
         source_id="redis_basic_chat",
-        redis_url=REDIS_URL,
+        redis_url="redis://localhost:6379",
     )
 
     # Create agent with Redis history provider
@@ -66,7 +62,7 @@ async def example_user_session_management() -> None:
     # Create Redis history provider for specific user session
     redis_provider = RedisHistoryProvider(
         source_id=f"redis_{user_id}",
-        redis_url=REDIS_URL,
+        redis_url="redis://localhost:6379",
         max_messages=10,  # Keep only last 10 messages
     )
 
@@ -107,7 +103,7 @@ async def example_conversation_persistence() -> None:
     print("--- Phase 1: Starting conversation ---")
     redis_provider = RedisHistoryProvider(
         source_id="redis_persistent_chat",
-        redis_url=REDIS_URL,
+        redis_url="redis://localhost:6379",
     )
 
     agent = OpenAIChatClient().as_agent(
@@ -156,7 +152,7 @@ async def example_session_serialization() -> None:
 
     redis_provider = RedisHistoryProvider(
         source_id="redis_serialization_chat",
-        redis_url=REDIS_URL,
+        redis_url="redis://localhost:6379",
     )
 
     agent = OpenAIChatClient().as_agent(
@@ -198,7 +194,7 @@ async def example_message_limits() -> None:
     # Create provider with small message limit
     redis_provider = RedisHistoryProvider(
         source_id="redis_limited_chat",
-        redis_url=REDIS_URL,
+        redis_url="redis://localhost:6379",
         max_messages=3,  # Keep only 3 most recent messages
     )
 
