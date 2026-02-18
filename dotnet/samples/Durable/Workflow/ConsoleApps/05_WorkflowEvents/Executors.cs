@@ -40,7 +40,7 @@ internal sealed record Order(string Id, DateTime OrderDate, bool IsCancelled, st
 internal sealed record Customer(string Name, string Email);
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Executors - emit events via IWorkflowContext.AddEventAsync
+// Executors - emit events via AddEventAsync and YieldOutputAsync
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// <summary>
@@ -66,6 +66,9 @@ internal sealed class OrderLookup() : Executor<string, Order>("OrderLookup")
             Customer: new Customer(Name: "Jerry", Email: "jerry@example.com"));
 
         await context.AddEventAsync(new OrderFoundEvent(order.Customer.Name), cancellationToken);
+
+        // YieldOutputAsync emits a WorkflowOutputEvent observable via streaming
+        await context.YieldOutputAsync(order, cancellationToken);
 
         return order;
     }
@@ -96,6 +99,8 @@ internal sealed class OrderCancel() : Executor<Order, Order>("OrderCancel")
         await context.AddEventAsync(new CancellationProgressEvent(100, "Complete"), cancellationToken);
         await context.AddEventAsync(new OrderCancelledEvent(), cancellationToken);
 
+        await context.YieldOutputAsync(cancelledOrder, cancellationToken);
+
         return cancelledOrder;
     }
 }
@@ -116,6 +121,8 @@ internal sealed class SendEmail() : Executor<Order, string>("SendEmail")
         string result = $"Cancellation email sent for order {message.Id} to {message.Customer.Email}.";
 
         await context.AddEventAsync(new EmailSentEvent(message.Customer.Email), cancellationToken);
+
+        await context.YieldOutputAsync(result, cancellationToken);
 
         return result;
     }
