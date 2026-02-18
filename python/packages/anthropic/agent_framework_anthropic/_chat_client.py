@@ -324,8 +324,9 @@ class AnthropicClient(
         self.anthropic_client = anthropic_client
         self.additional_beta_flags = additional_beta_flags or []
         self.model_id = anthropic_settings["chat_model_id"]
-        # streaming requires tracking the last function call ID and name
+        # streaming requires tracking the last function call ID, name, and content type
         self._last_call_id_name: tuple[str, str] | None = None
+        self._last_call_content_type: str | None = None
 
     # region Static factory methods for hosted tools
 
@@ -333,11 +334,13 @@ class AnthropicClient(
     def get_code_interpreter_tool(
         *,
         type_name: str | None = None,
+        name: str = "code_execution",
     ) -> dict[str, Any]:
         """Create a code interpreter tool configuration for Anthropic.
 
         Keyword Args:
             type_name: Override the tool type name. Defaults to "code_execution_20250825".
+            name: The name for this tool. Defaults to "code_execution".
 
         Returns:
             A dict-based tool configuration ready to pass to ChatAgent.
@@ -350,17 +353,19 @@ class AnthropicClient(
                 tool = AnthropicClient.get_code_interpreter_tool()
                 agent = AnthropicClient().as_agent(tools=[tool])
         """
-        return {"type": type_name or "code_execution_20250825"}
+        return {"type": type_name or "code_execution_20250825", "name": name}
 
     @staticmethod
     def get_web_search_tool(
         *,
         type_name: str | None = None,
+        name: str = "web_search",
     ) -> dict[str, Any]:
         """Create a web search tool configuration for Anthropic.
 
         Keyword Args:
             type_name: Override the tool type name. Defaults to "web_search_20250305".
+            name: The name for this tool. Defaults to "web_search".
 
         Returns:
             A dict-based tool configuration ready to pass to ChatAgent.
@@ -373,7 +378,7 @@ class AnthropicClient(
                 tool = AnthropicClient.get_web_search_tool()
                 agent = AnthropicClient().as_agent(tools=[tool])
         """
-        return {"type": type_name or "web_search_20250305"}
+        return {"type": type_name or "web_search_20250305", "name": name}
 
     @staticmethod
     def get_mcp_tool(
@@ -661,8 +666,27 @@ class AnthropicClient(
                         "content": content.result if content.result is not None else "",
                         "is_error": content.exception is not None,
                     })
+                case "mcp_server_tool_call":
+                    mcp_call: dict[str, Any] = {
+                        "type": "mcp_tool_use",
+                        "id": content.call_id,
+                        "name": content.tool_name,
+                        "server_name": content.server_name or "",
+                        "input": content.parse_arguments() or {},
+                    }
+                    a_content.append(mcp_call)
+                case "mcp_server_tool_result":
+                    mcp_result: dict[str, Any] = {
+                        "type": "mcp_tool_result",
+                        "tool_use_id": content.call_id,
+                        "content": content.output if content.output is not None else "",
+                    }
+                    a_content.append(mcp_result)
                 case "text_reasoning":
-                    a_content.append({"type": "thinking", "thinking": content.text})
+                    thinking_block: dict[str, Any] = {"type": "thinking", "thinking": content.text}
+                    if content.protected_data:
+                        thinking_block["signature"] = content.protected_data
+                    a_content.append(thinking_block)
                 case _:
                     logger.debug(f"Ignoring unsupported content type: {content.type} for now")
 
@@ -866,12 +890,13 @@ class AnthropicClient(
                     )
                 case "tool_use" | "mcp_tool_use" | "server_tool_use":
                     self._last_call_id_name = (content_block.id, content_block.name)
+                    self._last_call_content_type = content_block.type
                     if content_block.type == "mcp_tool_use":
                         contents.append(
                             Content.from_mcp_server_tool_call(
                                 call_id=content_block.id,
                                 tool_name=content_block.name,
-                                server_name=None,
+                                server_name=getattr(content_block, "server_name", None),
                                 arguments=content_block.input,
                                 raw_representation=content_block,
                             )
@@ -1129,24 +1154,32 @@ class AnthropicClient(
                         )
                     )
                 case "input_json_delta":
-                    # For streaming argument deltas, only pass call_id and arguments.
-                    # Pass empty string for name - it causes ag-ui to emit duplicate ToolCallStartEvents
-                    # since it triggers on `if content.name:`. The initial tool_use event already
-                    # provides the name, so deltas should only carry incremental arguments.
-                    # This matches OpenAI's behavior where streaming chunks have name="".
-                    call_id, _name = self._last_call_id_name if self._last_call_id_name else ("", "")
-                    contents.append(
-                        Content.from_function_call(
-                            call_id=call_id,
-                            name="",
-                            arguments=content_block.partial_json,
-                            raw_representation=content_block,
+                    # Skip argument deltas for MCP tools — execution is handled server-side.
+                    if self._last_call_content_type == "mcp_tool_use":
+                        pass
+                    else:
+                        call_id = self._last_call_id_name[0] if self._last_call_id_name else ""
+                        contents.append(
+                            Content.from_function_call(
+                                call_id=call_id,
+                                name="",
+                                arguments=content_block.partial_json,
+                                raw_representation=content_block,
+                            )
                         )
-                    )
                 case "thinking" | "thinking_delta":
                     contents.append(
                         Content.from_text_reasoning(
                             text=content_block.thinking,
+                            protected_data=getattr(content_block, "signature", None),
+                            raw_representation=content_block,
+                        )
+                    )
+                case "signature_delta":
+                    contents.append(
+                        Content.from_text_reasoning(
+                            text=None,
+                            protected_data=content_block.signature,
                             raw_representation=content_block,
                         )
                     )
