@@ -14,24 +14,19 @@ import asyncio
 
 
 async def run_semantic_kernel() -> None:
-    from azure.identity import AzureCliCredential
-    from semantic_kernel.agents import AzureResponsesAgent
-    from semantic_kernel.connectors.ai.open_ai import AzureOpenAISettings
+    from semantic_kernel.agents import OpenAIResponsesAgent
+    from semantic_kernel.connectors.ai.open_ai import OpenAISettings
 
-    credential = AzureCliCredential()
-    try:
-        client = AzureResponsesAgent.create_client(credential=credential)
-        # SK response agents wrap Azure OpenAI's hosted Responses API.
-        agent = AzureResponsesAgent(
-            ai_model_id=AzureOpenAISettings().responses_deployment_name,
-            client=client,
-            instructions="Answer in one concise sentence.",
-            name="Expert",
-        )
-        response = await agent.get_response("Why is the sky blue?")
-        print("[SK]", response.message.content)
-    finally:
-        await credential.close()
+    client = OpenAIResponsesAgent.create_client()
+    # SK response agents wrap OpenAI's hosted Responses API.
+    agent = OpenAIResponsesAgent(
+        ai_model_id=OpenAISettings().responses_model_id,
+        client=client,
+        instructions="Answer in one concise sentence.",
+        name="Expert",
+    )
+    response = await agent.get_response("Why is the sky blue?")
+    print("[SK]", response.message.content)
 
 
 async def run_agent_framework() -> None:
