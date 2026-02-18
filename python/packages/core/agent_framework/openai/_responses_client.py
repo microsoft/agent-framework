@@ -788,6 +788,9 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         request_input = self._prepare_messages_for_openai(messages)
         if not request_input:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
+
+        conversation_id = self._get_current_conversation_id(options, **kwargs)
+
         run_options["input"] = request_input
 
         # model id
@@ -911,8 +914,11 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         for content in message.contents:
             match content.type:
                 case "text_reasoning":
-                    # Don't send reasoning content back to model
-                    continue
+                    # Reasoning items must be sent back as top-level input items
+                    # for reasoning models that require them alongside function_calls
+                    reasoning = self._prepare_content_for_openai(message.role, content, call_id_to_id)  # type: ignore[arg-type]
+                    if reasoning:
+                        all_messages.append(reasoning)
                 case "function_result":
                     new_args: dict[str, Any] = {}
                     new_args.update(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore[arg-type]
@@ -967,6 +973,8 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 }
                 props: dict[str, Any] | None = getattr(content, "additional_properties", None)
                 if props:
+                    if reasoning_id := props.get("reasoning_id"):
+                        ret["id"] = reasoning_id
                     if status := props.get("status"):
                         ret["status"] = status
                     if reasoning_text := props.get("reasoning_text"):
@@ -1184,22 +1192,29 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                     )
                                 )
                 case "reasoning":  # ResponseOutputReasoning
+                    reasoning_id = getattr(item, "id", None)
                     if hasattr(item, "content") and item.content:
                         for index, reasoning_content in enumerate(item.content):
-                            additional_properties = None
+                            additional_properties: dict[str, Any] = {}
+                            if reasoning_id:
+                                additional_properties["reasoning_id"] = reasoning_id
                             if hasattr(item, "summary") and item.summary and index < len(item.summary):
-                                additional_properties = {"summary": item.summary[index]}
+                                additional_properties["summary"] = item.summary[index]
                             contents.append(
                                 Content.from_text_reasoning(
                                     text=reasoning_content.text,
                                     raw_representation=reasoning_content,
-                                    additional_properties=additional_properties,
+                                    additional_properties=additional_properties or None,
                                 )
                             )
                     if hasattr(item, "summary") and item.summary:
                         for summary in item.summary:
                             contents.append(
-                                Content.from_text_reasoning(text=summary.text, raw_representation=summary)  # type: ignore[arg-type]
+                                Content.from_text_reasoning(
+                                    text=summary.text,
+                                    raw_representation=summary,  # type: ignore[arg-type]
+                                    additional_properties={"reasoning_id": reasoning_id} if reasoning_id else None,
+                                )
                             )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                     call_id = getattr(item, "call_id", None) or getattr(item, "id", None)
@@ -1413,16 +1428,40 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 contents.append(Content.from_text(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_text.delta":
-                contents.append(Content.from_text_reasoning(text=event.delta, raw_representation=event))
+                contents.append(
+                    Content.from_text_reasoning(
+                        text=event.delta,
+                        raw_representation=event,
+                        additional_properties={"reasoning_id": event.item_id},
+                    )
+                )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_text.done":
-                contents.append(Content.from_text_reasoning(text=event.text, raw_representation=event))
+                contents.append(
+                    Content.from_text_reasoning(
+                        text=event.text,
+                        raw_representation=event,
+                        additional_properties={"reasoning_id": event.item_id},
+                    )
+                )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_summary_text.delta":
-                contents.append(Content.from_text_reasoning(text=event.delta, raw_representation=event))
+                contents.append(
+                    Content.from_text_reasoning(
+                        text=event.delta,
+                        raw_representation=event,
+                        additional_properties={"reasoning_id": event.item_id},
+                    )
+                )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_summary_text.done":
-                contents.append(Content.from_text_reasoning(text=event.text, raw_representation=event))
+                contents.append(
+                    Content.from_text_reasoning(
+                        text=event.text,
+                        raw_representation=event,
+                        additional_properties={"reasoning_id": event.item_id},
+                    )
+                )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.code_interpreter_call_code.delta":
                 call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
@@ -1593,20 +1632,23 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                             )
                         )
                     case "reasoning":  # ResponseOutputReasoning
+                        reasoning_id = getattr(event_item, "id", None)
                         if hasattr(event_item, "content") and event_item.content:
                             for index, reasoning_content in enumerate(event_item.content):
-                                additional_properties = None
+                                additional_properties: dict[str, Any] = {}
+                                if reasoning_id:
+                                    additional_properties["reasoning_id"] = reasoning_id
                                 if (
                                     hasattr(event_item, "summary")
                                     and event_item.summary
                                     and index < len(event_item.summary)
                                 ):
-                                    additional_properties = {"summary": event_item.summary[index]}
+                                    additional_properties["summary"] = event_item.summary[index]
                                 contents.append(
                                     Content.from_text_reasoning(
                                         text=reasoning_content.text,
                                         raw_representation=reasoning_content,
-                                        additional_properties=additional_properties,
+                                        additional_properties=additional_properties or None,
                                     )
                                 )
                     case _:
