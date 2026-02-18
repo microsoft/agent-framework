@@ -19,7 +19,7 @@ string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_MODE
 string embeddingModelName = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_EMBEDDING_MODEL") ?? "text-embedding-ada-002";
 
 // Create an AIProjectClient for Foundry with Azure Identity authentication.
-AzureCliCredential credential = new();
+DefaultAzureCredential credential = new();
 AIProjectClient projectClient = new(new Uri(foundryEndpoint), credential);
 
 // Get the ChatClient from the AIProjectClient's OpenAI property using the deployment name.
