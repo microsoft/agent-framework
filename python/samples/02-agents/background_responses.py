@@ -6,9 +6,6 @@ from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
-
-# Load environment variables from .env file
-load_dotenv()
 """Background Responses Sample.
 
 This sample demonstrates long-running agent operations using the OpenAI
@@ -23,6 +20,9 @@ Prerequisites:
   - Set the ``OPENAI_API_KEY`` environment variable.
   - A model that benefits from background execution (e.g. ``o3``).
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # 1. Create the agent with an OpenAI Responses client.

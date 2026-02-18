@@ -5,16 +5,15 @@ import asyncio
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 OpenAI Chat Client with Web Search Example
 
 This sample demonstrates using get_web_search_tool() with OpenAI Chat Client
 for real-time information retrieval and current data access.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

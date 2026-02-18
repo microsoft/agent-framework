@@ -12,10 +12,6 @@ from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Sample: Group Chat with Agent-Based Manager
 
@@ -27,6 +23,9 @@ What it does:
 Prerequisites:
 - OpenAI environment variables configured for OpenAIChatClient
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 ORCHESTRATOR_AGENT_INSTRUCTIONS = """
 You coordinate a team conversation to solve the user's task.

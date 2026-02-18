@@ -26,9 +26,6 @@ from durabletask.task import OrchestrationContext, Task, when_all
 from dotenv import load_dotenv
 
 # Configure logging
-
-# Load environment variables from .env file
-load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -43,6 +40,9 @@ def create_physicist_agent() -> "Agent":
     Returns:
         Agent: The configured Physicist agent
     """
+
+# Load environment variables from .env file
+load_dotenv()
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=PHYSICIST_AGENT_NAME,
         instructions="You are an expert in physics. You answer questions from a physics perspective.",

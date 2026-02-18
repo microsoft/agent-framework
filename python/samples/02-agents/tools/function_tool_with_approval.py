@@ -7,10 +7,6 @@ from typing import TYPE_CHECKING, Annotated, Any
 from agent_framework import Agent, AgentResponse, Message, tool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 if TYPE_CHECKING:
     from agent_framework import SupportsAgentRun
 
@@ -20,6 +16,9 @@ Demonstration of a tool with approvals.
 This sample demonstrates using AI functions with user approval workflows.
 It shows how to handle function call approvals without using threads.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 conditions = ["sunny", "cloudy", "raining", "snowing", "clear"]
 

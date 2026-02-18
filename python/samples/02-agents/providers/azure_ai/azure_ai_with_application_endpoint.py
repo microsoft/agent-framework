@@ -8,16 +8,15 @@ from agent_framework.azure import AzureAIClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure AI Agent with Application Endpoint Example
 
 This sample demonstrates working with pre-existing Azure AI Agents by providing
 application endpoint instead of project endpoint.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

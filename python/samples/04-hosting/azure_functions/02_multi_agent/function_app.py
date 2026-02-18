@@ -17,10 +17,6 @@ from agent_framework import tool
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 
@@ -28,6 +24,9 @@ logger = logging.getLogger(__name__)
 @tool(approval_mode="never_require")
 def get_weather(location: str) -> dict[str, Any]:
     """Get current weather for a location."""
+
+# Load environment variables from .env file
+load_dotenv()
 
     logger.info(f"🔧 [TOOL CALLED] get_weather(location={location})")
     result = {

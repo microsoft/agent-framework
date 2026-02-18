@@ -18,10 +18,6 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Sample: Workflow as Agent with Reflection and Retry Pattern
 
@@ -44,6 +40,9 @@ Prerequisites:
 - Familiarity with WorkflowBuilder, Executor, WorkflowContext, and event handling.
 - Understanding of how agent messages are generated, reviewed, and re-submitted.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @dataclass

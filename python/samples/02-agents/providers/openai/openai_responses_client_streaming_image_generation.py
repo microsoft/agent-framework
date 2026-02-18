@@ -8,10 +8,6 @@ from pathlib import Path
 import anyio
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """OpenAI Responses Client Streaming Image Generation Example
 
 Demonstrates streaming partial image generation using OpenAI's image generation tool.
@@ -25,6 +21,9 @@ Note: The number of partial images received depends on generation speed:
 Important: The final partial image IS the complete, full-quality image. Each partial
 represents a progressive refinement, with the last one being the finished result.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def save_image_from_data_uri(data_uri: str, filename: str) -> None:

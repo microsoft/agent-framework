@@ -7,10 +7,6 @@ from agent_framework import Agent
 from agent_framework.azure import AzureAIAgentClient, AzureAISearchContextProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
-
 """
 This sample demonstrates how to use Azure AI Search with semantic mode for RAG
 (Retrieval Augmented Generation) with Azure AI agents.
@@ -31,6 +27,9 @@ Prerequisites:
    - AZURE_AI_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
    - AZURE_AI_MODEL_DEPLOYMENT_NAME: Your model deployment name (e.g., "gpt-4o")
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Sample queries to demonstrate RAG
 USER_INPUTS = [

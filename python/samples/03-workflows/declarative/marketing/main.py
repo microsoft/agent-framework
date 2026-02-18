@@ -20,10 +20,6 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.declarative import WorkflowFactory
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 ANALYST_INSTRUCTIONS = """You are a product analyst. Analyze the given product and identify:
 1. Key features and benefits
 2. Target audience demographics
@@ -54,6 +50,9 @@ Return the final polished version."""
 
 async def main() -> None:
     """Run the marketing workflow with real Azure AI agents."""
+
+# Load environment variables from .env file
+load_dotenv()
     client = AzureOpenAIResponsesClient(
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
         deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],

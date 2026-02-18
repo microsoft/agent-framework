@@ -7,16 +7,15 @@ from agent_framework import Content
 from agent_framework.openai import OpenAIAssistantProvider, OpenAIAssistantsClient
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 OpenAI Assistants with File Search Example
 
 This sample demonstrates using get_file_search_tool() with OpenAI Assistants
 for document-based question answering and information retrieval.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def create_vector_store(client: AsyncOpenAI) -> tuple[str, Content]:

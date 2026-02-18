@@ -16,10 +16,6 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Sample: AzureOpenAI Chat Agents and an Executor in a Workflow with Streaming
 
@@ -39,6 +35,9 @@ Prerequisites:
 - Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
 - Authentication via azure-identity. Run `az login` before executing.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Simulated external content keyed by a simple topic hint.
 EXTERNAL_REFERENCES: Final[dict[str, str]] = {

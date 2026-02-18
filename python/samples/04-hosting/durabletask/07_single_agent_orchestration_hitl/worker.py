@@ -28,9 +28,6 @@ from pydantic import BaseModel, ValidationError
 from dotenv import load_dotenv
 
 # Configure logging
-
-# Load environment variables from .env file
-load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -41,6 +38,9 @@ HUMAN_APPROVAL_EVENT = "HumanApproval"
 
 class ContentGenerationInput(BaseModel):
     """Input for content generation orchestration."""
+
+# Load environment variables from .env file
+load_dotenv()
 
     topic: str
     max_review_attempts: int = 3

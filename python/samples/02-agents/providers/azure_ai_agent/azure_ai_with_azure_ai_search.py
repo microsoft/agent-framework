@@ -10,10 +10,6 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import ConnectionType
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure AI Agent with Azure AI Search Example
 
@@ -34,6 +30,9 @@ NOTE: To ensure consistent search tool usage:
 More info on `query type` can be found here:
 https://learn.microsoft.com/en-us/python/api/azure-ai-agents/azure.ai.agents.models.aisearchindexresource?view=azure-python-preview
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

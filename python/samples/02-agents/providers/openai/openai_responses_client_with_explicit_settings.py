@@ -9,16 +9,15 @@ from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 OpenAI Responses Client with Explicit Settings Example
 
 This sample demonstrates creating OpenAI Responses Client with explicit configuration
 settings rather than relying on environment variable defaults.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

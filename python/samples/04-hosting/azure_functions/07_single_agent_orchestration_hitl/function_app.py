@@ -22,10 +22,6 @@ from azure.durable_functions import DurableOrchestrationClient, DurableOrchestra
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 # 1. Define orchestration constants used throughout the workflow.
@@ -396,3 +392,6 @@ HTTP/1.1 200 OK
     }
 }
 """
+
+# Load environment variables from .env file
+load_dotenv()

@@ -6,16 +6,15 @@ from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, ConfigDict
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure AI Agent Response Format Example
 
 This sample demonstrates basic usage of AzureAIProjectAgentProvider with response format,
 also known as structured outputs.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class ReleaseBrief(BaseModel):

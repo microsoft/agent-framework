@@ -9,16 +9,15 @@ from azure.ai.agents.models import (
 )
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure AI Agent with Code Interpreter Example
 
 This sample demonstrates using get_code_interpreter_tool() with Azure AI Agents
 for Python code execution and mathematical problem solving.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def print_code_interpreter_inputs(response: AgentResponse) -> None:

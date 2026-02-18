@@ -13,10 +13,6 @@ from opentelemetry import trace
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 if TYPE_CHECKING:
     from agent_framework import SupportsChatGetResponse
 
@@ -30,6 +26,9 @@ you should see traces, logs, and metrics in the configured backend.
 If no OTLP endpoint or Application Insights connection string is configured, the sample will
 output traces, logs, and metrics to the console.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Define the scenarios that can be run to show the telemetry data collected by the SDK
 SCENARIOS = ["client", "client_stream", "tool", "all"]

@@ -7,10 +7,6 @@ from pathlib import Path
 from agent_framework import Content
 from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 logger = logging.getLogger(__name__)
 """
 Anthropic Skills Agent Example
@@ -22,6 +18,9 @@ This sample demonstrates using Anthropic with:
 - Creating an agent with the Code Interpreter tool and a Skill.
 - Catching and downloading generated files from the agent.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

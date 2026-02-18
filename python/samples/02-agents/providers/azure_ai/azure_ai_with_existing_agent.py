@@ -8,16 +8,15 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import PromptAgentDefinition
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure AI Agent with Existing Agent Example
 
 This sample demonstrates working with pre-existing Azure AI Agents by using provider.get_agent() method,
 showing agent reuse patterns for production scenarios.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def using_provider_get_agent() -> None:

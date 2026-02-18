@@ -27,10 +27,6 @@ import asyncio
 
 from agent_framework.declarative import AgentFactory
 from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
-
 # Example 1: OpenAI.Responses with API key authentication
 # Uses inline API key - suitable for OpenAI provider which supports headers
 YAML_OPENAI_WITH_API_KEY = """
@@ -68,6 +64,9 @@ tools:
 # No secrets in YAML - references a pre-configured Foundry connection by name
 # The connection stores credentials securely in Azure AI Foundry
 YAML_AZURE_AI_WITH_FOUNDRY_CONNECTION = """
+
+# Load environment variables from .env file
+load_dotenv()
 kind: Prompt
 name: GitHubAgent
 displayName: GitHub Assistant

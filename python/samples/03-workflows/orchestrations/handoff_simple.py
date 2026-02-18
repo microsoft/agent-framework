@@ -15,10 +15,6 @@ from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """Sample: Simple handoff workflow.
 
 A handoff workflow defines a pattern that assembles agents in a mesh topology, allowing
@@ -34,6 +30,9 @@ Key Concepts:
     - Termination condition: Controls when the workflow stops requesting user input
     - Request/response cycle: Workflow requests input, user responds, cycle continues
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

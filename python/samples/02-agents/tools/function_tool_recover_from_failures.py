@@ -6,16 +6,15 @@ from typing import Annotated
 from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Tool exceptions handled by returning the error for the agent to recover from.
 
 Shows how a tool that throws an exception creates gracefull recovery and can keep going.
 The LLM decides whether to retry the call or to respond with something else, based on the exception.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.

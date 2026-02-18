@@ -4,16 +4,15 @@ import asyncio
 
 from agent_framework.microsoft import CopilotStudioAgent
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Copilot Studio Agent Basic Example
 
 This sample demonstrates basic usage of CopilotStudioAgent with automatic configuration
 from environment variables, showing both streaming and non-streaming responses.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Environment variables needed:
 # COPILOTSTUDIOAGENT__ENVIRONMENTID - Environment ID where your copilot is deployed

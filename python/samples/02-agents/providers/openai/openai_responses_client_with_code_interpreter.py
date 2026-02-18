@@ -8,16 +8,15 @@ from agent_framework import (
 )
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 OpenAI Responses Client with Code Interpreter Example
 
 This sample demonstrates using get_code_interpreter_tool() with OpenAI Responses Client
 for Python code execution and mathematical problem solving.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

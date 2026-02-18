@@ -6,13 +6,11 @@ from agent_framework.declarative import AgentFactory
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+async def main():
+    """Create an agent from a declarative yaml specification and run it."""
 
 # Load environment variables from .env file
 load_dotenv()
-
-
-async def main():
-    """Create an agent from a declarative yaml specification and run it."""
     # get the path
     current_path = Path(__file__).parent
     yaml_path = current_path.parent.parent.parent.parent / "agent-samples" / "azure" / "AzureOpenAIResponses.yaml"

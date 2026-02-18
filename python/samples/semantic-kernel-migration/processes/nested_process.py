@@ -22,6 +22,9 @@ from typing import ClassVar, cast
 # region Agent Framework imports
 ######################################################################
 from agent_framework import (
+
+# Load environment variables from .env file
+load_dotenv()
     Executor,
     WorkflowBuilder,
     WorkflowContext,
@@ -49,10 +52,6 @@ from dotenv import load_dotenv
 ######################################################################
 # endregion
 ######################################################################
-
-
-# Load environment variables from .env file
-load_dotenv()
 logging.basicConfig(level=logging.WARNING)
 
 

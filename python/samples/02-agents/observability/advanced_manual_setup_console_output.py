@@ -21,14 +21,13 @@ from opentelemetry.semconv._incubating.attributes.service_attributes import SERV
 from opentelemetry.trace import set_tracer_provider
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 This sample shows how to manually configure to send traces, logs, and metrics to the console,
 without using the `configure_otel_providers` helper function.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 resource = Resource.create({SERVICE_NAME: "ManualSetup"})
 

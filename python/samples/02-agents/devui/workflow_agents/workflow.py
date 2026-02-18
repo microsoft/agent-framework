@@ -25,12 +25,11 @@ from dotenv import load_dotenv
 
 # Define structured output for review results
 
-# Load environment variables from .env file
-load_dotenv()
-
-
 class ReviewResult(BaseModel):
     """Review evaluation with scores and feedback."""
+
+# Load environment variables from .env file
+load_dotenv()
 
     score: int  # Overall quality score (0-100)
     feedback: str  # Concise, actionable feedback

@@ -10,10 +10,6 @@ from agent_framework.azure import AzureOpenAIChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework  # pyright: ignore[reportUnknownVariableType]
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 if sys.version_info >= (3, 12):
     from typing import override
 else:
@@ -29,6 +25,9 @@ class TextSearchResult:
 
 class TextSearchContextProvider(BaseContextProvider):
     """A simple context provider that simulates text search results based on keywords in the user's message."""
+
+# Load environment variables from .env file
+load_dotenv()
 
     def __init__(self):
         super().__init__("text-search")

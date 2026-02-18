@@ -21,10 +21,6 @@ from agent_framework import (
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Result Override with MiddlewareTypes (Regular and Streaming)
 
@@ -41,6 +37,9 @@ The weather override middleware lets the original weather function execute norma
 then replaces its result with a custom "perfect weather" message. For streaming responses,
 it creates a custom async generator that yields the override message in chunks.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.

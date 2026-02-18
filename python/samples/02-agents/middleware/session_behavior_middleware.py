@@ -13,10 +13,6 @@ from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Thread Behavior MiddlewareTypes Example
 
@@ -34,6 +30,9 @@ Key behaviors demonstrated:
 3. Second run: context.messages contains only current input, session contains previous history
 4. After call_next(): session contains full conversation history (all previous + current messages)
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.

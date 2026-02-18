@@ -4,10 +4,6 @@ import asyncio
 
 from agent_framework.openai import OpenAIResponsesClient, OpenAIResponsesOptions
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 OpenAI Responses Client Reasoning Example
 
@@ -21,6 +17,9 @@ the correct values for your provider, as they are passed through as-is.
 
 In this case they are here: https://platform.openai.com/docs/api-reference/responses/create#responses-create-reasoning
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 agent = OpenAIResponsesClient[OpenAIResponsesOptions](model_id="gpt-5").as_agent(

@@ -9,16 +9,15 @@ from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure OpenAI Chat Client Basic Example
 
 This sample demonstrates basic usage of AzureOpenAIChatClient for direct chat-based
 interactions, showing both streaming and non-streaming responses.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

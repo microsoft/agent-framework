@@ -17,10 +17,6 @@ from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Agent-Level and Run-Level MiddlewareTypes Example
 
@@ -56,6 +52,9 @@ Agent Middleware Execution Order:
     chain shown above. They follow the same ordering principle: agent-level function/chat
     middleware runs before run-level function/chat middleware.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.

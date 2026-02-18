@@ -36,10 +36,6 @@ from semantic_kernel.functions import KernelArguments
 from semantic_kernel.kernel import Kernel
 from semantic_kernel.prompt_template import KernelPromptTemplate, PromptTemplateConfig
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
@@ -81,6 +77,9 @@ def build_semantic_kernel_agents() -> list[Agent]:
 
 class ChatCompletionGroupChatManager(GroupChatManager):
     """Group chat manager that delegates orchestration decisions to an Azure OpenAI deployment."""
+
+# Load environment variables from .env file
+load_dotenv()
 
     service: ChatCompletionClientBase
     topic: str

@@ -23,17 +23,15 @@ from agent_framework.anthropic import ClaudeAgent
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 from dotenv import load_dotenv
 
-
-# Load environment variables from .env file
-load_dotenv()
-
-
 async def prompt_permission(
     tool_name: str,
     tool_input: dict[str, Any],
     context: object,
 ) -> PermissionResultAllow | PermissionResultDeny:
     """Permission handler that prompts the user for approval."""
+
+# Load environment variables from .env file
+load_dotenv()
     print(f"\n[Permission Request: {tool_name}]")
 
     response = input("Approve? (y/n): ").strip().lower()

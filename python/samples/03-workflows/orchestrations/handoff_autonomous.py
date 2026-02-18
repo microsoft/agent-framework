@@ -14,10 +14,6 @@ from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 logging.basicConfig(level=logging.ERROR)
 
 """Sample: Autonomous handoff workflow with agent iteration.
@@ -38,6 +34,9 @@ Key Concepts:
     - Autonomous interaction mode: agents iterate until they handoff
     - Turn limits: use `.with_autonomous_mode(turn_limits={agent_name: N})` to cap iterations per agent
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def create_agents(

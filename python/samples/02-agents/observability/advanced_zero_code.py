@@ -11,10 +11,6 @@ from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 if TYPE_CHECKING:
     from agent_framework import SupportsChatGetResponse
 
@@ -43,6 +39,9 @@ opentelemetry-instrument \
 You can also set the environment variables instead of passing them as CLI arguments.
 
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity.

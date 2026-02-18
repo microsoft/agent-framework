@@ -6,15 +6,14 @@ from typing import Annotated
 from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Some tools are very expensive to run, so you may want to limit the number of times
 it tries to call them and fails. This sample shows a tool that can only raise exceptions a
 limited number of times.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # we trick the AI into calling this function with 0 as denominator to trigger the exception

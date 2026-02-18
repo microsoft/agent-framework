@@ -7,10 +7,6 @@ import httpx
 from a2a.client import A2ACardResolver
 from agent_framework.a2a import A2AAgent
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Agent2Agent (A2A) Protocol Integration Sample
 
@@ -40,6 +36,9 @@ To run this sample:
 
 Visit the README.md for more details on setting up and running A2A agents.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main():

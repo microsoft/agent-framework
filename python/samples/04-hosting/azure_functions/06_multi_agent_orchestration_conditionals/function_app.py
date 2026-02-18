@@ -22,10 +22,6 @@ from azure.durable_functions import DurableOrchestrationClient, DurableOrchestra
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 # 1. Define agent names shared across the orchestration.
@@ -259,3 +255,6 @@ HTTP/1.1 200 OK
     "output": "Email sent: Thank you for reaching out..."
 }
 """
+
+# Load environment variables from .env file
+load_dotenv()

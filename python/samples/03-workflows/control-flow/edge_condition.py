@@ -19,10 +19,6 @@ from azure.identity import AzureCliCredential  # Uses your az CLI login for cred
 from pydantic import BaseModel  # Structured outputs for safer parsing
 from typing_extensions import Never
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Sample: Conditional routing with structured outputs
 
@@ -57,6 +53,9 @@ Notes:
 - Executors are small and single purpose to keep control flow easy to follow.
 - The workflow completes when it becomes idle, not via explicit completion events.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class DetectionResult(BaseModel):

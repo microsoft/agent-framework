@@ -6,10 +6,6 @@ import anyio
 from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 This sample demonstrates how to expose an Agent as an MCP server.
 
@@ -34,6 +30,9 @@ with the following configuration:
 }
 ```
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.

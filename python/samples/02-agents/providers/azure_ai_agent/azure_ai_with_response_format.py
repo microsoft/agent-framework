@@ -6,10 +6,6 @@ from agent_framework.azure import AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, ConfigDict
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure AI Agent Provider Response Format Example
 
@@ -18,6 +14,9 @@ for structured outputs in two ways:
 1. Setting default response_format at agent creation time (default_options)
 2. Overriding response_format at runtime (options parameter in agent.run)
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class WeatherInfo(BaseModel):

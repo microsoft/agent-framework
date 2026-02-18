@@ -18,13 +18,11 @@ work to specialized sub-agents wrapped as tools.
 import asyncio
 from dotenv import load_dotenv
 
+async def run_autogen() -> None:
+    """AutoGen's AgentTool for hierarchical agents with streaming."""
 
 # Load environment variables from .env file
 load_dotenv()
-
-
-async def run_autogen() -> None:
-    """AutoGen's AgentTool for hierarchical agents with streaming."""
     from autogen_agentchat.agents import AssistantAgent
     from autogen_agentchat.tools import AgentTool
     from autogen_agentchat.ui import Console

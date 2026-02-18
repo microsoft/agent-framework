@@ -25,9 +25,6 @@ from durabletask.task import OrchestrationContext, Task
 from dotenv import load_dotenv
 
 # Configure logging
-
-# Load environment variables from .env file
-load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -44,6 +41,9 @@ def create_writer_agent() -> "Agent":
     Returns:
         Agent: The configured Writer agent
     """
+
+# Load environment variables from .env file
+load_dotenv()
     instructions = (
         "You refine short pieces of text. When given an initial sentence you enhance it;\n"
         "when given an improved sentence you polish it further."

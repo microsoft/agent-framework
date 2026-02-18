@@ -7,10 +7,6 @@ from agent_framework import Agent, tool
 from agent_framework.amazon import BedrockChatClient
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Bedrock Chat Client Example
 
@@ -22,6 +18,9 @@ Environment variables used:
 - AWS credentials via standard variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
   optional `AWS_SESSION_TOKEN`)
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity.

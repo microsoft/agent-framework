@@ -24,10 +24,6 @@ import asyncio
 from agent_framework import FunctionTool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 definition = {
     "type": "function_tool",
     "name": "add_numbers",
@@ -46,6 +42,9 @@ definition = {
 
 async def main() -> None:
     """Main function demonstrating creating a tool with an injected function."""
+
+# Load environment variables from .env file
+load_dotenv()
 
     def func(a, b) -> int:
         """Add two numbers together."""

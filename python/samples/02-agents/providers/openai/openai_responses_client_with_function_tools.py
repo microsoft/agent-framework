@@ -9,16 +9,15 @@ from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 OpenAI Responses Client with Function Tools Example
 
 This sample demonstrates function tool integration with OpenAI Responses Client,
 showing both agent-level and query-level tool configuration patterns.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

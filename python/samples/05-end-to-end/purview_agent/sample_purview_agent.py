@@ -38,10 +38,6 @@ from azure.identity import (
     InteractiveBrowserCredential,
 )
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 JOKER_NAME = "Joker"
 JOKER_INSTRUCTIONS = "You are good at telling jokes. Keep responses concise."
 
@@ -52,6 +48,9 @@ class SimpleDictCacheProvider:
 
     This example demonstrates how to implement the CacheProvider protocol.
     """
+
+# Load environment variables from .env file
+load_dotenv()
 
     def __init__(self) -> None:
         """Initialize the simple dictionary cache."""

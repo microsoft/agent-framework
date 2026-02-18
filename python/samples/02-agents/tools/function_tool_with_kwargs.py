@@ -7,10 +7,6 @@ from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 AI Function with kwargs Example
 
@@ -21,6 +17,9 @@ This is useful for passing runtime information like access tokens, user IDs, or
 request-specific context that the tool needs but the model shouldn't know about
 or provide.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # Define the function tool with **kwargs to accept injected arguments

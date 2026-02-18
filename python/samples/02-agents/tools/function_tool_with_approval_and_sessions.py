@@ -7,10 +7,6 @@ from agent_framework import Agent, Message, tool
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Tool Approvals with Sessions
 
@@ -18,6 +14,9 @@ This sample demonstrates using tool approvals with sessions.
 With sessions, you don't need to manually pass previous messages -
 the session stores and retrieves them automatically.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @tool(approval_mode="always_require")

@@ -17,12 +17,11 @@ from dotenv import load_dotenv
 
 # 1. Instantiate the agent with the chosen deployment and instructions.
 
-# Load environment variables from .env file
-load_dotenv()
-
-
 def _create_agent() -> Any:
     """Create the Joker agent."""
+
+# Load environment variables from .env file
+load_dotenv()
 
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="Joker",

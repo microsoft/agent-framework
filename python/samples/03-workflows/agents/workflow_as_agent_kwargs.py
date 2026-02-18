@@ -11,10 +11,6 @@ from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Sample: Workflow as Agent with kwargs Propagation to @tool Tools
 
@@ -37,6 +33,9 @@ Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - Environment variables configured
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # Define tools that accept custom context via **kwargs

@@ -23,10 +23,6 @@ from azure.identity import AzureCliCredential  # Uses your az CLI login for cred
 from pydantic import BaseModel  # Structured outputs with validation
 from typing_extensions import Never
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Sample: Switch-Case Edge Group with an explicit Uncertain branch.
 
@@ -49,6 +45,9 @@ Prerequisites:
 - Working Azure OpenAI configuration for AzureOpenAIResponsesClient, with Azure CLI login and required environment variables.
 - Access to workflow/resources/ambiguous_email.txt, or accept the inline fallback string.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 EMAIL_STATE_PREFIX = "email:"

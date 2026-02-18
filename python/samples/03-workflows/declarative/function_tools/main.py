@@ -17,10 +17,6 @@ from agent_framework_declarative import ExternalInputRequest, ExternalInputRespo
 from azure.identity import AzureCliCredential
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 TEMP_DIR = Path(__file__).with_suffix("").parent / "tmp" / "checkpoints"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -47,6 +43,9 @@ MENU_ITEMS = [
 @tool(approval_mode="never_require")
 def get_menu() -> list[dict[str, Any]]:
     """Get all menu items."""
+
+# Load environment variables from .env file
+load_dotenv()
     return [{"category": i.category, "name": i.name, "price": i.price} for i in MENU_ITEMS]
 
 

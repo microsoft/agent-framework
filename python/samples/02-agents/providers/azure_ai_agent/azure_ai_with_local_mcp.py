@@ -6,16 +6,15 @@ from agent_framework import MCPStreamableHTTPTool
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure AI Agent with Local MCP Example
 
 This sample demonstrates integration of Azure AI Agents with local Model Context Protocol (MCP)
 servers, showing both agent-level and run-level tool configuration patterns.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def mcp_tools_on_run_level() -> None:

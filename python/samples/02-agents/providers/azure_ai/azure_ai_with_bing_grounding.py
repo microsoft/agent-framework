@@ -5,10 +5,6 @@ import os
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure AI Agent with Bing Grounding Example
 
@@ -26,6 +22,9 @@ To get your Bing connection ID:
 - Add a new connection for "Grounding with Bing Search"
 - Copy the connection ID and set it as the BING_PROJECT_CONNECTION_ID environment variable
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

@@ -5,10 +5,6 @@ import asyncio
 from agent_framework import FunctionTool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Example of how to create a function that only consists of a declaration without an implementation.
 This is useful when you want the agent to use tools that are defined elsewhere or when you want
@@ -17,6 +13,9 @@ to test the agent's ability to reason about tool usage without executing them.
 The only difference is that you provide a FunctionTool without a function.
 If you need a input_model, you can still provide that as well.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main():

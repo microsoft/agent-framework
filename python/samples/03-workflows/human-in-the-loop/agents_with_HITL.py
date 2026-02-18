@@ -22,10 +22,6 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from typing_extensions import Never
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Sample: AzureOpenAI Chat Agents in workflow with human feedback
 
@@ -46,6 +42,9 @@ Prerequisites:
 - Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
 - Authentication via azure-identity. Run `az login` before executing.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @dataclass

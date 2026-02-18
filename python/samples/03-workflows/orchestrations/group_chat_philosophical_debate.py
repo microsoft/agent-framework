@@ -13,10 +13,6 @@ from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 logging.basicConfig(level=logging.WARNING)
 
 """
@@ -43,6 +39,9 @@ Participants represent:
 Prerequisites:
 - OpenAI environment variables configured for OpenAIChatClient
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def _get_chat_client() -> AzureOpenAIChatClient:

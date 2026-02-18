@@ -34,10 +34,6 @@ from semantic_kernel.contents import (
 )
 from semantic_kernel.functions import kernel_function
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 if sys.version_info >= (3, 12):
     pass  # pragma: no cover
 else:
@@ -129,6 +125,9 @@ _sk_new_message = True
 
 def _sk_streaming_callback(message: StreamingChatMessageContent, is_final: bool) -> None:
     """Display SK agent messages as they stream."""
+
+# Load environment variables from .env file
+load_dotenv()
     global _sk_new_message
     if _sk_new_message:
         print(f"{message.name}: ", end="", flush=True)

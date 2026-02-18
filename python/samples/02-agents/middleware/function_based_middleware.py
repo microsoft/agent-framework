@@ -15,10 +15,6 @@ from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Function-based MiddlewareTypes Example
 
@@ -33,6 +29,9 @@ Function-based middleware is ideal for simple, stateless operations and provides
 lightweight approach compared to class-based middleware. Both agent and function middleware
 can be implemented as async functions that accept context and call_next parameters.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.

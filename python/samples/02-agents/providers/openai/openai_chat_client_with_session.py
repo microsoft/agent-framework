@@ -8,16 +8,15 @@ from agent_framework import Agent, AgentSession, InMemoryHistoryProvider, tool
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 OpenAI Chat Client with Session Management Example
 
 This sample demonstrates session management with OpenAI Chat Client, showing
 conversation sessions and message history preservation across interactions.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

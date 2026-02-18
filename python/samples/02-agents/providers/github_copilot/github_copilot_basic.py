@@ -25,15 +25,14 @@ from dotenv import load_dotenv
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 
-# Load environment variables from .env file
-load_dotenv()
-
-
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
 ) -> str:
     """Get the weather for a given location."""
+
+# Load environment variables from .env file
+load_dotenv()
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}C."
 

@@ -8,10 +8,6 @@ from agent_framework import FunctionInvocationContext, function_middleware, tool
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Runtime Context Delegation Patterns
 
@@ -44,6 +40,9 @@ Key Concepts:
 - Closure: Functions capturing variables from outer scope
 - kwargs Propagation: Automatic forwarding of runtime context through delegation chains
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class SessionContextContainer:

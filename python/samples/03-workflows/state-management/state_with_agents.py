@@ -21,10 +21,6 @@ from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 from typing_extensions import Never
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Sample: Workflow state with agents and conditional routing.
 
@@ -44,6 +40,9 @@ Prerequisites:
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Familiarity with WorkflowBuilder, executors, conditional edges, and streaming runs.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 EMAIL_STATE_PREFIX = "email:"
 CURRENT_EMAIL_ID_KEY = "current_email_id"

@@ -5,10 +5,6 @@ import asyncio
 from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 OpenAI Chat Client with Local MCP Example
 
@@ -19,6 +15,9 @@ The Agent Framework now supports enhanced metadata extraction from MCP tool
 results, including error states, token usage, costs, and other arbitrary
 metadata through the _meta field of CallToolResult objects.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def mcp_tools_on_run_level() -> None:

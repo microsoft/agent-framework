@@ -5,10 +5,6 @@ import json
 
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 OpenAI Chat Client Runtime JSON Schema Example
 
@@ -16,6 +12,9 @@ Demonstrates structured outputs when the schema is only known at runtime.
 Uses additional_chat_options to pass a JSON Schema payload directly to OpenAI
 without defining a Pydantic model up front.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 runtime_schema = {

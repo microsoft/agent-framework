@@ -12,10 +12,6 @@ from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import GroupChatBuilder, GroupChatState
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Sample: Group Chat with a round-robin speaker selector
 
@@ -26,6 +22,9 @@ What it does:
 Prerequisites:
 - OpenAI environment variables configured for OpenAIChatClient
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def round_robin_selector(state: GroupChatState) -> str:

@@ -11,16 +11,15 @@ from azure.ai.agents.aio import AgentsClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure AI Agent with Existing Session Example
 
 This sample demonstrates working with pre-existing conversation sessions
 by providing session IDs for session reuse patterns.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

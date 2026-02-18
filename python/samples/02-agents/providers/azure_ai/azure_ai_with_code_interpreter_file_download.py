@@ -13,10 +13,6 @@ from agent_framework import (
 from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure AI V2 Code Interpreter File Download Sample
 
@@ -29,6 +25,9 @@ when code interpreter generates text files. It shows:
 Note: Code interpreter generates files in containers, which require both
 file_id and container_id to download via client.containers.files.content.retrieve().
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 QUERY = (
     "Write a simple Python script that creates a text file called 'sample.txt' containing "

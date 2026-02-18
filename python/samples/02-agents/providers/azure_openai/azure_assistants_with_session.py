@@ -9,16 +9,15 @@ from agent_framework.azure import AzureOpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure OpenAI Assistants with Session Management Example
 
 This sample demonstrates session management with Azure OpenAI Assistants, comparing
 automatic session creation with explicit session management for persistent context.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

@@ -4,16 +4,15 @@ import asyncio
 
 from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Chat Response Cancellation Example
 
 Demonstrates proper cancellation of streaming chat responses during execution.
 Shows asyncio task cancellation and resource cleanup techniques.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

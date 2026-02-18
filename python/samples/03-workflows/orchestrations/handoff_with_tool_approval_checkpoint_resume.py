@@ -19,10 +19,6 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Sample: Handoff Workflow with Tool Approvals + Checkpoint Resume
 
@@ -50,6 +46,9 @@ Prerequisites:
 - Azure CLI authentication (az login).
 - Environment variables configured for AzureOpenAIResponsesClient.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 CHECKPOINT_DIR = Path(__file__).parent / "tmp" / "handoff_checkpoints"
 CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)

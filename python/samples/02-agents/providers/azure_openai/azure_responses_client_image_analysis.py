@@ -6,16 +6,15 @@ from agent_framework import Content
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure OpenAI Responses Client with Image Analysis Example
 
 This sample demonstrates using Azure OpenAI Responses for image analysis and vision tasks,
 showing multi-modal messages combining text and image content.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main():

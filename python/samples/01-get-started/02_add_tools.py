@@ -11,9 +11,6 @@ from azure.identity import AzureCliCredential
 from pydantic import Field
 from dotenv import load_dotenv
 
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Add Tools — Give your agent a function tool
 
@@ -24,6 +21,9 @@ Environment variables:
   AZURE_AI_PROJECT_ENDPOINT        — Your Azure AI Foundry project endpoint
   AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME — Model deployment name (e.g. gpt-4o)
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # <define_tool>

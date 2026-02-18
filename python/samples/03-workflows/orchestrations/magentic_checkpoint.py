@@ -18,10 +18,6 @@ from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import MagenticBuilder, MagenticPlanReviewRequest
 from azure.identity._credentials import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Sample: Magentic Orchestration + Checkpointing
 
@@ -40,6 +36,9 @@ Concepts highlighted here:
 Prerequisites:
 - OpenAI environment variables configured for `OpenAIChatClient`.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 TASK = (
     "Draft a concise internal brief describing how our research and implementation teams should collaborate "

@@ -7,10 +7,6 @@ from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIResponsesClient
 from httpx import AsyncClient
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 MCP Authentication Example
 
@@ -20,6 +16,9 @@ For more authentication examples including OAuth 2.0 flows, see:
 - https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/clients/simple-auth-client
 - https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/servers/simple-auth
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def api_key_auth_example() -> None:

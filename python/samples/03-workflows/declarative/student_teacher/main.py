@@ -27,10 +27,6 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.declarative import WorkflowFactory
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 STUDENT_INSTRUCTIONS = """You are a curious math student working on understanding mathematical concepts.
 When given a problem:
 1. Think through it step by step
@@ -55,6 +51,9 @@ Focus on building understanding, not just getting the right answer."""
 
 async def main() -> None:
     """Run the student-teacher workflow with real Azure AI agents."""
+
+# Load environment variables from .env file
+load_dotenv()
     # Create chat client
     client = AzureOpenAIResponsesClient(
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],

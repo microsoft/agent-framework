@@ -25,12 +25,11 @@ from dotenv import load_dotenv
 
 # Approach 1: Pydantic model as explicit schema
 
-# Load environment variables from .env file
-load_dotenv()
-
-
 class WeatherInput(BaseModel):
     """Input schema for the weather tool."""
+
+# Load environment variables from .env file
+load_dotenv()
 
     location: Annotated[str, Field(description="The city name to get weather for")]
     unit: Annotated[str, Field(description="Temperature unit: celsius or fahrenheit")] = "celsius"

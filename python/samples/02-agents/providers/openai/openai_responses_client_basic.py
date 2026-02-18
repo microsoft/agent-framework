@@ -18,16 +18,15 @@ from agent_framework import (
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 OpenAI Responses Client Basic Example
 
 This sample demonstrates basic usage of OpenAIResponsesClient for structured
 response generation, showing both streaming and non-streaming responses.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @chat_middleware

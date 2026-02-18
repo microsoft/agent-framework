@@ -27,9 +27,6 @@ from pydantic import BaseModel, ValidationError
 from dotenv import load_dotenv
 
 # Configure logging
-
-# Load environment variables from .env file
-load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -40,6 +37,9 @@ EMAIL_AGENT_NAME = "EmailAssistantAgent"
 
 class SpamDetectionResult(BaseModel):
     """Result from spam detection agent."""
+
+# Load environment variables from .env file
+load_dotenv()
 
     is_spam: bool
     reason: str

@@ -39,13 +39,11 @@ from dotenv import load_dotenv
 # Please set OPENAI_API_KEY to use the OpenAI vectorizer.
 # For chat responses, also set AZURE_AI_PROJECT_ENDPOINT and AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
 
+def create_chat_client() -> AzureOpenAIResponsesClient:
+    """Create an Azure OpenAI Responses client using a Foundry project endpoint."""
 
 # Load environment variables from .env file
 load_dotenv()
-
-
-def create_chat_client() -> AzureOpenAIResponsesClient:
-    """Create an Azure OpenAI Responses client using a Foundry project endpoint."""
     return AzureOpenAIResponsesClient(
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
         deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],

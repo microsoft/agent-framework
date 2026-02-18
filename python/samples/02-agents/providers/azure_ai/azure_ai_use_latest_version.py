@@ -9,10 +9,6 @@ from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure AI Agent Latest Version Example
 
@@ -20,6 +16,9 @@ This sample demonstrates how to reuse the latest version of an existing agent
 instead of creating a new agent version on each instantiation. The first call creates a new agent,
 while subsequent calls with `get_agent()` reuse the latest agent version.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

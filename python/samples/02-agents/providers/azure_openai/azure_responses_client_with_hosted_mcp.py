@@ -7,16 +7,15 @@ from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure OpenAI Responses Client with Hosted MCP Example
 
 This sample demonstrates integrating hosted Model Context Protocol (MCP) tools with
 Azure OpenAI Responses Client, including user approval workflows for function call security.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 if TYPE_CHECKING:
     from agent_framework import AgentSession, SupportsAgentRun

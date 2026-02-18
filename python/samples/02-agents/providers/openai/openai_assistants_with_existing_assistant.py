@@ -10,16 +10,15 @@ from agent_framework.openai import OpenAIAssistantProvider
 from openai import AsyncOpenAI
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 OpenAI Assistants with Existing Assistant Example
 
 This sample demonstrates working with pre-existing OpenAI Assistants
 using the provider's get_agent() and as_agent() methods.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.

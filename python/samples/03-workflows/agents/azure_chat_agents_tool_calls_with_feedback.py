@@ -27,10 +27,6 @@ from azure.identity import AzureCliCredential
 from pydantic import Field
 from typing_extensions import Never
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Sample: Tool-enabled agents with human feedback
 
@@ -52,6 +48,9 @@ Prerequisites:
 - Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
 - Authentication via azure-identity. Run `az login` before executing.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

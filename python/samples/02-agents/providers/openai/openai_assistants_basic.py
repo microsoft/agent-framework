@@ -10,16 +10,15 @@ from agent_framework.openai import OpenAIAssistantProvider
 from openai import AsyncOpenAI
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 OpenAI Assistants Basic Example
 
 This sample demonstrates basic usage of OpenAIAssistantProvider with automatic
 assistant lifecycle management, showing both streaming and non-streaming responses.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

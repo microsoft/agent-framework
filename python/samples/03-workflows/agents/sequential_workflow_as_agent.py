@@ -7,10 +7,6 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Sample: Build a sequential workflow orchestration and wrap it as an agent.
 
@@ -29,6 +25,9 @@ Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - Azure OpenAI access configured for AzureOpenAIResponsesClient (use az login + env vars)
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

@@ -5,16 +5,15 @@ import asyncio
 from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 OpenAI Responses Client with Local MCP Example
 
 This sample demonstrates integrating local Model Context Protocol (MCP) tools with
 OpenAI Responses Client for direct response generation with external capabilities.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def streaming_with_mcp(show_raw_stream: bool = False) -> None:

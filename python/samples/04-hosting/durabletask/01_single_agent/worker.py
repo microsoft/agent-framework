@@ -22,9 +22,6 @@ from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from dotenv import load_dotenv
 
 # Configure logging
-
-# Load environment variables from .env file
-load_dotenv()
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -35,6 +32,9 @@ def create_joker_agent() -> Agent:
     Returns:
         Agent: The configured Joker agent
     """
+
+# Load environment variables from .env file
+load_dotenv()
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="Joker",
         instructions="You are good at telling jokes.",

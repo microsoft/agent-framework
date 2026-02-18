@@ -70,9 +70,6 @@ from dotenv import load_dotenv
 # ============================================================================
 
 # Server configuration
-
-# Load environment variables from .env file
-load_dotenv()
 SERVER_HOST = "127.0.0.1"  # Bind to localhost only for security (local dev)
 SERVER_PORT = 8001
 SERVER_BASE_URL = f"http://localhost:{SERVER_PORT}"
@@ -105,6 +102,9 @@ logger = logging.getLogger(__name__)
 
 class WeatherResponse(str):
     """A string response that also carries WeatherData for widget creation."""
+
+# Load environment variables from .env file
+load_dotenv()
 
     def __new__(cls, text: str, weather_data: WeatherData):
         instance = super().__new__(cls, text)

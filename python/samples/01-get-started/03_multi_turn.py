@@ -7,9 +7,6 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Multi-Turn Conversations — Use AgentSession to maintain context
 
@@ -20,6 +17,9 @@ Environment variables:
   AZURE_AI_PROJECT_ENDPOINT        — Your Azure AI Foundry project endpoint
   AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME — Model deployment name (e.g. gpt-4o)
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

@@ -6,16 +6,15 @@ from agent_framework import AgentResponse
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import BaseModel
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 OpenAI Responses Client with Structured Output Example
 
 This sample demonstrates using structured output capabilities with OpenAI Responses Client,
 showing Pydantic model integration for type-safe response parsing and data extraction.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class OutputStruct(BaseModel):

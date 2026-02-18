@@ -11,16 +11,15 @@ from azure.identity import AzureCliCredential, get_bearer_token_provider
 from openai import AsyncAzureOpenAI
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure OpenAI Assistants with Existing Assistant Example
 
 This sample demonstrates working with pre-existing Azure OpenAI Assistants
 using existing assistant IDs rather than creating new ones.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

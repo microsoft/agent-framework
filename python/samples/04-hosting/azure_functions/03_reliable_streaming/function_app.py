@@ -32,10 +32,6 @@ from azure.identity import AzureCliCredential
 from redis_stream_response_handler import RedisStreamResponseHandler, StreamChunk
 from tools import get_local_events, get_weather_forecast
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Configuration
@@ -49,6 +45,9 @@ async def get_stream_handler() -> RedisStreamResponseHandler:
     This avoids event loop conflicts in Azure Functions by creating
     a fresh Redis client in the current event loop context.
     """
+
+# Load environment variables from .env file
+load_dotenv()
     # Create a new Redis client in the current event loop
     redis_client = aioredis.from_url(
         REDIS_CONNECTION_STRING,

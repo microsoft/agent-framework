@@ -16,10 +16,6 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Sample: Agents with a shared thread in a workflow
 
@@ -42,6 +38,9 @@ Prerequisites:
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with agents, workflows, and executors in the agent framework.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @executor(id="intercept_agent_response")

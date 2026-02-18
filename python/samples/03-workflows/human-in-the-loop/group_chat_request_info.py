@@ -38,13 +38,11 @@ from agent_framework.orchestrations import AgentRequestInfoResponse, GroupChatBu
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str, AgentRequestInfoResponse] | None:
+    """Process events from the workflow stream to capture human feedback requests."""
 
 # Load environment variables from .env file
 load_dotenv()
-
-
-async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str, AgentRequestInfoResponse] | None:
-    """Process events from the workflow stream to capture human feedback requests."""
 
     requests: dict[str, AgentExecutorResponse] = {}
     async for event in stream:

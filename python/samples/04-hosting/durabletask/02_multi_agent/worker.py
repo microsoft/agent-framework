@@ -24,9 +24,6 @@ from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from dotenv import load_dotenv
 
 # Configure logging
-
-# Load environment variables from .env file
-load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -38,6 +35,9 @@ MATH_AGENT_NAME = "MathAgent"
 @tool
 def get_weather(location: str) -> dict[str, Any]:
     """Get current weather for a location."""
+
+# Load environment variables from .env file
+load_dotenv()
     logger.info(f"🔧 [TOOL CALLED] get_weather(location={location})")
     result = {
         "location": location,

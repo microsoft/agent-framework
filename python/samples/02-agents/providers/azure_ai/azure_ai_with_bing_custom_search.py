@@ -5,10 +5,6 @@ import os
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Azure AI Agent with Bing Custom Search Example
 
@@ -20,6 +16,9 @@ Prerequisites:
 2. Ensure you have a Bing Custom Search connection configured in your Azure AI project
    and set BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID and BING_CUSTOM_SEARCH_INSTANCE_NAME environment variables.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

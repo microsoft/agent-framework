@@ -15,10 +15,6 @@ from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from pydantic import Field
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Built-in Chat Clients Example
 
@@ -38,6 +34,9 @@ Select one of these client names:
 - azure_openai_assistants
 - azure_ai_agent
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 ClientName = Literal[
     "openai_chat",

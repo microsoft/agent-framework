@@ -43,10 +43,6 @@ from dotenv import load_dotenv
 # Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py
 # and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 
-# Load environment variables from .env file
-load_dotenv()
-
-
 @tool(approval_mode="never_require")
 def search_flights(origin_airport_code: str, destination_airport_code: str, detailed: bool = False) -> str:
     """Simulated flight-search tool to demonstrate tool memory.
@@ -55,6 +51,9 @@ def search_flights(origin_airport_code: str, destination_airport_code: str, deta
     by the Redis context provider. We later ask the agent to recall facts from
     these tool results to verify memory is working as expected.
     """
+
+# Load environment variables from .env file
+load_dotenv()
     # Minimal static catalog used to simulate a tool's structured output
     flights = {
         ("JFK", "LAX"): {

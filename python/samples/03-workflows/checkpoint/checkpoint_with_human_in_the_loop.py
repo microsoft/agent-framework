@@ -10,10 +10,6 @@ from typing import Any
 
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
@@ -65,6 +61,9 @@ Typical pause/resume flow
    Doing so applies the answer immediately on resume, so the system does **not**
    re-emit the same ``.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Directory used for the sample's temporary checkpoint files. We isolate the
 # demo artefacts so that repeated runs do not collide with other samples and so

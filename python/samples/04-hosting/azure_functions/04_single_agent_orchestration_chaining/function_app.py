@@ -20,10 +20,6 @@ from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 logger = logging.getLogger(__name__)
 
 # 1. Define the agent name used across the orchestration.
@@ -33,6 +29,9 @@ WRITER_AGENT_NAME = "WriterAgent"
 # 2. Create the writer agent that will be invoked twice within the orchestration.
 def _create_writer_agent() -> Any:
     """Create the writer agent with the same persona as the C# sample."""
+
+# Load environment variables from .env file
+load_dotenv()
 
     instructions = (
         "You refine short pieces of text. When given an initial sentence you enhance it;\n"

@@ -15,16 +15,15 @@ import os
 from agent_framework.microsoft import CopilotStudioAgent, acquire_token
 from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Copilot Studio Agent with Explicit Settings Example
 
 This sample demonstrates explicit configuration of CopilotStudioAgent with manual
 token management and custom ConnectionSettings for production environments.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Environment variables needed:
 # COPILOTSTUDIOAGENT__ENVIRONMENTID - Environment ID where your copilot is deployed

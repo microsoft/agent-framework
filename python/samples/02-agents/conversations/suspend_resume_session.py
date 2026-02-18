@@ -7,10 +7,6 @@ from agent_framework.azure import AzureAIAgentClient
 from agent_framework.openai import OpenAIChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
-
-
-# Load environment variables from .env file
-load_dotenv()
 """
 Session Suspend and Resume Example
 
@@ -18,6 +14,9 @@ This sample demonstrates how to suspend and resume conversation sessions, compar
 service-managed sessions (Azure AI) with in-memory sessions (OpenAI) for persistent
 conversation state across sessions.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def suspend_resume_service_managed_session() -> None:
