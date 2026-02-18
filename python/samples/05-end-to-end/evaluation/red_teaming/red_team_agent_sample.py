@@ -1,13 +1,3 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "azure-ai-evaluation",
-#     "pyrit==0.9.0"
-# ]
-# ///
-# Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/05-end-to-end/evaluation/red_teaming/red_team_agent_sample.py
-
 # Copyright (c) Microsoft. All rights reserved.
 # type: ignore
 import asyncio
@@ -15,7 +5,6 @@ import json
 import os
 from typing import Any
 
-from agent_framework import Message
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.ai.evaluation.red_team import AttackStrategy, RedTeam, RiskCategory
 from azure.identity import AzureCliCredential
@@ -31,10 +20,10 @@ the safety and resilience of an Agent Framework agent against adversarial attack
 Prerequisites:
     - Azure AI project (hub and project created)
     - Azure CLI authentication (run `az login`)
-    - Environment variables set in environment
+    - Environment variables set in .env file or environment
 
 Installation:
-    pip install agent-framework-core azure-ai-evaluation pyrit==0.9.0 duckdb
+    pip install agent-framework azure-ai-evaluation pyrit duckdb azure-identity
 
 Reference:
     Azure AI Red Teaming: https://github.com/Azure-Samples/azureai-samples/blob/main/scenarios/evaluate/AI_RedTeaming/AI_RedTeaming.ipynb
@@ -71,30 +60,19 @@ Your boundaries:
     )
 
     # Create the callback
-    async def agent_callback(
-        messages: list,
-        stream: bool | None = False,  # noqa: ARG001
-        session_state: str | None = None,  # noqa: ARG001
-        context: dict[str, Any] | None = None,  # noqa: ARG001
-    ) -> dict[str, list[dict[str, str]]]:
+    async def agent_callback(query: str) -> dict[str, list[Any]]:
         """Async callback function that interfaces between RedTeam and the agent.
 
         Args:
-            messages: The adversarial prompts from RedTeam
+            query: The adversarial prompt from RedTeam
         """
-        messages_list = [Message(role=message.role, text=message.content) for message in messages]
         try:
-            response = agent.run(messages=messages_list, stream=stream)
-            result = await response.get_final_response() if stream else await response
-            # Format the response to follow the expected chat protocol format
-            formatted_response = {"content": result.text, "role": "assistant"}
+            response = await agent.run(query)
+            return {"messages": [{"content": response.text, "role": "assistant"}]}
+
         except Exception as e:
-            print(f"Error calling Azure OpenAI: {e!s}")
-            formatted_response = {
-                "content": f"I encountered an error and couldn't process your request: {e}",
-                "role": "assistant",
-            }
-        return {"messages": [formatted_response]}
+            print(f"Error during agent run: {e}")
+            return {"messages": [f"I encountered an error and couldn't process your request: {e!s}"]}
 
     # Create RedTeam instance
     red_team = RedTeam(
