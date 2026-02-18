@@ -79,12 +79,12 @@ internal sealed class FanInEdgeRunner(IRunnerContext runContext, FanInEdgeData e
 
                 Type? ResolveEnvelopeType(MessageEnvelope messageEnvelope)
                 {
-                    if (envelope.Message is PortableValue portableValue)
+                    if (messageEnvelope.Message is PortableValue portableValue)
                     {
                         return protocol.SendTypeTranslator.MapTypeId(portableValue.TypeId);
                     }
 
-                    return envelope.Message.GetType();
+                    return messageEnvelope.Message.GetType();
                 }
             }
         }

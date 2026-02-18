@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
@@ -27,9 +29,24 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 
 internal sealed class MessageRouter
 {
-    private readonly HashSet<Type> _interfaceHandlers = new();
-    private readonly Dictionary<Type, MessageHandlerF> _typedHandlers;
-    private readonly Dictionary<TypeId, Type> _runtimeTypeMap = new();
+    private readonly Type[] _interfaceHandlers;
+    //private readonly Dictionary<Type, MessageHandlerF> _typedHandlers;
+    //private readonly Dictionary<TypeId, Type> _runtimeTypeMap = new();
+
+    private readonly ConcurrentDictionary<TypeId, TypeHandlingInfo> _typeInfos = new();
+
+    private record TypeHandlingInfo(Type RuntimeType, MessageHandlerF Handler)
+    {
+        [Conditional("DEBUG")]
+        private void AssertTypeCovaraince(Type expectedDerviedType) => Debug.Assert(this.RuntimeType.IsAssignableFrom(expectedDerviedType));
+
+        public TypeHandlingInfo ForDerviedType(Type derivedType)
+        {
+            this.AssertTypeCovaraince(derivedType);
+
+            return this with { RuntimeType = derivedType };
+        }
+    }
 
     private readonly CatchAllF? _catchAllFunc;
 
@@ -37,18 +54,18 @@ internal sealed class MessageRouter
     {
         Throw.IfNull(handlers);
 
-        this._typedHandlers = handlers;
-
+        HashSet<Type> interfaceHandlers = new();
         foreach (Type type in handlers.Keys)
         {
-            this._runtimeTypeMap[new(type)] = type;
+            this._typeInfos[new(type)] = new(type, handlers[type]);
 
             if (type.IsInterface)
             {
-                this._interfaceHandlers.Add(type);
+                interfaceHandlers.Add(type);
             }
         }
 
+        this._interfaceHandlers = interfaceHandlers.ToArray();
         this._catchAllFunc = catchAllFunc;
 
         this.IncomingTypes = [.. handlers.Keys];
@@ -69,27 +86,28 @@ internal sealed class MessageRouter
     {
         for (Type? candidateType = messageType; candidateType != null; candidateType = candidateType.BaseType)
         {
-            if (this._typedHandlers.TryGetValue(candidateType, out MessageHandlerF? handler))
+            TypeId candidateTypeId = new(candidateType);
+            if (this._typeInfos.TryGetValue(candidateTypeId, out TypeHandlingInfo? handlingInfo))
             {
                 if (candidateType != messageType)
                 {
-                    // Cache the handler for future lookups.
-                    this._typedHandlers[messageType] = handler;
-                    this._runtimeTypeMap[new TypeId(messageType)] = candidateType;
+                    TypeHandlingInfo actualInfo = handlingInfo.ForDerviedType(messageType);
+                    this._typeInfos.TryAdd(new(messageType), actualInfo);
                 }
 
-                return handler;
+                return handlingInfo.Handler;
             }
-            else if (this._interfaceHandlers.Count > 0)
+            else if (this._interfaceHandlers.Length > 0)
             {
                 foreach (Type interfaceType in this._interfaceHandlers.Where(it => it.IsAssignableFrom(candidateType)))
                 {
-                    handler = this._typedHandlers[interfaceType];
-                    this._typedHandlers[messageType] = handler;
+                    handlingInfo = this._typeInfos[new(interfaceType)];
 
-                    // TODO: This could cause some consternation with Checkpointing (need to ensure we surface errors well)
-                    this._runtimeTypeMap[new TypeId(messageType)] = interfaceType;
-                    return handler;
+                    // By definition we do not have a pre-calculated handler information for this candidateType, otherwise
+                    // we would have found it above. This also means we do not have a corresponding entry for the messageType.
+                    this._typeInfos.TryAdd(new(messageType), handlingInfo.ForDerviedType(messageType));
+
+                    return handlingInfo.Handler;
                 }
             }
         }
@@ -105,10 +123,10 @@ internal sealed class MessageRouter
 
         PortableValue? portableValue = message as PortableValue;
         if (portableValue != null &&
-            this._runtimeTypeMap.TryGetValue(portableValue.TypeId, out Type? runtimeType))
+            this._typeInfos.TryGetValue(portableValue.TypeId, out TypeHandlingInfo? handlingInfo))
         {
             // If we found a runtime type, we can use it
-            message = portableValue.AsType(runtimeType) ?? message;
+            message = portableValue.AsType(handlingInfo.RuntimeType) ?? message;
         }
 
         try

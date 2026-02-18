@@ -47,13 +47,6 @@ internal sealed class UppercaseExecutor() : Executor<string, string>(nameof(Uppe
         message.ToUpperInvariant();
 }
 
-//internal partial sealed class UppercaseExecutorEx() : Executor(nameof(UppercaseExecutorEx), declareCrossRunShareable: true)
-//{
-//    [MessageHandler(Send = [typeof(string)])]
-//    public async ValueTask<string> MyHandlerMethod(string message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
-//        message.ToUpperInvariant();
-//}
-
 internal sealed class ReverseTextExecutor() : Executor("ReverseTextExecutor", declareCrossRunShareable: true)
 {
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)

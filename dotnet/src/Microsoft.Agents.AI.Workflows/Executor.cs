@@ -62,7 +62,7 @@ internal sealed class DelayedExternalRequestContext : IExternalRequestContext
 internal sealed class MessageTypeTranslator
 {
     private readonly Dictionary<TypeId, Type> _typeLookupMap = [];
-    private readonly Dictionary<Type, TypeId> _delcaredTypeMap = [];
+    private readonly Dictionary<Type, TypeId> _declaredTypeMap = [];
 
     // The types that can always be sent; this is a very inelegant solution to the following problem:
     //   Even with code analysis it is impossible to statically know all of the types that get sent via SendMessage, because
@@ -92,7 +92,7 @@ internal sealed class MessageTypeTranslator
             }
 
             this._typeLookupMap[typeId] = type;
-            this._delcaredTypeMap[type] = typeId;
+            this._declaredTypeMap[type] = typeId;
         }
     }
 
@@ -102,12 +102,12 @@ internal sealed class MessageTypeTranslator
         // the polymorphism transparently to the framework, or be expecting to deal with the appropriate truncation.
         for (Type? candidateType = messageType; candidateType != null; candidateType = candidateType.BaseType)
         {
-            if (this._delcaredTypeMap.TryGetValue(candidateType, out TypeId? declaredTypeId))
+            if (this._declaredTypeMap.TryGetValue(candidateType, out TypeId? declaredTypeId))
             {
                 if (candidateType != messageType)
                 {
                     // Add an entry for the derived type to speed up future lookups.
-                    this._delcaredTypeMap[messageType] = declaredTypeId;
+                    this._declaredTypeMap[messageType] = declaredTypeId;
                 }
 
                 return declaredTypeId;
@@ -131,10 +131,8 @@ internal sealed class ExecutorProtocol(MessageRouter router, ISet<Type> sendType
 
     internal MessageRouter Router => router;
 
-    //public bool CanHandle(TypeId typeId) => router.CanHandle(typeId);
     public bool CanHandle(Type type) => router.CanHandle(type);
 
-    //public bool CanOutput(TypeId typeId) => this._yieldTypes.Contains(typeId);
     public bool CanOutput(Type type) => this._yieldTypes.Contains(new(type));
 
     public ProtocolDescriptor Describe() => new(this.Router.IncomingTypes, yieldTypes, sendTypes, this.Router.HasCatchAll);
@@ -379,7 +377,8 @@ public abstract class Executor<TInput, TOutput>(string id, ExecutorOptions? opti
         Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> handlerDelegate = this.HandleAsync;
 
         return protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler(handlerDelegate))
-                              .AddMethodAttributeTypes(handlerDelegate.Method);
+                              .AddMethodAttributeTypes(handlerDelegate.Method)
+                              .AddClassAttributeTypes(this.GetType());
     }
 
     /// <inheritdoc/>

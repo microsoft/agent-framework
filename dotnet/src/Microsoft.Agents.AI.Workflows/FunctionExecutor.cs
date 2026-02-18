@@ -48,14 +48,13 @@ public class FunctionExecutor<TInput>(string id,
     }
 
     /// <inheritdoc/>
-    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
-    {
-        (IEnumerable<Type> attributeSentTypes, IEnumerable<Type> attributeYieldTypes) = handlerAsync.Method.GetAttributeTypes();
-
-        return base.ConfigureProtocol(protocolBuilder)
-               .SendsMessageTypes(attributeSentTypes.Concat(sentMessageTypes ?? []))
-               .YieldsOutputTypes(attributeYieldTypes.Concat(outputTypes ?? []));
-    }
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+        base.ConfigureProtocol(protocolBuilder)
+            // We have to register the delegate handlers here because the base class gets the RunActionAsync local function in
+            // WrapAction, which cannot have the right annotations.
+            .AddDelegateAttributeTypes(handlerAsync)
+            .SendsMessageTypes(sentMessageTypes ?? [])
+            .YieldsOutputTypes(outputTypes ?? []);
 
     /// <inheritdoc/>
     public override ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken) => handlerAsync(message, context, cancellationToken);
@@ -109,10 +108,13 @@ public class FunctionExecutor<TInput, TOutput>(string id,
     }
 
     /// <inheritdoc/>
-    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
-        => base.ConfigureProtocol(protocolBuilder)
-               .SendsMessageTypes(sentMessageTypes ?? [])
-               .YieldsOutputTypes(outputTypes ?? []);
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+        base.ConfigureProtocol(protocolBuilder)
+            // We have to register the delegate handlers here because the base class gets the RunFuncAsync local function in
+            // WrapFunc, which cannot have the right annotations.
+            .AddDelegateAttributeTypes(handlerAsync)
+            .SendsMessageTypes(sentMessageTypes ?? [])
+            .YieldsOutputTypes(outputTypes ?? []);
 
     /// <inheritdoc/>
     public override ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken) => handlerAsync(message, context, cancellationToken);

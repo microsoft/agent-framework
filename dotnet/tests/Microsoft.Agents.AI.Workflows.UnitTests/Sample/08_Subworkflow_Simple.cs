@@ -14,8 +14,6 @@ namespace Microsoft.Agents.AI.Workflows.Sample;
 internal sealed record class TextProcessingRequest(string Text, string TaskId);
 internal sealed record class TextProcessingResult(string TaskId, string Text, int WordCount, int ChatCount);
 
-//internal sealed class AllTasksCompletedEvent(IEnumerable<TextProcessingResult> results) : WorkflowEvent(results);
-
 internal static partial class Step8EntryPoint
 {
     public static List<string> TextsToProcess => [
