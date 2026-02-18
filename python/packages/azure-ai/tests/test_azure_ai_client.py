@@ -1778,3 +1778,317 @@ def test_get_image_generation_tool_with_options() -> None:
 
 
 # endregion
+
+
+# region Azure AI Search Citation Enhancement Tests
+
+
+def test_extract_azure_search_urls_with_dict_items(mock_project_client: MagicMock) -> None:
+    """Test _extract_azure_search_urls with dict-style output items."""
+    client = create_test_azure_ai_client(mock_project_client)
+    output_items = [
+        {
+            "type": "azure_ai_search_call",
+            "arguments": '{"query":"test"}',
+        },
+        {
+            "type": "azure_ai_search_call_output",
+            "output": {
+                "documents": [{"id": "1", "url": "https://search.example.com/"}],
+                "get_urls": [
+                    "https://search.example.com/indexes/idx/docs/1?api-version=2024-07-01",
+                    "https://search.example.com/indexes/idx/docs/2?api-version=2024-07-01",
+                ],
+            },
+        },
+        {"type": "message", "content": [{"type": "output_text", "text": "hello"}]},
+    ]
+    urls = client._extract_azure_search_urls(output_items)
+    assert len(urls) == 2
+    assert urls[0] == "https://search.example.com/indexes/idx/docs/1?api-version=2024-07-01"
+    assert urls[1] == "https://search.example.com/indexes/idx/docs/2?api-version=2024-07-01"
+
+
+def test_extract_azure_search_urls_with_object_items(mock_project_client: MagicMock) -> None:
+    """Test _extract_azure_search_urls with object-style output items."""
+    client = create_test_azure_ai_client(mock_project_client)
+    mock_output = MagicMock()
+    mock_output.get_urls = ["https://example.com/doc/1", "https://example.com/doc/2"]
+    mock_item = MagicMock()
+    mock_item.type = "azure_ai_search_call_output"
+    mock_item.output = mock_output
+
+    urls = client._extract_azure_search_urls([mock_item])
+    assert urls == ["https://example.com/doc/1", "https://example.com/doc/2"]
+
+
+def test_extract_azure_search_urls_no_search_items(mock_project_client: MagicMock) -> None:
+    """Test _extract_azure_search_urls with no search output items."""
+    client = create_test_azure_ai_client(mock_project_client)
+    output_items = [{"type": "message", "content": []}]
+    urls = client._extract_azure_search_urls(output_items)
+    assert urls == []
+
+
+def test_get_search_doc_url_valid(mock_project_client: MagicMock) -> None:
+    """Test _get_search_doc_url with valid doc_N title."""
+    client = create_test_azure_ai_client(mock_project_client)
+    get_urls = ["https://example.com/doc/0", "https://example.com/doc/1", "https://example.com/doc/2"]
+
+    assert client._get_search_doc_url("doc_0", get_urls) == "https://example.com/doc/0"
+    assert client._get_search_doc_url("doc_1", get_urls) == "https://example.com/doc/1"
+    assert client._get_search_doc_url("doc_2", get_urls) == "https://example.com/doc/2"
+
+
+def test_get_search_doc_url_out_of_range(mock_project_client: MagicMock) -> None:
+    """Test _get_search_doc_url with out-of-range index."""
+    client = create_test_azure_ai_client(mock_project_client)
+    get_urls = ["https://example.com/doc/0"]
+    assert client._get_search_doc_url("doc_5", get_urls) is None
+
+
+def test_get_search_doc_url_no_match(mock_project_client: MagicMock) -> None:
+    """Test _get_search_doc_url with non-matching title."""
+    client = create_test_azure_ai_client(mock_project_client)
+    get_urls = ["https://example.com/doc/0"]
+    assert client._get_search_doc_url("some_title", get_urls) is None
+    assert client._get_search_doc_url(None, get_urls) is None
+    assert client._get_search_doc_url("doc_0", []) is None
+
+
+def test_enrich_annotations_with_search_urls(mock_project_client: MagicMock) -> None:
+    """Test _enrich_annotations_with_search_urls enriches citation annotations."""
+    client = create_test_azure_ai_client(mock_project_client)
+    get_urls = [
+        "https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01",
+        "https://search.example.com/indexes/idx/docs/41?api-version=2024-07-01",
+    ]
+
+    content = Content.from_text(text="test response")
+    content.annotations = [
+        {
+            "type": "citation",
+            "title": "doc_0",
+            "url": "https://search.example.com/",
+        },
+        {
+            "type": "citation",
+            "title": "doc_1",
+            "url": "https://search.example.com/",
+        },
+    ]
+
+    client._enrich_annotations_with_search_urls([content], get_urls)
+
+    assert content.annotations[0]["additional_properties"]["get_url"] == get_urls[0]
+    assert content.annotations[1]["additional_properties"]["get_url"] == get_urls[1]
+
+
+def test_enrich_annotations_no_match(mock_project_client: MagicMock) -> None:
+    """Test _enrich_annotations_with_search_urls with non-matching titles."""
+    client = create_test_azure_ai_client(mock_project_client)
+    get_urls = ["https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01"]
+
+    content = Content.from_text(text="test response")
+    content.annotations = [
+        {
+            "type": "citation",
+            "title": "some_title",
+            "url": "https://search.example.com/",
+        },
+    ]
+
+    client._enrich_annotations_with_search_urls([content], get_urls)
+    assert "additional_properties" not in content.annotations[0] or "get_url" not in content.annotations[0].get(
+        "additional_properties", {}
+    )
+
+
+def test_enrich_annotations_empty_get_urls(mock_project_client: MagicMock) -> None:
+    """Test _enrich_annotations_with_search_urls with empty get_urls."""
+    client = create_test_azure_ai_client(mock_project_client)
+    content = Content.from_text(text="test")
+    content.annotations = [{"type": "citation", "title": "doc_0", "url": "https://example.com/"}]
+
+    # Should not raise or modify
+    client._enrich_annotations_with_search_urls([content], [])
+    assert "additional_properties" not in content.annotations[0]
+
+
+def test_parse_response_from_openai_with_search_citations(mock_project_client: MagicMock) -> None:
+    """Test _parse_response_from_openai enriches url_citation annotations with search URLs."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    # Build a mock OpenAI response with azure_ai_search_call_output and message with url_citation
+    mock_search_output = MagicMock()
+    mock_search_output.type = "azure_ai_search_call_output"
+    mock_search_output_data = MagicMock()
+    mock_search_output_data.get_urls = [
+        "https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01",
+        "https://search.example.com/indexes/idx/docs/41?api-version=2024-07-01",
+    ]
+    mock_search_output.output = mock_search_output_data
+
+    mock_annotation = MagicMock()
+    mock_annotation.type = "url_citation"
+    mock_annotation.title = "doc_0"
+    mock_annotation.url = "https://search.example.com/"
+    mock_annotation.start_index = 100
+    mock_annotation.end_index = 112
+
+    mock_text_content = MagicMock()
+    mock_text_content.type = "output_text"
+    mock_text_content.text = "Here is the result【5:0†source】."
+    mock_text_content.annotations = [mock_annotation]
+    mock_text_content.logprobs = None
+
+    mock_message = MagicMock()
+    mock_message.type = "message"
+    mock_message.content = [mock_text_content]
+    mock_message.role = "assistant"
+    mock_message.id = "msg_123"
+    mock_message.status = "completed"
+
+    mock_response = MagicMock(spec=OpenAIResponse)
+    mock_response.output = [mock_search_output, mock_message]
+    mock_response.id = "resp_123"
+    mock_response.created_at = 1700000000
+    mock_response.model = "gpt-4"
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.status = "completed"
+
+    result = client._parse_response_from_openai(mock_response, options={"store": False})
+
+    # Find the text content with annotations
+    assert result.messages is not None
+    found_citation = False
+    for msg in result.messages:
+        for content in msg.contents:
+            if hasattr(content, "annotations") and content.annotations:
+                for ann in content.annotations:
+                    if isinstance(ann, dict) and ann.get("title") == "doc_0":
+                        found_citation = True
+                        assert ann["additional_properties"]["get_url"] == (
+                            "https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01"
+                        )
+    assert found_citation, "Expected to find enriched citation annotation"
+
+
+def test_parse_response_from_openai_without_search_output(mock_project_client: MagicMock) -> None:
+    """Test _parse_response_from_openai works normally when no search output exists."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    mock_text_content = MagicMock()
+    mock_text_content.type = "output_text"
+    mock_text_content.text = "Hello world"
+    mock_text_content.annotations = []
+    mock_text_content.logprobs = None
+
+    mock_message = MagicMock()
+    mock_message.type = "message"
+    mock_message.content = [mock_text_content]
+    mock_message.role = "assistant"
+    mock_message.id = "msg_456"
+    mock_message.status = "completed"
+
+    mock_response = MagicMock(spec=OpenAIResponse)
+    mock_response.output = [mock_message]
+    mock_response.id = "resp_456"
+    mock_response.created_at = 1700000000
+    mock_response.model = "gpt-4"
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.status = "completed"
+
+    result = client._parse_response_from_openai(mock_response, options={"store": False})
+    assert result.messages is not None
+
+
+def test_parse_chunk_from_openai_captures_search_urls(mock_project_client: MagicMock) -> None:
+    """Test _parse_chunk_from_openai captures search URLs from azure_ai_search_call_output events."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    # Simulate azure_ai_search_call_output item arriving via response.output_item.added
+    mock_output_data = MagicMock()
+    mock_output_data.get_urls = [
+        "https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01",
+    ]
+    mock_item = MagicMock()
+    mock_item.type = "azure_ai_search_call_output"
+    mock_item.output = mock_output_data
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = mock_item
+    mock_event.output_index = 0
+
+    client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert hasattr(client, "_streaming_search_get_urls")
+    assert len(client._streaming_search_get_urls) == 1
+    assert (
+        client._streaming_search_get_urls[0] == "https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01"
+    )
+
+
+def test_parse_chunk_from_openai_enriches_url_citation(mock_project_client: MagicMock) -> None:
+    """Test _parse_chunk_from_openai enriches url_citation annotations with search URLs."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    # Pre-populate search URLs (simulating earlier capture)
+    client._streaming_search_get_urls = [
+        "https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01",
+        "https://search.example.com/indexes/idx/docs/41?api-version=2024-07-01",
+    ]
+
+    # Simulate url_citation annotation event
+    mock_annotation = MagicMock()
+    mock_annotation.type = "url_citation"
+    mock_annotation.title = "doc_0"
+    mock_annotation.url = "https://search.example.com/"
+    mock_annotation.start_index = 100
+    mock_annotation.end_index = 112
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation = mock_annotation
+    mock_event.annotation_index = 0
+
+    result = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    # Should have content with annotation containing get_url
+    assert result.contents is not None
+    found = False
+    for content in result.contents:
+        if hasattr(content, "annotations") and content.annotations:
+            for ann in content.annotations:
+                if isinstance(ann, dict) and ann.get("title") == "doc_0":
+                    found = True
+                    assert ann["additional_properties"]["get_url"] == (
+                        "https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01"
+                    )
+    assert found, "Expected url_citation annotation with enriched get_url"
+
+
+def test_parse_chunk_from_openai_clears_state_on_completed(mock_project_client: MagicMock) -> None:
+    """Test _parse_chunk_from_openai clears streaming state on response.completed."""
+    client = create_test_azure_ai_client(mock_project_client)
+    client._streaming_search_get_urls = ["https://example.com/doc/0"]
+
+    mock_response = MagicMock()
+    mock_response.id = "resp_123"
+    mock_response.model = "gpt-4"
+    mock_response.usage = None
+    mock_response.status = "completed"
+
+    mock_event = MagicMock()
+    mock_event.type = "response.completed"
+    mock_event.response = mock_response
+
+    client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert not hasattr(client, "_streaming_search_get_urls")
+
+
+# endregion

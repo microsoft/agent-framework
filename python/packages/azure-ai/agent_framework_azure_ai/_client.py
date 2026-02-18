@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
@@ -12,14 +13,19 @@ from typing import Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Agent,
+    Annotation,
     BaseContextProvider,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
+    ChatResponse,
+    ChatResponseUpdate,
+    Content,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
     Message,
     MiddlewareTypes,
+    TextSpanRegion,
 )
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
@@ -43,6 +49,12 @@ from azure.ai.projects.models import (
 from azure.ai.projects.models import FileSearchTool as ProjectsFileSearchTool
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
+from openai.types.responses.parsed_response import ParsedResponse
+from openai.types.responses.response import Response as OpenAIResponse
+from openai.types.responses.response_stream_event import (
+    ResponseStreamEvent as OpenAIResponseStreamEvent,
+)
+from pydantic import BaseModel
 
 from ._shared import AzureAISettings, create_text_format_config
 
@@ -615,6 +627,205 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             self.agent_name = agent_name
         if description and not self.agent_description:
             self.agent_description = description
+
+    # region Azure AI Search Citation Enhancement
+
+    def _extract_azure_search_urls(self, output_items: Any) -> list[str]:
+        """Extract document URLs from azure_ai_search_call_output items.
+
+        Args:
+            output_items: The response output items to scan.
+
+        Returns:
+            A flat list of get_urls from all azure_ai_search_call_output items.
+        """
+        get_urls: list[str] = []
+        for item in output_items:
+            item_type = getattr(item, "type", None)
+            if isinstance(item, dict):
+                item_type = item.get("type")
+            if item_type == "azure_ai_search_call_output":
+                output = getattr(item, "output", None)
+                if isinstance(item, dict):
+                    output = item.get("output")
+                if output is not None:
+                    urls = getattr(output, "get_urls", None)
+                    if isinstance(output, dict):
+                        urls = output.get("get_urls")
+                    if urls and isinstance(urls, list):
+                        get_urls.extend(urls)
+        return get_urls
+
+    def _get_search_doc_url(self, citation_title: str | None, get_urls: list[str]) -> str | None:
+        """Map a citation title like 'doc_0' to its corresponding get_url.
+
+        Args:
+            citation_title: The annotation title (e.g., "doc_0").
+            get_urls: The list of document URLs from azure_ai_search_call_output.
+
+        Returns:
+            The matching document URL if found, otherwise None.
+        """
+        if not citation_title or not get_urls:
+            return None
+        match = re.search(r"doc_(\d+)", citation_title)
+        if not match:
+            return None
+        doc_index = int(match.group(1))
+        if 0 <= doc_index < len(get_urls):
+            return str(get_urls[doc_index])
+        return None
+
+    def _enrich_annotations_with_search_urls(self, contents: list[Content], get_urls: list[str]) -> None:
+        """Enrich url_citation annotations in contents with real document URLs from Azure AI Search.
+
+        Args:
+            contents: The parsed content list from a ChatResponse.
+            get_urls: Document URLs extracted from azure_ai_search_call_output.
+        """
+        if not get_urls:
+            return
+        for content in contents:
+            annotations = getattr(content, "annotations", None)
+            if not annotations:
+                continue
+            for annotation in annotations:
+                if not isinstance(annotation, dict):
+                    continue
+                if annotation.get("type") != "citation":
+                    continue
+                title = annotation.get("title")
+                doc_url = self._get_search_doc_url(title, get_urls)
+                if doc_url:
+                    props = annotation.get("additional_properties") or {}
+                    props["get_url"] = doc_url
+                    annotation["additional_properties"] = props
+
+    @override
+    def _parse_response_from_openai(
+        self,
+        response: OpenAIResponse | ParsedResponse[BaseModel],
+        options: dict[str, Any],
+    ) -> ChatResponse:
+        """Parse response with Azure AI Search citation enrichment."""
+        # Extract search URLs before parsing
+        get_urls = self._extract_azure_search_urls(response.output)
+
+        # Let base class do the standard parsing
+        result = super()._parse_response_from_openai(response, options)
+
+        # Enrich url_citation annotations with real document URLs
+        if get_urls and result.messages:
+            for msg in result.messages:
+                self._enrich_annotations_with_search_urls(list(msg.contents or []), get_urls)
+
+        return result
+
+    @override
+    def _parse_chunk_from_openai(
+        self,
+        event: OpenAIResponseStreamEvent,
+        options: dict[str, Any],
+        function_call_ids: dict[int, tuple[str, str]],
+    ) -> ChatResponseUpdate:
+        """Parse streaming event with Azure AI Search citation enrichment."""
+        # Capture search output URLs when azure_ai_search_call_output items arrive
+        if event.type == "response.output_item.added":
+            event_item = event.item
+            item_type = getattr(event_item, "type", None)
+            if isinstance(event_item, dict):
+                item_type = event_item.get("type")
+            if item_type == "azure_ai_search_call_output":
+                urls = self._extract_azure_search_urls([event_item])
+                if urls:
+                    if not hasattr(self, "_streaming_search_get_urls"):
+                        self._streaming_search_get_urls: list[str] = []
+                    self._streaming_search_get_urls.extend(urls)
+
+        # Let base class parse the event
+        result = super()._parse_chunk_from_openai(event, options, function_call_ids)
+
+        # Handle url_citation annotations in streaming — base class doesn't handle these,
+        # so we produce an Annotation with the enriched URL from captured search data.
+        if event.type == "response.output_text.annotation.added":
+            annotation_data: Any = event.annotation
+            ann_type = (
+                annotation_data.get("type")
+                if isinstance(annotation_data, dict)
+                else getattr(annotation_data, "type", None)
+            )
+            if ann_type == "url_citation":
+                ann_title = (
+                    annotation_data.get("title")
+                    if isinstance(annotation_data, dict)
+                    else getattr(annotation_data, "title", None)
+                )
+                ann_url = (
+                    annotation_data.get("url")
+                    if isinstance(annotation_data, dict)
+                    else getattr(annotation_data, "url", None)
+                )
+                ann_start = (
+                    annotation_data.get("start_index")
+                    if isinstance(annotation_data, dict)
+                    else getattr(annotation_data, "start_index", None)
+                )
+                ann_end = (
+                    annotation_data.get("end_index")
+                    if isinstance(annotation_data, dict)
+                    else getattr(annotation_data, "end_index", None)
+                )
+
+                additional_props: dict[str, Any] = {
+                    "annotation_index": getattr(event, "annotation_index", None),
+                }
+
+                # Enrich with get_url from captured search data
+                if hasattr(self, "_streaming_search_get_urls") and self._streaming_search_get_urls:
+                    doc_url = self._get_search_doc_url(ann_title, self._streaming_search_get_urls)
+                    if doc_url:
+                        additional_props["get_url"] = doc_url
+
+                annotation_obj = Annotation(
+                    type="citation",
+                    title=ann_title,
+                    url=ann_url,
+                    additional_properties=additional_props,
+                    raw_representation=annotation_data,
+                )
+                if ann_start is not None and ann_end is not None:
+                    annotation_obj["annotated_regions"] = [
+                        TextSpanRegion(
+                            type="text_span",
+                            start_index=ann_start,
+                            end_index=ann_end,
+                        )
+                    ]
+
+                text_content = Content.from_text(text="", raw_representation=event)
+                text_content.annotations = [annotation_obj]
+                # Add to result contents
+                contents_list = list(result.contents or [])
+                contents_list.append(text_content)
+                result = ChatResponseUpdate(
+                    contents=contents_list,
+                    conversation_id=result.conversation_id,
+                    response_id=result.response_id,
+                    role=result.role,
+                    model_id=result.model_id,
+                    continuation_token=result.continuation_token,
+                    additional_properties=result.additional_properties,
+                    raw_representation=result.raw_representation,
+                )
+
+        # Clear streaming state when response completes
+        if event.type == "response.completed":
+            if hasattr(self, "_streaming_search_get_urls"):
+                del self._streaming_search_get_urls
+
+        return result
+
+    # endregion
 
     # region Hosted Tool Factory Methods (Azure-specific overrides)
 
