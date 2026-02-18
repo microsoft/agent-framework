@@ -114,7 +114,7 @@ def create_test_azure_ai_client(
 ) -> AzureAIClient:
     """Helper function to create AzureAIClient instances for testing, bypassing normal validation."""
     if azure_ai_settings is None:
-        azure_ai_settings = load_settings(AzureAISettings, env_prefix="AZURE_AI_", env_file_path="test.env")
+        azure_ai_settings = load_settings(AzureAISettings, env_prefix="AZURE_AI_")
 
     # Create client instance directly
     client = object.__new__(AzureAIClient)

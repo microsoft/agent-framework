@@ -56,6 +56,7 @@ from ._sessions import (
     SessionContext,
     register_state_type,
 )
+from ._settings import SecretString, load_settings
 from ._telemetry import (
     AGENT_FRAMEWORK_USER_AGENT,
     APP_INFO,
@@ -67,6 +68,7 @@ from ._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
+    ToolTypes,
     normalize_function_invocation_configuration,
     tool,
 )
@@ -234,6 +236,7 @@ __all__ = [
     "RoleLiteral",
     "Runner",
     "RunnerContext",
+    "SecretString",
     "SessionContext",
     "SingleEdgeGroup",
     "SubWorkflowRequestMessage",
@@ -250,6 +253,7 @@ __all__ = [
     "SwitchCaseEdgeGroupDefault",
     "TextSpanRegion",
     "ToolMode",
+    "ToolTypes",
     "TypeCompatibilityError",
     "UpdateT",
     "UsageDetails",
@@ -282,6 +286,7 @@ __all__ = [
     "executor",
     "function_middleware",
     "handler",
+    "load_settings",
     "map_chat_to_agent_update",
     "merge_chat_options",
     "normalize_function_invocation_configuration",

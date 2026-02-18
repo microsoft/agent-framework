@@ -33,10 +33,9 @@ DEFAULT_AZURE_TOKEN_ENDPOINT: Final[str] = "https://cognitiveservices.azure.com/
 class AzureOpenAISettings(TypedDict, total=False):
     """AzureOpenAI model settings.
 
-    The settings are first loaded from environment variables with the prefix 'AZURE_OPENAI_'.
-    If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
-    are ignored; however, validation will fail alerting that the settings are missing.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'AZURE_OPENAI_'. If settings are missing after resolution, validation will fail.
 
     Keyword Args:
         endpoint: The endpoint of the Azure deployment. This value

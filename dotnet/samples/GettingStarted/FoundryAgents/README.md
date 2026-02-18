@@ -60,6 +60,17 @@ Before you begin, ensure you have the following prerequisites:
 |[Computer use](./FoundryAgents_Step15_ComputerUse/)|This sample demonstrates how to use computer use capabilities with a Foundry agent|
 |[Local MCP](./FoundryAgents_Step27_LocalMCP/)|This sample demonstrates how to use a local MCP client with a Foundry agent|
 
+## Evaluation Samples
+
+Evaluation is critical for building trustworthy and high-quality AI applications. The evaluation samples demonstrate how to assess agent safety, quality, and performance using Azure AI Foundry's evaluation capabilities.
+
+|Sample|Description|
+|---|---|
+|[Red Team Evaluation](./FoundryAgents_Evaluations_Step01_RedTeaming/)|This sample demonstrates how to use Azure AI Foundry's Red Teaming service to assess model safety against adversarial attacks|
+|[Self-Reflection with Groundedness](./FoundryAgents_Evaluations_Step02_SelfReflection/)|This sample demonstrates the self-reflection pattern where agents iteratively improve responses based on groundedness evaluation|
+
+For details on safety evaluation, see the [Red Team Evaluation README](./FoundryAgents_Evaluations_Step01_RedTeaming/README.md).
+
 ## Running the samples from the console
 
 To run the samples, navigate to the desired sample directory, e.g.

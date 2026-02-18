@@ -5,7 +5,7 @@ import logging
 from random import randint
 from typing import Annotated
 
-from agent_framework import tool
+from agent_framework import Message, tool
 from agent_framework.observability import enable_instrumentation
 from agent_framework.openai import OpenAIChatClient
 from opentelemetry._logs import set_logger_provider
@@ -66,7 +66,9 @@ def setup_metrics():
     set_meter_provider(meter_provider)
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity.
+# Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -107,9 +109,9 @@ async def run_chat_client() -> None:
     message = "What's the weather in Amsterdam and in Paris?"
     print(f"User: {message}")
     print("Assistant: ", end="")
-    async for chunk in client.get_response(message, tools=get_weather, stream=True):
-        if str(chunk):
-            print(str(chunk), end="")
+    async for chunk in client.get_response([Message(role="user", text=message)], tools=get_weather, stream=True):
+        if chunk.text:
+            print(chunk.text, end="")
     print("")
 
 
