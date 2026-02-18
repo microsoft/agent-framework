@@ -21,9 +21,12 @@ HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddSingleton(new ChatClientAgentOptions() { Name = "Joker", ChatOptions = new() { Instructions = "You are good at telling jokes." } });
 
 // Add a chat client to the service collection.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 builder.Services.AddKeyedChatClient("AzureOpenAI", (sp) => new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
         .GetChatClient(deploymentName)
         .AsIChatClient());
 
@@ -44,12 +47,12 @@ await host.RunAsync().ConfigureAwait(false);
 /// </summary>
 internal sealed class SampleService(AIAgent agent, IHostApplicationLifetime appLifetime) : IHostedService
 {
-    private AgentThread? _thread;
+    private AgentSession? _session;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        // Create a thread that will be used for the entirety of the service lifetime so that the user can ask follow up questions.
-        this._thread = await agent.GetNewThreadAsync(cancellationToken);
+        // Create a session that will be used for the entirety of the service lifetime so that the user can ask follow up questions.
+        this._session = await agent.CreateSessionAsync(cancellationToken);
         _ = this.RunAsync(appLifetime.ApplicationStopping);
     }
 
@@ -72,7 +75,7 @@ internal sealed class SampleService(AIAgent agent, IHostApplicationLifetime appL
             }
 
             // Stream the output to the console as it is generated.
-            await foreach (var update in agent.RunStreamingAsync(input, this._thread, cancellationToken: cancellationToken))
+            await foreach (var update in agent.RunStreamingAsync(input, this._session, cancellationToken: cancellationToken))
             {
                 Console.Write(update);
             }

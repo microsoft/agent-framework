@@ -2,6 +2,8 @@
 
 """Agent Framework message mapper implementation."""
 
+from __future__ import annotations
+
 import json
 import logging
 import time
@@ -12,7 +14,7 @@ from datetime import datetime
 from typing import Any, Union
 from uuid import uuid4
 
-from agent_framework import ChatMessage, TextContent
+from agent_framework import Content, Message
 from openai.types.responses import (
     Response,
     ResponseContentPartAddedEvent,
@@ -92,7 +94,7 @@ def _serialize_content_recursive(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         serialized = [_serialize_content_recursive(item) for item in value]
         # For single-item lists containing text Content, extract just the text
-        # This handles the MCP case where result = [TextContent(text="Hello")]
+        # This handles the MCP case where result = [Content.from_text(text="Hello")]
         # and we want output = "Hello" not output = '[{"type": "text", "text": "Hello"}]'
         if len(serialized) == 1 and isinstance(serialized[0], dict) and serialized[0].get("type") == "text":
             return serialized[0].get("text", "")
@@ -127,18 +129,18 @@ class MessageMapper:
 
         # Register content type mappers for all 12 Agent Framework content types
         self.content_mappers = {
-            "TextContent": self._map_text_content,
-            "TextReasoningContent": self._map_reasoning_content,
-            "FunctionCallContent": self._map_function_call_content,
-            "FunctionResultContent": self._map_function_result_content,
-            "ErrorContent": self._map_error_content,
-            "UsageContent": self._map_usage_content,
-            "DataContent": self._map_data_content,
-            "UriContent": self._map_uri_content,
-            "HostedFileContent": self._map_hosted_file_content,
-            "HostedVectorStoreContent": self._map_hosted_vector_store_content,
-            "FunctionApprovalRequestContent": self._map_approval_request_content,
-            "FunctionApprovalResponseContent": self._map_approval_response_content,
+            "text": self._map_text_content,
+            "text_reasoning": self._map_reasoning_content,
+            "function_call": self._map_function_call_content,
+            "function_result": self._map_function_result_content,
+            "error": self._map_error_content,
+            "usage": self._map_usage_content,
+            "data": self._map_data_content,
+            "uri": self._map_uri_content,
+            "hosted_file": self._map_hosted_file_content,
+            "hosted_vector_store": self._map_hosted_vector_store_content,
+            "function_approval_request": self._map_approval_request_content,
+            "function_approval_response": self._map_approval_response_content,
         }
 
     async def convert_event(self, raw_event: Any, request: AgentFrameworkRequest) -> Sequence[Any]:
@@ -179,18 +181,19 @@ class MessageMapper:
         # Import Agent Framework types for proper isinstance checks
         try:
             from agent_framework import AgentResponse, AgentResponseUpdate, WorkflowEvent
-            from agent_framework._workflows._events import AgentRunUpdateEvent
 
-            # Handle AgentRunUpdateEvent - workflow event wrapping AgentResponseUpdate
+            # Handle WorkflowEvent with type='output' or 'data' wrapping AgentResponseUpdate
             # This must be checked BEFORE generic WorkflowEvent check
-            if isinstance(raw_event, AgentRunUpdateEvent):
-                # Extract the AgentResponseUpdate from the event's data attribute
-                if raw_event.data and isinstance(raw_event.data, AgentResponseUpdate):
-                    # Preserve executor_id in context for proper output routing
-                    context["current_executor_id"] = raw_event.executor_id
-                    return await self._convert_agent_update(raw_event.data, context)
-                # If no data, treat as generic workflow event
-                return await self._convert_workflow_event(raw_event, context)
+            # Note: AgentExecutor uses type='output' for streaming updates
+            if (
+                isinstance(raw_event, WorkflowEvent)
+                and raw_event.type in ("output", "data")
+                and raw_event.data
+                and isinstance(raw_event.data, AgentResponseUpdate)
+            ):
+                # Preserve executor_id in context for proper output routing
+                context["current_executor_id"] = raw_event.executor_id
+                return await self._convert_agent_update(raw_event.data, context)
 
             # Handle complete agent response (AgentResponse) - for non-streaming agent execution
             if isinstance(raw_event, AgentResponse):
@@ -450,7 +453,7 @@ class MessageMapper:
         Handles:
         - Primitives (str, int, float, bool, None)
         - Collections (list, tuple, set, dict)
-        - SerializationMixin objects (ChatMessage, etc.) - calls to_dict()
+        - SerializationMixin objects (Message, etc.) - calls to_dict()
         - Pydantic models - calls model_dump()
         - Dataclasses - recursively serializes with asdict()
         - Enums - extracts value
@@ -499,7 +502,7 @@ class MessageMapper:
         if isinstance(value, dict):
             return {k: self._serialize_value(v) for k, v in value.items()}
 
-        # Handle SerializationMixin (like ChatMessage) - call to_dict()
+        # Handle SerializationMixin (like Message) - call to_dict()
         if hasattr(value, "to_dict") and callable(getattr(value, "to_dict", None)):
             try:
                 return value.to_dict()  # type: ignore[attr-defined, no-any-return]
@@ -533,7 +536,7 @@ class MessageMapper:
     def _serialize_request_data(self, request_data: Any) -> dict[str, Any]:
         """Serialize RequestInfoMessage to dict for JSON transmission.
 
-        Handles nested SerializationMixin objects (like ChatMessage) within dataclasses.
+        Handles nested SerializationMixin objects (like Message) within dataclasses.
 
         Args:
             request_data: The RequestInfoMessage instance
@@ -551,7 +554,7 @@ class MessageMapper:
             return {k: self._serialize_value(v) for k, v in request_data.items()}
 
         # Handle dataclasses with nested SerializationMixin objects
-        # We can't use asdict() directly because it doesn't handle ChatMessage
+        # We can't use asdict() directly because it doesn't handle Message
         if is_dataclass(request_data) and not isinstance(request_data, type):
             try:
                 # Manually serialize each field to handle nested SerializationMixin
@@ -603,7 +606,7 @@ class MessageMapper:
                 return events
 
             # Check if we're streaming text content
-            has_text_content = any(isinstance(content, TextContent) for content in update.contents)
+            has_text_content = any(content.type == "text" for content in update.contents)
 
             # Check if we're in an executor context with an existing item
             executor_id = context.get("current_executor_id")
@@ -647,10 +650,8 @@ class MessageMapper:
 
             # Process each content item
             for content in update.contents:
-                content_type = content.__class__.__name__
-
                 # Special handling for TextContent to use proper delta events
-                if content_type == "TextContent" and "current_message_id" in context:
+                if content.type == "text" and "current_message_id" in context:
                     # Stream text content via proper delta events
                     events.append(
                         ResponseTextDeltaEvent(
@@ -663,9 +664,9 @@ class MessageMapper:
                             sequence_number=self._next_sequence(context),
                         )
                     )
-                elif content_type in self.content_mappers:
+                elif content.type in self.content_mappers:
                     # Use existing mappers for other content types
-                    mapped_events = await self.content_mappers[content_type](content, context)
+                    mapped_events = await self.content_mappers[content.type](content, context)
                     if mapped_events is not None:  # Handle None returns (e.g., UsageContent)
                         if isinstance(mapped_events, list):
                             events.extend(mapped_events)
@@ -676,7 +677,7 @@ class MessageMapper:
                     events.append(await self._create_unknown_content_event(content, context))
 
                 # Don't increment content_index for text deltas within the same part
-                if content_type != "TextContent":
+                if content.type != "text":
                     context["content_index"] = context.get("content_index", 0) + 1
 
         except Exception as e:
@@ -708,10 +709,8 @@ class MessageMapper:
             for message in messages:
                 if hasattr(message, "contents") and message.contents:
                     for content in message.contents:
-                        content_type = content.__class__.__name__
-
-                        if content_type in self.content_mappers:
-                            mapped_events = await self.content_mappers[content_type](content, context)
+                        if content.type in self.content_mappers:
+                            mapped_events = await self.content_mappers[content.type](content, context)
                             if mapped_events is not None:  # Handle None returns (e.g., UsageContent)
                                 if isinstance(mapped_events, list):
                                     events.extend(mapped_events)
@@ -726,9 +725,7 @@ class MessageMapper:
             # Add usage information if present
             usage_details = getattr(response, "usage_details", None)
             if usage_details:
-                from agent_framework import UsageContent
-
-                usage_content = UsageContent(details=usage_details)
+                usage_content = Content.from_usage(usage_details=usage_details)
                 await self._map_usage_content(usage_content, context)
                 # Note: _map_usage_content returns None - it accumulates usage for final Response.usage
 
@@ -831,10 +828,12 @@ class MessageMapper:
             List of OpenAI response stream events
         """
         try:
-            event_class = event.__class__.__name__
+            # Use event.type for discriminated union pattern (similar to Content class)
+            event_type = getattr(event, "type", None)
+            event_class = event.__class__.__name__  # Fallback for non-workflow events
 
             # Response-level events - construct proper OpenAI objects
-            if event_class == "WorkflowStartedEvent":
+            if event_type == "started":
                 workflow_id = getattr(event, "workflow_id", str(uuid4()))
                 context["workflow_id"] = workflow_id
 
@@ -878,8 +877,8 @@ class MessageMapper:
 
                 return events
 
-            # Handle WorkflowOutputEvent separately to preserve output data
-            if event_class == "WorkflowOutputEvent":
+            # Handle output events separately to preserve output data
+            if event_type == "output":
                 output_data = getattr(event, "data", None)
                 executor_id = getattr(event, "executor_id", "unknown")
 
@@ -893,17 +892,17 @@ class MessageMapper:
 
                     # Extract text from output data based on type
                     text = None
-                    if isinstance(output_data, ChatMessage):
-                        # Handle ChatMessage (from Magentic and AgentExecutor with output_response=True)
+                    if isinstance(output_data, Message):
+                        # Handle Message (from Magentic and AgentExecutor with output_response=True)
                         text = getattr(output_data, "text", None)
                         if not text:
                             # Fallback to string representation
                             text = str(output_data)
                     elif isinstance(output_data, list):
-                        # Handle list of ChatMessage objects (from Magentic yield_output([final_answer]))
+                        # Handle list of Message objects (from Magentic yield_output([final_answer]))
                         text_parts = []
                         for item in output_data:
-                            if isinstance(item, ChatMessage):
+                            if isinstance(item, Message):
                                 item_text = getattr(item, "text", None)
                                 if item_text:
                                     text_parts.append(item_text)
@@ -941,7 +940,7 @@ class MessageMapper:
 
                     # Emit output_item.added for each yield_output
                     logger.debug(
-                        f"WorkflowOutputEvent converted to output_item.added "
+                        f"output event (type='output') converted to output_item.added "
                         f"(executor: {executor_id}, length: {len(text)})"
                     )
                     return [
@@ -953,15 +952,15 @@ class MessageMapper:
                         )
                     ]
 
-            # Handle WorkflowCompletedEvent - Don't emit response.completed here
+            # Handle completed event - Don't emit response.completed here
             # The server will emit a proper one with usage data after aggregating all events
-            if event_class == "WorkflowCompletedEvent":
+            if event_type == "completed":
                 return []
 
-            if event_class == "WorkflowFailedEvent":
+            if event_type == "failed":
                 workflow_id = context.get("workflow_id", str(uuid4()))
-                # WorkflowFailedEvent uses 'details' field (WorkflowErrorDetails), not 'error'
-                # This matches ExecutorFailedEvent which also uses 'details'
+                # failed event (type='failed') uses 'details' field (WorkflowErrorDetails), not 'error'
+                # This matches executor_failed event which also uses 'details'
                 details = getattr(event, "details", None)
 
                 # Import Response and ResponseError types
@@ -1007,7 +1006,8 @@ class MessageMapper:
                 ]
 
             # Executor-level events (output items)
-            if event_class == "ExecutorInvokedEvent":
+            # Check for executor lifecycle events via event.type
+            if event_type == "executor_invoked":
                 executor_id = getattr(event, "executor_id", "unknown")
                 item_id = f"exec_{executor_id}_{uuid4().hex[:8]}"
                 context[f"exec_item_{executor_id}"] = item_id
@@ -1036,7 +1036,7 @@ class MessageMapper:
                     )
                 ]
 
-            if event_class == "ExecutorCompletedEvent":
+            if event_type == "executor_completed":
                 executor_id = getattr(event, "executor_id", "unknown")
                 item_id = context.get(f"exec_item_{executor_id}", f"exec_{executor_id}_unknown")
 
@@ -1045,9 +1045,9 @@ class MessageMapper:
                     context.pop("current_executor_id", None)
 
                 # Create ExecutorActionItem with completed status
-                # ExecutorCompletedEvent uses 'data' field, not 'result'
+                # executor_completed event (type='executor_completed') uses 'data' field, not 'result'
                 # Serialize the result data to ensure it's JSON-serializable
-                # (AgentExecutorResponse contains AgentResponse/ChatMessage which are SerializationMixin)
+                # (AgentExecutorResponse contains AgentResponse/Message which are SerializationMixin)
                 raw_result = getattr(event, "data", None)
                 serialized_result = self._serialize_value(raw_result) if raw_result is not None else None
                 executor_item = ExecutorActionItem(
@@ -1068,10 +1068,11 @@ class MessageMapper:
                     )
                 ]
 
-            if event_class == "ExecutorFailedEvent":
+            if event_type == "executor_failed":
                 executor_id = getattr(event, "executor_id", "unknown")
                 item_id = context.get(f"exec_item_{executor_id}", f"exec_{executor_id}_unknown")
-                # ExecutorFailedEvent uses 'details' field (WorkflowErrorDetails), not 'error'
+                # executor_failed event (type='executor_failed') uses 'details' property (WorkflowErrorDetails)
+                # not 'error'. This matches WorkflowEvent.details which returns self.data for executor_failed type
                 details = getattr(event, "details", None)
                 if details:
                     err_msg = getattr(details, "message", None) or str(details)
@@ -1100,8 +1101,8 @@ class MessageMapper:
                     )
                 ]
 
-            # Handle RequestInfoEvent specially - emit as HIL event with schema
-            if event_class == "RequestInfoEvent":
+            # Handle request_info events specially - emit as HIL event with schema
+            if event_type == "request_info":
                 from .models._openai_custom import ResponseRequestInfoEvent
 
                 request_id = getattr(event, "request_id", "")
@@ -1109,7 +1110,7 @@ class MessageMapper:
                 request_type_class = getattr(event, "request_type", None)
                 request_data = getattr(event, "data", None)
 
-                logger.info("📨 [MAPPER] Processing RequestInfoEvent")
+                logger.info("📨 [MAPPER] Processing request_info event (type='request_info')")
                 logger.info(f"   request_id: {request_id}")
                 logger.info(f"   source_executor_id: {source_executor_id}")
                 logger.info(f"   request_type_class: {request_type_class}")
@@ -1170,26 +1171,23 @@ class MessageMapper:
                 return [hil_event]
 
             # Handle other informational workflow events (status, warnings, errors)
-            if event_class in ["WorkflowStatusEvent", "WorkflowWarningEvent", "WorkflowErrorEvent"]:
+            if event_type in ["status", "warning", "error"]:
                 # These are informational events that don't map to OpenAI lifecycle events
                 # Convert them to trace events for debugging visibility
                 event_data: dict[str, Any] = {}
 
                 # Extract relevant data based on event type
-                if event_class == "WorkflowStatusEvent":
+                if event_type == "status":
                     event_data["state"] = str(getattr(event, "state", "unknown"))
-                elif event_class == "WorkflowWarningEvent":
-                    event_data["message"] = str(getattr(event, "message", ""))
-                elif event_class == "WorkflowErrorEvent":
-                    event_data["message"] = str(getattr(event, "message", ""))
-                    event_data["error"] = str(getattr(event, "error", ""))
+                elif event_type == "warning" or event_type == "error":
+                    event_data["message"] = str(getattr(event, "data", ""))
 
                 # Create a trace event for debugging
                 trace_event = ResponseTraceEventComplete(
                     type="response.trace.completed",
                     data={
                         "trace_type": "workflow_info",
-                        "event_type": event_class,
+                        "event_type": event_type,
                         "data": event_data,
                         "timestamp": datetime.now().isoformat(),
                     },
@@ -1421,11 +1419,11 @@ class MessageMapper:
         Returns:
             None - no event emitted (usage goes in final Response.usage)
         """
-        # Extract usage from UsageContent.details (UsageDetails object)
-        details = getattr(content, "details", None)
-        total_tokens = getattr(details, "total_token_count", 0) or 0
-        prompt_tokens = getattr(details, "input_token_count", 0) or 0
-        completion_tokens = getattr(details, "output_token_count", 0) or 0
+        # Extract usage from UsageContent.usage_details (UsageDetails object)
+        details = content.usage_details or {}
+        total_tokens = details.get("total_token_count", 0)
+        prompt_tokens = details.get("input_token_count", 0)
+        completion_tokens = details.get("output_token_count", 0)
 
         # Accumulate for final Response.usage
         request_id = context.get("request_id", "default")

@@ -14,7 +14,10 @@ const string JokerInstructions = "You are good at telling jokes.";
 const string JokerName = "JokerAgent";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Define the agent you want to create. (Prompt Agent in this case)
 AgentVersionCreationOptions options = new(new PromptAgentDefinition(model: deploymentName) { Instructions = JokerInstructions });
@@ -23,8 +26,8 @@ AgentVersionCreationOptions options = new(new PromptAgentDefinition(model: deplo
 // You can create a server side agent version with the Azure.AI.Agents SDK client below.
 AgentVersion agentVersion = aiProjectClient.Agents.CreateAgentVersion(agentName: JokerName, options);
 
-// You can retrieve an AIAgent for a already created server side agent version.
-AIAgent jokerAgent = aiProjectClient.GetAIAgent(agentVersion);
+// You can use an AIAgent with an already created server side agent version.
+AIAgent jokerAgent = aiProjectClient.AsAIAgent(agentVersion);
 
 // Invoke the agent with streaming support.
 await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate."))

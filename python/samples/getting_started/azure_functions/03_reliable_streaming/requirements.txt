@@ -1,3 +1,0 @@
-agent-framework-azurefunctions
-azure-identity
-redis

@@ -10,14 +10,14 @@ using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
-using Microsoft.Bot.ObjectModel.Abstractions;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
-internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state) :
+internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<InvokeAzureAgent>(model, state)
 {
     public static class Steps

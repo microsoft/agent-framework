@@ -6,17 +6,19 @@ from copy import deepcopy
 from typing import Any
 
 import numpy as np
-from agent_framework._tools import AIFunction
-from agent_framework._types import ChatMessage
+from agent_framework._tools import FunctionTool
+from agent_framework._types import Message
 from loguru import logger
 from pydantic import BaseModel
 from tau2.data_model.message import (  # type: ignore[import-untyped]
     AssistantMessage,
-    Message,
     SystemMessage,
     ToolCall,
     ToolMessage,
     UserMessage,
+)
+from tau2.data_model.message import (
+    Message as Tau2Message,
 )
 from tau2.data_model.tasks import EnvFunctionCall, InitializationData  # type: ignore[import-untyped]
 from tau2.environment.environment import Environment  # type: ignore[import-untyped]
@@ -25,8 +27,8 @@ from tau2.environment.tool import Tool  # type: ignore[import-untyped]
 _original_set_state = Environment.set_state
 
 
-def convert_tau2_tool_to_ai_function(tau2_tool: Tool) -> AIFunction[Any, Any]:
-    """Convert a tau2 Tool to an AIFunction for agent framework compatibility.
+def convert_tau2_tool_to_function_tool(tau2_tool: Tool) -> FunctionTool:
+    """Convert a tau2 Tool to a FunctionTool for agent framework compatibility.
 
     Creates a wrapper that preserves the tool's interface while ensuring
     results are deep-copied to prevent unintended mutations.
@@ -37,7 +39,7 @@ def convert_tau2_tool_to_ai_function(tau2_tool: Tool) -> AIFunction[Any, Any]:
         # Deep copy to prevent mutations of returned data
         return result.model_copy(deep=True) if isinstance(result, BaseModel) else deepcopy(result)
 
-    return AIFunction(
+    return FunctionTool(
         name=tau2_tool.name,
         description=tau2_tool._get_description(),
         func=wrapped_func,
@@ -45,7 +47,7 @@ def convert_tau2_tool_to_ai_function(tau2_tool: Tool) -> AIFunction[Any, Any]:
     )
 
 
-def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage]) -> list[Message]:
+def convert_agent_framework_messages_to_tau2_messages(messages: list[Message]) -> list[Tau2Message]:
     """Convert agent framework ChatMessages to tau2 Message objects.
 
     Handles role mapping, text extraction, function calls, and function results.
@@ -60,7 +62,7 @@ def convert_agent_framework_messages_to_tau2_messages(messages: list[ChatMessage
         text_content = None
         text_contents = [c for c in msg.contents if hasattr(c, "text") and hasattr(c, "type") and c.type == "text"]
         if text_contents:
-            text_content = " ".join(c.text for c in text_contents)
+            text_content = " ".join(c.text for c in text_contents)  # type: ignore[misc]
 
         # Extract function calls and convert to ToolCall objects
         function_calls = [c for c in msg.contents if hasattr(c, "type") and c.type == "function_call"]
@@ -119,13 +121,13 @@ def patch_env_set_state() -> None:
         self: Any,
         initialization_data: InitializationData | None,
         initialization_actions: list[EnvFunctionCall] | None,
-        message_history: list[Message],
+        message_history: list[Tau2Message],
     ) -> None:
         if self.solo_mode and any(isinstance(message, UserMessage) for message in message_history):
             raise ValueError("User messages are not allowed in solo mode")
 
         def get_actions_from_messages(
-            messages: list[Message],
+            messages: list[Tau2Message],
         ) -> list[tuple[ToolCall, ToolMessage]]:
             """Get the actions from the messages."""
             messages = deepcopy(messages)[::-1]

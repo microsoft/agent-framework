@@ -12,9 +12,20 @@ The Mem0 context provider enables persistent memory capabilities for your agents
 
 ### Basic Usage Example
 
-See the [Mem0 basic example](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/context_providers/mem0/mem0_basic.py) which demonstrates:
+See the [Mem0 basic example](../../samples/02-agents/context_providers/mem0/mem0_basic.py) which demonstrates:
 
 - Setting up an agent with Mem0 context provider
 - Teaching the agent user preferences
 - Retrieving information using remembered context across new threads
 - Persistent memory
+
+## Telemetry
+
+Mem0's telemetry is **disabled by default** when using this package. If you want to enable telemetry, set the environment variable before importing:
+
+```python
+import os
+os.environ["MEM0_TELEMETRY"] = "true"
+
+from agent_framework.mem0 import Mem0ContextProvider
+```

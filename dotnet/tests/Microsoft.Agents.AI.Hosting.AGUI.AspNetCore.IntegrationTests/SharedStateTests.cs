@@ -7,6 +7,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -34,7 +35,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -45,7 +46,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -77,7 +78,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -88,7 +89,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -119,7 +120,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         string stateJson = JsonSerializer.Serialize(complexState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -130,7 +131,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -159,7 +160,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -170,7 +171,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         List<AgentResponseUpdate> firstRoundUpdates = [];
 
         // Act - First round
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             firstRoundUpdates.Add(update);
         }
@@ -185,7 +186,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         ChatMessage secondUserMessage = new(ChatRole.User, "increment again");
 
         List<AgentResponseUpdate> secondRoundUpdates = [];
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([secondUserMessage, secondStateMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([secondUserMessage, secondStateMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             secondRoundUpdates.Add(update);
         }
@@ -210,14 +211,14 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
         List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -243,7 +244,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         string stateJson = JsonSerializer.Serialize(emptyState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -254,7 +255,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
         }
@@ -280,7 +281,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         await this.SetupTestServerAsync(fakeAgent);
         var chatClient = new AGUIChatClient(this._client!, "", null);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentThread thread = (ChatClientAgentThread)await agent.GetNewThreadAsync();
+        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         string stateJson = JsonSerializer.Serialize(initialState);
         byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
@@ -289,7 +290,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         ChatMessage userMessage = new(ChatRole.User, "process");
 
         // Act
-        AgentResponse response = await agent.RunAsync([userMessage, stateMessage], thread, new AgentRunOptions(), CancellationToken.None);
+        AgentResponse response = await agent.RunAsync([userMessage, stateMessage], session, new AgentRunOptions(), CancellationToken.None);
 
         // Assert
         response.Should().NotBeNull();
@@ -342,14 +343,14 @@ internal sealed class FakeStateAgent : AIAgent
 {
     public override string? Description => "Agent for state testing";
 
-    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
+        return this.RunCoreStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
     }
 
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -417,21 +418,30 @@ internal sealed class FakeStateAgent : AIAgent
         await Task.CompletedTask;
     }
 
-    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) =>
-        new(new FakeInMemoryAgentThread());
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
+        new(new FakeAgentSession());
 
-    public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-        new(new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions));
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        new(serializedState.Deserialize<FakeAgentSession>(jsonSerializerOptions)!);
 
-    private sealed class FakeInMemoryAgentThread : InMemoryAgentThread
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        public FakeInMemoryAgentThread()
-            : base()
+        if (session is not FakeAgentSession fakeSession)
+        {
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(FakeAgentSession)}' can be serialized by this agent.");
+        }
+
+        return new(JsonSerializer.SerializeToElement(fakeSession, jsonSerializerOptions));
+    }
+
+    private sealed class FakeAgentSession : AgentSession
+    {
+        public FakeAgentSession()
         {
         }
 
-        public FakeInMemoryAgentThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-            : base(serializedThread, jsonSerializerOptions)
+        [JsonConstructor]
+        public FakeAgentSession(AgentSessionStateBag stateBag) : base(stateBag)
         {
         }
     }

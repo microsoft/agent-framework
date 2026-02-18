@@ -15,6 +15,17 @@ For more information about the previous classic agents and for what's new in Fou
 
 For a sample demonstrating how to use classic Foundry Agents, see the following: [Agent with Azure AI Persistent](../AgentProviders/Agent_With_AzureAIAgentsPersistent/README.md).
 
+## Agent Versioning and Static Definitions
+
+One of the key architectural changes in the new Foundry Agents compared to the classic experience is how agent definitions are handled. In the new architecture, agents have **versions** and their definitions are established at creation time. This means that the agent's configuration—including instructions, tools, and options—is fixed when the agent version is created.
+
+> [!IMPORTANT]
+> Agent versions are static and strictly adhere to their original definition. Any attempt to provide or override tools, instructions, or options during an agent run or request will be ignored by the agent, as the API does not support runtime configuration changes. All agent behavior must be defined at agent creation time.
+
+This design ensures consistency and predictability in agent behavior across all interactions with a specific agent version.
+
+The Agent Framework intentionally ignores unsupported runtime parameters rather than throwing exceptions. This abstraction-first approach ensures that code written against the unified agent abstraction remains portable across providers (OpenAI, Azure OpenAI, Foundry Agents). It removes the need for provider-specific conditional logic. Teams can adopt Foundry Agents without rewriting existing orchestration code. Configurations that work with other providers will gracefully degrade, rather than fail, when the underlying API does not support them.
+
 ## Getting started with Foundry Agents prerequisites
 
 Before you begin, ensure you have the following prerequisites:
@@ -47,6 +58,18 @@ Before you begin, ensure you have the following prerequisites:
 |[Using plugins](./FoundryAgents_Step13_Plugins/)|This sample demonstrates how to use plugins with a Foundry agent|
 |[Code interpreter](./FoundryAgents_Step14_CodeInterpreter/)|This sample demonstrates how to use the code interpreter tool with a Foundry agent|
 |[Computer use](./FoundryAgents_Step15_ComputerUse/)|This sample demonstrates how to use computer use capabilities with a Foundry agent|
+|[Local MCP](./FoundryAgents_Step27_LocalMCP/)|This sample demonstrates how to use a local MCP client with a Foundry agent|
+
+## Evaluation Samples
+
+Evaluation is critical for building trustworthy and high-quality AI applications. The evaluation samples demonstrate how to assess agent safety, quality, and performance using Azure AI Foundry's evaluation capabilities.
+
+|Sample|Description|
+|---|---|
+|[Red Team Evaluation](./FoundryAgents_Evaluations_Step01_RedTeaming/)|This sample demonstrates how to use Azure AI Foundry's Red Teaming service to assess model safety against adversarial attacks|
+|[Self-Reflection with Groundedness](./FoundryAgents_Evaluations_Step02_SelfReflection/)|This sample demonstrates the self-reflection pattern where agents iteratively improve responses based on groundedness evaluation|
+
+For details on safety evaluation, see the [Red Team Evaluation README](./FoundryAgents_Evaluations_Step01_RedTeaming/README.md).
 
 ## Running the samples from the console
 

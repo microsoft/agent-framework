@@ -2,6 +2,8 @@
 
 """HTTP service for AG-UI protocol communication."""
 
+from __future__ import annotations
+
 import json
 import logging
 from collections.abc import AsyncIterable
@@ -148,7 +150,7 @@ class AGUIHttpService:
         if self._owns_client and self.http_client:
             await self.http_client.aclose()
 
-    async def __aenter__(self) -> "AGUIHttpService":
+    async def __aenter__(self) -> AGUIHttpService:
         """Enter async context manager."""
         return self
 

@@ -6,22 +6,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
-    ChatAgent,
-    HostedCodeInterpreterTool,
-    HostedFileSearchTool,
-    HostedMCPTool,
-    HostedVectorStoreContent,
-    HostedWebSearchTool,
-    ai_function,
+    Agent,
+    tool,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
-    Agent,
+    Agent as AzureAgent,
+)
+from azure.ai.agents.models import (
     CodeInterpreterToolDefinition,
 )
+from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel
 
 from agent_framework_azure_ai import (
+    AzureAIAgentClient,
     AzureAIAgentsProvider,
     AzureAISettings,
 )
@@ -87,12 +86,9 @@ def test_provider_init_missing_endpoint_raises(
     mock_azure_credential: MagicMock,
 ) -> None:
     """Test AzureAIAgentsProvider raises error when endpoint is missing."""
-    # Mock AzureAISettings to return None for project_endpoint
-    with patch("agent_framework_azure_ai._agent_provider.AzureAISettings") as mock_settings_class:
-        mock_settings = MagicMock()
-        mock_settings.project_endpoint = None
-        mock_settings.model_deployment_name = "test-model"
-        mock_settings_class.return_value = mock_settings
+    # Mock load_settings to return a dict with None for project_endpoint
+    with patch("agent_framework_azure_ai._agent_provider.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {"project_endpoint": None, "model_deployment_name": "test-model"}
 
         with pytest.raises(ServiceInitializationError) as exc_info:
             AzureAIAgentsProvider(credential=mock_azure_credential)
@@ -155,7 +151,7 @@ async def test_create_agent_basic(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test creating a basic agent."""
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "test-agent-id"
     mock_agent.name = "TestAgent"
     mock_agent.description = "A test agent"
@@ -174,7 +170,7 @@ async def test_create_agent_basic(
         description="A test agent",
     )
 
-    assert isinstance(agent, ChatAgent)
+    assert isinstance(agent, Agent)
     assert agent.name == "TestAgent"
     assert agent.id == "test-agent-id"
     mock_agents_client.create_agent.assert_called_once()
@@ -185,7 +181,7 @@ async def test_create_agent_with_model(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test creating an agent with explicit model."""
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "test-agent-id"
     mock_agent.name = "TestAgent"
     mock_agent.description = None
@@ -209,7 +205,7 @@ async def test_create_agent_with_tools(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test creating an agent with tools."""
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "test-agent-id"
     mock_agent.name = "TestAgent"
     mock_agent.description = None
@@ -222,7 +218,7 @@ async def test_create_agent_with_tools(
 
     provider = AzureAIAgentsProvider(agents_client=mock_agents_client)
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(city: str) -> str:
         """Get weather for a city."""
         return f"Weather in {city}"
@@ -244,7 +240,7 @@ async def test_create_agent_with_response_format(
         temperature: float
         description: str
 
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "test-agent-id"
     mock_agent.name = "TestAgent"
     mock_agent.description = None
@@ -271,11 +267,8 @@ async def test_create_agent_missing_model_raises(
 ) -> None:
     """Test that create_agent raises error when model is not specified."""
     # Create provider with mocked settings that has no model
-    with patch("agent_framework_azure_ai._agent_provider.AzureAISettings") as mock_settings_class:
-        mock_settings = MagicMock()
-        mock_settings.project_endpoint = "https://test.com"
-        mock_settings.model_deployment_name = None  # No model configured
-        mock_settings_class.return_value = mock_settings
+    with patch("agent_framework_azure_ai._agent_provider.load_settings") as mock_load_settings:
+        mock_load_settings.return_value = {"project_endpoint": "https://test.com", "model_deployment_name": None}
 
         provider = AzureAIAgentsProvider(agents_client=mock_agents_client)
 
@@ -296,7 +289,7 @@ async def test_get_agent_by_id(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test getting an agent by ID."""
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "existing-agent-id"
     mock_agent.name = "ExistingAgent"
     mock_agent.description = "An existing agent"
@@ -311,7 +304,7 @@ async def test_get_agent_by_id(
 
     agent = await provider.get_agent("existing-agent-id")
 
-    assert isinstance(agent, ChatAgent)
+    assert isinstance(agent, Agent)
     assert agent.id == "existing-agent-id"
     mock_agents_client.get_agent.assert_called_once_with("existing-agent-id")
 
@@ -326,7 +319,7 @@ async def test_get_agent_with_function_tools(
     mock_function_tool.function = MagicMock()
     mock_function_tool.function.name = "get_weather"
 
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "agent-with-tools"
     mock_agent.name = "AgentWithTools"
     mock_agent.description = None
@@ -355,7 +348,7 @@ async def test_get_agent_with_provided_function_tools(
     mock_function_tool.function = MagicMock()
     mock_function_tool.function.name = "get_weather"
 
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "agent-with-tools"
     mock_agent.name = "AgentWithTools"
     mock_agent.description = None
@@ -366,7 +359,7 @@ async def test_get_agent_with_provided_function_tools(
     mock_agent.tools = [mock_function_tool]
     mock_agents_client.get_agent = AsyncMock(return_value=mock_agent)
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(city: str) -> str:
         """Get weather for a city."""
         return f"Weather in {city}"
@@ -375,7 +368,7 @@ async def test_get_agent_with_provided_function_tools(
 
     agent = await provider.get_agent("agent-with-tools", tools=get_weather)
 
-    assert isinstance(agent, ChatAgent)
+    assert isinstance(agent, Agent)
     assert agent.id == "agent-with-tools"
 
 
@@ -390,7 +383,7 @@ def test_as_agent_wraps_without_http(
     mock_agents_client: MagicMock,
 ) -> None:
     """Test as_agent wraps Agent object without making HTTP calls."""
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "wrap-agent-id"
     mock_agent.name = "WrapAgent"
     mock_agent.description = "Wrapped agent"
@@ -404,7 +397,7 @@ def test_as_agent_wraps_without_http(
 
     agent = provider.as_agent(mock_agent)
 
-    assert isinstance(agent, ChatAgent)
+    assert isinstance(agent, Agent)
     assert agent.id == "wrap-agent-id"
     assert agent.name == "WrapAgent"
     # Ensure no HTTP calls were made
@@ -422,7 +415,7 @@ def test_as_agent_with_function_tools_validates(
     mock_function_tool.function = MagicMock()
     mock_function_tool.function.name = "my_function"
 
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "agent-id"
     mock_agent.name = "Agent"
     mock_agent.description = None
@@ -444,11 +437,11 @@ def test_as_agent_with_hosted_tools(
     azure_ai_unit_test_env: dict[str, str],
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test as_agent handles hosted tools correctly."""
+    """Test as_agent excludes hosted tools from local tools (they stay on the server agent)."""
     mock_code_interpreter = MagicMock()
     mock_code_interpreter.type = "code_interpreter"
 
-    mock_agent = MagicMock(spec=Agent)
+    mock_agent = MagicMock(spec=AzureAgent)
     mock_agent.id = "agent-id"
     mock_agent.name = "Agent"
     mock_agent.description = None
@@ -462,9 +455,81 @@ def test_as_agent_with_hosted_tools(
 
     agent = provider.as_agent(mock_agent)
 
-    assert isinstance(agent, ChatAgent)
-    # Should have HostedCodeInterpreterTool in the default_options tools
-    assert any(isinstance(t, HostedCodeInterpreterTool) for t in (agent.default_options.get("tools") or []))
+    assert isinstance(agent, Agent)
+    # Hosted tools (code_interpreter, file_search, etc.) are already on the server agent
+    # and should NOT be in local tools to avoid re-sending them at run time
+    tools = agent.default_options.get("tools") or []
+    assert not any(isinstance(t, dict) and t.get("type") == "code_interpreter" for t in tools)
+
+
+def test_as_agent_with_dict_function_tools_validates(
+    azure_ai_unit_test_env: dict[str, str],
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test as_agent validates dict-format function tools require implementations."""
+    # Dict-based function tool (as returned by some Azure AI SDK operations)
+    dict_function_tool = {  # type: ignore
+        "type": "function",
+        "function": {
+            "name": "dict_based_function",
+            "description": "A function defined as dict",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+
+    mock_agent = MagicMock(spec=AzureAgent)
+    mock_agent.id = "agent-id"
+    mock_agent.name = "Agent"
+    mock_agent.description = None
+    mock_agent.instructions = None
+    mock_agent.model = "gpt-4"
+    mock_agent.temperature = None
+    mock_agent.top_p = None
+    mock_agent.tools = [dict_function_tool]
+
+    provider = AzureAIAgentsProvider(agents_client=mock_agents_client)
+
+    with pytest.raises(ServiceInitializationError) as exc_info:
+        provider.as_agent(mock_agent)
+
+    assert "dict_based_function" in str(exc_info.value)
+
+
+def test_as_agent_with_dict_function_tools_provided(
+    azure_ai_unit_test_env: dict[str, str],
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test as_agent succeeds when dict-format function tools have implementations provided."""
+    dict_function_tool = {  # type: ignore
+        "type": "function",
+        "function": {
+            "name": "dict_based_function",
+            "description": "A function defined as dict",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+
+    mock_agent = MagicMock(spec=AzureAgent)
+    mock_agent.id = "agent-id"
+    mock_agent.name = "Agent"
+    mock_agent.description = None
+    mock_agent.instructions = None
+    mock_agent.model = "gpt-4"
+    mock_agent.temperature = None
+    mock_agent.top_p = None
+    mock_agent.tools = [dict_function_tool]
+
+    @tool
+    def dict_based_function() -> str:
+        """A function implementation."""
+        return "result"
+
+    provider = AzureAIAgentsProvider(agents_client=mock_agents_client)
+
+    agent = provider.as_agent(mock_agent, tools=dict_based_function)
+
+    assert isinstance(agent, Agent)
+    assert agent.id == "agent-id"
 
 
 # endregion
@@ -483,9 +548,9 @@ def test_to_azure_ai_agent_tools_empty() -> None:
 
 
 def test_to_azure_ai_agent_tools_function() -> None:
-    """Test converting AIFunction to Azure tool definition."""
+    """Test converting FunctionTool to Azure tool definition."""
 
-    @ai_function
+    @tool(approval_mode="never_require")
     def get_weather(city: str) -> str:
         """Get weather for a city."""
         return f"Weather in {city}"
@@ -498,8 +563,8 @@ def test_to_azure_ai_agent_tools_function() -> None:
 
 
 def test_to_azure_ai_agent_tools_code_interpreter() -> None:
-    """Test converting HostedCodeInterpreterTool."""
-    tool = HostedCodeInterpreterTool()
+    """Test converting code_interpreter dict tool."""
+    tool = AzureAIAgentClient.get_code_interpreter_tool()
 
     result = to_azure_ai_agent_tools([tool])
 
@@ -508,8 +573,8 @@ def test_to_azure_ai_agent_tools_code_interpreter() -> None:
 
 
 def test_to_azure_ai_agent_tools_file_search() -> None:
-    """Test converting HostedFileSearchTool with vector stores."""
-    tool = HostedFileSearchTool(inputs=[HostedVectorStoreContent(vector_store_id="vs-123")])
+    """Test converting file_search dict tool with vector stores."""
+    tool = AzureAIAgentClient.get_file_search_tool(vector_store_ids=["vs-123"])
     run_options: dict[str, Any] = {}
 
     result = to_azure_ai_agent_tools([tool], run_options)
@@ -519,15 +584,14 @@ def test_to_azure_ai_agent_tools_file_search() -> None:
 
 
 def test_to_azure_ai_agent_tools_web_search_bing_grounding(monkeypatch: Any) -> None:
-    """Test converting HostedWebSearchTool for Bing Grounding."""
+    """Test converting web_search dict tool for Bing Grounding."""
     # Use a properly formatted connection ID as required by Azure SDK
     valid_conn_id = (
         "/subscriptions/test-sub/resourceGroups/test-rg/"
         "providers/Microsoft.CognitiveServices/accounts/test-account/"
         "projects/test-project/connections/test-connection"
     )
-    monkeypatch.setenv("BING_CONNECTION_ID", valid_conn_id)
-    tool = HostedWebSearchTool()
+    tool = AzureAIAgentClient.get_web_search_tool(bing_connection_id=valid_conn_id)
 
     result = to_azure_ai_agent_tools([tool])
 
@@ -535,10 +599,11 @@ def test_to_azure_ai_agent_tools_web_search_bing_grounding(monkeypatch: Any) -> 
 
 
 def test_to_azure_ai_agent_tools_web_search_custom(monkeypatch: Any) -> None:
-    """Test converting HostedWebSearchTool for Custom Bing Search."""
-    monkeypatch.setenv("BING_CUSTOM_CONNECTION_ID", "custom-conn-id")
-    monkeypatch.setenv("BING_CUSTOM_INSTANCE_NAME", "my-instance")
-    tool = HostedWebSearchTool()
+    """Test converting web_search dict tool for Custom Bing Search."""
+    tool = AzureAIAgentClient.get_web_search_tool(
+        bing_custom_connection_id="custom-conn-id",
+        bing_custom_instance_id="my-instance",
+    )
 
     result = to_azure_ai_agent_tools([tool])
 
@@ -546,22 +611,23 @@ def test_to_azure_ai_agent_tools_web_search_custom(monkeypatch: Any) -> None:
 
 
 def test_to_azure_ai_agent_tools_web_search_missing_config(monkeypatch: Any) -> None:
-    """Test converting HostedWebSearchTool raises error when config is missing."""
+    """Test converting web_search dict tool without bing config returns empty."""
     monkeypatch.delenv("BING_CONNECTION_ID", raising=False)
     monkeypatch.delenv("BING_CUSTOM_CONNECTION_ID", raising=False)
     monkeypatch.delenv("BING_CUSTOM_INSTANCE_NAME", raising=False)
-    tool = HostedWebSearchTool()
+    tool = {"type": "web_search"}
 
-    with pytest.raises(ServiceInitializationError):
-        to_azure_ai_agent_tools([tool])
+    result = to_azure_ai_agent_tools([tool])
+
+    # web_search without bing connection is passed through as dict
+    assert len(result) == 1
 
 
 def test_to_azure_ai_agent_tools_mcp() -> None:
-    """Test converting HostedMCPTool."""
-    tool = HostedMCPTool(
+    """Test converting MCP dict tool."""
+    tool = AzureAIAgentClient.get_mcp_tool(
         name="my mcp server",
         url="https://mcp.example.com",
-        allowed_tools=["tool1", "tool2"],
     )
 
     result = to_azure_ai_agent_tools([tool])
@@ -580,13 +646,15 @@ def test_to_azure_ai_agent_tools_dict_passthrough() -> None:
 
 
 def test_to_azure_ai_agent_tools_unsupported_type() -> None:
-    """Test that unsupported tool types raise error."""
+    """Test that unsupported tool types pass through unchanged."""
 
     class UnsupportedTool:
         pass
 
-    with pytest.raises(ServiceInitializationError):
-        to_azure_ai_agent_tools([UnsupportedTool()])  # type: ignore
+    unsupported = UnsupportedTool()
+    result = to_azure_ai_agent_tools([unsupported])  # type: ignore
+    assert len(result) == 1
+    assert result[0] is unsupported  # Passed through unchanged
 
 
 # endregion
@@ -611,7 +679,7 @@ def test_from_azure_ai_agent_tools_code_interpreter() -> None:
     result = from_azure_ai_agent_tools([tool])
 
     assert len(result) == 1
-    assert isinstance(result[0], HostedCodeInterpreterTool)
+    assert result[0] == {"type": "code_interpreter"}
 
 
 def test_from_azure_ai_agent_tools_code_interpreter_dict() -> None:
@@ -621,7 +689,7 @@ def test_from_azure_ai_agent_tools_code_interpreter_dict() -> None:
     result = from_azure_ai_agent_tools([tool])
 
     assert len(result) == 1
-    assert isinstance(result[0], HostedCodeInterpreterTool)
+    assert result[0] == {"type": "code_interpreter"}
 
 
 def test_from_azure_ai_agent_tools_file_search_dict() -> None:
@@ -634,8 +702,8 @@ def test_from_azure_ai_agent_tools_file_search_dict() -> None:
     result = from_azure_ai_agent_tools([tool])
 
     assert len(result) == 1
-    assert isinstance(result[0], HostedFileSearchTool)
-    assert len(result[0].inputs or []) == 2
+    assert result[0]["type"] == "file_search"
+    assert result[0]["vector_store_ids"] == ["vs-123", "vs-456"]
 
 
 def test_from_azure_ai_agent_tools_bing_grounding_dict() -> None:
@@ -648,12 +716,8 @@ def test_from_azure_ai_agent_tools_bing_grounding_dict() -> None:
     result = from_azure_ai_agent_tools([tool])
 
     assert len(result) == 1
-    assert isinstance(result[0], HostedWebSearchTool)
-
-    additional_properties = result[0].additional_properties
-
-    assert additional_properties
-    assert additional_properties.get("connection_id") == "conn-123"
+    assert result[0]["type"] == "bing_grounding"
+    assert result[0]["connection_id"] == "conn-123"
 
 
 def test_from_azure_ai_agent_tools_bing_custom_search_dict() -> None:
@@ -669,11 +733,9 @@ def test_from_azure_ai_agent_tools_bing_custom_search_dict() -> None:
     result = from_azure_ai_agent_tools([tool])
 
     assert len(result) == 1
-    assert isinstance(result[0], HostedWebSearchTool)
-    additional_properties = result[0].additional_properties
-
-    assert additional_properties
-    assert additional_properties.get("custom_connection_id") == "custom-conn"
+    assert result[0]["type"] == "bing_custom_search"
+    assert result[0]["connection_id"] == "custom-conn"
+    assert result[0]["instance_name"] == "my-instance"
 
 
 def test_from_azure_ai_agent_tools_mcp_dict() -> None:
@@ -729,8 +791,6 @@ def test_from_azure_ai_agent_tools_unknown_dict() -> None:
 @skip_if_azure_ai_integration_tests_disabled
 async def test_integration_create_agent() -> None:
     """Integration test: Create an agent using the provider."""
-    from azure.identity.aio import AzureCliCredential
-
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,
@@ -741,7 +801,7 @@ async def test_integration_create_agent() -> None:
         )
 
         try:
-            assert isinstance(agent, ChatAgent)
+            assert isinstance(agent, Agent)
             assert agent.name == "IntegrationTestAgent"
             assert agent.id is not None
         finally:
@@ -753,8 +813,6 @@ async def test_integration_create_agent() -> None:
 @skip_if_azure_ai_integration_tests_disabled
 async def test_integration_get_agent() -> None:
     """Integration test: Get an existing agent using the provider."""
-    from azure.identity.aio import AzureCliCredential
-
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,
@@ -770,7 +828,7 @@ async def test_integration_get_agent() -> None:
             # Then get it using the provider
             agent = await provider.get_agent(created.id)
 
-            assert isinstance(agent, ChatAgent)
+            assert isinstance(agent, Agent)
             assert agent.id == created.id
         finally:
             await provider._agents_client.delete_agent(created.id)  # type: ignore
@@ -779,8 +837,6 @@ async def test_integration_get_agent() -> None:
 @skip_if_azure_ai_integration_tests_disabled
 async def test_integration_create_and_run() -> None:
     """Integration test: Create an agent and run a conversation."""
-    from azure.identity.aio import AzureCliCredential
-
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,

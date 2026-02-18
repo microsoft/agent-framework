@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -18,6 +19,12 @@ public class ChatProtocolExecutorOptions
     /// If set, the executor will accept string messages and convert them to chat messages with this role.
     /// </summary>
     public ChatRole? StringMessageChatRole { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the executor should automatically send the <see cref="TurnToken"/>
+    /// after returning from <see cref="ChatProtocolExecutor.TakeTurnAsync(List{ChatMessage}, IWorkflowContext, bool?, CancellationToken)"/>
+    /// </summary>
+    public bool AutoSendTurnToken { get; set; } = true;
 }
 
 /// <summary>
@@ -26,8 +33,14 @@ public class ChatProtocolExecutorOptions
 /// </summary>
 public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
 {
-    private static readonly Func<List<ChatMessage>> s_initFunction = () => [];
-    private readonly ChatRole? _stringMessageChatRole;
+    internal static readonly Func<List<ChatMessage>> s_initFunction = () => [];
+    private readonly ChatProtocolExecutorOptions _options;
+
+    private static readonly StatefulExecutorOptions s_baseExecutorOptions = new()
+    {
+        AutoSendMessageHandlerResultObject = false,
+        AutoYieldOutputHandlerResultObject = false
+    };
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatProtocolExecutor"/> class.
@@ -36,18 +49,30 @@ public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
     /// <param name="options">Optional configuration settings for the executor. If null, default options are used.</param>
     /// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
     protected ChatProtocolExecutor(string id, ChatProtocolExecutorOptions? options = null, bool declareCrossRunShareable = false)
-        : base(id, () => [], declareCrossRunShareable: declareCrossRunShareable)
+        : base(id, () => [], s_baseExecutorOptions, declareCrossRunShareable)
     {
-        this._stringMessageChatRole = options?.StringMessageChatRole;
+        this._options = options ?? new();
     }
+
+    /// <summary>
+    /// Gets a value indicating whether string-based messages are supported by this <see cref="ChatProtocolExecutor"/>.
+    /// </summary>
+    [MemberNotNullWhen(true, nameof(StringMessageChatRole))]
+    protected bool SupportsStringMessage => this.StringMessageChatRole.HasValue;
+
+    /// <inheritdoc cref="ChatProtocolExecutorOptions.StringMessageChatRole"/>
+    protected ChatRole? StringMessageChatRole => this._options.StringMessageChatRole;
+
+    /// <inheritdoc cref="ChatProtocolExecutorOptions.AutoSendTurnToken"/>
+    protected bool AutoSendTurnToken => this._options.AutoSendTurnToken;
 
     /// <inheritdoc/>
     protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
     {
-        if (this._stringMessageChatRole.HasValue)
+        if (this.SupportsStringMessage)
         {
             routeBuilder = routeBuilder.AddHandler<string>(
-                (message, context) => this.AddMessageAsync(new(this._stringMessageChatRole.Value, message), context));
+                (message, context) => this.AddMessageAsync(new(this.StringMessageChatRole.Value, message), context));
         }
 
         return routeBuilder.AddHandler<ChatMessage>(this.AddMessageAsync)
@@ -111,11 +136,36 @@ public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
             await this.TakeTurnAsync(maybePendingMessages ?? s_initFunction(), context, token.EmitEvents, cancellationToken)
                       .ConfigureAwait(false);
 
-            await context.SendMessageAsync(token, cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (this.AutoSendTurnToken)
+            {
+                await context.SendMessageAsync(token, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
 
             // Rerun the initialStateFactory to reset the state to empty list. (We could return the empty list directly,
             // but this is more consistent if the initial state factory becomes more complex.)
             return s_initFunction();
+        }
+    }
+
+    /// <summary>
+    /// Processes the current set of turn messages using the specified asynchronous processing function.
+    /// </summary>
+    /// <remarks>If the provided list of chat messages is null, an initial empty list is supplied to the
+    /// processing function. If the processing function returns null, an empty list is used as the result.</remarks>
+    /// <param name="processFunc">A delegate that asynchronously processes a list of chat messages within the given workflow context and
+    /// cancellation token, returning the processed list of chat messages or null.</param>
+    /// <param name="context">The workflow context in which the messages are processed.</param>
+    /// <param name="cancellationToken">A token that can be used to cancel the asynchronous operation.</param>
+    /// <returns>A ValueTask that represents the asynchronous operation. The result contains the processed list of chat messages,
+    /// or an empty list if the processing function returns null.</returns>
+    protected ValueTask ProcessTurnMessagesAsync(Func<List<ChatMessage>, IWorkflowContext, CancellationToken, ValueTask<List<ChatMessage>?>> processFunc, IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        return this.InvokeWithStateAsync(InvokeProcessFuncAsync, context, cancellationToken: cancellationToken);
+
+        async ValueTask<List<ChatMessage>?> InvokeProcessFuncAsync(List<ChatMessage>? maybePendingMessages, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            return (await processFunc(maybePendingMessages ?? s_initFunction(), context, cancellationToken).ConfigureAwait(false))
+                ?? s_initFunction();
         }
     }
 

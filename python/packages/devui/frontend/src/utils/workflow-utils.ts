@@ -15,8 +15,8 @@ import type { Workflow } from "@/types/workflow";
 import { getTypedWorkflow } from "@/types/workflow";
 
 /**
- * Detects if a JSON schema represents a ChatMessage input type.
- * ChatMessage schemas typically have:
+ * Detects if a JSON schema represents a Message input type.
+ * Message schemas typically have:
  * - type: "object"
  * - properties with "text" (required string) and "role" (optional string)
  *
@@ -24,7 +24,7 @@ import { getTypedWorkflow } from "@/types/workflow";
  * component for workflows that start with an AgentExecutor.
  *
  * @param schema - The JSON schema to check
- * @returns true if the schema represents a ChatMessage-like input
+ * @returns true if the schema represents a Message-like input
  */
 export function isChatMessageSchema(schema: JSONSchemaProperty | undefined): boolean {
   if (!schema) return false;
@@ -37,13 +37,13 @@ export function isChatMessageSchema(schema: JSONSchemaProperty | undefined): boo
 
   const props = schema.properties;
 
-  // ChatMessage has "text" property (the main content)
+  // Message has "text" property (the main content)
   const hasText = "text" in props && props.text?.type === "string";
 
-  // ChatMessage has "role" property (user, assistant, system)
+  // Message has "role" property (user, assistant, system)
   const hasRole = "role" in props && props.role?.type === "string";
 
-  // If it has both text and role, it's likely a ChatMessage
+  // If it has both text and role, it's likely a Message
   if (hasText && hasRole) {
     return true;
   }

@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - Internal use of obsolete types for backward compatibility
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -16,16 +18,13 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <summary>
 /// A component that processes messages in a <see cref="Workflow"/>.
 /// </summary>
-[DebuggerDisplay("{GetType().Name}{Id}")]
+[DebuggerDisplay("{GetType().Name}[{Id}]")]
 public abstract class Executor : IIdentified
 {
     /// <summary>
     /// A unique identifier for the executor.
     /// </summary>
     public string Id { get; }
-
-    private static readonly string s_namespace = typeof(Executor).Namespace!;
-    private static readonly ActivitySource s_activitySource = new(s_namespace);
 
     // TODO: Add overloads for binding with a configuration/options object once the Configured<T> hierarchy goes away.
 
@@ -63,6 +62,24 @@ public abstract class Executor : IIdentified
     /// </summary>
     protected abstract RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder);
 
+    internal void Configure(IExternalRequestContext externalRequestContext)
+    {
+        // TODO: This is an unfortunate pattern (pending the ability to rework the Configure APIs a bit):
+        // new()
+        // >>> will throw InvalidOperationException if Configure() is not invoked when using PortHandlers
+        //   .Configure()
+        // >>> only usable now
+        // The fix would be to change the API surface of Executor to have Configure return the contract that the workflow
+        // will use to invoke the executor (currently the MessageRouter). (Ideally we would rename Executor to Node or similar,
+        // and the actual Executor class will represent that Contract object)
+        // Not a terrible issue right now because only InProcessExecution exists right now, and the InProccessRunContext centralizes
+        // executor instantiation in EnsureExecutorAsync.
+        this.Router = this.CreateRouter(externalRequestContext);
+    }
+
+    private MessageRouter CreateRouter(IExternalRequestContext? externalRequestContext = null)
+        => this.ConfigureRoutes(new RouteBuilder(externalRequestContext)).Build();
+
     /// <summary>
     /// Perform any asynchronous initialization required by the executor. This method is called once per executor instance,
     /// </summary>
@@ -99,11 +116,14 @@ public abstract class Executor : IIdentified
         {
             if (field is null)
             {
-                RouteBuilder routeBuilder = this.ConfigureRoutes(new RouteBuilder());
-                field = routeBuilder.Build();
+                field = this.CreateRouter();
             }
 
             return field;
+        }
+        private set
+        {
+            field = value;
         }
     }
 
@@ -119,13 +139,13 @@ public abstract class Executor : IIdentified
     /// <returns>A ValueTask representing the asynchronous operation, wrapping the output from the executor.</returns>
     /// <exception cref="NotSupportedException">No handler found for the message type.</exception>
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
-    public async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, CancellationToken cancellationToken = default)
+        => this.ExecuteAsync(message, messageType, context, WorkflowTelemetryContext.Disabled, cancellationToken);
+
+    internal async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, CancellationToken cancellationToken = default)
     {
-        using var activity = s_activitySource.StartActivity(ActivityNames.ExecutorProcess, ActivityKind.Internal);
-        activity?.SetTag(Tags.ExecutorId, this.Id)
-            .SetTag(Tags.ExecutorType, this.GetType().FullName)
-            .SetTag(Tags.MessageType, messageType.TypeName)
-            .CreateSourceLinks(context.TraceContext);
+        using var activity = telemetryContext.StartExecutorProcessActivity(this.Id, this.GetType().FullName, messageType.TypeName, message);
+        activity?.CreateSourceLinks(context.TraceContext);
 
         await context.AddEventAsync(new ExecutorInvokedEvent(this.Id, message), cancellationToken).ConfigureAwait(false);
 
@@ -159,6 +179,11 @@ public abstract class Executor : IIdentified
         {
             return null; // Void result.
         }
+
+        // Output is not available if executor does not return anything, in which case
+        // messages sent in the handlers of this executor will be set in the message
+        // send activities.
+        telemetryContext.SetExecutorOutput(activity, result.Result);
 
         // If we had a real return type, raise it as a SendMessage; TODO: Should we have a way to disable this behaviour?
         if (result.Result is not null && this.Options.AutoSendMessageHandlerResultObject)
@@ -210,7 +235,7 @@ public abstract class Executor : IIdentified
         // TODO: Once burden of annotating yield/output messages becomes easier for the non-Auto case,
         // we should (1) start checking for validity on output/send side, and (2) add the Yield/Send
         // types to the ProtocolDescriptor.
-        return new(this.InputTypes);
+        return new(this.InputTypes, this.Router.HasCatchAll);
     }
 
     /// <summary>

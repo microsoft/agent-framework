@@ -18,9 +18,12 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? th
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 var embeddingDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-3-large";
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AzureOpenAIClient azureOpenAIClient = new(
     new Uri(endpoint),
-    new AzureCliCredential());
+    new DefaultAzureCredential());
 
 // Create an In-Memory vector store that uses the Azure OpenAI embedding model to generate embeddings.
 VectorStore vectorStore = new InMemoryVectorStore(new()
@@ -62,24 +65,28 @@ AIAgent agent = azureOpenAIClient
     .AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new() { Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available." },
-        AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new TextSearchProvider(SearchAdapter, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions)),
-        // Since we are using ChatCompletion which stores chat history locally, we can also add a message removal policy
+        AIContextProviders = [new TextSearchProvider(SearchAdapter, textSearchOptions)],
+        // Since we are using ChatCompletion which stores chat history locally, we can also add a message filter
         // that removes messages produced by the TextSearchProvider before they are added to the chat history, so that
         // we don't bloat chat history with all the search result messages.
-        ChatMessageStoreFactory = (ctx, ct) => new ValueTask<ChatMessageStore>(new InMemoryChatMessageStore(ctx.SerializedState, ctx.JsonSerializerOptions)
-            .WithAIContextProviderMessageRemoval()),
+        // By default the chat history provider will store all messages, except for those that came from chat history in the first place.
+        // We also want to maintain that exclusion here.
+        ChatHistoryProvider = new InMemoryChatHistoryProvider(new InMemoryChatHistoryProviderOptions
+        {
+            StorageInputMessageFilter = messages => messages.Where(m => m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.AIContextProvider && m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory)
+        }),
     });
 
-AgentThread thread = await agent.GetNewThreadAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 Console.WriteLine(">> Asking about returns\n");
-Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", thread));
+Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", session));
 
 Console.WriteLine("\n>> Asking about shipping\n");
-Console.WriteLine(await agent.RunAsync("How long does standard shipping usually take?", thread));
+Console.WriteLine(await agent.RunAsync("How long does standard shipping usually take?", session));
 
 Console.WriteLine("\n>> Asking about product care\n");
-Console.WriteLine(await agent.RunAsync("What is the best way to maintain the TrailRunner tent fabric?", thread));
+Console.WriteLine(await agent.RunAsync("What is the best way to maintain the TrailRunner tent fabric?", session));
 
 // Produces some sample search documents.
 // Each one contains a source name and link, which the agent can use to cite sources in its responses.

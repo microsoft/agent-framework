@@ -9,8 +9,8 @@ import pytest
 
 agentlightning = pytest.importorskip("agentlightning")
 
-from agent_framework import AgentExecutor, AgentRunEvent, ChatAgent, WorkflowBuilder
-from agent_framework.lab.lightning import AgentFrameworkTracer
+from agent_framework import AgentExecutor, AgentResponse, Agent, WorkflowBuilder, Workflow
+from agent_framework_lab_lightning import AgentFrameworkTracer
 from agent_framework.openai import OpenAIChatClient
 from agentlightning import TracerTraceToTriplet
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
@@ -80,14 +80,14 @@ def workflow_two_agents():
             ),
         ):
             # Create the two agents
-            analyzer_agent = ChatAgent(
-                chat_client=first_chat_client,
+            analyzer_agent = Agent(
+                client=first_chat_client,
                 name="DataAnalyzer",
                 instructions="You are a data analyst. Analyze the given data and provide insights.",
             )
 
-            advisor_agent = ChatAgent(
-                chat_client=second_chat_client,
+            advisor_agent = Agent(
+                client=second_chat_client,
                 name="InvestmentAdvisor",
                 instructions="You are an investment advisor. Based on analysis results, provide recommendations.",
             )
@@ -97,20 +97,17 @@ def workflow_two_agents():
 
             # Build workflow: analyzer -> advisor
             workflow = (
-                WorkflowBuilder()
-                .set_start_executor(analyzer_executor)
-                .add_edge(analyzer_executor, advisor_executor)
-                .build()
+                WorkflowBuilder(start_executor=analyzer_executor).add_edge(analyzer_executor, advisor_executor).build()
             )
 
             yield workflow
 
 
-async def test_openai_workflow_two_agents(workflow_two_agents):
+async def test_openai_workflow_two_agents(workflow_two_agents: Workflow):
     events = await workflow_two_agents.run("Please analyze the quarterly sales data")
 
-    # Get all AgentRunEvent data
-    agent_outputs = [event.data for event in events if isinstance(event, AgentRunEvent)]
+    # Get all output events with AgentResponse
+    agent_outputs = [event.data for event in events if event.type == "output" and isinstance(event.data, AgentResponse)]
 
     # Check that we have outputs from both agents
     assert len(agent_outputs) == 2
@@ -121,7 +118,7 @@ async def test_openai_workflow_two_agents(workflow_two_agents):
     )
 
 
-async def test_observability(workflow_two_agents):
+async def test_observability(workflow_two_agents: Workflow):
     r"""Expected trace tree:
 
                     [workflow.run]

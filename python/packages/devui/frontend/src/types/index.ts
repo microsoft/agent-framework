@@ -45,7 +45,14 @@ export interface AgentInfo {
 
 // JSON Schema types for workflow input
 export interface JSONSchemaProperty {
-  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  type?:
+    | "string"
+    | "number"
+    | "integer"
+    | "boolean"
+    | "array"
+    | "object"
+    | "null";
   description?: string;
   default?: unknown;
   enum?: string[];
@@ -53,6 +60,16 @@ export interface JSONSchemaProperty {
   properties?: Record<string, JSONSchemaProperty>;
   required?: string[];
   items?: JSONSchemaProperty;
+  // Union types (Pydantic generates these for Optional[T], Union[T1, T2], etc.)
+  anyOf?: JSONSchemaProperty[];
+  oneOf?: JSONSchemaProperty[];
+  allOf?: JSONSchemaProperty[];
+  // Additional JSON Schema properties
+  title?: string;
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
 }
 
 export interface JSONSchema {
@@ -168,10 +185,10 @@ export interface MetaResponse {
 }
 
 // Chat message types matching Agent Framework
-export interface ChatMessage {
+export interface Message {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
-  contents: import("./agent-framework").Contents[];
+  contents: import("./agent-framework").Content[];
   timestamp: string;
   streaming?: boolean;
   author_name?: string;
@@ -195,7 +212,7 @@ export interface AppState {
 }
 
 export interface ChatState {
-  messages: ChatMessage[];
+  messages: Message[];
   isStreaming: boolean;
   // streamEvents removed - use OpenAI events directly instead
 }
@@ -273,7 +290,7 @@ export interface FullCheckpoint {
   workflow_id: string;
   timestamp: string;
   messages: Record<string, unknown[]>;
-  shared_state: Record<string, unknown>;
+  state: Record<string, unknown>;
   pending_request_info_events: Record<string, PendingRequestInfoEvent>;
   iteration_count: number;
   metadata: Record<string, unknown>;

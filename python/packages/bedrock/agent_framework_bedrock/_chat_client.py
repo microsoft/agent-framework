@@ -1,55 +1,56 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import json
+import logging
 import sys
 from collections import deque
-from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Generic, Literal, TypedDict
 from uuid import uuid4
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    AIFunction,
     BaseChatClient,
-    ChatMessage,
+    ChatAndFunctionMiddlewareTypes,
+    ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    Contents,
-    FinishReason,
-    FunctionCallContent,
-    FunctionResultContent,
-    Role,
-    TextContent,
-    ToolProtocol,
-    UsageContent,
+    Content,
+    FinishReasonLiteral,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
+    FunctionTool,
+    Message,
+    ResponseStream,
     UsageDetails,
-    get_logger,
-    prepare_function_call_results,
-    use_chat_middleware,
-    use_function_invocation,
     validate_tool_mode,
 )
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import SecretString, load_settings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidResponseError
-from agent_framework.observability import use_instrumentation
+from agent_framework.observability import ChatTelemetryLayer
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
-from pydantic import SecretStr, ValidationError
+from pydantic import BaseModel
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import TypeVar  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar
-
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-logger = get_logger("agent_framework.bedrock")
+logger = logging.getLogger("agent_framework.bedrock")
 
 
 __all__ = [
@@ -58,6 +59,8 @@ __all__ = [
     "BedrockGuardrailConfig",
     "BedrockSettings",
 ]
+
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 # region Bedrock Chat Options TypedDict
@@ -86,7 +89,7 @@ class BedrockGuardrailConfig(TypedDict, total=False):
     """How to process guardrails during streaming (sync blocks, async does not)."""
 
 
-class BedrockChatOptions(ChatOptions, total=False):
+class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """Amazon Bedrock Converse API-specific chat options dict.
 
     Extends base ChatOptions with Bedrock-specific parameters.
@@ -178,46 +181,47 @@ BEDROCK_OPTION_TRANSLATIONS: dict[str, str] = {
 }
 """Maps ChatOptions keys to Bedrock Converse API parameter names."""
 
-TBedrockChatOptions = TypeVar("TBedrockChatOptions", bound=TypedDict, default="BedrockChatOptions", covariant=True)  # type: ignore[valid-type]
+BedrockChatOptionsT = TypeVar("BedrockChatOptionsT", bound=TypedDict, default="BedrockChatOptions", covariant=True)  # type: ignore[valid-type]
 
 
 # endregion
 
 
-ROLE_MAP: dict[Role, str] = {
-    Role.USER: "user",
-    Role.ASSISTANT: "assistant",
-    Role.SYSTEM: "user",
-    Role.TOOL: "user",
+ROLE_MAP: dict[str, str] = {
+    "user": "user",
+    "assistant": "assistant",
+    "system": "user",
+    "tool": "user",
 }
 
-FINISH_REASON_MAP: dict[str, FinishReason] = {
-    "end_turn": FinishReason.STOP,
-    "stop_sequence": FinishReason.STOP,
-    "max_tokens": FinishReason.LENGTH,
-    "length": FinishReason.LENGTH,
-    "content_filtered": FinishReason.CONTENT_FILTER,
-    "tool_use": FinishReason.TOOL_CALLS,
+FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "max_tokens": "length",
+    "length": "length",
+    "content_filtered": "content_filter",
+    "tool_use": "tool_calls",
 }
 
 
-class BedrockSettings(AFBaseSettings):
+class BedrockSettings(TypedDict, total=False):
     """Bedrock configuration settings pulled from environment variables or .env files."""
 
-    env_prefix: ClassVar[str] = "BEDROCK_"
-
-    region: str = DEFAULT_REGION
-    chat_model_id: str | None = None
-    access_key: SecretStr | None = None
-    secret_key: SecretStr | None = None
-    session_token: SecretStr | None = None
+    region: str | None
+    chat_model_id: str | None
+    access_key: SecretString | None
+    secret_key: SecretString | None
+    session_token: SecretString | None
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockChatOptions]):
-    """Async chat client for Amazon Bedrock's Converse API."""
+class BedrockChatClient(
+    ChatMiddlewareLayer[BedrockChatOptionsT],
+    FunctionInvocationLayer[BedrockChatOptionsT],
+    ChatTelemetryLayer[BedrockChatOptionsT],
+    BaseChatClient[BedrockChatOptionsT],
+    Generic[BedrockChatOptionsT],
+):
+    """Async chat client for Amazon Bedrock's Converse API with middleware, telemetry, and function invocation."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
@@ -231,6 +235,8 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         session_token: str | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -245,6 +251,8 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             session_token: Optional AWS session token for temporary credentials.
             client: Preconfigured Bedrock runtime client; when omitted a boto3 session is created.
             boto3_session: Custom boto3 session used to build the runtime client if provided.
+            middleware: Optional sequence of middlewares to include.
+            function_invocation_configuration: Optional function invocation configuration
             env_file_path: Optional .env file path used by ``BedrockSettings`` to load defaults.
             env_file_encoding: Encoding for the optional .env file.
             kwargs: Additional arguments forwarded to ``BaseChatClient``.
@@ -252,7 +260,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         Examples:
             .. code-block:: python
 
-                from agent_framework.bedrock import BedrockChatClient
+                from agent_framework.amazon import BedrockChatClient
 
                 # Basic usage with default credentials
                 client = BedrockChatClient(model_id="<model name>")
@@ -269,78 +277,87 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                 client = BedrockChatClient[MyOptions](model_id="<model name>")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            settings = BedrockSettings(
-                region=region,
-                chat_model_id=model_id,
-                access_key=access_key,  # type: ignore[arg-type]
-                secret_key=secret_key,  # type: ignore[arg-type]
-                session_token=session_token,  # type: ignore[arg-type]
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to initialize Bedrock settings.", ex) from ex
+        settings = load_settings(
+            BedrockSettings,
+            env_prefix="BEDROCK_",
+            region=region,
+            chat_model_id=model_id,
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+        if not settings.get("region"):
+            settings["region"] = DEFAULT_REGION
 
         if client is None:
             session = boto3_session or self._create_session(settings)
             client = session.client(
                 "bedrock-runtime",
-                region_name=settings.region,
+                region_name=settings["region"],
                 config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
             )
 
-        super().__init__(**kwargs)
+        super().__init__(
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            **kwargs,
+        )
         self._bedrock_client = client
-        self.model_id = settings.chat_model_id
-        self.region = settings.region
+        self.model_id = settings["chat_model_id"]
+        self.region = settings["region"]
 
     @staticmethod
     def _create_session(settings: BedrockSettings) -> Boto3Session:
-        session_kwargs: dict[str, Any] = {"region_name": settings.region or DEFAULT_REGION}
-        if settings.access_key and settings.secret_key:
-            session_kwargs["aws_access_key_id"] = settings.access_key.get_secret_value()
-            session_kwargs["aws_secret_access_key"] = settings.secret_key.get_secret_value()
-        if settings.session_token:
-            session_kwargs["aws_session_token"] = settings.session_token.get_secret_value()
+        session_kwargs: dict[str, Any] = {"region_name": settings.get("region") or DEFAULT_REGION}
+        if settings.get("access_key") and settings.get("secret_key"):
+            session_kwargs["aws_access_key_id"] = settings["access_key"].get_secret_value()  # type: ignore[union-attr]
+            session_kwargs["aws_secret_access_key"] = settings["secret_key"].get_secret_value()  # type: ignore[union-attr]
+        if settings.get("session_token"):
+            session_kwargs["aws_session_token"] = settings["session_token"].get_secret_value()  # type: ignore[union-attr]
         return Boto3Session(**session_kwargs)
 
     @override
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         request = self._prepare_options(messages, options, **kwargs)
-        raw_response = await asyncio.to_thread(self._bedrock_client.converse, **request)
-        return self._process_converse_response(raw_response)
 
-    @override
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        response = await self._inner_get_response(messages=messages, options=options, **kwargs)
-        contents = list(response.messages[0].contents if response.messages else [])
-        if response.usage_details:
-            contents.append(UsageContent(details=response.usage_details))
-        yield ChatResponseUpdate(
-            response_id=response.response_id,
-            contents=contents,
-            model_id=response.model_id,
-            finish_reason=response.finish_reason,
-            raw_representation=response.raw_representation,
-        )
+        if stream:
+            # Streaming mode - simulate streaming by yielding a single update
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                response = await asyncio.to_thread(self._bedrock_client.converse, **request)
+                parsed_response = self._process_converse_response(response)
+                contents = list(parsed_response.messages[0].contents if parsed_response.messages else [])
+                if parsed_response.usage_details:
+                    contents.append(Content.from_usage(usage_details=parsed_response.usage_details))  # type: ignore[arg-type]
+                yield ChatResponseUpdate(
+                    response_id=parsed_response.response_id,
+                    contents=contents,
+                    model_id=parsed_response.model_id,
+                    finish_reason=parsed_response.finish_reason,
+                    raw_representation=parsed_response.raw_representation,
+                )
+
+            return self._build_response_stream(_stream())
+
+        # Non-streaming mode
+        async def _get_response() -> ChatResponse:
+            raw_response = await asyncio.to_thread(self._bedrock_client.converse, **request)
+            return self._process_converse_response(raw_response)
+
+        return _get_response()
 
     def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
         model_id = options.get("model_id") or self.model_id
@@ -390,13 +407,13 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         return run_options
 
     def _prepare_bedrock_messages(
-        self, messages: Sequence[ChatMessage]
+        self, messages: Sequence[Message]
     ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
         prompts: list[dict[str, str]] = []
         conversation: list[dict[str, Any]] = []
         pending_tool_use_ids: deque[str] = deque()
         for message in messages:
-            if message.role == Role.SYSTEM:
+            if message.role == "system":
                 text_value = message.text
                 if text_value:
                     prompts.append({"text": text_value})
@@ -413,7 +430,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                     for block in content_blocks
                     if isinstance(block, MutableMapping) and "toolUse" in block
                 )
-            elif message.role == Role.TOOL:
+            elif message.role == "tool":
                 content_blocks = self._align_tool_results_with_pending(content_blocks, pending_tool_use_ids)
                 pending_tool_use_ids.clear()
                 if not content_blocks:
@@ -462,7 +479,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
 
         return aligned_blocks
 
-    def _convert_message_to_content_blocks(self, message: ChatMessage) -> list[dict[str, Any]]:
+    def _convert_message_to_content_blocks(self, message: Message) -> list[dict[str, Any]]:
         blocks: list[dict[str, Any]] = []
         for content in message.contents:
             block = self._convert_content_to_bedrock_block(content)
@@ -472,41 +489,45 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             blocks.append(block)
         return blocks
 
-    def _convert_content_to_bedrock_block(self, content: Contents) -> dict[str, Any] | None:
-        if isinstance(content, TextContent):
-            return {"text": content.text}
-        if isinstance(content, FunctionCallContent):
-            arguments = content.parse_arguments() or {}
-            return {
-                "toolUse": {
-                    "toolUseId": content.call_id or self._generate_tool_call_id(),
-                    "name": content.name,
-                    "input": arguments,
+    def _convert_content_to_bedrock_block(self, content: Content) -> dict[str, Any] | None:
+        match content.type:
+            case "text":
+                return {"text": content.text}
+            case "function_call":
+                arguments = content.parse_arguments() or {}
+                return {
+                    "toolUse": {
+                        "toolUseId": content.call_id or self._generate_tool_call_id(),
+                        "name": content.name,
+                        "input": arguments,
+                    }
                 }
-            }
-        if isinstance(content, FunctionResultContent):
-            tool_result_block = {
-                "toolResult": {
-                    "toolUseId": content.call_id,
-                    "content": self._convert_tool_result_to_blocks(content.result),
-                    "status": "error" if content.exception else "success",
+            case "function_result":
+                tool_result_block = {
+                    "toolResult": {
+                        "toolUseId": content.call_id,
+                        "content": self._convert_tool_result_to_blocks(content.result),
+                        "status": "error" if content.exception else "success",
+                    }
                 }
-            }
-            if content.exception:
-                tool_result = tool_result_block["toolResult"]
-                existing_content = tool_result.get("content")
-                content_list: list[dict[str, Any]]
-                if isinstance(existing_content, list):
-                    content_list = existing_content
-                else:
-                    content_list = []
-                    tool_result["content"] = content_list
-                content_list.append({"text": str(content.exception)})
-            return tool_result_block
+                if content.exception:
+                    tool_result = tool_result_block["toolResult"]
+                    existing_content = tool_result.get("content")
+                    content_list: list[dict[str, Any]]
+                    if isinstance(existing_content, list):
+                        content_list = existing_content
+                    else:
+                        content_list = []
+                        tool_result["content"] = content_list
+                    content_list.append({"text": str(content.exception)})
+                return tool_result_block
+            case _:
+                # Bedrock does not support other content types at this time
+                pass
         return None
 
     def _convert_tool_result_to_blocks(self, result: Any) -> list[dict[str, Any]]:
-        prepared_result = prepare_function_call_results(result)
+        prepared_result = result if isinstance(result, str) else FunctionTool.parse_result(result)
         try:
             parsed_result = json.loads(prepared_result)
         except json.JSONDecodeError:
@@ -531,7 +552,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             return {"text": value}
         if isinstance(value, (int, float, bool)) or value is None:
             return {"json": value}
-        if isinstance(value, TextContent) and getattr(value, "text", None):
+        if isinstance(value, Content) and value.type == "text":
             return {"text": value.text}
         if hasattr(value, "to_dict"):
             try:
@@ -540,7 +561,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                 return {"text": str(value)}
         return {"text": str(value)}
 
-    def _prepare_tools(self, tools: list[ToolProtocol | MutableMapping[str, Any]] | None) -> dict[str, Any] | None:
+    def _prepare_tools(self, tools: list[FunctionTool | MutableMapping[str, Any]] | None) -> dict[str, Any] | None:
         converted: list[dict[str, Any]] = []
         if not tools:
             return None
@@ -548,7 +569,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             if isinstance(tool, MutableMapping):
                 converted.append(dict(tool))
                 continue
-            if isinstance(tool, AIFunction):
+            if isinstance(tool, FunctionTool):
                 converted.append({
                     "toolSpec": {
                         "name": tool.name,
@@ -569,7 +590,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
         message = output.get("message", {})
         content_blocks = message.get("content", []) or []
         contents = self._parse_message_contents(content_blocks)
-        chat_message = ChatMessage(role=Role.ASSISTANT, contents=contents, raw_representation=message)
+        chat_message = Message(role="assistant", contents=contents, raw_representation=message)
         usage_details = self._parse_usage(response.get("usage") or output.get("usage"))
         finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
         response_id = response.get("responseId") or message.get("id")
@@ -586,23 +607,23 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
     def _parse_usage(self, usage: dict[str, Any] | None) -> UsageDetails | None:
         if not usage:
             return None
-        details = UsageDetails()
+        details: UsageDetails = {}
         if (input_tokens := usage.get("inputTokens")) is not None:
-            details.input_token_count = input_tokens
+            details["input_token_count"] = input_tokens
         if (output_tokens := usage.get("outputTokens")) is not None:
-            details.output_token_count = output_tokens
+            details["output_token_count"] = output_tokens
         if (total_tokens := usage.get("totalTokens")) is not None:
-            details.additional_counts["bedrock.total_tokens"] = total_tokens
+            details["total_token_count"] = total_tokens
         return details
 
     def _parse_message_contents(self, content_blocks: Sequence[MutableMapping[str, Any]]) -> list[Any]:
         contents: list[Any] = []
         for block in content_blocks:
             if text_value := block.get("text"):
-                contents.append(TextContent(text=text_value, raw_representation=block))
+                contents.append(Content.from_text(text=text_value, raw_representation=block))
                 continue
             if (json_value := block.get("json")) is not None:
-                contents.append(TextContent(text=json.dumps(json_value), raw_representation=block))
+                contents.append(Content.from_text(text=json.dumps(json_value), raw_representation=block))
                 continue
             tool_use = block.get("toolUse")
             if isinstance(tool_use, MutableMapping):
@@ -610,7 +631,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                 if not tool_name:
                     raise ServiceInvalidResponseError("Bedrock response missing required tool name in toolUse block.")
                 contents.append(
-                    FunctionCallContent(
+                    Content.from_function_call(
                         call_id=tool_use.get("toolUseId") or self._generate_tool_call_id(),
                         name=tool_name,
                         arguments=tool_use.get("input"),
@@ -626,10 +647,10 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
                     exception = RuntimeError(f"Bedrock tool result status: {status}")
                 result_value = self._convert_bedrock_tool_result_to_value(tool_result.get("content"))
                 contents.append(
-                    FunctionResultContent(
+                    Content.from_function_result(
                         call_id=tool_result.get("toolUseId") or self._generate_tool_call_id(),
                         result=result_value,
-                        exception=exception,
+                        exception=str(exception) if exception else None,  # type: ignore[arg-type]
                         raw_representation=block,
                     )
                 )
@@ -637,7 +658,7 @@ class BedrockChatClient(BaseChatClient[TBedrockChatOptions], Generic[TBedrockCha
             logger.debug("Ignoring unsupported Bedrock content block: %s", block)
         return contents
 
-    def _map_finish_reason(self, reason: str | None) -> FinishReason | None:
+    def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | None:
         if not reason:
             return None
         return FINISH_REASON_MAP.get(reason.lower())

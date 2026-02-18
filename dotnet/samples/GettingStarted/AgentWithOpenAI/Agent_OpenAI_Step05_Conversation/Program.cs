@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to maintain conversation state using the OpenAIResponseClientAgent
-// and AgentThread. By passing the same thread to multiple agent invocations, the agent
+// and AgentSession. By passing the same session to multiple agent invocations, the agent
 // automatically maintains the conversation history, allowing the AI model to understand
 // context from previous exchanges.
 
@@ -29,8 +29,8 @@ ClientResult createConversationResult = await conversationClient.CreateConversat
 using JsonDocument createConversationResultAsJson = JsonDocument.Parse(createConversationResult.GetRawResponse().Content.ToString());
 string conversationId = createConversationResultAsJson.RootElement.GetProperty("id"u8)!.GetString()!;
 
-// Create a thread for the conversation - this enables conversation state management for subsequent turns
-AgentThread thread = await agent.GetNewThreadAsync(conversationId);
+// Create a session for the conversation - this enables conversation state management for subsequent turns
+AgentSession session = await agent.CreateSessionAsync(conversationId);
 
 Console.WriteLine("=== Multi-turn Conversation Demo ===\n");
 
@@ -38,22 +38,22 @@ Console.WriteLine("=== Multi-turn Conversation Demo ===\n");
 Console.WriteLine("User: What is the capital of France?");
 UserChatMessage firstMessage = new("What is the capital of France?");
 
-// After this call, the conversation state associated in the options is stored in 'thread' and used in subsequent calls
-ChatCompletion firstResponse = await agent.RunAsync([firstMessage], thread);
+// After this call, the conversation state associated in the options is stored in 'session' and used in subsequent calls
+ChatCompletion firstResponse = await agent.RunAsync([firstMessage], session);
 Console.WriteLine($"Assistant: {firstResponse.Content.Last().Text}\n");
 
 // Second turn: Follow-up question that relies on conversation context
 Console.WriteLine("User: What famous landmarks are located there?");
 UserChatMessage secondMessage = new("What famous landmarks are located there?");
 
-ChatCompletion secondResponse = await agent.RunAsync([secondMessage], thread);
+ChatCompletion secondResponse = await agent.RunAsync([secondMessage], session);
 Console.WriteLine($"Assistant: {secondResponse.Content.Last().Text}\n");
 
 // Third turn: Another follow-up that demonstrates context continuity
 Console.WriteLine("User: How tall is the most famous one?");
 UserChatMessage thirdMessage = new("How tall is the most famous one?");
 
-ChatCompletion thirdResponse = await agent.RunAsync([thirdMessage], thread);
+ChatCompletion thirdResponse = await agent.RunAsync([thirdMessage], session);
 Console.WriteLine($"Assistant: {thirdResponse.Content.Last().Text}\n");
 
 Console.WriteLine("=== End of Conversation ===");

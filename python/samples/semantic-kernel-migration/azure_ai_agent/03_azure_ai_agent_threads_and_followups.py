@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/azure_ai_agent/03_azure_ai_agent_threads_and_followups.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Maintain Azure AI agent conversation state across turns in SK and AF."""
 
@@ -43,19 +52,19 @@ async def run_agent_framework() -> None:
             instructions="Track follow-up questions within the same thread.",
         ) as agent,
     ):
-        thread = agent.get_new_thread()
-        # AF threads are explicit and can be serialized for external storage.
-        first = await agent.run("Outline the onboarding checklist.", thread=thread)
+        session = agent.create_session()
+        # AF sessions are explicit and can be serialized for external storage.
+        first = await agent.run("Outline the onboarding checklist.", session=session)
         print("[AF][turn1]", first.text)
 
         second = await agent.run(
             "Highlight the items that require legal review.",
-            thread=thread,
+            session=session,
         )
         print("[AF][turn2]", second.text)
 
-        serialized = await thread.serialize()
-        print("[AF][thread-json]", serialized)
+        serialized = session.to_dict()
+        print("[AF][session-json]", serialized)
 
 
 async def main() -> None:

@@ -12,7 +12,7 @@ runs:
             docker rm -f dts-emulator
           fi
           echo "Starting Durable Task Scheduler Emulator"
-          docker run -d --name dts-emulator -p 8080:8080 -p 8082:8082 mcr.microsoft.com/dts/dts-emulator:latest
+          docker run -d --name dts-emulator -p 8080:8080 -p 8082:8082 -e DTS_USE_DYNAMIC_TASK_HUBS=true mcr.microsoft.com/dts/dts-emulator:latest
           echo "Waiting for Durable Task Scheduler Emulator to be ready"
           timeout 30 bash -c 'until curl --silent http://localhost:8080/healthz; do sleep 1; done'
           echo "Durable Task Scheduler Emulator is ready"

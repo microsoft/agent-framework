@@ -18,8 +18,11 @@ internal sealed class Program
         string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
         string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "computer-use-preview";
 
+        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
         // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-        AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
         const string AgentInstructions = @"
                     You are a computer automation assistant. 
                     
@@ -83,7 +86,7 @@ internal sealed class Program
             AllowBackgroundResponses = true,
         };
 
-        AgentThread thread = await agent.GetNewThreadAsync();
+        AgentSession session = await agent.CreateSessionAsync();
 
         ChatMessage message = new(ChatRole.User, [
             new TextContent("I need you to help me search for 'OpenAI news'. Please type 'OpenAI news' and submit the search. Once you see search results, the task is complete."),
@@ -93,7 +96,7 @@ internal sealed class Program
         // Initial request with screenshot - start with Bing search page
         Console.WriteLine("Starting computer automation session (initial screenshot: cua_browser_search.png)...");
 
-        AgentResponse response = await agent.RunAsync(message, thread: thread, options: runOptions);
+        AgentResponse response = await agent.RunAsync(message, session: session, options: runOptions);
 
         // Main interaction loop
         const int MaxIterations = 10;
@@ -113,7 +116,7 @@ internal sealed class Program
                 // Continue with the token.
                 runOptions.ContinuationToken = token;
 
-                response = await agent.RunAsync(thread, runOptions);
+                response = await agent.RunAsync(session, runOptions);
             }
 
             Console.WriteLine($"Agent response received (ID: {response.ResponseId})");
@@ -168,7 +171,7 @@ internal sealed class Program
 
             // Follow-up message with action result and new screenshot
             message = new(ChatRole.User, [content]);
-            response = await agent.RunAsync(message, thread: thread, options: runOptions);
+            response = await agent.RunAsync(message, session: session, options: runOptions);
         }
     }
 }

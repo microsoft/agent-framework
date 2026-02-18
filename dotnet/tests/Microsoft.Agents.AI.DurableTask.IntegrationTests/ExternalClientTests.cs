@@ -51,15 +51,15 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         AIAgent simpleAgentProxy = simpleAgent.AsDurableAgentProxy(testHelper.Services);
 
         // Act: send a prompt to the agent and wait for a response
-        AgentThread thread = await simpleAgentProxy.GetNewThreadAsync(this.TestTimeoutToken);
+        AgentSession session = await simpleAgentProxy.CreateSessionAsync(this.TestTimeoutToken);
         await simpleAgentProxy.RunAsync(
             message: "Hello!",
-            thread,
+            session,
             cancellationToken: this.TestTimeoutToken);
 
         AgentResponse response = await simpleAgentProxy.RunAsync(
             message: "Repeat what you just said but say it like a pirate",
-            thread,
+            session,
             cancellationToken: this.TestTimeoutToken);
 
         // Assert: verify the agent responded appropriately
@@ -156,13 +156,13 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         {
             // 1. Get agent and create a session
             DurableAIAgent agent = context.GetAgent("SimpleAgent");
-            AgentThread thread = await agent.GetNewThreadAsync(this.TestTimeoutToken);
+            AgentSession session = await agent.CreateSessionAsync(this.TestTimeoutToken);
 
             // 2. Call an agent and tell it my name
-            await agent.RunAsync($"My name is {name}.", thread);
+            await agent.RunAsync($"My name is {name}.", session);
 
-            // 3. Call the agent again with the same thread (ask it to tell me my name)
-            AgentResponse response = await agent.RunAsync("What is my name?", thread);
+            // 3. Call the agent again with the same session (ask it to tell me my name)
+            AgentResponse response = await agent.RunAsync("What is my name?", session);
 
             return response.Text;
         }
@@ -194,16 +194,16 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         AIAgent workflowManagerAgentProxy = testHelper.Services.GetDurableAgentProxy("WorkflowAgent");
 
         // Act: send a prompt to the agent
-        AgentThread thread = await workflowManagerAgentProxy.GetNewThreadAsync(this.TestTimeoutToken);
+        AgentSession session = await workflowManagerAgentProxy.CreateSessionAsync(this.TestTimeoutToken);
         await workflowManagerAgentProxy.RunAsync(
             message: "Start a greeting workflow for \"John Doe\".",
-            thread,
+            session,
             cancellationToken: this.TestTimeoutToken);
 
         // Act: prompt it again to wait for the workflow to complete
         AgentResponse response = await workflowManagerAgentProxy.RunAsync(
             message: "Wait for the workflow to complete and tell me the result.",
-            thread,
+            session,
             cancellationToken: this.TestTimeoutToken);
 
         // Assert: verify the agent responded appropriately

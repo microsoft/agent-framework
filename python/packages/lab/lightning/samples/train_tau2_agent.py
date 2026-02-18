@@ -12,6 +12,8 @@ Builds on concepts from train_math_agent.py with additional complexity.
 Requires one GPU of at least 80GB of memory.
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json

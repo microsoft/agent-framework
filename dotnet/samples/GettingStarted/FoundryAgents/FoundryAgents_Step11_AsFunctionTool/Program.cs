@@ -21,26 +21,29 @@ static string GetWeather([Description("The location to get the weather for.")] s
     => $"The weather in {location} is cloudy with a high of 15°C.";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create the weather agent with function tools.
 AITool weatherTool = AIFunctionFactory.Create(GetWeather);
-AIAgent weatherAgent = aiProjectClient.CreateAIAgent(
+AIAgent weatherAgent = await aiProjectClient.CreateAIAgentAsync(
     name: WeatherName,
     model: deploymentName,
     instructions: WeatherInstructions,
     tools: [weatherTool]);
 
 // Create the main agent, and provide the weather agent as a function tool.
-AIAgent agent = aiProjectClient.CreateAIAgent(
+AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
     name: MainName,
     model: deploymentName,
     instructions: MainInstructions,
     tools: [weatherAgent.AsAIFunction()]);
 
 // Invoke the agent and output the text result.
-AgentThread thread = await agent.GetNewThreadAsync();
-Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?", thread));
+AgentSession session = await agent.CreateSessionAsync();
+Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?", session));
 
 // Cleanup by agent name removes the agent versions created.
 await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);

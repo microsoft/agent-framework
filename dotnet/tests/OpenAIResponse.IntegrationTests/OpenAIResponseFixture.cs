@@ -25,14 +25,14 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
-        var typedThread = (ChatClientAgentThread)thread;
+        var typedSession = (ChatClientAgentSession)session;
 
         if (store)
         {
-            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(typedThread.ConversationId).ToListAsync();
-            var response = await this._openAIResponseClient.GetResponseAsync(typedThread.ConversationId);
+            var inputItems = await this._openAIResponseClient.GetResponseInputItemsAsync(typedSession.ConversationId).ToListAsync();
+            var response = await this._openAIResponseClient.GetResponseAsync(typedSession.ConversationId);
             var responseItem = response.Value.OutputItems.FirstOrDefault()!;
 
             // Take the messages that were the chat history leading up to the current response
@@ -50,12 +50,14 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
             return [.. previousMessages, responseMessage];
         }
 
-        if (typedThread.MessageStore is null)
+        var chatHistoryProvider = agent.GetService<ChatHistoryProvider>();
+
+        if (chatHistoryProvider is null)
         {
             return [];
         }
 
-        return (await typedThread.MessageStore.InvokingAsync(new([]))).ToList();
+        return (await chatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     private static ChatMessage ConvertToChatMessage(ResponseItem item)
@@ -90,7 +92,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         // Chat Completion does not require/support deleting agents, so this is a no-op.
         Task.CompletedTask;
 
-    public Task DeleteThreadAsync(AgentThread thread) =>
+    public Task DeleteSessionAsync(AgentSession session) =>
         // Chat Completion does not require/support deleting threads, so this is a no-op.
         Task.CompletedTask;
 

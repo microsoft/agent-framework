@@ -19,9 +19,12 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 
 var stateStore = new Dictionary<string, JsonElement?>();
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
      .GetResponsesClient(deploymentName)
      .AsAIAgent(
         name: "SpaceNovelWriter",
@@ -32,41 +35,41 @@ AIAgent agent = new AzureOpenAIClient(
 // Enable background responses (only supported by {Azure}OpenAI Responses at this time).
 AgentRunOptions options = new() { AllowBackgroundResponses = true };
 
-AgentThread thread = await agent.GetNewThreadAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Start the initial run.
-AgentResponse response = await agent.RunAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", thread, options);
+AgentResponse response = await agent.RunAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", session, options);
 
 // Poll for background responses until complete.
 while (response.ContinuationToken is not null)
 {
-    PersistAgentState(thread, response.ContinuationToken);
+    await PersistAgentState(agent, session, response.ContinuationToken);
 
     await Task.Delay(TimeSpan.FromSeconds(10));
 
-    var (restoredThread, continuationToken) = await RestoreAgentState(agent);
+    var (restoredSession, continuationToken) = await RestoreAgentState(agent);
 
     options.ContinuationToken = continuationToken;
-    response = await agent.RunAsync(restoredThread, options);
+    response = await agent.RunAsync(restoredSession, options);
 }
 
 Console.WriteLine(response.Text);
 
-void PersistAgentState(AgentThread thread, ResponseContinuationToken? continuationToken)
+async Task PersistAgentState(AIAgent agent, AgentSession? session, ResponseContinuationToken? continuationToken)
 {
-    stateStore["thread"] = thread.Serialize();
+    stateStore["session"] = await agent.SerializeSessionAsync(session!);
     stateStore["continuationToken"] = JsonSerializer.SerializeToElement(continuationToken, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
 }
 
-async Task<(AgentThread Thread, ResponseContinuationToken? ContinuationToken)> RestoreAgentState(AIAgent agent)
+async Task<(AgentSession Session, ResponseContinuationToken? ContinuationToken)> RestoreAgentState(AIAgent agent)
 {
-    JsonElement serializedThread = stateStore["thread"] ?? throw new InvalidOperationException("No serialized thread found in state store.");
+    JsonElement serializedSession = stateStore["session"] ?? throw new InvalidOperationException("No serialized session found in state store.");
     JsonElement? serializedToken = stateStore["continuationToken"];
 
-    AgentThread thread = await agent.DeserializeThreadAsync(serializedThread);
+    AgentSession session = await agent.DeserializeSessionAsync(serializedSession);
     ResponseContinuationToken? continuationToken = (ResponseContinuationToken?)serializedToken?.Deserialize(AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
 
-    return (thread, continuationToken);
+    return (session, continuationToken);
 }
 
 [Description("Researches relevant space facts and scientific information for writing a science fiction novel")]

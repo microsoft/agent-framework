@@ -1,5 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
+import asyncio
+import base64
 import logging
 import re
 import sys
@@ -8,7 +12,7 @@ from collections.abc import Callable, Collection, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 import httpx
 from anyio import ClosedResourceError
@@ -20,22 +24,14 @@ from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
-from pydantic import BaseModel, create_model
+from opentelemetry import propagate
 
 from ._tools import (
-    AIFunction,
-    HostedMCPSpecificApproval,
-    _build_pydantic_model_from_json_schema,
+    FunctionTool,
 )
 from ._types import (
-    ChatMessage,
-    Contents,
-    DataContent,
-    FunctionCallContent,
-    FunctionResultContent,
-    Role,
-    TextContent,
-    UriContent,
+    Content,
+    Message,
 )
 from .exceptions import ToolException, ToolExecutionException
 
@@ -45,7 +41,22 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 if TYPE_CHECKING:
-    from ._clients import ChatClientProtocol
+    from ._clients import SupportsChatGetResponse
+
+
+class MCPSpecificApproval(TypedDict, total=False):
+    """Represents the specific approval mode for an MCP tool.
+
+    When using this mode, the user must specify which tools always or never require approval.
+
+    Attributes:
+        always_require_approval: A sequence of tool names that always require approval.
+        never_require_approval: A sequence of tool names that never require approval.
+    """
+
+    always_require_approval: Collection[str] | None
+    never_require_approval: Collection[str] | None
+
 
 logger = logging.getLogger(__name__)
 
@@ -62,72 +73,138 @@ LOG_LEVEL_MAPPING: dict[types.LoggingLevel, int] = {
     "emergency": logging.CRITICAL,
 }
 
-__all__ = [
-    "MCPStdioTool",
-    "MCPStreamableHTTPTool",
-    "MCPWebsocketTool",
-]
+
+def _parse_prompt_result_from_mcp(
+    mcp_type: types.GetPromptResult,
+) -> str:
+    """Parse an MCP GetPromptResult directly into a string representation.
+
+    Converts each message in the prompt result to its string form and combines them.
+
+    Args:
+        mcp_type: The MCP GetPromptResult object to convert.
+
+    Returns:
+        A string representation of the prompt result.
+    """
+    import json
+
+    parts: list[str] = []
+    for message in mcp_type.messages:
+        content = message.content
+        if isinstance(content, types.TextContent):
+            parts.append(content.text)
+        elif isinstance(content, (types.ImageContent, types.AudioContent)):
+            parts.append(
+                json.dumps(
+                    {
+                        "type": "image" if isinstance(content, types.ImageContent) else "audio",
+                        "data": content.data,
+                        "mimeType": content.mimeType,
+                    },
+                    default=str,
+                )
+            )
+        elif isinstance(content, types.EmbeddedResource):
+            match content.resource:
+                case types.TextResourceContents():
+                    parts.append(content.resource.text)
+                case types.BlobResourceContents():
+                    parts.append(
+                        json.dumps(
+                            {
+                                "type": "blob",
+                                "data": content.resource.blob,
+                                "mimeType": content.resource.mimeType,
+                            },
+                            default=str,
+                        )
+                    )
+        else:
+            parts.append(str(content))
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    return json.dumps(parts, default=str)
 
 
 def _parse_message_from_mcp(
     mcp_type: types.PromptMessage | types.SamplingMessage,
-) -> ChatMessage:
+) -> Message:
     """Parse an MCP container type into an Agent Framework type."""
-    return ChatMessage(
-        role=Role(value=mcp_type.role),
+    return Message(
+        role=mcp_type.role,
         contents=_parse_content_from_mcp(mcp_type.content),
         raw_representation=mcp_type,
     )
 
 
-def _parse_contents_from_mcp_tool_result(
+def _parse_tool_result_from_mcp(
     mcp_type: types.CallToolResult,
-) -> list[Contents]:
-    """Parse an MCP CallToolResult into Agent Framework content types.
+) -> str:
+    """Parse an MCP CallToolResult directly into a string representation.
 
-    This function extracts the complete _meta field from CallToolResult objects
-    and merges all metadata into the additional_properties field of converted
-    content items.
-
-    Note: The _meta field from CallToolResult is applied to ALL content items
-    in the result, as the Agent Framework's content model doesn't have a
-    result-level metadata container. This ensures metadata is preserved but
-    means it will be duplicated across multiple content items if present.
+    Converts each content item in the MCP result to its string form and combines them.
+    This skips the intermediate Content object step for tool results.
 
     Args:
         mcp_type: The MCP CallToolResult object to convert.
 
     Returns:
-        A list of Agent Framework content items with metadata merged into
-        additional_properties.
+        A string representation of the tool result — either plain text or serialized JSON.
     """
-    meta_data = mcp_type.meta
+    import json
 
-    # Prepare merged metadata once if present
-    merged_meta_props = None
-    if meta_data:
-        merged_meta_props = {}
-        if hasattr(meta_data, "__dict__"):
-            merged_meta_props.update(meta_data.__dict__)
-        elif isinstance(meta_data, dict):
-            merged_meta_props.update(meta_data)
-        else:
-            merged_meta_props["_meta"] = meta_data
-
-    # Convert each content item and merge metadata
-    result_contents = []
+    parts: list[str] = []
     for item in mcp_type.content:
-        contents = _parse_content_from_mcp(item)
-
-        if merged_meta_props:
-            for content in contents:
-                existing_props = getattr(content, "additional_properties", None) or {}
-                # Merge with content-specific properties, letting content-specific props override
-                final_props = merged_meta_props.copy()
-                final_props.update(existing_props)
-                content.additional_properties = final_props
-        result_contents.extend(contents)
-    return result_contents
+        match item:
+            case types.TextContent():
+                parts.append(item.text)
+            case types.ImageContent() | types.AudioContent():
+                parts.append(
+                    json.dumps(
+                        {
+                            "type": "image" if isinstance(item, types.ImageContent) else "audio",
+                            "data": item.data,
+                            "mimeType": item.mimeType,
+                        },
+                        default=str,
+                    )
+                )
+            case types.ResourceLink():
+                parts.append(
+                    json.dumps(
+                        {
+                            "type": "resource_link",
+                            "uri": str(item.uri),
+                            "mimeType": item.mimeType,
+                        },
+                        default=str,
+                    )
+                )
+            case types.EmbeddedResource():
+                match item.resource:
+                    case types.TextResourceContents():
+                        parts.append(item.resource.text)
+                    case types.BlobResourceContents():
+                        parts.append(
+                            json.dumps(
+                                {
+                                    "type": "blob",
+                                    "data": item.resource.blob,
+                                    "mimeType": item.resource.mimeType,
+                                },
+                                default=str,
+                            )
+                        )
+            case _:
+                parts.append(str(item))
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    return json.dumps(parts, default=str)
 
 
 def _parse_content_from_mcp(
@@ -147,25 +224,27 @@ def _parse_content_from_mcp(
         | types.ToolUseContent
         | types.ToolResultContent
     ],
-) -> list[Contents]:
+) -> list[Content]:
     """Parse an MCP type into an Agent Framework type."""
     mcp_types = mcp_type if isinstance(mcp_type, Sequence) else [mcp_type]
-    return_types: list[Contents] = []
+    return_types: list[Content] = []
     for mcp_type in mcp_types:
         match mcp_type:
             case types.TextContent():
-                return_types.append(TextContent(text=mcp_type.text, raw_representation=mcp_type))
+                return_types.append(Content.from_text(text=mcp_type.text, raw_representation=mcp_type))
             case types.ImageContent() | types.AudioContent():
+                # MCP protocol uses base64-encoded strings, convert to bytes
+                data_bytes = base64.b64decode(mcp_type.data) if isinstance(mcp_type.data, str) else mcp_type.data
                 return_types.append(
-                    DataContent(
-                        data=mcp_type.data,
+                    Content.from_data(
+                        data=data_bytes,
                         media_type=mcp_type.mimeType,
                         raw_representation=mcp_type,
                     )
                 )
             case types.ResourceLink():
                 return_types.append(
-                    UriContent(
+                    Content.from_uri(
                         uri=str(mcp_type.uri),
                         media_type=mcp_type.mimeType or "application/json",
                         raw_representation=mcp_type,
@@ -173,7 +252,7 @@ def _parse_content_from_mcp(
                 )
             case types.ToolUseContent():
                 return_types.append(
-                    FunctionCallContent(
+                    Content.from_function_call(
                         call_id=mcp_type.id,
                         name=mcp_type.name,
                         arguments=mcp_type.input,
@@ -182,12 +261,12 @@ def _parse_content_from_mcp(
                 )
             case types.ToolResultContent():
                 return_types.append(
-                    FunctionResultContent(
+                    Content.from_function_result(
                         call_id=mcp_type.toolUseId,
                         result=_parse_content_from_mcp(mcp_type.content)
                         if mcp_type.content
                         else mcp_type.structuredContent,
-                        exception=Exception() if mcp_type.isError else None,
+                        exception=str(Exception()) if mcp_type.isError else None,  # type: ignore[arg-type]
                         raw_representation=mcp_type,
                     )
                 )
@@ -195,7 +274,7 @@ def _parse_content_from_mcp(
                 match mcp_type.resource:
                     case types.TextResourceContents():
                         return_types.append(
-                            TextContent(
+                            Content.from_text(
                                 text=mcp_type.resource.text,
                                 raw_representation=mcp_type,
                                 additional_properties=(
@@ -205,7 +284,7 @@ def _parse_content_from_mcp(
                         )
                     case types.BlobResourceContents():
                         return_types.append(
-                            DataContent(
+                            Content.from_uri(
                                 uri=mcp_type.resource.blob,
                                 media_type=mcp_type.resource.mimeType,
                                 raw_representation=mcp_type,
@@ -218,51 +297,47 @@ def _parse_content_from_mcp(
 
 
 def _prepare_content_for_mcp(
-    content: Contents,
+    content: Content,
 ) -> types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink | None:
     """Prepare an Agent Framework content type for MCP."""
-    match content:
-        case TextContent():
-            return types.TextContent(type="text", text=content.text)
-        case DataContent():
-            if content.media_type and content.media_type.startswith("image/"):
-                return types.ImageContent(type="image", data=content.uri, mimeType=content.media_type)
-            if content.media_type and content.media_type.startswith("audio/"):
-                return types.AudioContent(type="audio", data=content.uri, mimeType=content.media_type)
-            if content.media_type and content.media_type.startswith("application/"):
-                return types.EmbeddedResource(
-                    type="resource",
-                    resource=types.BlobResourceContents(
-                        blob=content.uri,
-                        mimeType=content.media_type,
-                        # uri's are not limited in MCP but they have to be set.
-                        # the uri of data content, contains the data uri, which
-                        # is not the uri meant here, UriContent would match this.
-                        uri=(
-                            content.additional_properties.get("uri", "af://binary")
-                            if content.additional_properties
-                            else "af://binary"
-                        ),  # type: ignore[reportArgumentType]
-                    ),
-                )
-            return None
-        case UriContent():
-            return types.ResourceLink(
-                type="resource_link",
-                uri=content.uri,  # type: ignore[reportArgumentType]
-                mimeType=content.media_type,
-                name=(
-                    content.additional_properties.get("name", "Unknown") if content.additional_properties else "Unknown"
+    if content.type == "text":
+        return types.TextContent(type="text", text=content.text)  # type: ignore[attr-defined]
+    if content.type == "data":
+        if content.media_type and content.media_type.startswith("image/"):  # type: ignore[attr-defined]
+            return types.ImageContent(type="image", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
+        if content.media_type and content.media_type.startswith("audio/"):  # type: ignore[attr-defined]
+            return types.AudioContent(type="audio", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
+        if content.media_type and content.media_type.startswith("application/"):  # type: ignore[attr-defined]
+            return types.EmbeddedResource(
+                type="resource",
+                resource=types.BlobResourceContents(
+                    blob=content.uri,  # type: ignore[attr-defined]
+                    mimeType=content.media_type,  # type: ignore[attr-defined]
+                    # uri's are not limited in MCP but they have to be set.
+                    # the uri of data content, contains the data uri, which
+                    # is not the uri meant here, UriContent would match this.
+                    uri=(
+                        content.additional_properties.get("uri", "af://binary")
+                        if content.additional_properties
+                        else "af://binary"
+                    ),  # type: ignore[reportArgumentType]
                 ),
             )
-        case _:
-            return None
+        return None
+    if content.type == "uri":
+        return types.ResourceLink(
+            type="resource_link",
+            uri=content.uri,  # type: ignore[reportArgumentType,attr-defined]
+            mimeType=content.media_type,  # type: ignore[attr-defined]
+            name=(content.additional_properties.get("name", "Unknown") if content.additional_properties else "Unknown"),
+        )
+    return None
 
 
 def _prepare_message_for_mcp(
-    content: ChatMessage,
+    content: Message,
 ) -> list[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink]:
-    """Prepare a ChatMessage for MCP format."""
+    """Prepare a Message for MCP format."""
     messages: list[
         types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink
     ] = []
@@ -273,11 +348,14 @@ def _prepare_message_for_mcp(
     return messages
 
 
-def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> type[BaseModel]:
-    """Creates a Pydantic model from a prompt's parameters."""
+def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any]:
+    """Get the input model from an MCP prompt.
+
+    Returns a JSON schema dictionary for prompt arguments.
+    """
     # Check if 'arguments' is missing or empty
     if not prompt.arguments:
-        return create_model(f"{prompt.name}_input")
+        return {"type": "object", "properties": {}}
 
     # Convert prompt arguments to JSON schema format
     properties: dict[str, Any] = {}
@@ -292,18 +370,31 @@ def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> type[BaseModel]:
         if prompt_argument.required:
             required.append(prompt_argument.name)
 
-    schema = {"properties": properties, "required": required}
-    return _build_pydantic_model_from_json_schema(prompt.name, schema)
-
-
-def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
-    """Creates a Pydantic model from a tools parameters."""
-    return _build_pydantic_model_from_json_schema(tool.name, tool.inputSchema)
+    schema: dict[str, Any] = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return schema
 
 
 def _normalize_mcp_name(name: str) -> str:
     """Normalize MCP tool/prompt names to allowed identifier pattern (A-Za-z0-9_.-)."""
     return re.sub(r"[^A-Za-z0-9_.-]", "-", name)
+
+
+def _inject_otel_into_mcp_meta(meta: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Inject OpenTelemetry trace context into MCP request _meta via the global propagator(s)."""
+    carrier: dict[str, str] = {}
+    propagate.inject(carrier)
+    if not carrier:
+        return meta
+
+    if meta is None:
+        meta = {}
+    for key, value in carrier.items():
+        if key not in meta:
+            meta[key] = value
+
+    return meta
 
 
 # region: MCP Plugin
@@ -331,15 +422,15 @@ class MCPTool:
         self,
         name: str,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
+        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         load_tools: bool = True,
-        parse_tool_results: Literal[True] | Callable[[types.CallToolResult], Any] | None = True,
+        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
         load_prompts: bool = True,
-        parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
+        parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         session: ClientSession | None = None,
         request_timeout: int | None = None,
-        chat_client: "ChatClientProtocol | None" = None,
+        client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the MCP Tool base.
@@ -347,6 +438,30 @@ class MCPTool:
         Note:
             Do not use this method, use one of the subclasses: MCPStreamableHTTPTool, MCPWebsocketTool
             or MCPStdioTool.
+
+        Args:
+            name: The name of the MCP tool.
+            description: A description of the MCP tool.
+            approval_mode: Whether approval is required to run tools.
+            allowed_tools: A collection of tool names to allow.
+            load_tools: Whether to load tools from the MCP server.
+            parse_tool_results: An optional callable with signature
+                ``Callable[[types.CallToolResult], str]`` that overrides the default result
+                parsing. When ``None`` (the default), the built-in parser converts MCP types
+                directly to a string. If you need per-function result parsing, access the
+                ``.functions`` list after connecting and set ``result_parser`` on individual
+                ``FunctionTool`` instances.
+            load_prompts: Whether to load prompts from the MCP server.
+            parse_prompt_results: An optional callable with signature
+                ``Callable[[types.GetPromptResult], str]`` that overrides the default prompt
+                result parsing. When ``None`` (the default), the built-in parser converts
+                MCP prompt results to a string. If you need per-function result parsing,
+                access the ``.functions`` list after connecting and set ``result_parser`` on
+                individual ``FunctionTool`` instances.
+            session: An existing MCP client session to use.
+            request_timeout: Timeout in seconds for MCP requests.
+            client: A chat client for sampling callbacks.
+            additional_properties: Additional properties for the tool.
         """
         self.name = name
         self.description = description or ""
@@ -360,8 +475,8 @@ class MCPTool:
         self._exit_stack = AsyncExitStack()
         self.session = session
         self.request_timeout = request_timeout
-        self.chat_client = chat_client
-        self._functions: list[AIFunction[Any, Any]] = []
+        self.client = client
+        self._functions: list[FunctionTool] = []
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
@@ -370,11 +485,43 @@ class MCPTool:
         return f"MCPTool(name={self.name}, description={self.description})"
 
     @property
-    def functions(self) -> list[AIFunction[Any, Any]]:
+    def functions(self) -> list[FunctionTool]:
         """Get the list of functions that are allowed."""
         if not self.allowed_tools:
             return self._functions
         return [func for func in self._functions if func.name in self.allowed_tools]
+
+    async def _safe_close_exit_stack(self) -> None:
+        """Safely close the exit stack, handling cross-task boundary errors.
+
+        anyio's cancel scopes are bound to the task they were created in.
+        If aclose() is called from a different task (e.g., during streaming reconnection),
+        anyio will raise a RuntimeError or CancelledError. In this case, we log a warning
+        and allow garbage collection to clean up the resources.
+
+        Known error variants:
+        - "Attempted to exit cancel scope in a different task than it was entered in"
+        - "Attempted to exit a cancel scope that isn't the current task's current cancel scope"
+        - CancelledError from anyio cancel scope cleanup
+        """
+        try:
+            await self._exit_stack.aclose()
+        except RuntimeError as e:
+            error_msg = str(e).lower()
+            # Check for anyio cancel scope errors (multiple variants exist)
+            if "cancel scope" in error_msg:
+                logger.warning(
+                    "Could not cleanly close MCP exit stack due to cancel scope error. "
+                    "Old resources will be garbage collected. Error: %s",
+                    e,
+                )
+            else:
+                raise
+        except asyncio.CancelledError:
+            # CancelledError can occur during cleanup when cancel scopes are involved
+            logger.warning(
+                "Could not cleanly close MCP exit stack due to cancellation. Old resources will be garbage collected."
+            )
 
     async def connect(self, *, reset: bool = False) -> None:
         """Connect to the MCP server.
@@ -389,7 +536,7 @@ class MCPTool:
             ToolException: If connection or session initialization fails.
         """
         if reset:
-            await self._exit_stack.aclose()
+            await self._safe_close_exit_stack()
             self.session = None
             self.is_connected = False
             self._exit_stack = AsyncExitStack()
@@ -397,7 +544,7 @@ class MCPTool:
             try:
                 transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
             except Exception as ex:
-                await self._exit_stack.aclose()
+                await self._safe_close_exit_stack()
                 command = getattr(self, "command", None)
                 if command:
                     error_msg = f"Failed to start MCP server '{command}': {ex}"
@@ -418,7 +565,7 @@ class MCPTool:
                     )
                 )
             except Exception as ex:
-                await self._exit_stack.aclose()
+                await self._safe_close_exit_stack()
                 raise ToolException(
                     message="Failed to create MCP session. Please check your configuration.",
                     inner_exception=ex,
@@ -426,7 +573,7 @@ class MCPTool:
             try:
                 await session.initialize()
             except Exception as ex:
-                await self._exit_stack.aclose()
+                await self._safe_close_exit_stack()
                 # Provide context about initialization failure
                 command = getattr(self, "command", None)
                 if command:
@@ -479,17 +626,17 @@ class MCPTool:
         Returns:
             Either a CreateMessageResult with the generated message or ErrorData if generation fails.
         """
-        if not self.chat_client:
+        if not self.client:
             return types.ErrorData(
                 code=types.INTERNAL_ERROR,
                 message="No chat client available. Please set a chat client.",
             )
         logger.debug("Sampling callback called with params: %s", params)
-        messages: list[ChatMessage] = []
+        messages: list[Message] = []
         for msg in params.messages:
             messages.append(_parse_message_from_mcp(msg))
         try:
-            response = await self.chat_client.get_response(
+            response = await self.client.get_response(
                 messages,
                 temperature=params.temperature,
                 max_tokens=params.maxTokens,
@@ -582,7 +729,7 @@ class MCPTool:
         """Load prompts from the MCP server.
 
         Retrieves available prompts from the connected MCP server and converts
-        them into AIFunction instances. Handles pagination automatically.
+        them into FunctionTool instances. Handles pagination automatically.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected.
@@ -606,7 +753,7 @@ class MCPTool:
 
                 input_model = _get_input_model_from_mcp_prompt(prompt)
                 approval_mode = self._determine_approval_mode(local_name)
-                func: AIFunction[BaseModel, list[ChatMessage] | Any | types.GetPromptResult] = AIFunction(
+                func: FunctionTool = FunctionTool(
                     func=partial(self.get_prompt, prompt.name),
                     name=local_name,
                     description=prompt.description or "",
@@ -625,7 +772,7 @@ class MCPTool:
         """Load tools from the MCP server.
 
         Retrieves available tools from the connected MCP server and converts
-        them into AIFunction instances. Handles pagination automatically.
+        them into FunctionTool instances. Handles pagination automatically.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected.
@@ -647,15 +794,14 @@ class MCPTool:
                 if local_name in existing_names:
                     continue
 
-                input_model = _get_input_model_from_mcp_tool(tool)
                 approval_mode = self._determine_approval_mode(local_name)
-                # Create AIFunctions out of each tool
-                func: AIFunction[BaseModel, list[Contents] | Any | types.CallToolResult] = AIFunction(
+                # Create FunctionTools out of each tool
+                func: FunctionTool = FunctionTool(
                     func=partial(self.call_tool, tool.name),
                     name=local_name,
                     description=tool.description or "",
                     approval_mode=approval_mode,
-                    input_model=input_model,
+                    input_model=tool.inputSchema,
                 )
                 self._functions.append(func)
                 existing_names.add(local_name)
@@ -670,7 +816,7 @@ class MCPTool:
 
         Closes the connection and cleans up resources.
         """
-        await self._exit_stack.aclose()
+        await self._safe_close_exit_stack()
         self.session = None
         self.is_connected = False
 
@@ -704,7 +850,7 @@ class MCPTool:
                     inner_exception=ex,
                 ) from ex
 
-    async def call_tool(self, tool_name: str, **kwargs: Any) -> list[Contents] | Any | types.CallToolResult:
+    async def call_tool(self, tool_name: str, **kwargs: Any) -> str:
         """Call a tool with the given arguments.
 
         Args:
@@ -714,7 +860,7 @@ class MCPTool:
             kwargs: Arguments to pass to the tool.
 
         Returns:
-            A list of content items returned by the tool.
+            A string representation of the tool result — either plain text or serialized JSON.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected, tools are not loaded,
@@ -727,21 +873,35 @@ class MCPTool:
         # Filter out framework kwargs that cannot be serialized by the MCP SDK.
         # These are internal objects passed through the function invocation pipeline
         # that should not be forwarded to external MCP servers.
+        # conversation_id is an internal tracking ID used by services like Azure AI.
+        # options contains metadata/store used by AG-UI for Azure AI client requirements.
+        # response_format is a Pydantic model class used for structured output (not serializable).
         filtered_kwargs = {
-            k: v for k, v in kwargs.items() if k not in {"chat_options", "tools", "tool_choice", "thread"}
+            k: v
+            for k, v in kwargs.items()
+            if k
+            not in {
+                "chat_options",
+                "tools",
+                "tool_choice",
+                "session",
+                "thread",
+                "conversation_id",
+                "options",
+                "response_format",
+            }
         }
+
+        # Inject OpenTelemetry trace context into MCP _meta for distributed tracing.
+        otel_meta = _inject_otel_into_mcp_meta()
+
+        parser = self.parse_tool_results or _parse_tool_result_from_mcp
 
         # Try the operation, reconnecting once if the connection is closed
         for attempt in range(2):
             try:
-                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs)  # type: ignore
-                if self.parse_tool_results is None:
-                    return result
-                if self.parse_tool_results is True:
-                    return _parse_contents_from_mcp_tool_result(result)
-                if callable(self.parse_tool_results):
-                    return self.parse_tool_results(result)
-                return result
+                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=otel_meta)  # type: ignore
+                return parser(result)
             except ClosedResourceError as cl_ex:
                 if attempt == 0:
                     # First attempt failed, try reconnecting
@@ -767,7 +927,7 @@ class MCPTool:
                 raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
         raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
 
-    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> list[ChatMessage] | Any | types.GetPromptResult:
+    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> str:
         """Call a prompt with the given arguments.
 
         Args:
@@ -777,7 +937,7 @@ class MCPTool:
             kwargs: Arguments to pass to the prompt.
 
         Returns:
-            A list of chat messages returned by the prompt.
+            A string representation of the prompt result — either plain text or serialized JSON.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected, prompts are not loaded,
@@ -788,17 +948,13 @@ class MCPTool:
                 "Prompts are not loaded for this server, please set load_prompts=True in the constructor."
             )
 
+        parser = self.parse_prompt_results or _parse_prompt_result_from_mcp
+
         # Try the operation, reconnecting once if the connection is closed
         for attempt in range(2):
             try:
                 prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
-                if self.parse_prompt_results is None:
-                    return prompt_result
-                if self.parse_prompt_results is True:
-                    return [_parse_message_from_mcp(message) for message in prompt_result.messages]
-                if callable(self.parse_prompt_results):
-                    return self.parse_prompt_results(prompt_result)
-                return prompt_result
+                return parser(prompt_result)
             except ClosedResourceError as cl_ex:
                 if attempt == 0:
                     # First attempt failed, try reconnecting
@@ -842,7 +998,7 @@ class MCPTool:
         except ToolException:
             raise
         except Exception as ex:
-            await self._exit_stack.aclose()
+            await self._safe_close_exit_stack()
             raise ToolExecutionException("Failed to enter context manager.", inner_exception=ex) from ex
 
     async def __aexit__(
@@ -875,7 +1031,7 @@ class MCPStdioTool(MCPTool):
     Examples:
         .. code-block:: python
 
-            from agent_framework import MCPStdioTool, ChatAgent
+            from agent_framework import MCPStdioTool, Agent
 
             # Create an MCP stdio tool
             mcp_tool = MCPStdioTool(
@@ -887,7 +1043,7 @@ class MCPStdioTool(MCPTool):
 
             # Use with a chat agent
             async with mcp_tool:
-                agent = ChatAgent(chat_client=client, name="assistant", tools=mcp_tool)
+                agent = Agent(client=client, name="assistant", tools=mcp_tool)
                 response = await agent.run("List files in the directory")
     """
 
@@ -897,18 +1053,18 @@ class MCPStdioTool(MCPTool):
         command: str,
         *,
         load_tools: bool = True,
-        parse_tool_results: Literal[True] | Callable[[types.CallToolResult], Any] | None = True,
+        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
         load_prompts: bool = True,
-        parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
+        parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
+        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         encoding: str | None = None,
-        chat_client: "ChatClientProtocol | None" = None,
+        client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -925,15 +1081,19 @@ class MCPStdioTool(MCPTool):
 
         Keyword Args:
             load_tools: Whether to load tools from the MCP server.
-            parse_tool_results: How to parse tool results from the MCP server.
-                Set to True, to use the default parser that converts to Agent Framework types.
-                Set to a callable to use a custom parser function.
-                Set to None to return the raw MCP tool result.
+            parse_tool_results: An optional callable with signature
+                ``Callable[[types.CallToolResult], str]`` that overrides the default result
+                parsing. When ``None`` (the default), the built-in parser converts MCP types
+                directly to a string. If you need per-function result parsing, access the
+                ``.functions`` list after connecting and set ``result_parser`` on individual
+                ``FunctionTool`` instances.
             load_prompts: Whether to load prompts from the MCP server.
-            parse_prompt_results: How to parse prompt results from the MCP server.
-                Set to True, to use the default parser that converts to Agent Framework types.
-                Set to a callable to use a custom parser function.
-                Set to None to return the raw MCP prompt result.
+            parse_prompt_results: An optional callable with signature
+                ``Callable[[types.GetPromptResult], str]`` that overrides the default prompt
+                result parsing. When ``None`` (the default), the built-in parser converts
+                MCP prompt results to a string. If you need per-function result parsing,
+                access the ``.functions`` list after connecting and set ``result_parser`` on
+                individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
             session: The session to use for the MCP connection.
             description: The description of the tool.
@@ -948,7 +1108,7 @@ class MCPStdioTool(MCPTool):
             args: The arguments to pass to the command.
             env: The environment variables to set for the command.
             encoding: The encoding to use for the command output.
-            chat_client: The chat client to use for sampling.
+            client: The chat client to use for sampling.
             kwargs: Any extra arguments to pass to the stdio client.
         """
         super().__init__(
@@ -958,7 +1118,7 @@ class MCPStdioTool(MCPTool):
             allowed_tools=allowed_tools,
             additional_properties=additional_properties,
             session=session,
-            chat_client=chat_client,
+            client=client,
             load_tools=load_tools,
             parse_tool_results=parse_tool_results,
             load_prompts=load_prompts,
@@ -997,7 +1157,7 @@ class MCPStreamableHTTPTool(MCPTool):
     Examples:
         .. code-block:: python
 
-            from agent_framework import MCPStreamableHTTPTool, ChatAgent
+            from agent_framework import MCPStreamableHTTPTool, Agent
 
             # Create an MCP HTTP tool
             mcp_tool = MCPStreamableHTTPTool(
@@ -1008,7 +1168,7 @@ class MCPStreamableHTTPTool(MCPTool):
 
             # Use with a chat agent
             async with mcp_tool:
-                agent = ChatAgent(chat_client=client, name="assistant", tools=mcp_tool)
+                agent = Agent(client=client, name="assistant", tools=mcp_tool)
                 response = await agent.run("Fetch data from the API")
     """
 
@@ -1018,16 +1178,16 @@ class MCPStreamableHTTPTool(MCPTool):
         url: str,
         *,
         load_tools: bool = True,
-        parse_tool_results: Literal[True] | Callable[[types.CallToolResult], Any] | None = True,
+        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
         load_prompts: bool = True,
-        parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
+        parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
+        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         terminate_on_close: bool | None = None,
-        chat_client: "ChatClientProtocol | None" = None,
+        client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
         http_client: httpx.AsyncClient | None = None,
         **kwargs: Any,
@@ -1046,15 +1206,19 @@ class MCPStreamableHTTPTool(MCPTool):
 
         Keyword Args:
             load_tools: Whether to load tools from the MCP server.
-            parse_tool_results: How to parse tool results from the MCP server.
-                Set to True, to use the default parser that converts to Agent Framework types.
-                Set to a callable to use a custom parser function.
-                Set to None to return the raw MCP tool result.
+            parse_tool_results: An optional callable with signature
+                ``Callable[[types.CallToolResult], str]`` that overrides the default result
+                parsing. When ``None`` (the default), the built-in parser converts MCP types
+                directly to a string. If you need per-function result parsing, access the
+                ``.functions`` list after connecting and set ``result_parser`` on individual
+                ``FunctionTool`` instances.
             load_prompts: Whether to load prompts from the MCP server.
-            parse_prompt_results: How to parse prompt results from the MCP server.
-                Set to True, to use the default parser that converts to Agent Framework types.
-                Set to a callable to use a custom parser function.
-                Set to None to return the raw MCP prompt result.
+            parse_prompt_results: An optional callable with signature
+                ``Callable[[types.GetPromptResult], str]`` that overrides the default prompt
+                result parsing. When ``None`` (the default), the built-in parser converts
+                MCP prompt results to a string. If you need per-function result parsing,
+                access the ``.functions`` list after connecting and set ``result_parser`` on
+                individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
             session: The session to use for the MCP connection.
             description: The description of the tool.
@@ -1067,7 +1231,7 @@ class MCPStreamableHTTPTool(MCPTool):
             allowed_tools: A list of tools that are allowed to use this tool.
             additional_properties: Additional properties.
             terminate_on_close: Close the transport when the MCP client is terminated.
-            chat_client: The chat client to use for sampling.
+            client: The chat client to use for sampling.
             http_client: Optional httpx.AsyncClient to use. If not provided, the
                 ``streamable_http_client`` API will create and manage a default client.
                 To configure headers, timeouts, or other HTTP client settings, create
@@ -1081,7 +1245,7 @@ class MCPStreamableHTTPTool(MCPTool):
             allowed_tools=allowed_tools,
             additional_properties=additional_properties,
             session=session,
-            chat_client=chat_client,
+            client=client,
             load_tools=load_tools,
             parse_tool_results=parse_tool_results,
             load_prompts=load_prompts,
@@ -1114,7 +1278,7 @@ class MCPWebsocketTool(MCPTool):
     Examples:
         .. code-block:: python
 
-            from agent_framework import MCPWebsocketTool, ChatAgent
+            from agent_framework import MCPWebsocketTool, Agent
 
             # Create an MCP WebSocket tool
             mcp_tool = MCPWebsocketTool(
@@ -1123,7 +1287,7 @@ class MCPWebsocketTool(MCPTool):
 
             # Use with a chat agent
             async with mcp_tool:
-                agent = ChatAgent(chat_client=client, name="assistant", tools=mcp_tool)
+                agent = Agent(client=client, name="assistant", tools=mcp_tool)
                 response = await agent.run("Connect to the real-time service")
     """
 
@@ -1133,15 +1297,15 @@ class MCPWebsocketTool(MCPTool):
         url: str,
         *,
         load_tools: bool = True,
-        parse_tool_results: Literal[True] | Callable[[types.CallToolResult], Any] | None = True,
+        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
         load_prompts: bool = True,
-        parse_prompt_results: Literal[True] | Callable[[types.GetPromptResult], Any] | None = True,
+        parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
+        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
-        chat_client: "ChatClientProtocol | None" = None,
+        client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -1159,15 +1323,19 @@ class MCPWebsocketTool(MCPTool):
 
         Keyword Args:
             load_tools: Whether to load tools from the MCP server.
-            parse_tool_results: How to parse tool results from the MCP server.
-                Set to True, to use the default parser that converts to Agent Framework types.
-                Set to a callable to use a custom parser function.
-                Set to None to return the raw MCP tool result.
+            parse_tool_results: An optional callable with signature
+                ``Callable[[types.CallToolResult], str]`` that overrides the default result
+                parsing. When ``None`` (the default), the built-in parser converts MCP types
+                directly to a string. If you need per-function result parsing, access the
+                ``.functions`` list after connecting and set ``result_parser`` on individual
+                ``FunctionTool`` instances.
             load_prompts: Whether to load prompts from the MCP server.
-            parse_prompt_results: How to parse prompt results from the MCP server.
-                Set to True, to use the default parser that converts to Agent Framework types.
-                Set to a callable to use a custom parser function.
-                Set to None to return the raw MCP prompt result.
+            parse_prompt_results: An optional callable with signature
+                ``Callable[[types.GetPromptResult], str]`` that overrides the default prompt
+                result parsing. When ``None`` (the default), the built-in parser converts
+                MCP prompt results to a string. If you need per-function result parsing,
+                access the ``.functions`` list after connecting and set ``result_parser`` on
+                individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
             session: The session to use for the MCP connection.
             description: The description of the tool.
@@ -1179,7 +1347,7 @@ class MCPWebsocketTool(MCPTool):
                 A tool should not be listed in both, if so, it will require approval.
             allowed_tools: A list of tools that are allowed to use this tool.
             additional_properties: Additional properties.
-            chat_client: The chat client to use for sampling.
+            client: The chat client to use for sampling.
             kwargs: Any extra arguments to pass to the WebSocket client.
         """
         super().__init__(
@@ -1189,7 +1357,7 @@ class MCPWebsocketTool(MCPTool):
             allowed_tools=allowed_tools,
             additional_properties=additional_properties,
             session=session,
-            chat_client=chat_client,
+            client=client,
             load_tools=load_tools,
             parse_tool_results=parse_tool_results,
             load_prompts=load_prompts,

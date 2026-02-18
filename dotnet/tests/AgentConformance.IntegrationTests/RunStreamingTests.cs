@@ -24,11 +24,11 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
     {
         // Arrange
         var agent = this.Fixture.Agent;
-        var thread = await agent.GetNewThreadAsync();
-        await using var cleanup = new ThreadCleanup(thread, this.Fixture);
+        var session = await agent.CreateSessionAsync();
+        await using var cleanup = new SessionCleanup(session, this.Fixture);
 
         // Act
-        var chatResponses = await agent.RunStreamingAsync(thread, await this.AgentRunOptionsFactory.Invoke()).ToListAsync();
+        var chatResponses = await agent.RunStreamingAsync(session, await this.AgentRunOptionsFactory.Invoke()).ToListAsync();
     }
 
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
@@ -36,11 +36,11 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
     {
         // Arrange
         var agent = this.Fixture.Agent;
-        var thread = await agent.GetNewThreadAsync();
-        await using var cleanup = new ThreadCleanup(thread, this.Fixture);
+        var session = await agent.CreateSessionAsync();
+        await using var cleanup = new SessionCleanup(session, this.Fixture);
 
         // Act
-        var responseUpdates = await agent.RunStreamingAsync("What is the capital of France.", thread, await this.AgentRunOptionsFactory.Invoke()).ToListAsync();
+        var responseUpdates = await agent.RunStreamingAsync("What is the capital of France.", session, await this.AgentRunOptionsFactory.Invoke()).ToListAsync();
 
         // Assert
         var chatResponseText = string.Concat(responseUpdates.Select(x => x.Text));
@@ -52,11 +52,11 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
     {
         // Arrange
         var agent = this.Fixture.Agent;
-        var thread = await agent.GetNewThreadAsync();
-        await using var cleanup = new ThreadCleanup(thread, this.Fixture);
+        var session = await agent.CreateSessionAsync();
+        await using var cleanup = new SessionCleanup(session, this.Fixture);
 
         // Act
-        var responseUpdates = await agent.RunStreamingAsync(new ChatMessage(ChatRole.User, "What is the capital of France."), thread, await this.AgentRunOptionsFactory.Invoke()).ToListAsync();
+        var responseUpdates = await agent.RunStreamingAsync(new ChatMessage(ChatRole.User, "What is the capital of France."), session, await this.AgentRunOptionsFactory.Invoke()).ToListAsync();
 
         // Assert
         var chatResponseText = string.Concat(responseUpdates.Select(x => x.Text));
@@ -68,8 +68,8 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
     {
         // Arrange
         var agent = this.Fixture.Agent;
-        var thread = await agent.GetNewThreadAsync();
-        await using var cleanup = new ThreadCleanup(thread, this.Fixture);
+        var session = await agent.CreateSessionAsync();
+        await using var cleanup = new SessionCleanup(session, this.Fixture);
 
         // Act
         var responseUpdates = await agent.RunStreamingAsync(
@@ -77,7 +77,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
                 new ChatMessage(ChatRole.User, "Hello."),
                 new ChatMessage(ChatRole.User, "What is the capital of France.")
             ],
-            thread,
+            session,
             await this.AgentRunOptionsFactory.Invoke()).ToListAsync();
 
         // Assert
@@ -86,19 +86,19 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
     }
 
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
-    public virtual async Task ThreadMaintainsHistoryAsync()
+    public virtual async Task SessionMaintainsHistoryAsync()
     {
         // Arrange
         const string Q1 = "What is the capital of France.";
         const string Q2 = "And Austria?";
         var agent = this.Fixture.Agent;
-        var thread = await agent.GetNewThreadAsync();
-        await using var cleanup = new ThreadCleanup(thread, this.Fixture);
+        var session = await agent.CreateSessionAsync();
+        await using var cleanup = new SessionCleanup(session, this.Fixture);
 
         // Act
         var options = await this.AgentRunOptionsFactory.Invoke();
-        var responseUpdates1 = await agent.RunStreamingAsync(Q1, thread, options).ToListAsync();
-        var responseUpdates2 = await agent.RunStreamingAsync(Q2, thread, options).ToListAsync();
+        var responseUpdates1 = await agent.RunStreamingAsync(Q1, session, options).ToListAsync();
+        var responseUpdates2 = await agent.RunStreamingAsync(Q2, session, options).ToListAsync();
 
         // Assert
         var response1Text = string.Concat(responseUpdates1.Select(x => x.Text));
@@ -106,7 +106,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         Assert.Contains("Paris", response1Text);
         Assert.Contains("Vienna", response2Text);
 
-        var chatHistory = await this.Fixture.GetChatHistoryAsync(thread);
+        var chatHistory = await this.Fixture.GetChatHistoryAsync(agent, session);
         Assert.Equal(4, chatHistory.Count);
         Assert.Equal(2, chatHistory.Count(x => x.Role == ChatRole.User));
         Assert.Equal(2, chatHistory.Count(x => x.Role == ChatRole.Assistant));

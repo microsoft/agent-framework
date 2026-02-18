@@ -7,8 +7,8 @@ using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
-using Microsoft.Bot.ObjectModel.Abstractions;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
@@ -22,11 +22,12 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
             {
                 return conditionItem.Id;
             }
+
             int index = model.Conditions.IndexOf(conditionItem);
             return $"{model.Id}_Items{index}";
         }
 
-        public static string Else(ConditionGroup model) => model.ElseActions.Id.Value ?? $"{model.Id}_Else";
+        public static string Else(ConditionGroup model) => model.ElseActions.Id.Value;
     }
 
     public ConditionGroupExecutor(ConditionGroup model, WorkflowFormulaState state)

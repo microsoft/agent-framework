@@ -11,31 +11,46 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
 
     public override string? Name { get; } = name;
 
-    public override ValueTask<AgentThread> DeserializeThreadAsync(
-        JsonElement serializedThread,
-        JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return ValueTask.FromResult<AgentThread>(DurableAgentThread.Deserialize(serializedThread, jsonSerializerOptions));
+        if (session is null)
+        {
+            throw new ArgumentNullException(nameof(session));
+        }
+
+        if (session is not DurableAgentSession durableSession)
+        {
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(DurableAgentSession)}' can be serialized by this agent.");
+        }
+
+        return new(durableSession.Serialize(jsonSerializerOptions));
     }
 
-    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
+        JsonElement serializedState,
+        JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return ValueTask.FromResult<AgentThread>(new DurableAgentThread(AgentSessionId.WithRandomKey(this.Name!)));
+        return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedState, jsonSerializerOptions));
+    }
+
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+    {
+        return ValueTask.FromResult<AgentSession>(new DurableAgentSession(AgentSessionId.WithRandomKey(this.Name!)));
     }
 
     protected override async Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        thread ??= await this.GetNewThreadAsync(cancellationToken).ConfigureAwait(false);
-        if (thread is not DurableAgentThread durableThread)
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is not DurableAgentSession durableSession)
         {
             throw new ArgumentException(
-                "The provided thread is not valid for a durable agent. " +
-                "Create a new thread using GetNewThread or provide a thread previously created by this agent.",
-                paramName: nameof(thread));
+                "The provided session is not valid for a durable agent. " +
+                "Create a new session using CreateSessionAsync or provide a session previously created by this agent.",
+                paramName: nameof(session));
         }
 
         IList<string>? enableToolNames = null;
@@ -47,7 +62,6 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         {
             enableToolCalls = durableOptions.EnableToolCalls;
             enableToolNames = durableOptions.EnableToolNames;
-            responseFormat = durableOptions.ResponseFormat;
             isFireAndForget = durableOptions.IsFireAndForget;
         }
         else if (options is ChatClientAgentRunOptions chatClientOptions)
@@ -56,8 +70,14 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
             responseFormat = chatClientOptions.ChatOptions?.ResponseFormat;
         }
 
+        // Override the response format if specified in the agent run options
+        if (options?.ResponseFormat is { } format)
+        {
+            responseFormat = format;
+        }
+
         RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames);
-        AgentSessionId sessionId = durableThread.SessionId;
+        AgentSessionId sessionId = durableSession.SessionId;
 
         AgentRunHandle agentRunHandle = await this._agentClient.RunAgentAsync(sessionId, request, cancellationToken);
 
@@ -72,7 +92,7 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
 
     protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {

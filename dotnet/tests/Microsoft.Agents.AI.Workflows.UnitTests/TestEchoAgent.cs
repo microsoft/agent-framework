@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -16,26 +17,38 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
     protected override string? IdCore => id;
     public override string? Name => name ?? base.Name;
 
-    public override async ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    public InMemoryChatHistoryProvider ChatHistoryProvider { get; } = new();
+
+    protected override async ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return serializedThread.Deserialize<EchoAgentThread>(jsonSerializerOptions) ?? await this.GetNewThreadAsync(cancellationToken);
+        return serializedState.Deserialize<EchoAgentSession>(jsonSerializerOptions) ?? await this.CreateSessionAsync(cancellationToken);
     }
 
-    public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default) =>
-        new(new EchoAgentThread());
-
-    private static ChatMessage UpdateThread(ChatMessage message, InMemoryAgentThread? thread = null)
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        thread?.MessageStore.Add(message);
+        if (session is not EchoAgentSession typedSession)
+        {
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(EchoAgentSession)}' can be serialized by this agent.");
+        }
+
+        return new(JsonSerializer.SerializeToElement(typedSession, jsonSerializerOptions));
+    }
+
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
+        new(new EchoAgentSession());
+
+    private ChatMessage UpdateSession(ChatMessage message, AgentSession? session = null)
+    {
+        this.ChatHistoryProvider.GetMessages(session).Add(message);
 
         return message;
     }
 
-    private IEnumerable<ChatMessage> EchoMessages(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null)
+    private IEnumerable<ChatMessage> EchoMessages(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null)
     {
         foreach (ChatMessage message in messages)
         {
-            UpdateThread(message, thread as InMemoryAgentThread);
+            this.UpdateSession(message, session);
         }
 
         IEnumerable<ChatMessage> echoMessages
@@ -43,14 +56,14 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
               where message.Role == ChatRole.User &&
                     !string.IsNullOrEmpty(message.Text)
               select
-                    UpdateThread(new ChatMessage(ChatRole.Assistant, $"{prefix}{message.Text}")
+                    this.UpdateSession(new ChatMessage(ChatRole.Assistant, $"{prefix}{message.Text}")
                     {
                         AuthorName = this.Name ?? this.Id,
                         CreatedAt = DateTimeOffset.Now,
                         MessageId = Guid.NewGuid().ToString("N")
-                    }, thread as InMemoryAgentThread);
+                    }, session);
 
-        return echoMessages.Concat(this.GetEpilogueMessages(options).Select(m => UpdateThread(m, thread as InMemoryAgentThread)));
+        return echoMessages.Concat(this.GetEpilogueMessages(options).Select(m => this.UpdateSession(m, session)));
     }
 
     protected virtual IEnumerable<ChatMessage> GetEpilogueMessages(AgentRunOptions? options = null)
@@ -58,10 +71,10 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
         return [];
     }
 
-    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         AgentResponse result =
-            new(this.EchoMessages(messages, thread, options).ToList())
+            new(this.EchoMessages(messages, session, options).ToList())
             {
                 AgentId = this.Id,
                 CreatedAt = DateTimeOffset.Now,
@@ -71,11 +84,11 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
         return Task.FromResult(result);
     }
 
-    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         string responseId = Guid.NewGuid().ToString("N");
 
-        foreach (ChatMessage message in this.EchoMessages(messages, thread, options).ToList())
+        foreach (ChatMessage message in this.EchoMessages(messages, session, options).ToList())
         {
             yield return
                 new(message.Role, message.Contents)
@@ -89,5 +102,11 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
         }
     }
 
-    private sealed class EchoAgentThread : InMemoryAgentThread;
+    private sealed class EchoAgentSession : AgentSession
+    {
+        internal EchoAgentSession() { }
+
+        [JsonConstructor]
+        internal EchoAgentSession(AgentSessionStateBag stateBag) : base(stateBag) { }
+    }
 }

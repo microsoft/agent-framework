@@ -1,32 +1,38 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import json
 import logging
 import sys
-from collections.abc import Mapping
-from typing import Any, Generic, TypedDict
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Generic
 
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from pydantic import ValidationError
+from pydantic import BaseModel
 
 from agent_framework import (
+    Annotation,
+    ChatMiddlewareLayer,
     ChatResponse,
     ChatResponseUpdate,
-    CitationAnnotation,
-    TextContent,
-    use_chat_middleware,
-    use_function_invocation,
+    Content,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
 )
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.observability import use_instrumentation
-from agent_framework.openai._chat_client import OpenAIBaseChatClient, OpenAIChatOptions
+from agent_framework.observability import ChatTelemetryLayer
+from agent_framework.openai import OpenAIChatOptions
+from agent_framework.openai._chat_client import RawOpenAIChatClient
 
+from .._settings import load_settings
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
+    _apply_azure_defaults,
 )
 
 if sys.version_info >= (3, 13):
@@ -36,11 +42,19 @@ else:
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+
+if TYPE_CHECKING:
+    from agent_framework._middleware import MiddlewareTypes
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-__all__ = ["AzureOpenAIChatClient", "AzureOpenAIChatOptions", "AzureUserSecurityContext"]
+
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 # region Azure OpenAI Chat Options TypedDict
@@ -68,7 +82,7 @@ class AzureUserSecurityContext(TypedDict, total=False):
     """The original client's IP address."""
 
 
-class AzureOpenAIChatOptions(OpenAIChatOptions, total=False):
+class AzureOpenAIChatOptions(OpenAIChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """Azure OpenAI-specific chat options dict.
 
     Extends OpenAIChatOptions with Azure-specific options including
@@ -123,8 +137,8 @@ class AzureOpenAIChatOptions(OpenAIChatOptions, total=False):
     Note: You will be charged based on tokens across all choices. Keep n=1 to minimize costs."""
 
 
-TAzureOpenAIChatOptions = TypeVar(
-    "TAzureOpenAIChatOptions",
+AzureOpenAIChatOptionsT = TypeVar(
+    "AzureOpenAIChatOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="AzureOpenAIChatOptions",
     covariant=True,
@@ -133,17 +147,19 @@ TAzureOpenAIChatOptions = TypeVar(
 
 # endregion
 
-TChatResponse = TypeVar("TChatResponse", ChatResponse, ChatResponseUpdate)
-TAzureOpenAIChatClient = TypeVar("TAzureOpenAIChatClient", bound="AzureOpenAIChatClient")
+ChatResponseT = TypeVar("ChatResponseT", ChatResponse, ChatResponseUpdate)
+AzureOpenAIChatClientT = TypeVar("AzureOpenAIChatClientT", bound="AzureOpenAIChatClient")
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class AzureOpenAIChatClient(
-    AzureOpenAIConfigMixin, OpenAIBaseChatClient[TAzureOpenAIChatOptions], Generic[TAzureOpenAIChatOptions]
+class AzureOpenAIChatClient(  # type: ignore[misc]
+    AzureOpenAIConfigMixin,
+    ChatMiddlewareLayer[AzureOpenAIChatOptionsT],
+    FunctionInvocationLayer[AzureOpenAIChatOptionsT],
+    ChatTelemetryLayer[AzureOpenAIChatOptionsT],
+    RawOpenAIChatClient[AzureOpenAIChatOptionsT],
+    Generic[AzureOpenAIChatOptionsT],
 ):
-    """Azure OpenAI Chat completion class."""
+    """Azure OpenAI Chat completion class with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
@@ -162,6 +178,8 @@ class AzureOpenAIChatClient(
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an Azure OpenAI Chat completion client.
@@ -193,6 +211,8 @@ class AzureOpenAIChatClient(
             env_file_encoding: The encoding of the environment settings file, defaults to 'utf-8'.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
                 prompts could use `developer` or `system`.
+            middleware: Optional sequence of middleware to apply to requests.
+            function_invocation_configuration: Optional configuration for function invocation behavior.
             kwargs: Other keyword parameters.
 
         Examples:
@@ -228,49 +248,49 @@ class AzureOpenAIChatClient(
                 client: AzureOpenAIChatClient[MyOptions] = AzureOpenAIChatClient()
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            # Filter out any None values from the arguments
-            azure_openai_settings = AzureOpenAISettings(
-                # pydantic settings will see if there is a value, if not, will try the env var or .env file
-                api_key=api_key,  # type: ignore
-                base_url=base_url,  # type: ignore
-                endpoint=endpoint,  # type: ignore
-                chat_deployment_name=deployment_name,
-                api_version=api_version,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-                token_endpoint=token_endpoint,
-            )
-        except ValidationError as exc:
-            raise ServiceInitializationError(f"Failed to validate settings: {exc}") from exc
+        azure_openai_settings = load_settings(
+            AzureOpenAISettings,
+            env_prefix="AZURE_OPENAI_",
+            api_key=api_key,
+            base_url=base_url,
+            endpoint=endpoint,
+            chat_deployment_name=deployment_name,
+            api_version=api_version,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+            token_endpoint=token_endpoint,
+        )
+        _apply_azure_defaults(azure_openai_settings)
 
-        if not azure_openai_settings.chat_deployment_name:
+        if not azure_openai_settings["chat_deployment_name"]:
             raise ServiceInitializationError(
                 "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_CHAT_DEPLOYMENT_NAME' environment variable."
             )
 
         super().__init__(
-            deployment_name=azure_openai_settings.chat_deployment_name,
-            endpoint=azure_openai_settings.endpoint,
-            base_url=azure_openai_settings.base_url,
-            api_version=azure_openai_settings.api_version,  # type: ignore
-            api_key=azure_openai_settings.api_key.get_secret_value() if azure_openai_settings.api_key else None,
+            deployment_name=azure_openai_settings["chat_deployment_name"],
+            endpoint=azure_openai_settings["endpoint"],
+            base_url=azure_openai_settings["base_url"],
+            api_version=azure_openai_settings["api_version"],  # type: ignore
+            api_key=azure_openai_settings["api_key"].get_secret_value() if azure_openai_settings["api_key"] else None,
             ad_token=ad_token,
             ad_token_provider=ad_token_provider,
-            token_endpoint=azure_openai_settings.token_endpoint,
+            token_endpoint=azure_openai_settings["token_endpoint"],
             credential=credential,
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
             **kwargs,
         )
 
     @override
-    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> TextContent | None:
-        """Parse the choice into a TextContent object.
+    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
+        """Parse the choice into a Content object with type='text'.
 
-        Overwritten from OpenAIBaseChatClient to deal with Azure On Your Data function.
+        Overwritten from RawOpenAIChatClient to deal with Azure On Your Data function.
         For docs see:
         https://learn.microsoft.com/en-us/azure/ai-foundry/openai/references/on-your-data?tabs=python#context
         """
@@ -279,10 +299,10 @@ class AzureOpenAIChatClient(
         if message is None:  # type: ignore
             return None
         if hasattr(message, "refusal") and message.refusal:
-            return TextContent(text=message.refusal, raw_representation=choice)
+            return Content.from_text(text=message.refusal, raw_representation=choice)
         if not message.content:
             return None
-        text_content = TextContent(text=message.content, raw_representation=choice)
+        text_content = Content.from_text(text=message.content, raw_representation=choice)
         if not message.model_extra or "context" not in message.model_extra:
             return text_content
 
@@ -304,7 +324,8 @@ class AzureOpenAIChatClient(
             text_content.annotations = []
             for citation in citations:
                 text_content.annotations.append(
-                    CitationAnnotation(
+                    Annotation(
+                        type="citation",
                         title=citation.get("title", ""),
                         url=citation.get("url", ""),
                         snippet=citation.get("content", ""),

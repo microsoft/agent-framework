@@ -16,34 +16,51 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? th
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Construct the agent, and provide a factory to create an in-memory chat message store with a reducer that keeps only the last 2 non-system messages.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new() { Instructions = "You are good at telling jokes." },
         Name = "Joker",
-        ChatMessageStoreFactory = (ctx, ct) => new ValueTask<ChatMessageStore>(new InMemoryChatMessageStore(new MessageCountingChatReducer(2), ctx.SerializedState, ctx.JsonSerializerOptions))
+        ChatHistoryProvider = new InMemoryChatHistoryProvider(new() { ChatReducer = new MessageCountingChatReducer(2) })
     });
 
-AgentThread thread = await agent.GetNewThreadAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Invoke the agent and output the text result.
-Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session));
 
 // Get the chat history to see how many messages are stored.
-IList<ChatMessage>? chatHistory = thread.GetService<IList<ChatMessage>>();
+// We can use the ChatHistoryProvider, that is also used by the agent, to read the
+// chat history from the session state, and see how the reducer is affecting the stored messages.
+// Here we expect to see 2 messages, the original user message and the agent response message.
+var provider = agent.GetService<InMemoryChatHistoryProvider>();
+List<ChatMessage>? chatHistory = provider?.GetMessages(session);
 Console.WriteLine($"\nChat history has {chatHistory?.Count} messages.\n");
 
 // Invoke the agent a few more times.
-Console.WriteLine(await agent.RunAsync("Tell me a joke about a robot.", thread));
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a robot.", session));
+
+// Now we expect to see 4 messages in the chat history, 2 input and 2 output.
+// While the target number of messages is 2, the default time for the InMemoryChatHistoryProvider
+// to trigger the reducer is just before messages are contributed to a new agent run.
+// So at this time, we have not yet triggered the reducer for the most recently added messages,
+// and they are still in the chat history.
+chatHistory = provider?.GetMessages(session);
 Console.WriteLine($"\nChat history has {chatHistory?.Count} messages.\n");
-Console.WriteLine(await agent.RunAsync("Tell me a joke about a lemur.", thread));
+
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a lemur.", session));
+chatHistory = provider?.GetMessages(session);
 Console.WriteLine($"\nChat history has {chatHistory?.Count} messages.\n");
 
 // At this point, the chat history has exceeded the limit and the original message will not exist anymore,
-// so asking a follow up question about it will not work as expected.
-Console.WriteLine(await agent.RunAsync("Tell me the joke about the pirate again, but add emojis and use the voice of a parrot.", thread));
+// so asking a follow up question about it may not work as expected.
+Console.WriteLine(await agent.RunAsync("What was the first joke I asked you to tell again?", session));
 
+chatHistory = provider?.GetMessages(session);
 Console.WriteLine($"\nChat history has {chatHistory?.Count} messages.\n");

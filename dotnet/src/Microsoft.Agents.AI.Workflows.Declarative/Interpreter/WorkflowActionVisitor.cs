@@ -8,7 +8,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 
@@ -50,6 +50,14 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         WorkflowModelBuilder builder = new(this._rootAction);
 
         this._workflowModel.Build(builder);
+
+        // Apply telemetry if configured
+        if (this._workflowOptions.IsTelemetryEnabled)
+        {
+            builder.WorkflowBuilder.WithOpenTelemetry(
+                this._workflowOptions.ConfigureTelemetry,
+                this._workflowOptions.TelemetryActivitySource);
+        }
 
         // Build final workflow
         return builder.WorkflowBuilder.Build(validateOrphans: false);
@@ -193,7 +201,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         {
             // Transition to end of inner actions
             string endActionsId = ForeachExecutor.Steps.End(action.Id);
-            this.ContinueWith(new DelegateActionExecutor(endActionsId, this._workflowState, action.ResetAsync), action.Id);
+            this.ContinueWith(new DelegateActionExecutor(endActionsId, this._workflowState, action.CompleteAsync), action.Id);
             // Transition to select the next item
             this._workflowModel.AddLink(endActionsId, loopId);
         }

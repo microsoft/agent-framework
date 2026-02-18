@@ -7,6 +7,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Agents.AI.Workflows.Execution;
+using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -52,6 +54,15 @@ public class Workflow
     }
 
     /// <summary>
+    /// Gets the collection of executor bindings, keyed by their ID.
+    /// </summary>
+    /// <returns>A copy of the executor bindings dictionary. Modifications do not affect the workflow.</returns>
+    public Dictionary<string, ExecutorBinding> ReflectExecutors()
+    {
+        return new Dictionary<string, ExecutorBinding>(this.ExecutorBindings);
+    }
+
+    /// <summary>
     /// Gets the identifier of the starting executor of the workflow.
     /// </summary>
     public string StartExecutorId { get; }
@@ -66,6 +77,11 @@ public class Workflow
     /// </summary>
     public string? Description { get; internal init; }
 
+    /// <summary>
+    /// Gets the telemetry context for the workflow.
+    /// </summary>
+    internal WorkflowTelemetryContext TelemetryContext { get; }
+
     internal bool AllowConcurrent => this.ExecutorBindings.Values.All(registration => registration.SupportsConcurrentSharedExecution);
 
     internal IEnumerable<string> NonConcurrentExecutorIds =>
@@ -78,11 +94,13 @@ public class Workflow
     /// <param name="startExecutorId">The unique identifier of the starting executor for the workflow. Cannot be <c>null</c>.</param>
     /// <param name="name">Optional human-readable name for the workflow.</param>
     /// <param name="description">Optional description of what the workflow does.</param>
-    internal Workflow(string startExecutorId, string? name = null, string? description = null)
+    /// <param name="telemetryContext">Optional telemetry context for the workflow.</param>
+    internal Workflow(string startExecutorId, string? name = null, string? description = null, WorkflowTelemetryContext? telemetryContext = null)
     {
         this.StartExecutorId = Throw.IfNull(startExecutorId);
         this.Name = name;
         this.Description = description;
+        this.TelemetryContext = telemetryContext ?? WorkflowTelemetryContext.Disabled;
     }
 
     private bool _needsReset;
@@ -166,9 +184,9 @@ public class Workflow
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",
             Justification = "Does not exist in NetFx 4.7.2")]
-    internal async ValueTask ReleaseOwnershipAsync(object ownerToken)
+    internal async ValueTask ReleaseOwnershipAsync(object ownerToken, object? targetOwnerToken)
     {
-        object? originalToken = Interlocked.CompareExchange(ref this._ownerToken, null, ownerToken) ??
+        object? originalToken = Interlocked.CompareExchange(ref this._ownerToken, targetOwnerToken, ownerToken) ??
             throw new InvalidOperationException("Attempting to release ownership of a Workflow that is not owned.");
 
         if (!ReferenceEquals(originalToken, ownerToken))
@@ -177,6 +195,16 @@ public class Workflow
         }
 
         await this.TryResetExecutorRegistrationsAsync().ConfigureAwait(false);
+    }
+
+    private sealed class NoOpExternalRequestContext : IExternalRequestContext, IExternalRequestSink
+    {
+        public ValueTask PostAsync(ExternalRequest request) => default;
+
+        IExternalRequestSink IExternalRequestContext.RegisterPort(RequestPort port)
+        {
+            return this;
+        }
     }
 
     /// <summary>
@@ -190,6 +218,8 @@ public class Workflow
         ExecutorBinding startExecutorRegistration = this.ExecutorBindings[this.StartExecutorId];
         Executor startExecutor = await startExecutorRegistration.CreateInstanceAsync(string.Empty)
                                                                 .ConfigureAwait(false);
+        startExecutor.Configure(new NoOpExternalRequestContext());
+
         return startExecutor.DescribeProtocol();
     }
 }

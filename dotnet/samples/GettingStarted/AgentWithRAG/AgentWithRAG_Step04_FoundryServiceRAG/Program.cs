@@ -15,9 +15,12 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOIN
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Create an AI Project client and get an OpenAI client that works with the foundry service.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIProjectClient aiProjectClient = new(
     new Uri(endpoint),
-    new AzureCliCredential());
+    new DefaultAzureCredential());
 OpenAIClient openAIClient = aiProjectClient.GetProjectOpenAIClient();
 
 // Upload the file that contains the data to be used for RAG to the Foundry service.
@@ -43,16 +46,16 @@ AIAgent agent = await aiProjectClient
         instructions: "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
         tools: [fileSearchTool]);
 
-AgentThread thread = await agent.GetNewThreadAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 Console.WriteLine(">> Asking about returns\n");
-Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", thread));
+Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", session));
 
 Console.WriteLine("\n>> Asking about shipping\n");
-Console.WriteLine(await agent.RunAsync("How long does standard shipping usually take?", thread));
+Console.WriteLine(await agent.RunAsync("How long does standard shipping usually take?", session));
 
 Console.WriteLine("\n>> Asking about product care\n");
-Console.WriteLine(await agent.RunAsync("What is the best way to maintain the TrailRunner tent fabric?", thread));
+Console.WriteLine(await agent.RunAsync("What is the best way to maintain the TrailRunner tent fabric?", session));
 
 // Cleanup
 await fileClient.DeleteFileAsync(uploadResult.Value.Id);

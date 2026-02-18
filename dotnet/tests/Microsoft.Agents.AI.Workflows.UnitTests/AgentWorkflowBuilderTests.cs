@@ -135,18 +135,21 @@ public class AgentWorkflowBuilderTests
     {
         public override string Name => name;
 
-        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
-            => new(new DoubleEchoAgentThread());
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+            => new(new DoubleEchoAgentSession());
 
-        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-            => new(new DoubleEchoAgentThread());
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new DoubleEchoAgentSession());
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => default;
 
         protected override Task<AgentResponse> RunCoreAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+            IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
 
@@ -158,7 +161,7 @@ public class AgentWorkflowBuilderTests
         }
     }
 
-    private sealed class DoubleEchoAgentThread() : InMemoryAgentThread();
+    private sealed class DoubleEchoAgentSession() : AgentSession();
 
     [Fact]
     public async Task BuildConcurrent_AgentsRunInParallelAsync()
@@ -410,7 +413,7 @@ public class AgentWorkflowBuilderTests
     private sealed class DoubleEchoAgentWithBarrier(string name, StrongBox<TaskCompletionSource<bool>> barrier, StrongBox<int> remaining) : DoubleEchoAgent(name)
     {
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
-            IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             if (Interlocked.Decrement(ref remaining.Value) == 0)
             {
@@ -419,7 +422,7 @@ public class AgentWorkflowBuilderTests
 
             await barrier.Value!.Task.ConfigureAwait(false);
 
-            await foreach (var update in base.RunCoreStreamingAsync(messages, thread, options, cancellationToken))
+            await foreach (var update in base.RunCoreStreamingAsync(messages, session, options, cancellationToken))
             {
                 await Task.Yield();
                 yield return update;

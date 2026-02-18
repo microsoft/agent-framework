@@ -1,5 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
+import logging
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -7,12 +10,11 @@ from collections.abc import (
     Callable,
     Mapping,
     MutableMapping,
-    MutableSequence,
     Sequence,
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Generic, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NoReturn, TypedDict, cast
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
@@ -28,54 +30,33 @@ from openai.types.responses.response_usage import ResponseUsage
 from openai.types.responses.tool_param import (
     CodeInterpreter,
     CodeInterpreterContainerCodeInterpreterToolAuto,
+    ImageGeneration,
     Mcp,
-    ToolParam,
 )
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from .._clients import BaseChatClient
-from .._logging import get_logger
-from .._middleware import use_chat_middleware
+from .._middleware import ChatMiddlewareLayer
+from .._settings import load_settings
 from .._tools import (
-    AIFunction,
-    HostedCodeInterpreterTool,
-    HostedFileSearchTool,
-    HostedImageGenerationTool,
-    HostedMCPTool,
-    HostedWebSearchTool,
-    ToolProtocol,
-    use_function_invocation,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
+    FunctionTool,
 )
 from .._types import (
-    ChatMessage,
+    Annotation,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    CitationAnnotation,
-    CodeInterpreterToolCallContent,
-    CodeInterpreterToolResultContent,
-    Contents,
-    DataContent,
-    FunctionApprovalRequestContent,
-    FunctionApprovalResponseContent,
-    FunctionCallContent,
-    FunctionResultContent,
-    HostedFileContent,
-    HostedVectorStoreContent,
-    ImageGenerationToolCallContent,
-    ImageGenerationToolResultContent,
-    MCPServerToolCallContent,
-    MCPServerToolResultContent,
+    Content,
+    ContinuationToken,
+    Message,
+    ResponseStream,
     Role,
-    TextContent,
-    TextReasoningContent,
     TextSpanRegion,
-    UriContent,
-    UsageContent,
     UsageDetails,
-    _parse_content,
-    prepare_function_call_results,
+    detect_media_type_from_base64,
     prepend_instructions_to_messages,
     validate_tool_mode,
 )
@@ -84,7 +65,7 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from ..observability import use_instrumentation
+from ..observability import ChatTelemetryLayer
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
@@ -96,10 +77,27 @@ if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-logger = get_logger("agent_framework.openai")
+if TYPE_CHECKING:
+    from .._middleware import (
+        ChatMiddleware,
+        ChatMiddlewareCallable,
+        FunctionMiddleware,
+        FunctionMiddlewareCallable,
+    )
 
-__all__ = ["OpenAIResponsesClient", "OpenAIResponsesOptions"]
+logger = logging.getLogger("agent_framework.openai")
+
+
+class OpenAIContinuationToken(ContinuationToken):
+    """Continuation token for OpenAI Responses API background operations."""
+
+    response_id: str
+    """OpenAI Responses API response ID."""
 
 
 # region OpenAI Responses Options TypedDict
@@ -125,7 +123,10 @@ class StreamOptions(TypedDict, total=False):
     """Whether to include usage statistics in stream events."""
 
 
-class OpenAIResponsesOptions(ChatOptions, total=False):
+ResponseFormatT = TypeVar("ResponseFormatT", bound=BaseModel | None, default=None)
+
+
+class OpenAIResponsesOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], total=False):
     """OpenAI Responses API-specific chat options.
 
     Extends ChatOptions with options specific to OpenAI's Responses API.
@@ -188,9 +189,20 @@ class OpenAIResponsesOptions(ChatOptions, total=False):
     - 'auto': Truncate from beginning if exceeds context
     - 'disabled': Fail with 400 error if exceeds context"""
 
+    background: bool
+    """Whether to run the model response in the background.
+    When True, the response returns immediately with a continuation token
+    that can be used to poll for the result.
+    See: https://platform.openai.com/docs/guides/background"""
 
-TOpenAIResponsesOptions = TypeVar(
-    "TOpenAIResponsesOptions",
+    continuation_token: OpenAIContinuationToken
+    """Token for resuming or polling a long-running background operation.
+    Pass the ``continuation_token`` from a previous response to poll for
+    completion or resume a streaming response."""
+
+
+OpenAIResponsesOptionsT = TypeVar(
+    "OpenAIResponsesOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="OpenAIResponsesOptions",
     covariant=True,
@@ -203,95 +215,134 @@ TOpenAIResponsesOptions = TypeVar(
 # region ResponsesClient
 
 
-class OpenAIBaseResponsesClient(
+class RawOpenAIResponsesClient(  # type: ignore[misc]
     OpenAIBase,
-    BaseChatClient[TOpenAIResponsesOptions],
-    Generic[TOpenAIResponsesOptions],
+    BaseChatClient[OpenAIResponsesOptionsT],
+    Generic[OpenAIResponsesOptionsT],
 ):
-    """Base class for all OpenAI Responses based API's."""
+    """Raw OpenAI Responses client without middleware, telemetry, or function invocation.
+
+    Warning:
+        **This class should not normally be used directly.** It does not include middleware,
+        telemetry, or function invocation support that you most likely need. If you do use it,
+        you should consider which additional layers to apply. There is a defined ordering that
+        you should follow:
+
+        1. **ChatMiddlewareLayer** - Should be applied first as it also prepares function middleware
+        2. **FunctionInvocationLayer** - Handles tool/function calling loop
+        3. **ChatTelemetryLayer** - Must be inside the function calling loop for correct per-call telemetry
+
+        Use ``OpenAIResponsesClient`` instead for a fully-featured client with all layers applied.
+    """
+
+    STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     FILE_SEARCH_MAX_RESULTS: int = 50
 
     # region Inner Methods
 
-    @override
-    async def _inner_get_response(
+    async def _prepare_request(
         self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
         **kwargs: Any,
-    ) -> ChatResponse:
+    ) -> tuple[AsyncOpenAI, dict[str, Any], dict[str, Any]]:
+        """Validate options and prepare the request.
+
+        Returns:
+            Tuple of (client, run_options, validated_options).
+        """
         client = await self._ensure_client()
-        # prepare
-        run_options = await self._prepare_options(messages, options, **kwargs)
-        try:
-            # execute and process
-            if "text_format" in run_options:
-                response = await client.responses.parse(stream=False, **run_options)
-            else:
-                response = await client.responses.create(stream=False, **run_options)
-            return self._parse_response_from_openai(response, options=options)
-        except BadRequestError as ex:
-            if ex.code == "content_filter":
-                raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error: {ex}",
-                    inner_exception=ex,
-                ) from ex
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
+        validated_options = await self._validate_options(options)
+        run_options = await self._prepare_options(messages, validated_options, **kwargs)
+        return client, run_options, validated_options
+
+    def _handle_request_error(self, ex: Exception) -> NoReturn:
+        """Convert exceptions to appropriate service exceptions. Always raises."""
+        if isinstance(ex, BadRequestError) and ex.code == "content_filter":
+            raise OpenAIContentFilterException(
+                f"{type(self)} service encountered a content error: {ex}",
                 inner_exception=ex,
             ) from ex
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
+        raise ServiceResponseException(
+            f"{type(self)} service failed to complete the prompt: {ex}",
+            inner_exception=ex,
+        ) from ex
 
     @override
-    async def _inner_get_streaming_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
+        stream: bool = False,
         **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        client = await self._ensure_client()
-        # prepare
-        run_options = await self._prepare_options(messages, options, **kwargs)
-        function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
-        try:
-            # execute and process
-            if "text_format" not in run_options:
-                async for chunk in await client.responses.create(stream=True, **run_options):
-                    yield self._parse_chunk_from_openai(
-                        chunk,
-                        options=options,
-                        function_call_ids=function_call_ids,
-                    )
-                return
-            async with client.responses.stream(**run_options) as response:
-                async for chunk in response:
-                    yield self._parse_chunk_from_openai(
-                        chunk,
-                        options=options,
-                        function_call_ids=function_call_ids,
-                    )
-        except BadRequestError as ex:
-            if ex.code == "content_filter":
-                raise OpenAIContentFilterException(
-                    f"{type(self)} service encountered a content error: {ex}",
-                    inner_exception=ex,
-                ) from ex
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
-        except Exception as ex:
-            raise ServiceResponseException(
-                f"{type(self)} service failed to complete the prompt: {ex}",
-                inner_exception=ex,
-            ) from ex
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        continuation_token: OpenAIContinuationToken | None = options.get("continuation_token")  # type: ignore[assignment]
+
+        if stream:
+            function_call_ids: dict[int, tuple[str, str]] = {}
+            validated_options: dict[str, Any] | None = None
+
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                nonlocal validated_options
+                if continuation_token is not None:
+                    # Resume a background streaming response by retrieving with stream=True
+                    client = await self._ensure_client()
+                    validated_options = await self._validate_options(options)
+                    try:
+                        stream_response = await client.responses.retrieve(
+                            continuation_token["response_id"],
+                            stream=True,
+                        )
+                        async for chunk in stream_response:
+                            yield self._parse_chunk_from_openai(
+                                chunk, options=validated_options, function_call_ids=function_call_ids
+                            )
+                    except Exception as ex:
+                        self._handle_request_error(ex)
+                else:
+                    client, run_options, validated_options = await self._prepare_request(messages, options, **kwargs)
+                    try:
+                        if "text_format" in run_options:
+                            async with client.responses.stream(**run_options) as response:
+                                async for chunk in response:
+                                    yield self._parse_chunk_from_openai(
+                                        chunk, options=validated_options, function_call_ids=function_call_ids
+                                    )
+                        else:
+                            async for chunk in await client.responses.create(stream=True, **run_options):
+                                yield self._parse_chunk_from_openai(
+                                    chunk, options=validated_options, function_call_ids=function_call_ids
+                                )
+                    except Exception as ex:
+                        self._handle_request_error(ex)
+
+            response_format = validated_options.get("response_format") if validated_options else None
+            return self._build_response_stream(_stream(), response_format=response_format)
+
+        # Non-streaming
+        async def _get_response() -> ChatResponse:
+            if continuation_token is not None:
+                # Poll a background response by retrieving without stream
+                client = await self._ensure_client()
+                validated_options = await self._validate_options(options)
+                try:
+                    response = await client.responses.retrieve(continuation_token["response_id"])
+                except Exception as ex:
+                    self._handle_request_error(ex)
+                return self._parse_response_from_openai(response, options=validated_options)
+            client, run_options, validated_options = await self._prepare_request(messages, options, **kwargs)
+            try:
+                if "text_format" in run_options:
+                    response = await client.responses.parse(stream=False, **run_options)
+                else:
+                    response = await client.responses.create(stream=False, **run_options)
+            except Exception as ex:
+                self._handle_request_error(ex)
+            return self._parse_response_from_openai(response, options=validated_options)
+
+        return _get_response()
 
     def _prepare_response_and_text_format(
         self,
@@ -375,140 +426,338 @@ class OpenAIBaseResponsesClient(
 
     # region Prep methods
 
-    def _prepare_tools_for_openai(
-        self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None
-    ) -> list[ToolParam | dict[str, Any]]:
-        response_tools: list[ToolParam | dict[str, Any]] = []
-        if not tools:
-            return response_tools
-        for tool in tools:
-            if isinstance(tool, ToolProtocol):
-                match tool:
-                    case HostedMCPTool():
-                        response_tools.append(self._prepare_mcp_tool(tool))
-                    case HostedCodeInterpreterTool():
-                        tool_args: CodeInterpreterContainerCodeInterpreterToolAuto = {"type": "auto"}
-                        if tool.inputs:
-                            tool_args["file_ids"] = []
-                            for tool_input in tool.inputs:
-                                if isinstance(tool_input, HostedFileContent):
-                                    tool_args["file_ids"].append(tool_input.file_id)  # type: ignore[attr-defined]
-                            if not tool_args["file_ids"]:
-                                tool_args.pop("file_ids")
-                        response_tools.append(
-                            CodeInterpreter(
-                                type="code_interpreter",
-                                container=tool_args,
-                            )
-                        )
-                    case AIFunction():
-                        params = tool.parameters()
-                        params["additionalProperties"] = False
-                        response_tools.append(
-                            FunctionToolParam(
-                                name=tool.name,
-                                parameters=params,
-                                strict=False,
-                                type="function",
-                                description=tool.description,
-                            )
-                        )
-                    case HostedFileSearchTool():
-                        if not tool.inputs:
-                            raise ValueError("HostedFileSearchTool requires inputs to be specified.")
-                        inputs: list[str] = [
-                            inp.vector_store_id for inp in tool.inputs if isinstance(inp, HostedVectorStoreContent)
-                        ]
-                        if not inputs:
-                            raise ValueError(
-                                "HostedFileSearchTool requires inputs to be of type `HostedVectorStoreContent`."
-                            )
+    def _prepare_tools_for_openai(self, tools: Sequence[Any] | None) -> list[Any]:
+        """Prepare tools for the OpenAI Responses API.
 
-                        response_tools.append(
-                            FileSearchToolParam(
-                                type="file_search",
-                                vector_store_ids=inputs,
-                                max_num_results=tool.max_results
-                                or self.FILE_SEARCH_MAX_RESULTS,  # default to max results  if not specified
-                            )
-                        )
-                    case HostedWebSearchTool():
-                        web_search_tool = WebSearchToolParam(type="web_search")
-                        if location := (
-                            tool.additional_properties.get("user_location", None)
-                            if tool.additional_properties
-                            else None
-                        ):
-                            web_search_tool["user_location"] = {
-                                "type": "approximate",
-                                "city": location.get("city", None),
-                                "country": location.get("country", None),
-                                "region": location.get("region", None),
-                                "timezone": location.get("timezone", None),
-                            }
-                        if filters := (
-                            tool.additional_properties.get("filters", None) if tool.additional_properties else None
-                        ):
-                            web_search_tool["filters"] = filters
-                        if search_context_size := (
-                            tool.additional_properties.get("search_context_size", None)
-                            if tool.additional_properties
-                            else None
-                        ):
-                            web_search_tool["search_context_size"] = search_context_size
-                        response_tools.append(web_search_tool)
-                    case HostedImageGenerationTool():
-                        mapped_tool: dict[str, Any] = {"type": "image_generation"}
-                        if tool.options:
-                            option_mapping = {
-                                "image_size": "size",
-                                "media_type": "output_format",
-                                "model_id": "model",
-                                "streaming_count": "partial_images",
-                            }
-                            # count and response_format are not supported by Responses API
-                            for key, value in tool.options.items():
-                                mapped_key = option_mapping.get(key, key)
-                                mapped_tool[mapped_key] = value
-                        if tool.additional_properties:
-                            mapped_tool.update(tool.additional_properties)
-                        response_tools.append(mapped_tool)
-                    case _:
-                        logger.debug("Unsupported tool passed (type: %s)", type(tool))
+        Converts FunctionTool to Responses API format. All other tools pass through unchanged.
+
+        Args:
+            tools: Sequence of tools to prepare.
+
+        Returns:
+            List of tool parameters ready for the OpenAI API.
+        """
+        if not tools:
+            return []
+        response_tools: list[Any] = []
+        for tool in tools:
+            if isinstance(tool, FunctionTool):
+                params = tool.parameters()
+                params["additionalProperties"] = False
+                response_tools.append(
+                    FunctionToolParam(
+                        name=tool.name,
+                        parameters=params,
+                        strict=False,
+                        type="function",
+                        description=tool.description,
+                    )
+                )
             else:
-                # Handle raw dictionary tools
-                tool_dict = tool if isinstance(tool, dict) else dict(tool)
-                response_tools.append(tool_dict)
+                # Pass through all other tools (dicts, SDK types) unchanged
+                response_tools.append(tool)
         return response_tools
 
+    # region Hosted Tool Factory Methods
+
     @staticmethod
-    def _prepare_mcp_tool(tool: HostedMCPTool) -> Mcp:
-        """Get MCP tool from HostedMCPTool."""
+    def get_code_interpreter_tool(
+        *,
+        file_ids: list[str] | None = None,
+        container: Literal["auto"] | CodeInterpreterContainerCodeInterpreterToolAuto = "auto",
+    ) -> Any:
+        """Create a code interpreter tool configuration for the Responses API.
+
+        Keyword Args:
+            file_ids: List of file IDs to make available to the code interpreter.
+            container: Container configuration. Use "auto" for automatic container management,
+                or provide a TypedDict with custom container settings.
+
+        Returns:
+            A CodeInterpreter tool parameter ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIResponsesClient
+
+                # Basic code interpreter
+                tool = OpenAIResponsesClient.get_code_interpreter_tool()
+
+                # With file access
+                tool = OpenAIResponsesClient.get_code_interpreter_tool(file_ids=["file-abc123"])
+
+                # Use with agent
+                agent = ChatAgent(client, tools=[tool])
+        """
+        container_config: CodeInterpreterContainerCodeInterpreterToolAuto = (
+            container if isinstance(container, dict) else {"type": "auto"}
+        )
+
+        if file_ids:
+            container_config["file_ids"] = file_ids
+
+        return CodeInterpreter(type="code_interpreter", container=container_config)
+
+    @staticmethod
+    def get_web_search_tool(
+        *,
+        user_location: dict[str, str] | None = None,
+        search_context_size: Literal["low", "medium", "high"] | None = None,
+        filters: dict[str, Any] | None = None,
+    ) -> Any:
+        """Create a web search tool configuration for the Responses API.
+
+        Keyword Args:
+            user_location: Location context for search results. Dict with keys like
+                "city", "country", "region", "timezone".
+            search_context_size: Amount of context to include from search results.
+                One of "low", "medium", or "high".
+            filters: Additional search filters.
+
+        Returns:
+            A WebSearchToolParam dict ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIResponsesClient
+
+                # Basic web search
+                tool = OpenAIResponsesClient.get_web_search_tool()
+
+                # With location context
+                tool = OpenAIResponsesClient.get_web_search_tool(
+                    user_location={"city": "Seattle", "country": "US"},
+                    search_context_size="medium",
+                )
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        web_search_tool = WebSearchToolParam(type="web_search")
+
+        if user_location:
+            web_search_tool["user_location"] = {
+                "type": "approximate",
+                "city": user_location.get("city"),
+                "country": user_location.get("country"),
+                "region": user_location.get("region"),
+                "timezone": user_location.get("timezone"),
+            }
+
+        if search_context_size:
+            web_search_tool["search_context_size"] = search_context_size
+
+        if filters:
+            web_search_tool["filters"] = filters  # type: ignore[typeddict-item]
+
+        return web_search_tool
+
+    @staticmethod
+    def get_image_generation_tool(
+        *,
+        size: Literal["1024x1024", "1024x1536", "1536x1024", "auto"] | None = None,
+        output_format: Literal["png", "jpeg", "webp"] | None = None,
+        model: Literal["gpt-image-1", "gpt-image-1-mini"] | str | None = None,
+        quality: Literal["low", "medium", "high", "auto"] | None = None,
+        partial_images: int | None = None,
+        background: Literal["transparent", "opaque", "auto"] | None = None,
+        moderation: Literal["auto", "low"] | None = None,
+        output_compression: int | None = None,
+    ) -> Any:
+        """Create an image generation tool configuration for the Responses API.
+
+        Keyword Args:
+            size: Image dimensions. One of "1024x1024", "1024x1536", "1536x1024", or "auto".
+            output_format: Output image format. One of "png", "jpeg", or "webp".
+            model: Model to use for image generation. One of "gpt-image-1" or "gpt-image-1-mini".
+            quality: Image quality level. One of "low", "medium", "high", or "auto".
+            partial_images: Number of partial images to stream during generation.
+            background: Background type. One of "transparent", "opaque", or "auto".
+            moderation: Moderation level. One of "auto" or "low".
+            output_compression: Compression level for output (0-100).
+
+        Returns:
+            An ImageGeneration tool parameter dict ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIResponsesClient
+
+                # Basic image generation
+                tool = OpenAIResponsesClient.get_image_generation_tool()
+
+                # High quality large image
+                tool = OpenAIResponsesClient.get_image_generation_tool(
+                    size="1536x1024",
+                    quality="high",
+                    output_format="png",
+                )
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        tool: ImageGeneration = {"type": "image_generation"}
+
+        if size:
+            tool["size"] = size
+        if output_format:
+            tool["output_format"] = output_format
+        if model:
+            tool["model"] = model
+        if quality:
+            tool["quality"] = quality
+        if partial_images is not None:
+            tool["partial_images"] = partial_images
+        if background:
+            tool["background"] = background
+        if moderation:
+            tool["moderation"] = moderation
+        if output_compression is not None:
+            tool["output_compression"] = output_compression
+
+        return tool
+
+    @staticmethod
+    def get_mcp_tool(
+        *,
+        name: str,
+        url: str,
+        description: str | None = None,
+        approval_mode: Literal["always_require", "never_require"] | dict[str, list[str]] | None = None,
+        allowed_tools: list[str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        """Create a hosted MCP (Model Context Protocol) tool configuration for the Responses API.
+
+        This configures an MCP server that will be called by OpenAI's service.
+        The tools from this MCP server are executed remotely by OpenAI,
+        not locally by your application.
+
+        Note:
+            For local MCP execution where your application calls the MCP server
+            directly, use the MCP client tools instead of this method.
+
+        Keyword Args:
+            name: A label/name for the MCP server.
+            url: The URL of the MCP server.
+            description: A description of what the MCP server provides.
+            approval_mode: Tool approval mode. Use "always_require" or "never_require" for all tools,
+                or provide a dict with "always_require_approval" and/or "never_require_approval"
+                keys mapping to lists of tool names.
+            allowed_tools: List of tool names that are allowed to be used from this MCP server.
+            headers: HTTP headers to include in requests to the MCP server.
+
+        Returns:
+            An Mcp tool parameter dict ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIResponsesClient
+
+                # Basic MCP tool
+                tool = OpenAIResponsesClient.get_mcp_tool(
+                    name="my_mcp",
+                    url="https://mcp.example.com",
+                )
+
+                # With approval settings
+                tool = OpenAIResponsesClient.get_mcp_tool(
+                    name="github_mcp",
+                    url="https://mcp.github.com",
+                    description="GitHub MCP server",
+                    approval_mode="always_require",
+                    headers={"Authorization": "Bearer token"},
+                )
+
+                # With specific tool approvals
+                tool = OpenAIResponsesClient.get_mcp_tool(
+                    name="tools_mcp",
+                    url="https://tools.example.com",
+                    approval_mode={
+                        "always_require_approval": ["dangerous_tool"],
+                        "never_require_approval": ["safe_tool"],
+                    },
+                )
+
+                agent = ChatAgent(client, tools=[tool])
+        """
         mcp: Mcp = {
             "type": "mcp",
-            "server_label": tool.name.replace(" ", "_"),
-            "server_url": str(tool.url),
-            "server_description": tool.description,
-            "headers": tool.headers,
+            "server_label": name.replace(" ", "_"),
+            "server_url": url,
         }
-        if tool.allowed_tools:
-            mcp["allowed_tools"] = list(tool.allowed_tools)
-        if tool.approval_mode:
-            match tool.approval_mode:
-                case str():
-                    mcp["require_approval"] = "always" if tool.approval_mode == "always_require" else "never"
-                case _:
-                    if always_require_approvals := tool.approval_mode.get("always_require_approval"):
-                        mcp["require_approval"] = {"always": {"tool_names": list(always_require_approvals)}}
-                    if never_require_approvals := tool.approval_mode.get("never_require_approval"):
-                        mcp["require_approval"] = {"never": {"tool_names": list(never_require_approvals)}}
+
+        if description:
+            mcp["server_description"] = description
+
+        if headers:
+            mcp["headers"] = headers
+
+        if allowed_tools:
+            mcp["allowed_tools"] = allowed_tools
+
+        if approval_mode:
+            if isinstance(approval_mode, str):
+                mcp["require_approval"] = "always" if approval_mode == "always_require" else "never"
+            else:
+                if always_require := approval_mode.get("always_require_approval"):
+                    mcp["require_approval"] = {"always": {"tool_names": always_require}}
+                if never_require := approval_mode.get("never_require_approval"):
+                    mcp["require_approval"] = {"never": {"tool_names": never_require}}
 
         return mcp
 
+    @staticmethod
+    def get_file_search_tool(
+        *,
+        vector_store_ids: list[str],
+        max_num_results: int | None = None,
+    ) -> Any:
+        """Create a file search tool configuration for the Responses API.
+
+        Keyword Args:
+            vector_store_ids: List of vector store IDs to search within.
+            max_num_results: Maximum number of results to return. Defaults to 50 if not specified.
+
+        Returns:
+            A FileSearchToolParam dict ready to pass to ChatAgent.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIResponsesClient
+
+                # Basic file search
+                tool = OpenAIResponsesClient.get_file_search_tool(
+                    vector_store_ids=["vs_abc123"],
+                )
+
+                # With result limit
+                tool = OpenAIResponsesClient.get_file_search_tool(
+                    vector_store_ids=["vs_abc123", "vs_def456"],
+                    max_num_results=10,
+                )
+
+                agent = ChatAgent(client, tools=[tool])
+        """
+        tool = FileSearchToolParam(
+            type="file_search",
+            vector_store_ids=vector_store_ids,
+        )
+
+        if max_num_results is not None:
+            tool["max_num_results"] = max_num_results
+
+        return tool
+
+    # endregion
+
     async def _prepare_options(
         self,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Take options dict and create the specific options for Responses API."""
@@ -524,13 +773,18 @@ class OpenAIBaseResponsesClient(
             "response_format",  # handled separately
             "conversation_id",  # handled separately
             "tool_choice",  # handled separately
+            "continuation_token",  # handled separately in _inner_get_response
         }
         run_options: dict[str, Any] = {k: v for k, v in options.items() if k not in exclude_keys and v is not None}
 
         # messages
         # Handle instructions by prepending to messages as system message
-        if instructions := options.get("instructions"):
+        # Only prepend instructions for the first turn (when no conversation/response ID exists)
+        conversation_id = self._get_current_conversation_id(options, **kwargs)
+        if (instructions := options.get("instructions")) and not conversation_id:
+            # First turn: prepend instructions as system message
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
+        # Continuation turn: instructions already exist in conversation context, skip prepending
         request_input = self._prepare_messages_for_openai(messages)
         if not request_input:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
@@ -568,15 +822,16 @@ class OpenAIBaseResponsesClient(
             # tool_choice: convert ToolMode to appropriate format
             if tool_choice := options.get("tool_choice"):
                 tool_mode = validate_tool_mode(tool_choice)
-                if (mode := tool_mode.get("mode")) == "required" and (
-                    func_name := tool_mode.get("required_function_name")
-                ) is not None:
-                    run_options["tool_choice"] = {
-                        "type": "function",
-                        "name": func_name,
-                    }
-                else:
-                    run_options["tool_choice"] = mode
+                if tool_mode is not None:
+                    if (mode := tool_mode.get("mode")) == "required" and (
+                        func_name := tool_mode.get("required_function_name")
+                    ) is not None:
+                        run_options["tool_choice"] = {
+                            "type": "function",
+                            "name": func_name,
+                        }
+                    else:
+                        run_options["tool_choice"] = mode
         else:
             run_options.pop("parallel_tool_calls", None)
             run_options.pop("tool_choice", None)
@@ -604,16 +859,20 @@ class OpenAIBaseResponsesClient(
                 raise ValueError("model_id must be a non-empty string")
             options["model"] = self.model_id
 
-    def _get_current_conversation_id(self, options: dict[str, Any], **kwargs: Any) -> str | None:
-        """Get the current conversation ID from options dict or kwargs."""
-        return options.get("conversation_id") or kwargs.get("conversation_id")
+    def _get_current_conversation_id(self, options: Mapping[str, Any], **kwargs: Any) -> str | None:
+        """Get the current conversation ID, preferring kwargs over options.
 
-    def _prepare_messages_for_openai(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
+        This ensures runtime-updated conversation IDs (for example, from tool execution
+        loops) take precedence over the initial configuration provided in options.
+        """
+        return kwargs.get("conversation_id") or options.get("conversation_id")
+
+    def _prepare_messages_for_openai(self, chat_messages: Sequence[Message]) -> list[dict[str, Any]]:
         """Prepare the chat messages for a request.
 
         Allowing customization of the key names for role/author, and optionally overriding the role.
 
-        Role.TOOL messages need to be formatted different than system/user/assistant messages:
+        "tool" messages need to be formatted different than system/user/assistant messages:
             They require a "tool_call_id" and (function) "name" key, and the "metadata" key should
             be removed. The "encoding" key should also be removed.
 
@@ -629,43 +888,50 @@ class OpenAIBaseResponsesClient(
         for message in chat_messages:
             for content in message.contents:
                 if (
-                    isinstance(content, FunctionCallContent)
+                    content.type == "function_call"
                     and content.additional_properties
                     and "fc_id" in content.additional_properties
                 ):
-                    call_id_to_id[content.call_id] = content.additional_properties["fc_id"]
+                    call_id_to_id[content.call_id] = content.additional_properties["fc_id"]  # type: ignore[attr-defined, index]
         list_of_list = [self._prepare_message_for_openai(message, call_id_to_id) for message in chat_messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
 
     def _prepare_message_for_openai(
         self,
-        message: ChatMessage,
+        message: Message,
         call_id_to_id: dict[str, str],
     ) -> list[dict[str, Any]]:
         """Prepare a chat message for the OpenAI Responses API format."""
         all_messages: list[dict[str, Any]] = []
         args: dict[str, Any] = {
-            "role": message.role.value if isinstance(message.role, Role) else message.role,
+            "type": "message",
+            "role": message.role,
         }
         for content in message.contents:
-            match content:
-                case TextReasoningContent():
+            match content.type:
+                case "text_reasoning":
                     # Don't send reasoning content back to model
                     continue
-                case FunctionResultContent():
+                case "function_result":
                     new_args: dict[str, Any] = {}
-                    new_args.update(self._prepare_content_for_openai(message.role, content, call_id_to_id))
-                    all_messages.append(new_args)
-                case FunctionCallContent():
-                    function_call = self._prepare_content_for_openai(message.role, content, call_id_to_id)
-                    all_messages.append(function_call)  # type: ignore
-                case FunctionApprovalResponseContent() | FunctionApprovalRequestContent():
-                    all_messages.append(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore
+                    new_args.update(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore[arg-type]
+                    if new_args:
+                        all_messages.append(new_args)
+                case "function_call":
+                    function_call = self._prepare_content_for_openai(message.role, content, call_id_to_id)  # type: ignore[arg-type]
+                    if function_call:
+                        all_messages.append(function_call)  # type: ignore
+                case "function_approval_response" | "function_approval_request":
+                    prepared = self._prepare_content_for_openai(Role(message.role), content, call_id_to_id)
+                    if prepared:
+                        all_messages.append(prepared)  # type: ignore
                 case _:
-                    if "content" not in args:
-                        args["content"] = []
-                    args["content"].append(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore
+                    prepared_content = self._prepare_content_for_openai(message.role, content, call_id_to_id)  # type: ignore
+                    if prepared_content:
+                        if "content" not in args:
+                            args["content"] = []
+                        args["content"].append(prepared_content)  # type: ignore
         if "content" in args or "tool_calls" in args:
             all_messages.append(args)
         return all_messages
@@ -673,17 +939,25 @@ class OpenAIBaseResponsesClient(
     def _prepare_content_for_openai(
         self,
         role: Role,
-        content: Contents,
+        content: Content,
         call_id_to_id: dict[str, str],
     ) -> dict[str, Any]:
         """Prepare content for the OpenAI Responses API format."""
-        match content:
-            case TextContent():
+        match content.type:
+            case "text":
+                if role == "assistant":
+                    # Assistant history is represented as output text items; Azure validation
+                    # requires `annotations` to be present for this type.
+                    return {
+                        "type": "output_text",
+                        "text": content.text,
+                        "annotations": [],
+                    }
                 return {
-                    "type": "output_text" if role == Role.ASSISTANT else "input_text",
+                    "type": "input_text",
                     "text": content.text,
                 }
-            case TextReasoningContent():
+            case "text_reasoning":
                 ret: dict[str, Any] = {
                     "type": "reasoning",
                     "summary": {
@@ -703,7 +977,7 @@ class OpenAIBaseResponsesClient(
                     if encrypted_content := props.get("encrypted_content"):
                         ret["encrypted_content"] = encrypted_content
                 return ret
-            case DataContent() | UriContent():
+            case "data" | "uri":
                 if content.has_top_level_media_type("image"):
                     return {
                         "type": "input_image",
@@ -744,7 +1018,7 @@ class OpenAIBaseResponsesClient(
                         file_obj["filename"] = filename
                     return file_obj
                 return {}
-            case FunctionCallContent():
+            case "function_call":
                 if not content.call_id:
                     logger.warning(f"FunctionCallContent missing call_id for function '{content.name}'")
                     return {}
@@ -761,37 +1035,37 @@ class OpenAIBaseResponsesClient(
                     "arguments": content.arguments,
                     "status": None,
                 }
-            case FunctionResultContent():
+            case "function_result":
                 # call_id for the result needs to be the same as the call_id for the function call
                 args: dict[str, Any] = {
                     "call_id": content.call_id,
                     "type": "function_call_output",
-                    "output": prepare_function_call_results(content.result),
+                    "output": content.result if content.result is not None else "",
                 }
                 return args
-            case FunctionApprovalRequestContent():
+            case "function_approval_request":
                 return {
                     "type": "mcp_approval_request",
-                    "id": content.id,
-                    "arguments": content.function_call.arguments,
-                    "name": content.function_call.name,
-                    "server_label": content.function_call.additional_properties.get("server_label")
-                    if content.function_call.additional_properties
+                    "id": content.id,  # type: ignore[union-attr]
+                    "arguments": content.function_call.arguments,  # type: ignore[union-attr]
+                    "name": content.function_call.name,  # type: ignore[union-attr]
+                    "server_label": content.function_call.additional_properties.get("server_label")  # type: ignore[union-attr]
+                    if content.function_call.additional_properties  # type: ignore[union-attr]
                     else None,
                 }
-            case FunctionApprovalResponseContent():
+            case "function_approval_response":
                 return {
                     "type": "mcp_approval_response",
                     "approval_request_id": content.id,
                     "approve": content.approved,
                 }
-            case HostedFileContent():
+            case "hosted_file":
                 return {
                     "type": "input_file",
                     "file_id": content.file_id,
                 }
             case _:  # should catch UsageDetails and ErrorContent and HostedVectorStoreContent
-                logger.debug("Unsupported content type passed (type: %s)", type(content))
+                logger.debug("Unsupported content type passed (type: %s)", content.type)
                 return {}
 
     # region Parse methods
@@ -799,12 +1073,12 @@ class OpenAIBaseResponsesClient(
         self,
         response: OpenAIResponse | ParsedResponse[BaseModel],
         options: dict[str, Any],
-    ) -> "ChatResponse":
+    ) -> ChatResponse:
         """Parse an OpenAI Responses API response into a ChatResponse."""
         structured_response: BaseModel | None = response.output_parsed if isinstance(response, ParsedResponse) else None  # type: ignore[reportUnknownMemberType]
 
         metadata: dict[str, Any] = response.metadata or {}
-        contents: list[Contents] = []
+        contents: list[Content] = []
         for item in response.output:  # type: ignore[reportUnknownMemberType]
             match item.type:
                 # types:
@@ -829,7 +1103,7 @@ class OpenAIBaseResponsesClient(
                     for message_content in item.content:  # type: ignore[reportMissingTypeArgument]
                         match message_content.type:
                             case "output_text":
-                                text_content = TextContent(
+                                text_content = Content.from_text(
                                     text=message_content.text,
                                     raw_representation=message_content,  # type: ignore[reportUnknownArgumentType]
                                 )
@@ -839,8 +1113,9 @@ class OpenAIBaseResponsesClient(
                                     for annotation in message_content.annotations:
                                         match annotation.type:
                                             case "file_path":
-                                                text_content.annotations.append(
-                                                    CitationAnnotation(
+                                                text_content.annotations.append(  # pyright: ignore[reportUnknownMemberType]
+                                                    Annotation(
+                                                        type="citation",
                                                         file_id=annotation.file_id,
                                                         additional_properties={
                                                             "index": annotation.index,
@@ -849,8 +1124,9 @@ class OpenAIBaseResponsesClient(
                                                     )
                                                 )
                                             case "file_citation":
-                                                text_content.annotations.append(
-                                                    CitationAnnotation(
+                                                text_content.annotations.append(  # pyright: ignore[reportUnknownMemberType]
+                                                    Annotation(
+                                                        type="citation",
                                                         url=annotation.filename,
                                                         file_id=annotation.file_id,
                                                         raw_representation=annotation,
@@ -860,12 +1136,14 @@ class OpenAIBaseResponsesClient(
                                                     )
                                                 )
                                             case "url_citation":
-                                                text_content.annotations.append(
-                                                    CitationAnnotation(
+                                                text_content.annotations.append(  # pyright: ignore[reportUnknownMemberType]
+                                                    Annotation(
+                                                        type="citation",
                                                         title=annotation.title,
                                                         url=annotation.url,
                                                         annotated_regions=[
                                                             TextSpanRegion(
+                                                                type="text_span",
                                                                 start_index=annotation.start_index,
                                                                 end_index=annotation.end_index,
                                                             )
@@ -874,8 +1152,9 @@ class OpenAIBaseResponsesClient(
                                                     )
                                                 )
                                             case "container_file_citation":
-                                                text_content.annotations.append(
-                                                    CitationAnnotation(
+                                                text_content.annotations.append(  # pyright: ignore[reportUnknownMemberType]
+                                                    Annotation(
+                                                        type="citation",
                                                         file_id=annotation.file_id,
                                                         url=annotation.filename,
                                                         additional_properties={
@@ -883,6 +1162,7 @@ class OpenAIBaseResponsesClient(
                                                         },
                                                         annotated_regions=[
                                                             TextSpanRegion(
+                                                                type="text_span",
                                                                 start_index=annotation.start_index,
                                                                 end_index=annotation.end_index,
                                                             )
@@ -898,7 +1178,7 @@ class OpenAIBaseResponsesClient(
                                 contents.append(text_content)
                             case "refusal":
                                 contents.append(
-                                    TextContent(
+                                    Content.from_text(
                                         text=message_content.refusal,
                                         raw_representation=message_content,
                                     )
@@ -910,7 +1190,7 @@ class OpenAIBaseResponsesClient(
                             if hasattr(item, "summary") and item.summary and index < len(item.summary):
                                 additional_properties = {"summary": item.summary[index]}
                             contents.append(
-                                TextReasoningContent(
+                                Content.from_text_reasoning(
                                     text=reasoning_content.text,
                                     raw_representation=reasoning_content,
                                     additional_properties=additional_properties,
@@ -919,23 +1199,23 @@ class OpenAIBaseResponsesClient(
                     if hasattr(item, "summary") and item.summary:
                         for summary in item.summary:
                             contents.append(
-                                TextReasoningContent(text=summary.text, raw_representation=summary)  # type: ignore[arg-type]
+                                Content.from_text_reasoning(text=summary.text, raw_representation=summary)  # type: ignore[arg-type]
                             )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                     call_id = getattr(item, "call_id", None) or getattr(item, "id", None)
-                    outputs: list["Contents"] = []
+                    outputs: list[Content] = []
                     if item_outputs := getattr(item, "outputs", None):
                         for code_output in item_outputs:
                             if getattr(code_output, "type", None) == "logs":
                                 outputs.append(
-                                    TextContent(
+                                    Content.from_text(
                                         text=code_output.logs,
                                         raw_representation=code_output,
                                     )
                                 )
                             elif getattr(code_output, "type", None) == "image":
                                 outputs.append(
-                                    UriContent(
+                                    Content.from_uri(
                                         uri=code_output.url,
                                         raw_representation=code_output,
                                         media_type="image",
@@ -943,14 +1223,14 @@ class OpenAIBaseResponsesClient(
                                 )
                     if code := getattr(item, "code", None):
                         contents.append(
-                            CodeInterpreterToolCallContent(
+                            Content.from_code_interpreter_tool_call(
                                 call_id=call_id,
-                                inputs=[TextContent(text=code, raw_representation=item)],
+                                inputs=[Content.from_text(text=code, raw_representation=item)],
                                 raw_representation=item,
                             )
                         )
                     contents.append(
-                        CodeInterpreterToolResultContent(
+                        Content.from_code_interpreter_tool_result(
                             call_id=call_id,
                             outputs=outputs,
                             raw_representation=item,
@@ -958,7 +1238,7 @@ class OpenAIBaseResponsesClient(
                     )
                 case "function_call":  # ResponseOutputFunctionCall
                     contents.append(
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id=item.call_id if hasattr(item, "call_id") and item.call_id else "",
                             name=item.name if hasattr(item, "name") else "",
                             arguments=item.arguments if hasattr(item, "arguments") else "",
@@ -968,9 +1248,9 @@ class OpenAIBaseResponsesClient(
                     )
                 case "mcp_approval_request":  # ResponseOutputMcpApprovalRequest
                     contents.append(
-                        FunctionApprovalRequestContent(
+                        Content.from_function_approval_request(
                             id=item.id,
-                            function_call=FunctionCallContent(
+                            function_call=Content.from_function_call(
                                 call_id=item.id,
                                 name=item.name,
                                 arguments=item.arguments,
@@ -982,7 +1262,7 @@ class OpenAIBaseResponsesClient(
                 case "mcp_call":
                     call_id = item.id
                     contents.append(
-                        MCPServerToolCallContent(
+                        Content.from_mcp_server_tool_call(
                             call_id=call_id,
                             tool_name=item.name,
                             server_name=item.server_label,
@@ -992,31 +1272,31 @@ class OpenAIBaseResponsesClient(
                     )
                     if item.output is not None:
                         contents.append(
-                            MCPServerToolResultContent(
+                            Content.from_mcp_server_tool_result(
                                 call_id=call_id,
-                                output=[TextContent(text=item.output)],
+                                output=[Content.from_text(text=item.output)],
                                 raw_representation=item,
                             )
                         )
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
-                    image_output: DataContent | None = None
-                    if item.result:
-                        base64_data = item.result
-                        image_format = DataContent.detect_image_format_from_base64(base64_data)
-                        image_output = DataContent(
-                            data=base64_data,
-                            media_type=f"image/{image_format}" if image_format else "image/png",
+                    image_output: Content | None = None
+                    if item.result is not None:
+                        # item.result contains raw base64 string
+                        # so we call detect_media_type_from_base64 to get the media type and fallback to image/png
+                        image_output = Content.from_uri(
+                            uri=f"data:{detect_media_type_from_base64(data_str=item.result) or 'image/png'}"
+                            f";base64,{item.result}",
                             raw_representation=item.result,
                         )
                     image_id = item.id
                     contents.append(
-                        ImageGenerationToolCallContent(
+                        Content.from_image_generation_tool_call(
                             image_id=image_id,
                             raw_representation=item,
                         )
                     )
                     contents.append(
-                        ImageGenerationToolResultContent(
+                        Content.from_image_generation_tool_result(
                             image_id=image_id,
                             outputs=image_output,
                             raw_representation=item,
@@ -1024,7 +1304,7 @@ class OpenAIBaseResponsesClient(
                     )
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
-        response_message = ChatMessage(role="assistant", contents=contents)
+        response_message = Message(role="assistant", contents=contents)
         args: dict[str, Any] = {
             "response_id": response.id,
             "created_at": datetime.fromtimestamp(response.created_at, tz=timezone.utc).strftime(
@@ -1036,7 +1316,7 @@ class OpenAIBaseResponsesClient(
             "raw_representation": response,
         }
 
-        if conversation_id := self._get_conversation_id(response, options.get("store")):
+        if conversation_id := self._get_conversation_id(response, options.get("store")):  # pyright: ignore[reportUnknownArgumentType]
             args["conversation_id"] = conversation_id
         if response.usage and (usage_details := self._parse_usage_from_openai(response.usage)):
             args["usage_details"] = usage_details
@@ -1046,6 +1326,9 @@ class OpenAIBaseResponsesClient(
             # Only pass response_format to ChatResponse if it's a Pydantic model type,
             # not a runtime JSON schema dict
             args["response_format"] = response_format
+        # Set continuation_token when background operation is still in progress
+        if response.status and response.status in ("in_progress", "queued"):
+            args["continuation_token"] = OpenAIContinuationToken(response_id=response.id)
         return ChatResponse(**args)
 
     def _parse_chunk_from_openai(
@@ -1056,11 +1339,11 @@ class OpenAIBaseResponsesClient(
     ) -> ChatResponseUpdate:
         """Parse an OpenAI Responses API streaming event into a ChatResponseUpdate."""
         metadata: dict[str, Any] = {}
-        contents: list[Contents] = []
+        contents: list[Content] = []
         conversation_id: str | None = None
         response_id: str | None = None
+        continuation_token: OpenAIContinuationToken | None = None
         model = self.model_id
-        # TODO(peterychang): Add support for other content types
         match event.type:
             # types:
             # ResponseAudioDeltaEvent,
@@ -1120,33 +1403,80 @@ class OpenAIBaseResponsesClient(
                 event_part = event.part
                 match event_part.type:
                     case "output_text":
-                        contents.append(TextContent(text=event_part.text, raw_representation=event))
+                        contents.append(Content.from_text(text=event_part.text, raw_representation=event))
                         metadata.update(self._get_metadata_from_response(event_part))
                     case "refusal":
-                        contents.append(TextContent(text=event_part.refusal, raw_representation=event))
+                        contents.append(Content.from_text(text=event_part.refusal, raw_representation=event))
                     case _:
                         pass
             case "response.output_text.delta":
-                contents.append(TextContent(text=event.delta, raw_representation=event))
+                contents.append(Content.from_text(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_text.delta":
-                contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
+                contents.append(Content.from_text_reasoning(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_text.done":
-                contents.append(TextReasoningContent(text=event.text, raw_representation=event))
+                contents.append(Content.from_text_reasoning(text=event.text, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_summary_text.delta":
-                contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
+                contents.append(Content.from_text_reasoning(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_summary_text.done":
-                contents.append(TextReasoningContent(text=event.text, raw_representation=event))
+                contents.append(Content.from_text_reasoning(text=event.text, raw_representation=event))
+                metadata.update(self._get_metadata_from_response(event))
+            case "response.code_interpreter_call_code.delta":
+                call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
+                ci_additional_properties = {
+                    "output_index": event.output_index,
+                    "sequence_number": event.sequence_number,
+                    "item_id": event.item_id,
+                }
+                contents.append(
+                    Content.from_code_interpreter_tool_call(
+                        call_id=call_id,
+                        inputs=[
+                            Content.from_text(
+                                text=event.delta,
+                                raw_representation=event,
+                                additional_properties=ci_additional_properties,
+                            )
+                        ],
+                        raw_representation=event,
+                        additional_properties=ci_additional_properties,
+                    )
+                )
+                metadata.update(self._get_metadata_from_response(event))
+            case "response.code_interpreter_call_code.done":
+                call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
+                ci_additional_properties = {
+                    "output_index": event.output_index,
+                    "sequence_number": event.sequence_number,
+                    "item_id": event.item_id,
+                }
+                contents.append(
+                    Content.from_code_interpreter_tool_call(
+                        call_id=call_id,
+                        inputs=[
+                            Content.from_text(
+                                text=event.code,
+                                raw_representation=event,
+                                additional_properties=ci_additional_properties,
+                            )
+                        ],
+                        raw_representation=event,
+                        additional_properties=ci_additional_properties,
+                    )
+                )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.created":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
+                if event.response.status and event.response.status in ("in_progress", "queued"):
+                    continuation_token = OpenAIContinuationToken(response_id=event.response.id)
             case "response.in_progress":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
+                continuation_token = OpenAIContinuationToken(response_id=event.response.id)
             case "response.completed":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
@@ -1154,7 +1484,7 @@ class OpenAIBaseResponsesClient(
                 if event.response.usage:
                     usage = self._parse_usage_from_openai(event.response.usage)
                     if usage:
-                        contents.append(UsageContent(details=usage, raw_representation=event))
+                        contents.append(Content.from_usage(usage_details=usage, raw_representation=event))
             case "response.output_item.added":
                 event_item = event.item
                 match event_item.type:
@@ -1179,9 +1509,9 @@ class OpenAIBaseResponsesClient(
                         )
                     case "mcp_approval_request":
                         contents.append(
-                            FunctionApprovalRequestContent(
+                            Content.from_function_approval_request(
                                 id=event_item.id,
-                                function_call=FunctionCallContent(
+                                function_call=Content.from_function_call(
                                     call_id=event_item.id,
                                     name=event_item.name,
                                     arguments=event_item.arguments,
@@ -1193,7 +1523,7 @@ class OpenAIBaseResponsesClient(
                     case "mcp_call":
                         call_id = getattr(event_item, "id", None) or getattr(event_item, "call_id", None) or ""
                         contents.append(
-                            MCPServerToolCallContent(
+                            Content.from_mcp_server_tool_call(
                                 call_id=call_id,
                                 tool_name=getattr(event_item, "name", "") or "",
                                 server_name=getattr(event_item, "server_label", None),
@@ -1206,17 +1536,17 @@ class OpenAIBaseResponsesClient(
                             or getattr(event_item, "output", None)
                             or getattr(event_item, "outputs", None)
                         )
-                        parsed_output: list[Contents] | None = None
+                        parsed_output: list[Content] | None = None
                         if result_output:
-                            normalized = (
+                            normalized = (  # pyright: ignore[reportUnknownVariableType]
                                 result_output
                                 if isinstance(result_output, Sequence)
                                 and not isinstance(result_output, (str, bytes, MutableMapping))
                                 else [result_output]
                             )
-                            parsed_output = [_parse_content(output_item) for output_item in normalized]
+                            parsed_output = [Content.from_dict(output_item) for output_item in normalized]  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
                         contents.append(
-                            MCPServerToolResultContent(
+                            Content.from_mcp_server_tool_result(
                                 call_id=call_id,
                                 output=parsed_output,
                                 raw_representation=event_item,
@@ -1224,19 +1554,19 @@ class OpenAIBaseResponsesClient(
                         )
                     case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                         call_id = getattr(event_item, "call_id", None) or getattr(event_item, "id", None)
-                        outputs: list[Contents] = []
+                        outputs: list[Content] = []
                         if hasattr(event_item, "outputs") and event_item.outputs:
                             for code_output in event_item.outputs:
                                 if getattr(code_output, "type", None) == "logs":
                                     outputs.append(
-                                        TextContent(
+                                        Content.from_text(
                                             text=cast(Any, code_output).logs,
                                             raw_representation=code_output,
                                         )
                                     )
                                 elif getattr(code_output, "type", None) == "image":
                                     outputs.append(
-                                        UriContent(
+                                        Content.from_uri(
                                             uri=cast(Any, code_output).url,
                                             raw_representation=code_output,
                                             media_type="image",
@@ -1244,10 +1574,10 @@ class OpenAIBaseResponsesClient(
                                     )
                         if hasattr(event_item, "code") and event_item.code:
                             contents.append(
-                                CodeInterpreterToolCallContent(
+                                Content.from_code_interpreter_tool_call(
                                     call_id=call_id,
                                     inputs=[
-                                        TextContent(
+                                        Content.from_text(
                                             text=event_item.code,
                                             raw_representation=event_item,
                                         )
@@ -1256,7 +1586,7 @@ class OpenAIBaseResponsesClient(
                                 )
                             )
                         contents.append(
-                            CodeInterpreterToolResultContent(
+                            Content.from_code_interpreter_tool_result(
                                 call_id=call_id,
                                 outputs=outputs,
                                 raw_representation=event_item,
@@ -1273,7 +1603,7 @@ class OpenAIBaseResponsesClient(
                                 ):
                                     additional_properties = {"summary": event_item.summary[index]}
                                 contents.append(
-                                    TextReasoningContent(
+                                    Content.from_text_reasoning(
                                         text=reasoning_content.text,
                                         raw_representation=reasoning_content,
                                         additional_properties=additional_properties,
@@ -1285,7 +1615,7 @@ class OpenAIBaseResponsesClient(
                 call_id, name = function_call_ids.get(event.output_index, (None, None))
                 if call_id and name:
                     contents.append(
-                        FunctionCallContent(
+                        Content.from_function_call(
                             call_id=call_id,
                             name=name,
                             arguments=event.delta,
@@ -1300,13 +1630,9 @@ class OpenAIBaseResponsesClient(
                 # Handle streaming partial image generation
                 image_base64 = event.partial_image_b64
                 partial_index = event.partial_image_index
-
-                # Use helper function to create data URI from base64
-                uri, media_type = DataContent.create_data_uri_from_base64(image_base64)
-
-                image_output = DataContent(
-                    uri=uri,
-                    media_type=media_type,
+                image_output = Content.from_uri(
+                    uri=f"data:{detect_media_type_from_base64(data_str=image_base64) or 'image/png'}"
+                    f";base64,{image_base64}",
                     additional_properties={
                         "partial_image_index": partial_index,
                         "is_partial_image": True,
@@ -1316,13 +1642,13 @@ class OpenAIBaseResponsesClient(
 
                 image_id = getattr(event, "item_id", None)
                 contents.append(
-                    ImageGenerationToolCallContent(
+                    Content.from_image_generation_tool_call(
                         image_id=image_id,
                         raw_representation=event,
                     )
                 )
                 contents.append(
-                    ImageGenerationToolResultContent(
+                    Content.from_image_generation_tool_result(
                         image_id=image_id,
                         outputs=image_output,
                         raw_representation=event,
@@ -1343,7 +1669,7 @@ class OpenAIBaseResponsesClient(
                 if ann_type == "file_path":
                     if ann_file_id:
                         contents.append(
-                            HostedFileContent(
+                            Content.from_hosted_file(
                                 file_id=str(ann_file_id),
                                 additional_properties={
                                     "annotation_index": event.annotation_index,
@@ -1355,7 +1681,7 @@ class OpenAIBaseResponsesClient(
                 elif ann_type == "file_citation":
                     if ann_file_id:
                         contents.append(
-                            HostedFileContent(
+                            Content.from_hosted_file(
                                 file_id=str(ann_file_id),
                                 additional_properties={
                                     "annotation_index": event.annotation_index,
@@ -1368,7 +1694,7 @@ class OpenAIBaseResponsesClient(
                 elif ann_type == "container_file_citation":
                     if ann_file_id:
                         contents.append(
-                            HostedFileContent(
+                            Content.from_hosted_file(
                                 file_id=str(ann_file_id),
                                 additional_properties={
                                     "annotation_index": event.annotation_index,
@@ -1389,8 +1715,9 @@ class OpenAIBaseResponsesClient(
             contents=contents,
             conversation_id=conversation_id,
             response_id=response_id,
-            role=Role.ASSISTANT,
+            role="assistant",
             model_id=model,
+            continuation_token=continuation_token,
             additional_properties=metadata,
             raw_representation=event,
         )
@@ -1402,9 +1729,9 @@ class OpenAIBaseResponsesClient(
             total_token_count=usage.total_tokens,
         )
         if usage.input_tokens_details and usage.input_tokens_details.cached_tokens:
-            details["openai.cached_input_tokens"] = usage.input_tokens_details.cached_tokens
+            details["openai.cached_input_tokens"] = usage.input_tokens_details.cached_tokens  # type: ignore[typeddict-unknown-key]
         if usage.output_tokens_details and usage.output_tokens_details.reasoning_tokens:
-            details["openai.reasoning_tokens"] = usage.output_tokens_details.reasoning_tokens
+            details["openai.reasoning_tokens"] = usage.output_tokens_details.reasoning_tokens  # type: ignore[typeddict-unknown-key]
         return details
 
     def _get_metadata_from_response(self, output: Any) -> dict[str, Any]:
@@ -1416,15 +1743,15 @@ class OpenAIBaseResponsesClient(
         return {}
 
 
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class OpenAIResponsesClient(
+class OpenAIResponsesClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    OpenAIBaseResponsesClient[TOpenAIResponsesOptions],
-    Generic[TOpenAIResponsesOptions],
+    ChatMiddlewareLayer[OpenAIResponsesOptionsT],
+    FunctionInvocationLayer[OpenAIResponsesOptionsT],
+    ChatTelemetryLayer[OpenAIResponsesOptionsT],
+    RawOpenAIResponsesClient[OpenAIResponsesOptionsT],
+    Generic[OpenAIResponsesOptionsT],
 ):
-    """OpenAI Responses client class."""
+    """OpenAI Responses client class with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
@@ -1438,6 +1765,10 @@ class OpenAIResponsesClient(
         instruction_role: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        middleware: (
+            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
+        ) = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an OpenAI Responses client.
@@ -1459,6 +1790,8 @@ class OpenAIResponsesClient(
             env_file_path: Use the environment settings file as a fallback
                 to environment variables.
             env_file_encoding: The encoding of the environment settings file.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
             kwargs: Other keyword parameters.
 
         Examples:
@@ -1489,34 +1822,36 @@ class OpenAIResponsesClient(
                 client: OpenAIResponsesClient[MyOptions] = OpenAIResponsesClient(model_id="gpt-4o")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            openai_settings = OpenAISettings(
-                api_key=api_key,  # type: ignore[reportArgumentType]
-                org_id=org_id,
-                base_url=base_url,
-                responses_model_id=model_id,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
+        openai_settings = load_settings(
+            OpenAISettings,
+            env_prefix="OPENAI_",
+            api_key=api_key,
+            org_id=org_id,
+            base_url=base_url,
+            responses_model_id=model_id,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
-        if not async_client and not openai_settings.api_key:
+        if not async_client and not openai_settings["api_key"]:
             raise ServiceInitializationError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
-        if not openai_settings.responses_model_id:
+        if not openai_settings["responses_model_id"]:
             raise ServiceInitializationError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_RESPONSES_MODEL_ID' environment variable."
             )
 
         super().__init__(
-            model_id=openai_settings.responses_model_id,
-            api_key=self._get_api_key(openai_settings.api_key),
-            org_id=openai_settings.org_id,
+            model_id=openai_settings["responses_model_id"],
+            api_key=self._get_api_key(openai_settings["api_key"]),
+            org_id=openai_settings["org_id"],
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
-            base_url=openai_settings.base_url,
+            base_url=openai_settings["base_url"],
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            **kwargs,
         )

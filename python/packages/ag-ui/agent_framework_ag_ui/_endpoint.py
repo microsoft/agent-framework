@@ -2,13 +2,15 @@
 
 """FastAPI endpoint creation for AG-UI agents."""
 
+from __future__ import annotations
+
 import copy
 import logging
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
 from ag_ui.encoder import EventEncoder
-from agent_framework import AgentProtocol
+from agent_framework import SupportsAgentRun
 from fastapi import FastAPI
 from fastapi.params import Depends
 from fastapi.responses import StreamingResponse
@@ -21,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 def add_agent_framework_fastapi_endpoint(
     app: FastAPI,
-    agent: AgentProtocol | AgentFrameworkAgent,
+    agent: SupportsAgentRun | AgentFrameworkAgent,
     path: str = "/",
     state_schema: Any | None = None,
     predict_state_config: dict[str, dict[str, str]] | None = None,
@@ -34,7 +36,7 @@ def add_agent_framework_fastapi_endpoint(
 
     Args:
         app: The FastAPI application
-        agent: The agent to expose (can be raw AgentProtocol or wrapped)
+        agent: The agent to expose (can be raw SupportsAgentRun or wrapped)
         path: The endpoint path
         state_schema: Optional state schema for shared state management; accepts dict or Pydantic model/class
         predict_state_config: Optional predictive state update configuration.
@@ -47,7 +49,7 @@ def add_agent_framework_fastapi_endpoint(
             authentication checks, rate limiting, or other middleware-like behavior.
             Example: `dependencies=[Depends(verify_api_key)]`
     """
-    if isinstance(agent, AgentProtocol):
+    if isinstance(agent, SupportsAgentRun):
         wrapped_agent = AgentFrameworkAgent(
             agent=agent,
             state_schema=state_schema,
@@ -56,8 +58,8 @@ def add_agent_framework_fastapi_endpoint(
     else:
         wrapped_agent = agent
 
-    @app.post(path, tags=tags or ["AG-UI"], dependencies=dependencies)  # type: ignore[arg-type]
-    async def agent_endpoint(request_body: AGUIRequest):  # type: ignore[misc]
+    @app.post(path, tags=tags or ["AG-UI"], dependencies=dependencies, response_model=None)  # type: ignore[arg-type]
+    async def agent_endpoint(request_body: AGUIRequest) -> StreamingResponse | dict[str, str]:
         """Handle AG-UI agent requests.
 
         Note: Function is accessed via FastAPI's decorator registration,
@@ -77,17 +79,19 @@ def add_agent_framework_fastapi_endpoint(
             )
             logger.info(f"Received request at {path}: {input_data.get('run_id', 'no-run-id')}")
 
-            async def event_generator():
+            async def event_generator() -> AsyncGenerator[str]:
                 encoder = EventEncoder()
                 event_count = 0
                 async for event in wrapped_agent.run_agent(input_data):
                     event_count += 1
-                    logger.debug(f"[{path}] Event {event_count}: {type(event).__name__}")
-
-                    # Log event payload for debugging
-                    if hasattr(event, "model_dump"):
-                        event_data = event.model_dump(exclude_none=True)
-                        logger.debug(f"[{path}] Event payload: {event_data}")
+                    event_type_name = getattr(event, "type", type(event).__name__)
+                    # Log important events at INFO level
+                    if "TOOL_CALL" in str(event_type_name) or "RUN" in str(event_type_name):
+                        if hasattr(event, "model_dump"):
+                            event_data = event.model_dump(exclude_none=True)
+                            logger.info(f"[{path}] Event {event_count}: {event_type_name} - {event_data}")
+                        else:
+                            logger.info(f"[{path}] Event {event_count}: {event_type_name}")
 
                     encoded = encoder.encode(event)
                     logger.debug(

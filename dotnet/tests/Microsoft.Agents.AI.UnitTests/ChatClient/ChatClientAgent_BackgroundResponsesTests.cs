@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
+using Moq.Protected;
 
 namespace Microsoft.Agents.AI.UnitTests;
 
@@ -55,10 +56,10 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         ChatClientAgent agent = new(mockChatClient.Object);
 
-        ChatClientAgentThread thread = new() { ConversationId = "conversation-id" };
+        ChatClientAgentSession? session = new() { ConversationId = "conversation-id" };
 
         // Act
-        await agent.RunAsync(thread, options: agentRunOptions);
+        await agent.RunAsync(session, options: agentRunOptions);
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -94,12 +95,12 @@ public class ChatClientAgent_BackgroundResponsesTests
             ContinuationToken = continuationToken2
         };
 
-        ChatClientAgentThread thread = new() { ConversationId = "conversation-id" };
+        ChatClientAgentSession? session = new() { ConversationId = "conversation-id" };
 
         ChatClientAgent agent = new(mockChatClient.Object);
 
         // Act
-        await agent.RunAsync(thread, options: agentRunOptions);
+        await agent.RunAsync(session, options: agentRunOptions);
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -153,10 +154,10 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         ChatClientAgent agent = new(mockChatClient.Object);
 
-        ChatClientAgentThread thread = new() { ConversationId = "conversation-id" };
+        ChatClientAgentSession? session = new() { ConversationId = "conversation-id" };
 
         // Act
-        await foreach (var _ in agent.RunStreamingAsync(thread, options: agentRunOptions))
+        await foreach (var _ in agent.RunStreamingAsync(session, options: agentRunOptions))
         {
         }
 
@@ -202,10 +203,10 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         ChatClientAgent agent = new(mockChatClient.Object);
 
-        var thread = new ChatClientAgentThread() { ConversationId = "conversation-id" };
+        var session = new ChatClientAgentSession() { ConversationId = "conversation-id" };
 
         // Act
-        await foreach (var _ in agent.RunStreamingAsync(thread, options: agentRunOptions))
+        await foreach (var _ in agent.RunStreamingAsync(session, options: agentRunOptions))
         {
         }
 
@@ -231,10 +232,10 @@ public class ChatClientAgent_BackgroundResponsesTests
         ChatClientAgent agent = new(mockChatClient.Object);
         var runOptions = new ChatClientAgentRunOptions(new ChatOptions { AllowBackgroundResponses = true });
 
-        ChatClientAgentThread thread = new();
+        ChatClientAgentSession? session = new();
 
         // Act
-        var response = await agent.RunAsync([new(ChatRole.User, "hi")], thread, options: runOptions);
+        var response = await agent.RunAsync([new(ChatRole.User, "hi")], session, options: runOptions);
 
         // Assert
         Assert.Same(continuationToken, (response.ContinuationToken as ChatClientAgentContinuationToken)?.InnerToken);
@@ -261,11 +262,11 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         ChatClientAgent agent = new(mockChatClient.Object);
 
-        ChatClientAgentThread thread = new();
+        ChatClientAgentSession? session = new();
 
         // Act
         var actualUpdates = new List<AgentResponseUpdate>();
-        await foreach (var u in agent.RunStreamingAsync([new(ChatRole.User, "hi")], thread, options: new ChatClientAgentRunOptions(new ChatOptions { AllowBackgroundResponses = true })))
+        await foreach (var u in agent.RunStreamingAsync([new(ChatRole.User, "hi")], session, options: new ChatClientAgentRunOptions(new ChatOptions { AllowBackgroundResponses = true })))
         {
             actualUpdates.Add(u);
         }
@@ -331,21 +332,25 @@ public class ChatClientAgent_BackgroundResponsesTests
     }
 
     [Fact]
-    public async Task RunAsync_WhenContinuationTokenProvided_SkipsThreadMessagePopulationAsync()
+    public async Task RunAsync_WhenContinuationTokenProvided_SkipsSessionMessagePopulationAsync()
     {
         // Arrange
         List<ChatMessage> capturedMessages = [];
 
-        // Create a mock message store that would normally provide messages
-        var mockMessageStore = new Mock<ChatMessageStore>();
-        mockMessageStore
-            .Setup(ms => ms.InvokingAsync(It.IsAny<ChatMessageStore.InvokingContext>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([new(ChatRole.User, "Message from message store")]);
+        // Create a mock chat history provider that would normally provide messages
+        var mockChatHistoryProvider = new Mock<ChatHistoryProvider>(null, null);
+        mockChatHistoryProvider.SetupGet(p => p.StateKey).Returns("ChatHistoryProvider");
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync([new(ChatRole.User, "Message from chat history provider")]);
 
         // Create a mock AI context provider that would normally provide context
-        var mockContextProvider = new Mock<AIContextProvider>();
+        var mockContextProvider = new Mock<AIContextProvider>(null, null);
+        mockContextProvider.SetupGet(p => p.StateKey).Returns("Provider1");
         mockContextProvider
-            .Setup(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()))
+            .Protected()
+            .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new AIContext
             {
                 Messages = [new(ChatRole.System, "Message from AI context")],
@@ -362,14 +367,14 @@ public class ChatClientAgent_BackgroundResponsesTests
                 capturedMessages.AddRange(msgs))
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "continued response")]));
 
-        ChatClientAgent agent = new(mockChatClient.Object);
-
-        // Create a thread with both message store and AI context provider
-        ChatClientAgentThread thread = new()
+        ChatClientAgent agent = new(mockChatClient.Object, options: new()
         {
-            MessageStore = mockMessageStore.Object,
-            AIContextProvider = mockContextProvider.Object
-        };
+            ChatHistoryProvider = mockChatHistoryProvider.Object,
+            AIContextProviders = [mockContextProvider.Object]
+        });
+
+        // Create a session
+        ChatClientAgentSession? session = new();
 
         AgentRunOptions runOptions = new()
         {
@@ -377,40 +382,44 @@ public class ChatClientAgent_BackgroundResponsesTests
         };
 
         // Act
-        await agent.RunAsync([], thread, options: runOptions);
+        await agent.RunAsync([], session, options: runOptions);
 
         // Assert
 
-        // With continuation token, thread message population should be skipped
+        // With continuation token, session message population should be skipped
         Assert.Empty(capturedMessages);
 
-        // Verify that message store was never called due to continuation token
-        mockMessageStore.Verify(
-            ms => ms.InvokingAsync(It.IsAny<ChatMessageStore.InvokingContext>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        // Verify that chat history provider was never called due to continuation token
+        mockChatHistoryProvider
+            .Protected()
+            .Verify<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", Times.Never(), ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>());
 
         // Verify that AI context provider was never called due to continuation token
-        mockContextProvider.Verify(
-            p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        mockContextProvider
+            .Protected()
+            .Verify<ValueTask<AIContext>>("InvokingCoreAsync", Times.Never(), ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>());
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WhenContinuationTokenProvided_SkipsThreadMessagePopulationAsync()
+    public async Task RunStreamingAsync_WhenContinuationTokenProvided_SkipsSessionMessagePopulationAsync()
     {
         // Arrange
         List<ChatMessage> capturedMessages = [];
 
-        // Create a mock message store that would normally provide messages
-        var mockMessageStore = new Mock<ChatMessageStore>();
-        mockMessageStore
-            .Setup(ms => ms.InvokingAsync(It.IsAny<ChatMessageStore.InvokingContext>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([new(ChatRole.User, "Message from message store")]);
+        // Create a mock chat history provider that would normally provide messages
+        var mockChatHistoryProvider = new Mock<ChatHistoryProvider>(null, null);
+        mockChatHistoryProvider.SetupGet(p => p.StateKey).Returns("ChatHistoryProvider");
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync([new(ChatRole.User, "Message from chat history provider")]);
 
         // Create a mock AI context provider that would normally provide context
-        var mockContextProvider = new Mock<AIContextProvider>();
+        var mockContextProvider = new Mock<AIContextProvider>(null, null);
+        mockContextProvider.SetupGet(p => p.StateKey).Returns("Provider1");
         mockContextProvider
-            .Setup(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()))
+            .Protected()
+            .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new AIContext
             {
                 Messages = [new(ChatRole.System, "Message from AI context")],
@@ -427,14 +436,14 @@ public class ChatClientAgent_BackgroundResponsesTests
                 capturedMessages.AddRange(msgs))
             .Returns(ToAsyncEnumerableAsync([new ChatResponseUpdate(role: ChatRole.Assistant, content: "continued response")]));
 
-        ChatClientAgent agent = new(mockChatClient.Object);
-
-        // Create a thread with both message store and AI context provider
-        ChatClientAgentThread thread = new()
+        ChatClientAgent agent = new(mockChatClient.Object, options: new()
         {
-            MessageStore = mockMessageStore.Object,
-            AIContextProvider = mockContextProvider.Object
-        };
+            ChatHistoryProvider = mockChatHistoryProvider.Object,
+            AIContextProviders = [mockContextProvider.Object]
+        });
+
+        // Create a session
+        ChatClientAgentSession? session = new();
 
         AgentRunOptions runOptions = new()
         {
@@ -442,25 +451,25 @@ public class ChatClientAgent_BackgroundResponsesTests
         };
 
         // Act
-        await agent.RunStreamingAsync(thread, options: runOptions).ToListAsync();
+        await agent.RunStreamingAsync(session, options: runOptions).ToListAsync();
 
         // Assert
-        // With continuation token, thread message population should be skipped
+        // With continuation token, session message population should be skipped
         Assert.Empty(capturedMessages);
 
-        // Verify that message store was never called due to continuation token
-        mockMessageStore.Verify(
-            ms => ms.InvokingAsync(It.IsAny<ChatMessageStore.InvokingContext>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        // Verify that chat history provider was never called due to continuation token
+        mockChatHistoryProvider
+            .Protected()
+            .Verify<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", Times.Never(), ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>());
 
         // Verify that AI context provider was never called due to continuation token
-        mockContextProvider.Verify(
-            p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        mockContextProvider
+            .Protected()
+            .Verify<ValueTask<AIContext>>("InvokingCoreAsync", Times.Never(), ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>());
     }
 
     [Fact]
-    public async Task RunAsync_WhenNoThreadProvidedForBackgroundResponses_ThrowsInvalidOperationExceptionAsync()
+    public async Task RunAsync_WhenNoSessionProvidedForBackgroundResponses_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -484,7 +493,7 @@ public class ChatClientAgent_BackgroundResponsesTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WhenNoThreadProvidedForBackgroundResponses_ThrowsInvalidOperationExceptionAsync()
+    public async Task RunStreamingAsync_WhenNoSessionProvidedForBackgroundResponses_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -532,7 +541,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         ChatClientAgent agent = new(mockChatClient.Object);
 
-        ChatClientAgentThread thread = new() { ConversationId = "conversation-id" };
+        ChatClientAgentSession? session = new() { ConversationId = "conversation-id" };
 
         AgentRunOptions runOptions = new()
         {
@@ -544,7 +553,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         // Act
         var updates = new List<AgentResponseUpdate>();
-        await foreach (var update in agent.RunStreamingAsync(thread, options: runOptions))
+        await foreach (var update in agent.RunStreamingAsync(session, options: runOptions))
         {
             updates.Add(update);
         }
@@ -580,7 +589,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         ChatClientAgent agent = new(mockChatClient.Object);
 
-        ChatClientAgentThread thread = new() { ConversationId = "conversation-id" };
+        ChatClientAgentSession? session = new() { ConversationId = "conversation-id" };
 
         AgentRunOptions runOptions = new()
         {
@@ -592,7 +601,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         // Act
         var updates = new List<AgentResponseUpdate>();
-        await foreach (var update in agent.RunStreamingAsync(thread, options: runOptions))
+        await foreach (var update in agent.RunStreamingAsync(session, options: runOptions))
         {
             updates.Add(update);
         }
@@ -610,7 +619,7 @@ public class ChatClientAgent_BackgroundResponsesTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WhenResumingStreaming_UsesUpdatesFromInitialRunForContextProviderAndMessageStoreAsync()
+    public async Task RunStreamingAsync_WhenResumingStreaming_UsesUpdatesFromInitialRunForContextProviderAndChatHistoryProviderAsync()
     {
         // Arrange
         ChatResponseUpdate[] returnUpdates =
@@ -628,27 +637,31 @@ public class ChatClientAgent_BackgroundResponsesTests
                 It.IsAny<CancellationToken>()))
             .Returns(ToAsyncEnumerableAsync(returnUpdates));
 
-        ChatClientAgent agent = new(mockChatClient.Object);
-
-        List<ChatMessage> capturedMessagesAddedToStore = [];
-        var mockMessageStore = new Mock<ChatMessageStore>();
-        mockMessageStore
-            .Setup(ms => ms.InvokedAsync(It.IsAny<ChatMessageStore.InvokedContext>(), It.IsAny<CancellationToken>()))
-            .Callback<ChatMessageStore.InvokedContext, CancellationToken>((ctx, ct) => capturedMessagesAddedToStore.AddRange(ctx.ResponseMessages ?? []))
+        List<ChatMessage> capturedMessagesAddedToProvider = [];
+        var mockChatHistoryProvider = new Mock<ChatHistoryProvider>(null, null);
+        mockChatHistoryProvider.SetupGet(p => p.StateKey).Returns("ChatHistoryProvider");
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Callback<ChatHistoryProvider.InvokedContext, CancellationToken>((ctx, ct) => capturedMessagesAddedToProvider.AddRange(ctx.ResponseMessages ?? []))
             .Returns(new ValueTask());
 
         AIContextProvider.InvokedContext? capturedInvokedContext = null;
-        var mockContextProvider = new Mock<AIContextProvider>();
+        var mockContextProvider = new Mock<AIContextProvider>(null, null);
+        mockContextProvider.SetupGet(p => p.StateKey).Returns("Provider1");
         mockContextProvider
-            .Setup(cp => cp.InvokedAsync(It.IsAny<AIContextProvider.InvokedContext>(), It.IsAny<CancellationToken>()))
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<AIContextProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
             .Callback<AIContextProvider.InvokedContext, CancellationToken>((context, ct) => capturedInvokedContext = context)
             .Returns(new ValueTask());
 
-        ChatClientAgentThread thread = new()
+        ChatClientAgent agent = new(mockChatClient.Object, options: new()
         {
-            MessageStore = mockMessageStore.Object,
-            AIContextProvider = mockContextProvider.Object
-        };
+            ChatHistoryProvider = mockChatHistoryProvider.Object,
+            AIContextProviders = [mockContextProvider.Object]
+        });
+
+        ChatClientAgentSession? session = new();
 
         AgentRunOptions runOptions = new()
         {
@@ -659,21 +672,25 @@ public class ChatClientAgent_BackgroundResponsesTests
         };
 
         // Act
-        await agent.RunStreamingAsync(thread, options: runOptions).ToListAsync();
+        await agent.RunStreamingAsync(session, options: runOptions).ToListAsync();
 
         // Assert
-        mockMessageStore.Verify(ms => ms.InvokedAsync(It.IsAny<ChatMessageStore.InvokedContext>(), It.IsAny<CancellationToken>()), Times.Once);
-        Assert.Single(capturedMessagesAddedToStore);
-        Assert.Contains("once upon a time", capturedMessagesAddedToStore[0].Text);
+        mockChatHistoryProvider
+            .Protected()
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(), ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>());
+        Assert.Single(capturedMessagesAddedToProvider);
+        Assert.Contains("once upon a time", capturedMessagesAddedToProvider[0].Text);
 
-        mockContextProvider.Verify(cp => cp.InvokedAsync(It.IsAny<AIContextProvider.InvokedContext>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockContextProvider
+            .Protected()
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(), ItExpr.IsAny<AIContextProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>());
         Assert.NotNull(capturedInvokedContext?.ResponseMessages);
         Assert.Single(capturedInvokedContext.ResponseMessages);
         Assert.Contains("once upon a time", capturedInvokedContext.ResponseMessages.ElementAt(0).Text);
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WhenResumingStreaming_UsesInputMessagesFromInitialRunForContextProviderAndMessageStoreAsync()
+    public async Task RunStreamingAsync_WhenResumingStreaming_UsesInputMessagesFromInitialRunForContextProviderAndChatHistoryProviderAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -684,27 +701,31 @@ public class ChatClientAgent_BackgroundResponsesTests
                 It.IsAny<CancellationToken>()))
             .Returns(ToAsyncEnumerableAsync(Array.Empty<ChatResponseUpdate>()));
 
-        ChatClientAgent agent = new(mockChatClient.Object);
-
-        List<ChatMessage> capturedMessagesAddedToStore = [];
-        var mockMessageStore = new Mock<ChatMessageStore>();
-        mockMessageStore
-            .Setup(ms => ms.InvokedAsync(It.IsAny<ChatMessageStore.InvokedContext>(), It.IsAny<CancellationToken>()))
-            .Callback<ChatMessageStore.InvokedContext, CancellationToken>((ctx, ct) => capturedMessagesAddedToStore.AddRange(ctx.RequestMessages))
+        List<ChatMessage> capturedMessagesAddedToProvider = [];
+        var mockChatHistoryProvider = new Mock<ChatHistoryProvider>(null, null);
+        mockChatHistoryProvider.SetupGet(p => p.StateKey).Returns("ChatHistoryProvider");
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Callback<ChatHistoryProvider.InvokedContext, CancellationToken>((ctx, ct) => capturedMessagesAddedToProvider.AddRange(ctx.RequestMessages))
             .Returns(new ValueTask());
 
         AIContextProvider.InvokedContext? capturedInvokedContext = null;
-        var mockContextProvider = new Mock<AIContextProvider>();
+        var mockContextProvider = new Mock<AIContextProvider>(null, null);
+        mockContextProvider.SetupGet(p => p.StateKey).Returns("Provider1");
         mockContextProvider
-            .Setup(cp => cp.InvokedAsync(It.IsAny<AIContextProvider.InvokedContext>(), It.IsAny<CancellationToken>()))
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<AIContextProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
             .Callback<AIContextProvider.InvokedContext, CancellationToken>((context, ct) => capturedInvokedContext = context)
             .Returns(new ValueTask());
 
-        ChatClientAgentThread thread = new()
+        ChatClientAgent agent = new(mockChatClient.Object, options: new()
         {
-            MessageStore = mockMessageStore.Object,
-            AIContextProvider = mockContextProvider.Object
-        };
+            ChatHistoryProvider = mockChatHistoryProvider.Object,
+            AIContextProviders = [mockContextProvider.Object]
+        });
+
+        ChatClientAgentSession? session = new();
 
         AgentRunOptions runOptions = new()
         {
@@ -715,14 +736,18 @@ public class ChatClientAgent_BackgroundResponsesTests
         };
 
         // Act
-        await agent.RunStreamingAsync(thread, options: runOptions).ToListAsync();
+        await agent.RunStreamingAsync(session, options: runOptions).ToListAsync();
 
         // Assert
-        mockMessageStore.Verify(ms => ms.InvokedAsync(It.IsAny<ChatMessageStore.InvokedContext>(), It.IsAny<CancellationToken>()), Times.Once);
-        Assert.Single(capturedMessagesAddedToStore);
-        Assert.Contains("Tell me a story", capturedMessagesAddedToStore[0].Text);
+        mockChatHistoryProvider
+            .Protected()
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(), ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>());
+        Assert.Single(capturedMessagesAddedToProvider);
+        Assert.Contains("Tell me a story", capturedMessagesAddedToProvider[0].Text);
 
-        mockContextProvider.Verify(cp => cp.InvokedAsync(It.IsAny<AIContextProvider.InvokedContext>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockContextProvider
+            .Protected()
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(), ItExpr.IsAny<AIContextProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>());
         Assert.NotNull(capturedInvokedContext?.RequestMessages);
         Assert.Single(capturedInvokedContext.RequestMessages);
         Assert.Contains("Tell me a story", capturedInvokedContext.RequestMessages.ElementAt(0).Text);
@@ -750,7 +775,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         ChatClientAgent agent = new(mockChatClient.Object);
 
-        ChatClientAgentThread thread = new() { };
+        ChatClientAgentSession? session = new() { };
 
         List<ChatClientAgentContinuationToken> capturedContinuationTokens = [];
 
@@ -759,7 +784,7 @@ public class ChatClientAgent_BackgroundResponsesTests
         // Act
 
         // Do the initial run
-        await foreach (var update in agent.RunStreamingAsync(userMessage, thread))
+        await foreach (var update in agent.RunStreamingAsync(userMessage, session))
         {
             capturedContinuationTokens.Add(Assert.IsType<ChatClientAgentContinuationToken>(update.ContinuationToken));
             break;
@@ -768,7 +793,7 @@ public class ChatClientAgent_BackgroundResponsesTests
         // Now resume the run using the captured continuation token
         returnUpdates.RemoveAt(0); // remove the first mock update as it was already processed
         var options = new AgentRunOptions { ContinuationToken = capturedContinuationTokens[0] };
-        await foreach (var update in agent.RunStreamingAsync(thread, options: options))
+        await foreach (var update in agent.RunStreamingAsync(session, options: options))
         {
             capturedContinuationTokens.Add(Assert.IsType<ChatClientAgentContinuationToken>(update.ContinuationToken));
         }

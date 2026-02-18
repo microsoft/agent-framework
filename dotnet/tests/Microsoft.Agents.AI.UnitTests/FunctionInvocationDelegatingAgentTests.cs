@@ -524,8 +524,15 @@ public sealed class FunctionInvocationDelegatingAgentTests
     {
         // Arrange
         var testFunction = AIFunctionFactory.Create(() => "Function result", "TestFunction", "A test function");
-        var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>());
-        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall);
+        var mockChatClient = new Mock<IChatClient>();
+
+        mockChatClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new ChatResponse([
+                new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>())])
+            ]));
 
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
@@ -717,10 +724,10 @@ public sealed class FunctionInvocationDelegatingAgentTests
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
 
-        async Task<AgentResponse> RunningMiddlewareCallbackAsync(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+        async Task<AgentResponse> RunningMiddlewareCallbackAsync(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
         {
             executionOrder.Add("Running-Pre");
-            var result = await innerAgent.RunAsync(messages, thread, options, cancellationToken);
+            var result = await innerAgent.RunAsync(messages, session, options, cancellationToken);
             executionOrder.Add("Running-Post");
             return result;
         }

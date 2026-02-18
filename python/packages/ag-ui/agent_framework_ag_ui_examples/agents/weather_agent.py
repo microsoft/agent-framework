@@ -2,12 +2,14 @@
 
 """Weather agent example demonstrating backend tool rendering."""
 
+from __future__ import annotations
+
 from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, ai_function
+from agent_framework import Agent, SupportsChatGetResponse, tool
 
 
-@ai_function
+@tool
 def get_weather(location: str) -> dict[str, Any]:
     """Get the current weather for a location.
 
@@ -39,7 +41,7 @@ def get_weather(location: str) -> dict[str, Any]:
     }
 
 
-@ai_function
+@tool
 def get_forecast(location: str, days: int = 3) -> str:
     """Get the weather forecast for a location.
 
@@ -57,22 +59,23 @@ def get_forecast(location: str, days: int = 3) -> str:
     return f"{days}-day forecast for {location}:\n" + "\n".join(forecast)
 
 
-def weather_agent(chat_client: ChatClientProtocol[Any]) -> ChatAgent[Any]:
+def weather_agent(client: SupportsChatGetResponse[Any]) -> Agent[Any]:
     """Create a weather agent with get_weather and get_forecast tools.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
-        A configured ChatAgent instance with weather tools
+        A configured Agent instance with weather tools
     """
-    return ChatAgent[Any](
+    return Agent[Any](
         name="weather_agent",
         instructions=(
             "You are a helpful weather assistant. "
             "Use the get_weather and get_forecast functions to help users with weather information. "
-            "Always provide friendly and informative responses."
+            "Always provide friendly and informative responses. "
+            "First return the weather result, and then return details about the forecast."
         ),
-        chat_client=chat_client,
+        client=client,
         tools=[get_weather, get_forecast],
     )

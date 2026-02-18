@@ -25,12 +25,15 @@ await using var mcpClient = await McpClient.CreateAsync(new StdioClientTransport
 IList<McpClientTool> mcpTools = await mcpClient.ListToolsAsync();
 string agentName = "AgentWithMCP";
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 Console.WriteLine($"Creating the agent '{agentName}' ...");
 
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent agent = aiProjectClient.CreateAIAgent(
+AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
     name: agentName,
     model: deploymentName,
     instructions: "You answer questions related to GitHub repositories only.",
