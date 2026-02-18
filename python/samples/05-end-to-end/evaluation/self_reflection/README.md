@@ -7,23 +7,22 @@ This sample demonstrates the self-reflection pattern using Agent Framework and A
 **What it demonstrates:**
 - Iterative self-reflection loop that automatically improves responses based on groundedness evaluation
 - Batch processing of prompts from JSONL files with progress tracking
-- Using `AzureOpenAIChatClient` with Azure CLI authentication
+- Using `AzureOpenAIResponsesClient` with a Project Endpoint and Azure CLI authentication
 - Comprehensive summary statistics and detailed result tracking
 
 ## Prerequisites
 
 ### Azure Resources
-- **Azure OpenAI**: Deploy models (default: gpt-4.1 for both agent and judge)
+- **Azure OpenAI Responses in Foundry**: Deploy models (default: gpt-5.2 for both agent and judge)
 - **Azure CLI**: Run `az login` to authenticate
 
 ### Python Environment
 ```bash
-pip install agent-framework-core azure-ai-projects pandas --pre
+pip install agent-framework-core pandas --pre
 ```
 
 ### Environment Variables
 ```bash
-# .env file
 AZURE_AI_PROJECT_ENDPOINT=https://<your-ai-resource>.services.ai.azure.com/api/projects/<your-ai-project>/
 ```
 
@@ -66,6 +65,12 @@ The agent iteratively improves responses:
   ✓ Perfect groundedness score achieved!
   ✓ Completed with score: 5/5 (best at iteration 2/3)
 ```
+
+In the Foundry UI, under `Build`/`Evaluations` you can view detailed results for each prompt, including:
+- Context
+- Query
+- Response
+- Groundedness scores and reasoning for each interation of each prompt
 
 ## Related Resources
 
