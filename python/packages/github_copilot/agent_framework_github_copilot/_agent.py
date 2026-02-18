@@ -40,8 +40,6 @@ from copilot.types import (
 )
 from copilot.types import Tool as CopilotTool
 
-from ._settings import GitHubCopilotSettings
-
 if sys.version_info >= (3, 13):
     from typing import TypeVar
 else:
@@ -55,6 +53,30 @@ PermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], Permission
 """Type for permission request handlers."""
 
 logger = logging.getLogger("agent_framework.github_copilot")
+
+
+class GitHubCopilotSettings(TypedDict, total=False):
+    """GitHub Copilot model settings.
+
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'GITHUB_COPILOT_'.
+
+    Keys:
+        cli_path: Path to the Copilot CLI executable.
+            Can be set via environment variable GITHUB_COPILOT_CLI_PATH.
+        model: Model to use (e.g., "gpt-5", "claude-sonnet-4").
+            Can be set via environment variable GITHUB_COPILOT_MODEL.
+        timeout: Request timeout in seconds.
+            Can be set via environment variable GITHUB_COPILOT_TIMEOUT.
+        log_level: CLI log level.
+            Can be set via environment variable GITHUB_COPILOT_LOG_LEVEL.
+    """
+
+    cli_path: str | None
+    model: str | None
+    timeout: float | None
+    log_level: str | None
 
 
 class GitHubCopilotOptions(TypedDict, total=False):

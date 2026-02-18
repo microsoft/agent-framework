@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
+import os
 from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
 from typing import Any
 from unittest.mock import Mock
@@ -901,7 +902,7 @@ def test_console_exporters_opt_in_false(monkeypatch):
     monkeypatch.setenv("ENABLE_CONSOLE_EXPORTERS", "false")
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings(env_file_path=os.devnull)
     assert settings.enable_console_exporters is False
 
 
@@ -911,7 +912,7 @@ def test_console_exporters_opt_in_true(monkeypatch):
 
     monkeypatch.setenv("ENABLE_CONSOLE_EXPORTERS", "true")
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings(env_file_path=os.devnull)
     assert settings.enable_console_exporters is True
 
 
@@ -921,7 +922,7 @@ def test_console_exporters_default_false(monkeypatch):
 
     monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings(env_file_path=os.devnull)
     assert settings.enable_console_exporters is False
 
 
@@ -996,7 +997,7 @@ def test_observability_settings_is_setup_initial(monkeypatch):
     from agent_framework.observability import ObservabilitySettings
 
     monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings(env_file_path=os.devnull)
     assert settings.is_setup is False
 
 
@@ -1452,7 +1453,7 @@ def test_get_exporters_from_env_no_endpoints(monkeypatch):
     ]:
         monkeypatch.delenv(key, raising=False)
 
-    exporters = _get_exporters_from_env()
+    exporters = _get_exporters_from_env(env_file_path=os.devnull)
     assert exporters == []
 
 
@@ -1464,7 +1465,7 @@ def test_observability_settings_configure_not_enabled(monkeypatch):
     from agent_framework.observability import ObservabilitySettings
 
     monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings(env_file_path=os.devnull)
 
     # Should not raise, should just return early
     settings._configure()
@@ -1485,7 +1486,7 @@ def test_observability_settings_configure_already_setup(monkeypatch):
     ]:
         monkeypatch.delenv(key, raising=False)
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings(env_file_path=os.devnull)
 
     # Manually mark as set up
     settings._executed_setup = True
@@ -2021,7 +2022,7 @@ def test_configure_providers_with_span_exporters(monkeypatch):
     ]:
         monkeypatch.delenv(key, raising=False)
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings(env_file_path=os.devnull)
 
     # Create mock span exporter
     mock_span_exporter = Mock(spec=SpanExporter)
