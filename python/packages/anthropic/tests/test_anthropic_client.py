@@ -220,6 +220,24 @@ def test_prepare_message_for_anthropic_text_reasoning(mock_anthropic_client: Mag
     assert len(result["content"]) == 1
     assert result["content"][0]["type"] == "thinking"
     assert result["content"][0]["thinking"] == "Let me think about this..."
+    assert "signature" not in result["content"][0]
+
+
+def test_prepare_message_for_anthropic_text_reasoning_with_signature(mock_anthropic_client: MagicMock) -> None:
+    """Test converting text reasoning message with signature to Anthropic format."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text_reasoning(text="Let me think about this...", protected_data="sig_abc123")],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["role"] == "assistant"
+    assert len(result["content"]) == 1
+    assert result["content"][0]["type"] == "thinking"
+    assert result["content"][0]["thinking"] == "Let me think about this..."
+    assert result["content"][0]["signature"] == "sig_abc123"
 
 
 def test_prepare_messages_for_anthropic_with_system(mock_anthropic_client: MagicMock) -> None:
@@ -287,6 +305,7 @@ def test_prepare_tools_for_anthropic_web_search(mock_anthropic_client: MagicMock
     assert "tools" in result
     assert len(result["tools"]) == 1
     assert result["tools"][0]["type"] == "web_search_20250305"
+    assert result["tools"][0]["name"] == "web_search"
 
 
 def test_prepare_tools_for_anthropic_code_interpreter(mock_anthropic_client: MagicMock) -> None:
@@ -300,6 +319,7 @@ def test_prepare_tools_for_anthropic_code_interpreter(mock_anthropic_client: Mag
     assert "tools" in result
     assert len(result["tools"]) == 1
     assert result["tools"][0]["type"] == "code_execution_20250825"
+    assert result["tools"][0]["name"] == "code_execution"
 
 
 def test_prepare_tools_for_anthropic_mcp_tool(mock_anthropic_client: MagicMock) -> None:
@@ -1764,11 +1784,13 @@ def test_parse_thinking_block(mock_anthropic_client: MagicMock) -> None:
     mock_block = MagicMock()
     mock_block.type = "thinking"
     mock_block.thinking = "Let me think about this..."
+    mock_block.signature = "sig_abc123"
 
     result = client._parse_contents_from_anthropic([mock_block])
 
     assert len(result) == 1
     assert result[0].type == "text_reasoning"
+    assert result[0].protected_data == "sig_abc123"
 
 
 def test_parse_thinking_delta_block(mock_anthropic_client: MagicMock) -> None:
@@ -1784,6 +1806,23 @@ def test_parse_thinking_delta_block(mock_anthropic_client: MagicMock) -> None:
 
     assert len(result) == 1
     assert result[0].type == "text_reasoning"
+
+
+def test_parse_signature_delta_block(mock_anthropic_client: MagicMock) -> None:
+    """Test parsing signature delta content block."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    # Create mock signature delta block
+    mock_block = MagicMock()
+    mock_block.type = "signature_delta"
+    mock_block.signature = "sig_xyz789"
+
+    result = client._parse_contents_from_anthropic([mock_block])
+
+    assert len(result) == 1
+    assert result[0].type == "text_reasoning"
+    assert result[0].text is None
+    assert result[0].protected_data == "sig_xyz789"
 
 
 # Citation Tests
