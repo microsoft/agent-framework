@@ -31,11 +31,12 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
-# A declaration-only tool: the schema is sent to the LLM, but the framework
-# has no implementation to execute. The caller must supply the result.
 
 # Load environment variables from .env file
 load_dotenv()
+
+# A declaration-only tool: the schema is sent to the LLM, but the framework
+# has no implementation to execute. The caller must supply the result.
 get_user_location = FunctionTool(
     name="get_user_location",
     func=None,
