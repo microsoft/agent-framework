@@ -47,7 +47,7 @@ async def main() -> None:
     )
 
     async with agent:
-        query = "List the first 3 Python files in the current directory"
+        query = "List the first 3 markdown (.md) files in the current directory"
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result.text}\n")

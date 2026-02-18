@@ -36,8 +36,8 @@ async def main() -> None:
         instructions="You are a helpful agent for creating powerpoint presentations.",
         tools=client.get_code_interpreter_tool(),
         default_options={
-            "max_tokens": 20000,
-            "thinking": {"type": "enabled", "budget_tokens": 10000},
+            "max_tokens": 4096,
+            "thinking": {"type": "enabled", "budget_tokens": 2000},
             "container": {"skills": [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]},
         },
     )
@@ -49,7 +49,7 @@ async def main() -> None:
         "\033[32mAgent Reasoning: (green)\033[0m\n"
         "\033[34mUsage: (blue)\033[0m\n"
     )
-    query = "Create a presentation about renewable energy with 5 slides"
+    query = "Create a simple presentation with 2 slides about Python programming"
     print(f"User: {query}")
     print("Agent: ", end="", flush=True)
     files: list[Content] = []
@@ -79,9 +79,9 @@ async def main() -> None:
             file_content = await client.anthropic_client.beta.files.download(
                 file_id=file.file_id, betas=["files-api-2025-04-14"]
             )
-            with open(Path(__file__).parent / f"renewable_energy-{idx}.pptx", "wb") as f:
+            with open(Path(__file__).parent / f"python_programming-{idx}.pptx", "wb") as f:
                 await file_content.write_to_file(f.name)
-            print(f"File {idx}: renewable_energy-{idx}.pptx saved to disk.")
+            print(f"File {idx}: python_programming-{idx}.pptx saved to disk.")
 
 
 if __name__ == "__main__":
