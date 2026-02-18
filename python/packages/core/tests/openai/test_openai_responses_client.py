@@ -139,8 +139,7 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
 @pytest.mark.parametrize("exclude_list", [["OPENAI_RESPONSES_MODEL_ID"]], indirect=True)
 def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
-        OpenAIResponsesClient(
-        )
+        OpenAIResponsesClient()
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
@@ -816,7 +815,101 @@ def test_prepare_message_for_openai_with_function_approval_response() -> None:
     assert prepared_message["approve"] is True
 
 
-def test_chat_message_with_error_content() -> None:
+def test_prepare_message_for_openai_includes_reasoning_with_function_call() -> None:
+    """Test _prepare_message_for_openai includes reasoning items alongside function_calls.
+
+    Reasoning models require reasoning items to be present in the input when
+    function_call items are included. Stripping reasoning causes a 400 error:
+    "function_call was provided without its required reasoning item".
+    """
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    reasoning = Content.from_text_reasoning(
+        text="Let me analyze the request",
+        additional_properties={"status": "completed", "reasoning_id": "rs_abc123"},
+    )
+    function_call = Content.from_function_call(
+        call_id="call_123",
+        name="search_hotels",
+        arguments='{"city": "Paris"}',
+    )
+
+    message = Message(role="assistant", contents=[reasoning, function_call])
+    call_id_to_id: dict[str, str] = {}
+
+    result = client._prepare_message_for_openai(message, call_id_to_id)
+
+    # Both reasoning and function_call should be present as top-level items
+    types = [item["type"] for item in result]
+    assert "reasoning" in types, "Reasoning items must be included for reasoning models"
+    assert "function_call" in types
+
+    reasoning_item = next(item for item in result if item["type"] == "reasoning")
+    assert reasoning_item["summary"]["text"] == "Let me analyze the request"
+    assert reasoning_item["id"] == "rs_abc123", "Reasoning id must be preserved for the API"
+
+
+def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
+    """Test _prepare_messages_for_openai correctly serializes a full conversation
+    that includes reasoning + function_call + function_result + final text.
+
+    This simulates the conversation history passed between agents in a workflow.
+    The API requires reasoning items alongside function_calls.
+    """
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="search for hotels")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    text="I need to search for hotels",
+                    additional_properties={"reasoning_id": "rs_test123", "status": "completed"},
+                ),
+                Content.from_function_call(
+                    call_id="call_1",
+                    name="search_hotels",
+                    arguments='{"city": "Paris"}',
+                    additional_properties={"fc_id": "fc_test456"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_1",
+                    result="Found 3 hotels in Paris",
+                ),
+            ],
+        ),
+        Message(role="assistant", contents=[Content.from_text(text="I found hotels for you")]),
+    ]
+
+    result = client._prepare_messages_for_openai(messages)
+
+    types = [item.get("type") for item in result]
+    assert "message" in types, "User/assistant messages should be present"
+    assert "reasoning" in types, "Reasoning items must be present"
+    assert "function_call" in types, "Function call items must be present"
+    assert "function_call_output" in types, "Function call output must be present"
+
+    # Verify reasoning has id
+    reasoning_items = [item for item in result if item.get("type") == "reasoning"]
+    assert reasoning_items[0]["id"] == "rs_test123"
+
+    # Verify function_call has id
+    fc_items = [item for item in result if item.get("type") == "function_call"]
+    assert fc_items[0]["id"] == "fc_test456"
+
+    # Verify correct ordering: reasoning before function_call
+    reasoning_idx = types.index("reasoning")
+    fc_idx = types.index("function_call")
+    assert reasoning_idx < fc_idx, "Reasoning must come before function_call"
+
+
+def test_prepare_message_for_openai_filters_error_content() -> None:
     """Test that error content in messages is handled properly."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
