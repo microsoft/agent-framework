@@ -33,7 +33,7 @@ pip install agent-framework --pre
 
 Samples call `load_dotenv()` to automatically load environment variables from a `.env` file in the `python/` directory. This is a convenience for local development and testing.
 
-**For local development**, set up your environment using either method:
+**For local development**, set up your environment using any of these methods:
 
 **Option 1: Using a `.env` file** (recommended for local development):
 1. Copy `.env.example` to `.env` in the `python/` directory:
@@ -47,6 +47,19 @@ Samples call `load_dotenv()` to automatically load environment variables from a 
 export AZURE_AI_PROJECT_ENDPOINT="your-foundry-project-endpoint"
 export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"
 ```
+
+**Option 3: Using `env_file_path` parameter** (for per-client configuration):
+
+All client classes (e.g., `OpenAIChatClient`, `AzureOpenAIResponsesClient`) support an `env_file_path` parameter to load environment variables from a specific file:
+
+```python
+from agent_framework.openai import OpenAIChatClient
+
+# Load from a custom .env file
+client = OpenAIChatClient(env_file_path="path/to/custom.env")
+```
+
+This allows different clients to use different configuration files if needed.
 
 For the getting-started samples, you'll need at minimum:
 ```bash
