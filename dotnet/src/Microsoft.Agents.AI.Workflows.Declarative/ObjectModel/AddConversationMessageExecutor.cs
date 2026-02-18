@@ -12,12 +12,14 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
-internal sealed class AddConversationMessageExecutor(AddConversationMessage model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state) :
+internal sealed class AddConversationMessageExecutor(AddConversationMessage model, ResponseAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<AddConversationMessage>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
+        Throw.IfNull(this.Model.Message);
         Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
+
         string conversationId = this.Evaluator.GetValue(this.Model.ConversationId).Value;
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? _);
 
@@ -26,7 +28,7 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
         // Capture the created message, which includes the assigned ID.
         newMessage = await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);
 
-        await this.AssignAsync(this.Model.Message?.Path, newMessage.ToRecord(), context).ConfigureAwait(false);
+        await this.AssignAsync(this.Model.Message.Path, newMessage.ToRecord(), context).ConfigureAwait(false);
 
         if (isWorkflowConversation)
         {

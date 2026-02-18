@@ -2,6 +2,7 @@
 
 """Tests for the graph-based declarative workflow executors."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -1295,3 +1296,203 @@ class TestExtractJsonFromResponse:
         text = 'First: {"status": "pending"} then later: {"status": "complete", "id": 42}'
         result = _extract_json_from_response(text)
         assert result == {"status": "complete", "id": 42}
+
+
+class TestPowerFxConditionalImport:
+    """The _declarative_base module should be importable without dotnet/powerfx."""
+
+    def test_import_guard_exists(self):
+        """The powerfx import must be wrapped in try/except."""
+        import agent_framework_declarative._workflows._declarative_base as base_mod
+
+        assert hasattr(base_mod, "DeclarativeWorkflowState")
+        assert hasattr(base_mod, "Engine")
+
+        # Engine should either be the real class or None — never an ImportError
+        engine = base_mod.Engine
+        assert engine is None or callable(engine)
+
+    def test_eval_raises_when_engine_unavailable(self):
+        """eval() should raise RuntimeError when Engine is None."""
+        import agent_framework_declarative._workflows._declarative_base as base_mod
+
+        mock_state = MagicMock()
+        mock_state._data: dict[str, Any] = {}
+        mock_state.get = MagicMock(side_effect=lambda k, d=None: mock_state._data.get(k, d))
+        mock_state.set = MagicMock(side_effect=lambda k, v: mock_state._data.__setitem__(k, v))
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"name": "test"})
+
+        original_engine = base_mod.Engine
+        try:
+            base_mod.Engine = None
+            with pytest.raises(RuntimeError, match="PowerFx is not available"):
+                state.eval("=Local.counter + 1")
+        finally:
+            base_mod.Engine = original_engine
+
+    def test_eval_passes_through_plain_strings_without_engine(self):
+        """Non-PowerFx strings (no leading '=') should work without Engine."""
+        import agent_framework_declarative._workflows._declarative_base as base_mod
+
+        mock_state = MagicMock()
+        mock_state._data: dict[str, Any] = {}
+        mock_state.get = MagicMock(side_effect=lambda k, d=None: mock_state._data.get(k, d))
+        mock_state.set = MagicMock(side_effect=lambda k, v: mock_state._data.__setitem__(k, v))
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        original_engine = base_mod.Engine
+        try:
+            base_mod.Engine = None
+            assert state.eval("hello world") == "hello world"
+            assert state.eval("") == ""
+            assert state.eval(42) == 42
+        finally:
+            base_mod.Engine = original_engine
+
+
+class TestExecutorKwargsForwarding:
+    """Workflow run kwargs should be forwarded through executor agent invocations."""
+
+    @pytest.mark.asyncio
+    async def test_invoke_agent_forwards_kwargs(self):
+        """InvokeAzureAgentExecutor should forward run_kwargs to agent.run()."""
+        from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
+        from agent_framework._workflows._state import State
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            InvokeAzureAgentExecutor,
+        )
+
+        # Create a mock State with kwargs stored
+        mock_state = MagicMock(spec=State)
+        state_data: dict[str, Any] = {}
+
+        def mock_get(key, default=None):
+            return state_data.get(key, default)
+
+        def mock_set(key, value):
+            state_data[key] = value
+
+        mock_state.get = MagicMock(side_effect=mock_get)
+        mock_state.set = MagicMock(side_effect=mock_set)
+
+        # Store kwargs in state like Workflow.run() does
+        test_kwargs = {"user_token": "abc123", "service_config": {"endpoint": "http://test"}}
+        state_data[WORKFLOW_RUN_KWARGS_KEY] = test_kwargs
+
+        # Initialize declarative state
+        dws = DeclarativeWorkflowState(mock_state)
+        dws.initialize({"input": "hello"})
+
+        # Create a mock agent
+        mock_response = MagicMock()
+        mock_response.text = "response text"
+        mock_response.messages = []
+        mock_response.tool_calls = []
+        mock_agent = AsyncMock()
+        mock_agent.run = AsyncMock(return_value=mock_response)
+
+        # Create a mock workflow context
+        mock_ctx = MagicMock()
+        mock_ctx.get_state = MagicMock(side_effect=mock_get)
+        mock_ctx.yield_output = AsyncMock()
+
+        executor = InvokeAzureAgentExecutor.__new__(InvokeAzureAgentExecutor)
+        executor._agents = {"test_agent": mock_agent}
+
+        await executor._invoke_agent_and_store_results(
+            agent=mock_agent,
+            agent_name="test_agent",
+            input_text="hello",
+            state=dws,
+            ctx=mock_ctx,
+            messages_var=None,
+            response_obj_var=None,
+            result_property=None,
+            auto_send=True,
+        )
+
+        # Verify agent.run was called with kwargs
+        mock_agent.run.assert_called_once()
+        call_kwargs = mock_agent.run.call_args
+
+        # Check options contains additional_function_arguments
+        assert "options" in call_kwargs.kwargs
+        assert call_kwargs.kwargs["options"]["additional_function_arguments"] == test_kwargs
+
+        # Check direct kwargs were passed
+        assert call_kwargs.kwargs.get("user_token") == "abc123"
+        assert call_kwargs.kwargs.get("service_config") == {"endpoint": "http://test"}
+
+    @pytest.mark.asyncio
+    async def test_invoke_agent_merges_caller_options(self):
+        """Caller-provided options in run_kwargs should be merged, not cause TypeError."""
+        from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
+        from agent_framework._workflows._state import State
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            InvokeAzureAgentExecutor,
+        )
+
+        mock_state = MagicMock(spec=State)
+        state_data: dict[str, Any] = {}
+
+        def mock_get(key, default=None):
+            return state_data.get(key, default)
+
+        def mock_set(key, value):
+            state_data[key] = value
+
+        mock_state.get = MagicMock(side_effect=mock_get)
+        mock_state.set = MagicMock(side_effect=mock_set)
+
+        # Include 'options' in run_kwargs to test merge behavior
+        test_kwargs = {
+            "user_token": "abc123",
+            "options": {"temperature": 0.5},
+        }
+        state_data[WORKFLOW_RUN_KWARGS_KEY] = test_kwargs
+
+        dws = DeclarativeWorkflowState(mock_state)
+        dws.initialize({"input": "hello"})
+
+        mock_response = MagicMock()
+        mock_response.text = "response text"
+        mock_response.messages = []
+        mock_response.tool_calls = []
+        mock_agent = AsyncMock()
+        mock_agent.run = AsyncMock(return_value=mock_response)
+
+        mock_ctx = MagicMock()
+        mock_ctx.get_state = MagicMock(side_effect=mock_get)
+        mock_ctx.yield_output = AsyncMock()
+
+        executor = InvokeAzureAgentExecutor.__new__(InvokeAzureAgentExecutor)
+        executor._agents = {"test_agent": mock_agent}
+
+        await executor._invoke_agent_and_store_results(
+            agent=mock_agent,
+            agent_name="test_agent",
+            input_text="hello",
+            state=dws,
+            ctx=mock_ctx,
+            messages_var=None,
+            response_obj_var=None,
+            result_property=None,
+            auto_send=True,
+        )
+
+        mock_agent.run.assert_called_once()
+        call_kwargs = mock_agent.run.call_args
+
+        # Caller options should be merged with additional_function_arguments
+        merged_options = call_kwargs.kwargs["options"]
+        assert merged_options["temperature"] == 0.5
+        assert "additional_function_arguments" in merged_options
+
+        # Direct kwargs should be passed without 'options' (no duplicate keyword)
+        assert call_kwargs.kwargs.get("user_token") == "abc123"

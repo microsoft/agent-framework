@@ -1,5 +1,18 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Workflow namespace for built-in Agent Framework orchestration primitives.
+
+This module re-exports objects from workflow implementation modules under
+``agent_framework._workflows``.
+
+Supported classes include:
+- Workflow
+- WorkflowBuilder
+- AgentExecutor
+- Runner
+- WorkflowExecutor
+"""
+
 from ._agent import WorkflowAgent
 from ._agent_executor import (
     AgentExecutor,
@@ -7,19 +20,16 @@ from ._agent_executor import (
     AgentExecutorResponse,
 )
 from ._agent_utils import resolve_agent_id
-from ._base_group_chat_orchestrator import (
-    BaseGroupChatOrchestrator,
-    GroupChatRequestMessage,
-    GroupChatRequestSentEvent,
-    GroupChatResponseReceivedEvent,
-)
 from ._checkpoint import (
     CheckpointStorage,
     FileCheckpointStorage,
     InMemoryCheckpointStorage,
     WorkflowCheckpoint,
 )
-from ._checkpoint_summary import WorkflowCheckpointSummary, get_checkpoint_summary
+from ._checkpoint_encoding import (
+    decode_checkpoint_value,
+    encode_checkpoint_value,
+)
 from ._const import (
     DEFAULT_MAX_ITERATIONS,
 )
@@ -37,22 +47,11 @@ from ._edge import (
 )
 from ._edge_runner import create_edge_runner
 from ._events import (
-    ExecutorCompletedEvent,
-    ExecutorEvent,
-    ExecutorFailedEvent,
-    ExecutorInvokedEvent,
-    RequestInfoEvent,
-    SuperStepCompletedEvent,
-    SuperStepStartedEvent,
     WorkflowErrorDetails,
     WorkflowEvent,
     WorkflowEventSource,
-    WorkflowFailedEvent,
-    WorkflowLifecycleEvent,
-    WorkflowOutputEvent,
+    WorkflowEventType,
     WorkflowRunState,
-    WorkflowStartedEvent,
-    WorkflowStatusEvent,
 )
 from ._exceptions import (
     WorkflowCheckpointException,
@@ -65,15 +64,14 @@ from ._executor import (
     handler,
 )
 from ._function_executor import FunctionExecutor, executor
-from ._orchestration_request_info import AgentRequestInfoResponse
-from ._orchestration_state import OrchestrationState
 from ._request_info_mixin import response_handler
 from ._runner import Runner
 from ._runner_context import (
     InProcRunnerContext,
-    Message,
     RunnerContext,
+    WorkflowMessage,
 )
+from ._state import State
 from ._validation import (
     EdgeDuplicationError,
     GraphConnectivityError,
@@ -97,8 +95,6 @@ __all__ = [
     "AgentExecutor",
     "AgentExecutorRequest",
     "AgentExecutorResponse",
-    "AgentRequestInfoResponse",
-    "BaseGroupChatOrchestrator",
     "Case",
     "CheckpointStorage",
     "Default",
@@ -106,30 +102,19 @@ __all__ = [
     "EdgeCondition",
     "EdgeDuplicationError",
     "Executor",
-    "ExecutorCompletedEvent",
-    "ExecutorEvent",
-    "ExecutorFailedEvent",
-    "ExecutorInvokedEvent",
     "FanInEdgeGroup",
     "FanOutEdgeGroup",
     "FileCheckpointStorage",
     "FunctionExecutor",
     "GraphConnectivityError",
-    "GroupChatRequestMessage",
-    "GroupChatRequestSentEvent",
-    "GroupChatResponseReceivedEvent",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
-    "Message",
-    "OrchestrationState",
-    "RequestInfoEvent",
     "Runner",
     "RunnerContext",
     "SingleEdgeGroup",
+    "State",
     "SubWorkflowRequestMessage",
     "SubWorkflowResponseMessage",
-    "SuperStepCompletedEvent",
-    "SuperStepStartedEvent",
     "SwitchCaseEdgeGroup",
     "SwitchCaseEdgeGroupCase",
     "SwitchCaseEdgeGroupDefault",
@@ -140,27 +125,24 @@ __all__ = [
     "WorkflowBuilder",
     "WorkflowCheckpoint",
     "WorkflowCheckpointException",
-    "WorkflowCheckpointSummary",
     "WorkflowContext",
     "WorkflowConvergenceException",
     "WorkflowErrorDetails",
     "WorkflowEvent",
     "WorkflowEventSource",
+    "WorkflowEventType",
     "WorkflowException",
     "WorkflowExecutor",
-    "WorkflowFailedEvent",
-    "WorkflowLifecycleEvent",
-    "WorkflowOutputEvent",
+    "WorkflowMessage",
     "WorkflowRunResult",
     "WorkflowRunState",
     "WorkflowRunnerException",
-    "WorkflowStartedEvent",
-    "WorkflowStatusEvent",
     "WorkflowValidationError",
     "WorkflowViz",
     "create_edge_runner",
+    "decode_checkpoint_value",
+    "encode_checkpoint_value",
     "executor",
-    "get_checkpoint_summary",
     "handler",
     "resolve_agent_id",
     "response_handler",

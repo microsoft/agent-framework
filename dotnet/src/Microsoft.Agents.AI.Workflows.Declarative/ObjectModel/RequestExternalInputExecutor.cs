@@ -12,7 +12,7 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
-internal sealed class RequestExternalInputExecutor(RequestExternalInput model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state)
+internal sealed class RequestExternalInputExecutor(RequestExternalInput model, ResponseAgentProvider agentProvider, WorkflowFormulaState state)
     : DeclarativeActionExecutor<RequestExternalInput>(model, state)
 {
     public static class Steps
@@ -45,5 +45,7 @@ internal sealed class RequestExternalInputExecutor(RequestExternalInput model, W
         }
         await context.SetLastMessageAsync(response.Messages.Last()).ConfigureAwait(false);
         await this.AssignAsync(this.Model.Variable?.Path, response.Messages.ToFormula(), context).ConfigureAwait(false);
+
+        await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
     }
 }

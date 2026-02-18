@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
@@ -425,20 +426,20 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
         public override string? Description => "Agent that produces multiple text chunks";
 
-        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
-            new(new TestInMemoryAgentSession());
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
+            new(new TestAgentSession());
 
-        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-            new(new TestInMemoryAgentSession(serializedState, jsonSerializerOptions));
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(serializedState.Deserialize<TestAgentSession>(jsonSerializerOptions)!);
 
-        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
-            if (session is not TestInMemoryAgentSession testSession)
+            if (session is not TestAgentSession testSession)
             {
-                throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+                throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(TestAgentSession)}' can be serialized by this agent.");
             }
 
-            return testSession.Serialize(jsonSerializerOptions);
+            return new(JsonSerializer.SerializeToElement(testSession, jsonSerializerOptions));
         }
 
         protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
@@ -506,20 +507,16 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         };
     }
 
-    private sealed class TestInMemoryAgentSession : InMemoryAgentSession
+    private sealed class TestAgentSession : AgentSession
     {
-        public TestInMemoryAgentSession()
-            : base()
+        public TestAgentSession()
         {
         }
 
-        public TestInMemoryAgentSession(JsonElement serializedSessionState, JsonSerializerOptions? jsonSerializerOptions = null)
-            : base(serializedSessionState, jsonSerializerOptions, null)
+        [JsonConstructor]
+        public TestAgentSession(AgentSessionStateBag stateBag) : base(stateBag)
         {
         }
-
-        internal new JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
-            => base.Serialize(jsonSerializerOptions);
     }
 
     private sealed class TestAgent : AIAgent
@@ -528,20 +525,20 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
         public override string? Description => "Test agent";
 
-        public override ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken = default) =>
-            new(new TestInMemoryAgentSession());
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
+            new(new TestAgentSession());
 
-        public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-            new(new TestInMemoryAgentSession(serializedState, jsonSerializerOptions));
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+            new(serializedState.Deserialize<TestAgentSession>(jsonSerializerOptions)!);
 
-        public override JsonElement SerializeSession(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
-            if (session is not TestInMemoryAgentSession testSession)
+            if (session is not TestAgentSession testSession)
             {
-                throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+                throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(TestAgentSession)}' can be serialized by this agent.");
             }
 
-            return testSession.Serialize(jsonSerializerOptions);
+            return new(JsonSerializer.SerializeToElement(testSession, jsonSerializerOptions));
         }
 
         protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

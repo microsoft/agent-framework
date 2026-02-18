@@ -96,8 +96,7 @@ jobs:
         uses: ./.github/actions/azure-functions-integration-setup
         id: azure-functions-setup
       - name: Test with pytest
-        timeout-minutes: 10
-        run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 900 --retries 3 --retry-delay 10
+        run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
         working-directory: ./python
       - name: Test core samples
         timeout-minutes: 10
@@ -153,8 +152,8 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Test with pytest
-        timeout-minutes: 10
-        run: uv run --directory packages/azure-ai poe integration-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
+        timeout-minutes: 15
+        run: uv run --directory packages/azure-ai poe integration-tests -n logical --dist loadfile --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
         working-directory: ./python
       - name: Test Azure AI samples
         timeout-minutes: 10

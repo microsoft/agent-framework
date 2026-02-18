@@ -4,7 +4,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponseUpdate, AgentThread, ChatMessage, Content, tool
+from agent_framework import AgentResponseUpdate, AgentSession, Content, Message, tool
+from agent_framework._settings import load_settings
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
@@ -15,23 +16,21 @@ from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
 class TestClaudeAgentSettings:
     """Tests for ClaudeAgentSettings."""
 
-    def test_env_prefix(self) -> None:
-        """Test that env_prefix is correctly set."""
-        assert ClaudeAgentSettings.env_prefix == "CLAUDE_AGENT_"
-
     def test_default_values(self) -> None:
         """Test default values are None."""
-        settings = ClaudeAgentSettings()
-        assert settings.cli_path is None
-        assert settings.model is None
-        assert settings.cwd is None
-        assert settings.permission_mode is None
-        assert settings.max_turns is None
-        assert settings.max_budget_usd is None
+        settings = load_settings(ClaudeAgentSettings, env_prefix="CLAUDE_AGENT_")
+        assert settings["cli_path"] is None
+        assert settings["model"] is None
+        assert settings["cwd"] is None
+        assert settings["permission_mode"] is None
+        assert settings["max_turns"] is None
+        assert settings["max_budget_usd"] is None
 
     def test_explicit_values(self) -> None:
         """Test explicit values override defaults."""
-        settings = ClaudeAgentSettings(
+        settings = load_settings(
+            ClaudeAgentSettings,
+            env_prefix="CLAUDE_AGENT_",
             cli_path="/usr/local/bin/claude",
             model="sonnet",
             cwd="/home/user/project",
@@ -39,20 +38,20 @@ class TestClaudeAgentSettings:
             max_turns=10,
             max_budget_usd=5.0,
         )
-        assert settings.cli_path == "/usr/local/bin/claude"
-        assert settings.model == "sonnet"
-        assert settings.cwd == "/home/user/project"
-        assert settings.permission_mode == "default"
-        assert settings.max_turns == 10
-        assert settings.max_budget_usd == 5.0
+        assert settings["cli_path"] == "/usr/local/bin/claude"
+        assert settings["model"] == "sonnet"
+        assert settings["cwd"] == "/home/user/project"
+        assert settings["permission_mode"] == "default"
+        assert settings["max_turns"] == 10
+        assert settings["max_budget_usd"] == 5.0
 
     def test_env_variable_loading(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test loading from environment variables."""
         monkeypatch.setenv("CLAUDE_AGENT_MODEL", "opus")
         monkeypatch.setenv("CLAUDE_AGENT_MAX_TURNS", "20")
-        settings = ClaudeAgentSettings()
-        assert settings.model == "opus"
-        assert settings.max_turns == 20
+        settings = load_settings(ClaudeAgentSettings, env_prefix="CLAUDE_AGENT_")
+        assert settings["model"] == "opus"
+        assert settings["max_turns"] == 20
 
 
 # region Test ClaudeAgent Initialization
@@ -95,9 +94,9 @@ class TestClaudeAgentInit:
             "max_turns": 10,
         }
         agent = ClaudeAgent(default_options=options)
-        assert agent._settings.model == "sonnet"  # type: ignore[reportPrivateUsage]
-        assert agent._settings.permission_mode == "default"  # type: ignore[reportPrivateUsage]
-        assert agent._settings.max_turns == 10  # type: ignore[reportPrivateUsage]
+        assert agent._settings["model"] == "sonnet"  # type: ignore[reportPrivateUsage]
+        assert agent._settings["permission_mode"] == "default"  # type: ignore[reportPrivateUsage]
+        assert agent._settings["max_turns"] == 10  # type: ignore[reportPrivateUsage]
 
     def test_with_function_tool(self) -> None:
         """Test agent with function tool."""
@@ -268,12 +267,12 @@ class TestClaudeAgentRun:
 
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
-            thread = agent.get_new_thread()
-            await agent.run("Hello", thread=thread)
-            assert thread.service_thread_id == "test-session-id"
+            session = agent.create_session()
+            await agent.run("Hello", session=session)
+            assert session.service_session_id == "test-session-id"
 
-    async def test_run_with_thread(self) -> None:
-        """Test run with existing thread."""
+    async def test_run_with_session(self) -> None:
+        """Test run with existing session."""
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
         from claude_agent_sdk.types import StreamEvent
 
@@ -303,16 +302,16 @@ class TestClaudeAgentRun:
 
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
-            thread = agent.get_new_thread()
-            thread.service_thread_id = "existing-session"
-            await agent.run("Hello", thread=thread)
+            session = agent.create_session()
+            session.service_session_id = "existing-session"
+            await agent.run("Hello", session=session)
 
 
 # region Test ClaudeAgent Run Stream
 
 
 class TestClaudeAgentRunStream:
-    """Tests for ClaudeAgent run_stream method."""
+    """Tests for ClaudeAgent streaming run method."""
 
     @staticmethod
     async def _create_async_generator(items: list[Any]) -> Any:
@@ -332,7 +331,7 @@ class TestClaudeAgentRunStream:
         return mock_client
 
     async def test_run_stream_yields_updates(self) -> None:
-        """Test run_stream yields AgentResponseUpdate objects."""
+        """Test run(stream=True) yields AgentResponseUpdate objects."""
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
         from claude_agent_sdk.types import StreamEvent
 
@@ -371,16 +370,16 @@ class TestClaudeAgentRunStream:
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
             updates: list[AgentResponseUpdate] = []
-            async for update in agent.run_stream("Hello"):
+            async for update in agent.run("Hello", stream=True):
                 updates.append(update)
-            # StreamEvent yields text deltas
+            # StreamEvent yields text deltas (2 events)
             assert len(updates) == 2
             assert updates[0].role == "assistant"
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
 
     async def test_run_stream_raises_on_assistant_message_error(self) -> None:
-        """Test run_stream raises ServiceException when AssistantMessage has an error."""
+        """Test run raises ServiceException when AssistantMessage has an error."""
         from agent_framework.exceptions import ServiceException
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
@@ -404,13 +403,13 @@ class TestClaudeAgentRunStream:
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
             with pytest.raises(ServiceException) as exc_info:
-                async for _ in agent.run_stream("Hello"):
+                async for _ in agent.run("Hello", stream=True):
                     pass
             assert "Invalid request to Claude API" in str(exc_info.value)
             assert "Error details from API" in str(exc_info.value)
 
     async def test_run_stream_raises_on_result_message_error(self) -> None:
-        """Test run_stream raises ServiceException when ResultMessage.is_error is True."""
+        """Test run raises ServiceException when ResultMessage.is_error is True."""
         from agent_framework.exceptions import ServiceException
         from claude_agent_sdk import ResultMessage
 
@@ -430,7 +429,7 @@ class TestClaudeAgentRunStream:
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
             with pytest.raises(ServiceException) as exc_info:
-                async for _ in agent.run_stream("Hello"):
+                async for _ in agent.run("Hello", stream=True):
                     pass
             assert "Model 'claude-sonnet-4.5' not found" in str(exc_info.value)
 
@@ -441,26 +440,18 @@ class TestClaudeAgentRunStream:
 class TestClaudeAgentSessionManagement:
     """Tests for ClaudeAgent session management."""
 
-    def test_get_new_thread(self) -> None:
-        """Test get_new_thread creates a new thread."""
+    def test_create_session(self) -> None:
+        """Test create_session creates a new session."""
         agent = ClaudeAgent()
-        thread = agent.get_new_thread()
-        assert isinstance(thread, AgentThread)
-        assert thread.service_thread_id is None
+        session = agent.create_session()
+        assert isinstance(session, AgentSession)
+        assert session.service_session_id is None
 
-    def test_get_new_thread_with_service_thread_id(self) -> None:
-        """Test get_new_thread with existing service_thread_id."""
+    def test_create_session_with_service_session_id(self) -> None:
+        """Test create_session with existing service_session_id."""
         agent = ClaudeAgent()
-        thread = agent.get_new_thread(service_thread_id="existing-session-123")
-        assert isinstance(thread, AgentThread)
-        assert thread.service_thread_id == "existing-session-123"
-
-    def test_thread_inherits_context_provider(self) -> None:
-        """Test that thread inherits context provider."""
-        mock_provider = MagicMock()
-        agent = ClaudeAgent(context_provider=mock_provider)
-        thread = agent.get_new_thread()
-        assert thread.context_provider == mock_provider
+        session = agent.create_session(session_id="existing-session-123")
+        assert isinstance(session, AgentSession)
 
     async def test_ensure_session_creates_client(self) -> None:
         """Test _ensure_session creates client when not started."""
@@ -620,13 +611,13 @@ class TestClaudeAgentPermissions:
     def test_default_permission_mode(self) -> None:
         """Test default permission mode."""
         agent = ClaudeAgent()
-        assert agent._settings.permission_mode is None  # type: ignore[reportPrivateUsage]
+        assert agent._settings["permission_mode"] is None  # type: ignore[reportPrivateUsage]
 
     def test_permission_mode_from_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test permission mode from environment settings."""
         monkeypatch.setenv("CLAUDE_AGENT_PERMISSION_MODE", "acceptEdits")
-        settings = ClaudeAgentSettings()
-        assert settings.permission_mode == "acceptEdits"
+        settings = load_settings(ClaudeAgentSettings, env_prefix="CLAUDE_AGENT_")
+        assert settings["permission_mode"] == "acceptEdits"
 
     def test_permission_mode_in_options(self) -> None:
         """Test permission mode in options."""
@@ -634,7 +625,7 @@ class TestClaudeAgentPermissions:
             "permission_mode": "bypassPermissions",
         }
         agent = ClaudeAgent(default_options=options)
-        assert agent._settings.permission_mode == "bypassPermissions"  # type: ignore[reportPrivateUsage]
+        assert agent._settings["permission_mode"] == "bypassPermissions"  # type: ignore[reportPrivateUsage]
 
 
 # region Test ClaudeAgent Error Handling
@@ -686,7 +677,7 @@ class TestFormatPrompt:
     def test_format_user_message(self) -> None:
         """Test formatting user message."""
         agent = ClaudeAgent()
-        msg = ChatMessage(
+        msg = Message(
             role="user",
             contents=[Content.from_text(text="Hello")],
         )
@@ -697,9 +688,9 @@ class TestFormatPrompt:
         """Test formatting multiple messages."""
         agent = ClaudeAgent()
         messages = [
-            ChatMessage("user", [Content.from_text(text="Hi")]),
-            ChatMessage("assistant", [Content.from_text(text="Hello!")]),
-            ChatMessage("user", [Content.from_text(text="How are you?")]),
+            Message(role="user", contents=[Content.from_text(text="Hi")]),
+            Message(role="assistant", contents=[Content.from_text(text="Hello!")]),
+            Message(role="user", contents=[Content.from_text(text="How are you?")]),
         ]
         result = agent._format_prompt(messages)  # type: ignore[reportPrivateUsage]
         assert "Hi" in result

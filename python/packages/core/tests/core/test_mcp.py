@@ -10,24 +10,22 @@ import pytest
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.shared.exceptions import McpError
-from pydantic import AnyUrl, BaseModel, ValidationError
+from pydantic import AnyUrl, BaseModel
 
 from agent_framework import (
-    ChatMessage,
     Content,
     MCPStdioTool,
     MCPStreamableHTTPTool,
     MCPWebsocketTool,
-    ToolProtocol,
+    Message,
 )
 from agent_framework._mcp import (
     MCPTool,
     _get_input_model_from_mcp_prompt,
-    _get_input_model_from_mcp_tool,
     _normalize_mcp_name,
     _parse_content_from_mcp,
-    _parse_contents_from_mcp_tool_result,
     _parse_message_from_mcp,
+    _parse_tool_result_from_mcp,
     _prepare_content_for_mcp,
     _prepare_message_for_mcp,
     logger,
@@ -61,7 +59,7 @@ def test_mcp_prompt_message_to_ai_content():
     mcp_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hello, world!"))
     ai_content = _parse_message_from_mcp(mcp_message)
 
-    assert isinstance(ai_content, ChatMessage)
+    assert isinstance(ai_content, Message)
     assert ai_content.role == "user"
     assert len(ai_content.contents) == 1
     assert ai_content.contents[0].type == "text"
@@ -69,144 +67,58 @@ def test_mcp_prompt_message_to_ai_content():
     assert ai_content.raw_representation == mcp_message
 
 
-def test_parse_contents_from_mcp_tool_result():
-    """Test conversion from MCP tool result to AI contents."""
+def test_parse_tool_result_from_mcp():
+    """Test conversion from MCP tool result to string representation."""
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Result text"),
-            types.ImageContent(type="image", data="eHl6", mimeType="image/png"),  # base64 for "xyz"
-            types.ImageContent(type="image", data="YWJj", mimeType="image/webp"),  # base64 for "abc"
+            types.ImageContent(type="image", data="eHl6", mimeType="image/png"),
+            types.ImageContent(type="image", data="YWJj", mimeType="image/webp"),
         ]
     )
-    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
+    result = _parse_tool_result_from_mcp(mcp_result)
 
-    assert len(ai_contents) == 3
-    assert ai_contents[0].type == "text"
-    assert ai_contents[0].text == "Result text"
-    assert ai_contents[1].type == "data"
-    assert ai_contents[1].uri == "data:image/png;base64,eHl6"
-    assert ai_contents[1].media_type == "image/png"
-    assert ai_contents[2].type == "data"
-    assert ai_contents[2].uri == "data:image/webp;base64,YWJj"
-    assert ai_contents[2].media_type == "image/webp"
+    # Multiple items produce a JSON array of strings
+    assert isinstance(result, str)
+    import json
+
+    parsed = json.loads(result)
+    assert len(parsed) == 3
+    assert parsed[0] == "Result text"
+    # Image items are JSON-encoded strings within the array
+    img1 = json.loads(parsed[1])
+    assert img1["type"] == "image"
+    assert img1["data"] == "eHl6"
+    img2 = json.loads(parsed[2])
+    assert img2["type"] == "image"
+    assert img2["data"] == "YWJj"
 
 
-def test_mcp_call_tool_result_with_meta_error():
-    """Test conversion from MCP tool result with _meta field containing isError=True."""
-    # Create a mock CallToolResult with _meta field containing error information
+def test_parse_tool_result_from_mcp_single_text():
+    """Test conversion from MCP tool result with a single text item."""
+    mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="Simple result")])
+    result = _parse_tool_result_from_mcp(mcp_result)
+
+    # Single text item returns just the text
+    assert result == "Simple result"
+
+
+def test_parse_tool_result_from_mcp_meta_not_in_string():
+    """Test that _meta data is not included in the string result (it's tool-level, not content-level)."""
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="Error occurred")],
-        _meta={"isError": True, "errorCode": "TOOL_ERROR", "errorMessage": "Tool execution failed"},
+        _meta={"isError": True, "errorCode": "TOOL_ERROR"},
     )
 
-    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
-
-    assert len(ai_contents) == 1
-    assert ai_contents[0].type == "text"
-    assert ai_contents[0].text == "Error occurred"
-
-    # Check that _meta data is merged into additional_properties
-    assert ai_contents[0].additional_properties is not None
-    assert ai_contents[0].additional_properties["isError"] is True
-    assert ai_contents[0].additional_properties["errorCode"] == "TOOL_ERROR"
-    assert ai_contents[0].additional_properties["errorMessage"] == "Tool execution failed"
+    result = _parse_tool_result_from_mcp(mcp_result)
+    assert result == "Error occurred"
 
 
-def test_mcp_call_tool_result_with_meta_arbitrary_data():
-    """Test conversion from MCP tool result with _meta field containing arbitrary metadata.
-
-    Note: The _meta field is optional and can contain any structure that a specific
-    MCP server chooses to provide. This test uses example metadata to verify that
-    whatever is provided gets preserved in additional_properties.
-    """
-    mcp_result = types.CallToolResult(
-        content=[types.TextContent(type="text", text="Success result")],
-        _meta={
-            "serverVersion": "2.1.0",
-            "executionId": "exec_abc123",
-            "metrics": {"responseTime": 1.25, "memoryUsed": "64MB"},
-            "source": "example-mcp-server",
-            "customField": "arbitrary_value",
-        },
-    )
-
-    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
-
-    assert len(ai_contents) == 1
-    assert ai_contents[0].type == "text"
-    assert ai_contents[0].text == "Success result"
-
-    # Check that _meta data is preserved in additional_properties
-    props = ai_contents[0].additional_properties
-    assert props is not None
-    assert props["serverVersion"] == "2.1.0"
-    assert props["executionId"] == "exec_abc123"
-    assert props["metrics"] == {"responseTime": 1.25, "memoryUsed": "64MB"}
-    assert props["source"] == "example-mcp-server"
-    assert props["customField"] == "arbitrary_value"
-
-
-def test_mcp_call_tool_result_with_meta_merging_existing_properties():
-    """Test that _meta data merges correctly with existing additional_properties."""
-    # Create content with existing additional_properties
-    text_content = types.TextContent(type="text", text="Test content")
-    mcp_result = types.CallToolResult(content=[text_content], _meta={"newField": "newValue", "isError": False})
-
-    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
-
-    assert len(ai_contents) == 1
-    content = ai_contents[0]
-
-    # Check that _meta data is present in additional_properties
-    assert content.additional_properties is not None
-    assert content.additional_properties["newField"] == "newValue"
-    assert content.additional_properties["isError"] is False
-
-
-def test_mcp_call_tool_result_with_meta_none():
-    """Test that missing _meta field is handled gracefully."""
-    mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="No meta test")])
-    # No _meta field set
-
-    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
-
-    assert len(ai_contents) == 1
-    assert ai_contents[0].type == "text"
-    assert ai_contents[0].text == "No meta test"
-
-    # Should handle gracefully when no _meta field exists
-    # additional_properties may be None or empty dict
-    props = ai_contents[0].additional_properties
-    assert props is None or props == {}
-
-
-def test_mcp_call_tool_result_regression_successful_workflow():
-    """Regression test to ensure existing successful workflows remain unchanged."""
-    # Test the original successful workflow still works
-    mcp_result = types.CallToolResult(
-        content=[
-            types.TextContent(type="text", text="Success message"),
-            types.ImageContent(type="image", data="YWJjMTIz", mimeType="image/jpeg"),  # base64 for "abc123"
-        ]
-    )
-
-    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
-
-    # Verify basic conversion still works correctly
-    assert len(ai_contents) == 2
-
-    text_content = ai_contents[0]
-    assert text_content.type == "text"
-    assert text_content.text == "Success message"
-
-    image_content = ai_contents[1]
-    assert image_content.type == "data"
-    assert image_content.uri == "data:image/jpeg;base64,YWJjMTIz"
-    assert image_content.media_type == "image/jpeg"
-
-    # Should have no additional_properties when no _meta field
-    assert text_content.additional_properties is None or text_content.additional_properties == {}
-    assert image_content.additional_properties is None or image_content.additional_properties == {}
+def test_parse_tool_result_from_mcp_empty_content():
+    """Test that empty content produces empty string."""
+    mcp_result = types.CallToolResult(content=[])
+    result = _parse_tool_result_from_mcp(mcp_result)
+    assert result == ""
 
 
 def test_mcp_content_types_to_ai_content_text():
@@ -349,7 +261,7 @@ def test_ai_content_to_mcp_content_types_uri():
 
 
 def test_prepare_message_for_mcp():
-    message = ChatMessage(
+    message = Message(
         role="user",
         contents=[
             Content.from_text(text="test"),
@@ -363,363 +275,338 @@ def test_prepare_message_for_mcp():
 
 
 @pytest.mark.parametrize(
-    "test_id,input_schema,valid_data,expected_values,invalid_data,validation_check",
+    "test_id,input_schema",
     [
-        # Basic types with required/optional fields
-        (
-            "basic_types",
-            {
-                "type": "object",
-                "properties": {"param1": {"type": "string"}, "param2": {"type": "number"}},
-                "required": ["param1"],
-            },
-            {"param1": "test", "param2": 42},
-            {"param1": "test", "param2": 42},
-            {"param2": 42},  # Missing required param1
-            None,
-        ),
-        # Nested object
-        (
-            "nested_object",
-            {
-                "type": "object",
-                "properties": {
-                    "params": {
-                        "type": "object",
-                        "properties": {"customer_id": {"type": "integer"}},
-                        "required": ["customer_id"],
-                    }
+        (test_id, input_schema)
+        for test_id, input_schema, _, _, _, _ in [
+            # Basic types with required/optional fields
+            (
+                "basic_types",
+                {
+                    "type": "object",
+                    "properties": {"param1": {"type": "string"}, "param2": {"type": "number"}},
+                    "required": ["param1"],
                 },
-                "required": ["params"],
-            },
-            {"params": {"customer_id": 251}},
-            {"params.customer_id": 251},
-            {"params": {}},  # Missing required customer_id
-            lambda instance: isinstance(instance.params, BaseModel),
-        ),
-        # $ref resolution
-        (
-            "ref_schema",
-            {
-                "type": "object",
-                "properties": {"params": {"$ref": "#/$defs/CustomerIdParam"}},
-                "required": ["params"],
-                "$defs": {
-                    "CustomerIdParam": {
-                        "type": "object",
-                        "properties": {"customer_id": {"type": "integer"}},
-                        "required": ["customer_id"],
-                    }
-                },
-            },
-            {"params": {"customer_id": 251}},
-            {"params.customer_id": 251},
-            {"params": {}},  # Missing required customer_id
-            lambda instance: isinstance(instance.params, BaseModel),
-        ),
-        # Array of strings (typed)
-        (
-            "array_of_strings",
-            {
-                "type": "object",
-                "properties": {
-                    "tags": {
-                        "type": "array",
-                        "description": "List of tags",
-                        "items": {"type": "string"},
-                    }
-                },
-                "required": ["tags"],
-            },
-            {"tags": ["tag1", "tag2", "tag3"]},
-            {"tags": ["tag1", "tag2", "tag3"]},
-            None,  # No validation error test for this case
-            None,
-        ),
-        # Array of integers (typed)
-        (
-            "array_of_integers",
-            {
-                "type": "object",
-                "properties": {
-                    "numbers": {
-                        "type": "array",
-                        "description": "List of integers",
-                        "items": {"type": "integer"},
-                    }
-                },
-                "required": ["numbers"],
-            },
-            {"numbers": [1, 2, 3]},
-            {"numbers": [1, 2, 3]},
-            None,
-            None,
-        ),
-        # Array of objects (complex nested)
-        (
-            "array_of_objects",
-            {
-                "type": "object",
-                "properties": {
-                    "users": {
-                        "type": "array",
-                        "description": "List of users",
-                        "items": {
+                {"param1": "test", "param2": 42},
+                {"param1": "test", "param2": 42},
+                {"param2": 42},  # Missing required param1
+                None,
+            ),
+            # Nested object
+            (
+                "nested_object",
+                {
+                    "type": "object",
+                    "properties": {
+                        "params": {
                             "type": "object",
-                            "properties": {
-                                "id": {"type": "integer", "description": "User ID"},
-                                "name": {"type": "string", "description": "User name"},
-                            },
-                            "required": ["id", "name"],
-                        },
-                    }
+                            "properties": {"customer_id": {"type": "integer"}},
+                            "required": ["customer_id"],
+                        }
+                    },
+                    "required": ["params"],
                 },
-                "required": ["users"],
-            },
-            {"users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]},
-            {"users[0].id": 1, "users[0].name": "Alice", "users[1].id": 2, "users[1].name": "Bob"},
-            {"users": [{"id": 1}]},  # Missing required 'name'
-            lambda instance: all(isinstance(user, BaseModel) for user in instance.users),
-        ),
-        # Deeply nested objects (3+ levels)
-        (
-            "deeply_nested",
-            {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "object",
-                        "properties": {
-                            "filters": {
+                {"params": {"customer_id": 251}},
+                {"params.customer_id": 251},
+                {"params": {}},  # Missing required customer_id
+                lambda instance: isinstance(instance.params, BaseModel),
+            ),
+            # $ref resolution
+            (
+                "ref_schema",
+                {
+                    "type": "object",
+                    "properties": {"params": {"$ref": "#/$defs/CustomerIdParam"}},
+                    "required": ["params"],
+                    "$defs": {
+                        "CustomerIdParam": {
+                            "type": "object",
+                            "properties": {"customer_id": {"type": "integer"}},
+                            "required": ["customer_id"],
+                        }
+                    },
+                },
+                {"params": {"customer_id": 251}},
+                {"params.customer_id": 251},
+                {"params": {}},  # Missing required customer_id
+                lambda instance: isinstance(instance.params, BaseModel),
+            ),
+            # Array of strings (typed)
+            (
+                "array_of_strings",
+                {
+                    "type": "object",
+                    "properties": {
+                        "tags": {
+                            "type": "array",
+                            "description": "List of tags",
+                            "items": {"type": "string"},
+                        }
+                    },
+                    "required": ["tags"],
+                },
+                {"tags": ["tag1", "tag2", "tag3"]},
+                {"tags": ["tag1", "tag2", "tag3"]},
+                None,  # No validation error test for this case
+                None,
+            ),
+            # Array of integers (typed)
+            (
+                "array_of_integers",
+                {
+                    "type": "object",
+                    "properties": {
+                        "numbers": {
+                            "type": "array",
+                            "description": "List of integers",
+                            "items": {"type": "integer"},
+                        }
+                    },
+                    "required": ["numbers"],
+                },
+                {"numbers": [1, 2, 3]},
+                {"numbers": [1, 2, 3]},
+                None,
+                None,
+            ),
+            # Array of objects (complex nested)
+            (
+                "array_of_objects",
+                {
+                    "type": "object",
+                    "properties": {
+                        "users": {
+                            "type": "array",
+                            "description": "List of users",
+                            "items": {
                                 "type": "object",
                                 "properties": {
-                                    "date_range": {
-                                        "type": "object",
-                                        "properties": {
-                                            "start": {"type": "string"},
-                                            "end": {"type": "string"},
-                                        },
-                                        "required": ["start", "end"],
-                                    },
-                                    "categories": {"type": "array", "items": {"type": "string"}},
+                                    "id": {"type": "integer", "description": "User ID"},
+                                    "name": {"type": "string", "description": "User name"},
                                 },
-                                "required": ["date_range"],
-                            }
-                        },
-                        "required": ["filters"],
+                                "required": ["id", "name"],
+                            },
+                        }
+                    },
+                    "required": ["users"],
+                },
+                {"users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]},
+                {"users[0].id": 1, "users[0].name": "Alice", "users[1].id": 2, "users[1].name": "Bob"},
+                {"users": [{"id": 1}]},  # Missing required 'name'
+                lambda instance: all(isinstance(user, BaseModel) for user in instance.users),
+            ),
+            # Deeply nested objects (3+ levels)
+            (
+                "deeply_nested",
+                {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "object",
+                            "properties": {
+                                "filters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "date_range": {
+                                            "type": "object",
+                                            "properties": {
+                                                "start": {"type": "string"},
+                                                "end": {"type": "string"},
+                                            },
+                                            "required": ["start", "end"],
+                                        },
+                                        "categories": {"type": "array", "items": {"type": "string"}},
+                                    },
+                                    "required": ["date_range"],
+                                }
+                            },
+                            "required": ["filters"],
+                        }
+                    },
+                    "required": ["query"],
+                },
+                {
+                    "query": {
+                        "filters": {
+                            "date_range": {"start": "2024-01-01", "end": "2024-12-31"},
+                            "categories": ["tech", "science"],
+                        }
                     }
                 },
-                "required": ["query"],
-            },
-            {
-                "query": {
-                    "filters": {
-                        "date_range": {"start": "2024-01-01", "end": "2024-12-31"},
-                        "categories": ["tech", "science"],
+                {
+                    "query.filters.date_range.start": "2024-01-01",
+                    "query.filters.date_range.end": "2024-12-31",
+                    "query.filters.categories": ["tech", "science"],
+                },
+                {"query": {"filters": {"date_range": {}}}},  # Missing required start and end
+                None,
+            ),
+            # Complex $ref with nested structure
+            (
+                "ref_nested_structure",
+                {
+                    "type": "object",
+                    "properties": {"order": {"$ref": "#/$defs/OrderParams"}},
+                    "required": ["order"],
+                    "$defs": {
+                        "OrderParams": {
+                            "type": "object",
+                            "properties": {
+                                "customer": {"$ref": "#/$defs/Customer"},
+                                "items": {"type": "array", "items": {"$ref": "#/$defs/OrderItem"}},
+                            },
+                            "required": ["customer", "items"],
+                        },
+                        "Customer": {
+                            "type": "object",
+                            "properties": {"id": {"type": "integer"}, "email": {"type": "string"}},
+                            "required": ["id", "email"],
+                        },
+                        "OrderItem": {
+                            "type": "object",
+                            "properties": {"product_id": {"type": "string"}, "quantity": {"type": "integer"}},
+                            "required": ["product_id", "quantity"],
+                        },
+                    },
+                },
+                {
+                    "order": {
+                        "customer": {"id": 123, "email": "test@example.com"},
+                        "items": [{"product_id": "prod1", "quantity": 2}],
                     }
-                }
-            },
-            {
-                "query.filters.date_range.start": "2024-01-01",
-                "query.filters.date_range.end": "2024-12-31",
-                "query.filters.categories": ["tech", "science"],
-            },
-            {"query": {"filters": {"date_range": {}}}},  # Missing required start and end
-            None,
-        ),
-        # Complex $ref with nested structure
-        (
-            "ref_nested_structure",
-            {
-                "type": "object",
-                "properties": {"order": {"$ref": "#/$defs/OrderParams"}},
-                "required": ["order"],
-                "$defs": {
-                    "OrderParams": {
-                        "type": "object",
-                        "properties": {
-                            "customer": {"$ref": "#/$defs/Customer"},
-                            "items": {"type": "array", "items": {"$ref": "#/$defs/OrderItem"}},
+                },
+                {
+                    "order.customer.id": 123,
+                    "order.customer.email": "test@example.com",
+                    "order.items[0].product_id": "prod1",
+                    "order.items[0].quantity": 2,
+                },
+                {"order": {"customer": {"id": 123}, "items": []}},  # Missing email
+                lambda instance: isinstance(instance.order.customer, BaseModel),
+            ),
+            # Mixed types (primitives, arrays, nested objects)
+            (
+                "mixed_types",
+                {
+                    "type": "object",
+                    "properties": {
+                        "simple_string": {"type": "string"},
+                        "simple_number": {"type": "integer"},
+                        "string_array": {"type": "array", "items": {"type": "string"}},
+                        "nested_config": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {"type": "boolean"},
+                                "options": {"type": "array", "items": {"type": "string"}},
+                            },
+                            "required": ["enabled"],
                         },
-                        "required": ["customer", "items"],
                     },
-                    "Customer": {
-                        "type": "object",
-                        "properties": {"id": {"type": "integer"}, "email": {"type": "string"}},
-                        "required": ["id", "email"],
-                    },
-                    "OrderItem": {
-                        "type": "object",
-                        "properties": {"product_id": {"type": "string"}, "quantity": {"type": "integer"}},
-                        "required": ["product_id", "quantity"],
+                    "required": ["simple_string", "nested_config"],
+                },
+                {
+                    "simple_string": "test",
+                    "simple_number": 42,
+                    "string_array": ["a", "b"],
+                    "nested_config": {"enabled": True, "options": ["opt1", "opt2"]},
+                },
+                {
+                    "simple_string": "test",
+                    "simple_number": 42,
+                    "string_array": ["a", "b"],
+                    "nested_config.enabled": True,
+                    "nested_config.options": ["opt1", "opt2"],
+                },
+                None,
+                None,
+            ),
+            # Empty schema (no properties)
+            (
+                "empty_schema",
+                {"type": "object", "properties": {}},
+                {},
+                {},
+                None,
+                None,
+            ),
+            # All primitive types
+            (
+                "all_primitives",
+                {
+                    "type": "object",
+                    "properties": {
+                        "string_field": {"type": "string"},
+                        "integer_field": {"type": "integer"},
+                        "number_field": {"type": "number"},
+                        "boolean_field": {"type": "boolean"},
                     },
                 },
-            },
-            {
-                "order": {
-                    "customer": {"id": 123, "email": "test@example.com"},
-                    "items": [{"product_id": "prod1", "quantity": 2}],
-                }
-            },
-            {
-                "order.customer.id": 123,
-                "order.customer.email": "test@example.com",
-                "order.items[0].product_id": "prod1",
-                "order.items[0].quantity": 2,
-            },
-            {"order": {"customer": {"id": 123}, "items": []}},  # Missing email
-            lambda instance: isinstance(instance.order.customer, BaseModel),
-        ),
-        # Mixed types (primitives, arrays, nested objects)
-        (
-            "mixed_types",
-            {
-                "type": "object",
-                "properties": {
-                    "simple_string": {"type": "string"},
-                    "simple_number": {"type": "integer"},
-                    "string_array": {"type": "array", "items": {"type": "string"}},
-                    "nested_config": {
-                        "type": "object",
-                        "properties": {
-                            "enabled": {"type": "boolean"},
-                            "options": {"type": "array", "items": {"type": "string"}},
-                        },
-                        "required": ["enabled"],
-                    },
+                {"string_field": "test", "integer_field": 42, "number_field": 3.14, "boolean_field": True},
+                {"string_field": "test", "integer_field": 42, "number_field": 3.14, "boolean_field": True},
+                None,
+                None,
+            ),
+            # Edge case: unresolvable $ref (fallback to dict)
+            (
+                "unresolvable_ref",
+                {
+                    "type": "object",
+                    "properties": {"data": {"$ref": "#/$defs/NonExistent"}},
+                    "$defs": {},
                 },
-                "required": ["simple_string", "nested_config"],
-            },
-            {
-                "simple_string": "test",
-                "simple_number": 42,
-                "string_array": ["a", "b"],
-                "nested_config": {"enabled": True, "options": ["opt1", "opt2"]},
-            },
-            {
-                "simple_string": "test",
-                "simple_number": 42,
-                "string_array": ["a", "b"],
-                "nested_config.enabled": True,
-                "nested_config.options": ["opt1", "opt2"],
-            },
-            None,
-            None,
-        ),
-        # Empty schema (no properties)
-        (
-            "empty_schema",
-            {"type": "object", "properties": {}},
-            {},
-            {},
-            None,
-            None,
-        ),
-        # All primitive types
-        (
-            "all_primitives",
-            {
-                "type": "object",
-                "properties": {
-                    "string_field": {"type": "string"},
-                    "integer_field": {"type": "integer"},
-                    "number_field": {"type": "number"},
-                    "boolean_field": {"type": "boolean"},
+                {"data": {"key": "value"}},
+                {"data": {"key": "value"}},
+                None,
+                None,
+            ),
+            # Edge case: array without items schema (fallback to bare list)
+            (
+                "array_no_items",
+                {
+                    "type": "object",
+                    "properties": {"items": {"type": "array"}},
                 },
-            },
-            {"string_field": "test", "integer_field": 42, "number_field": 3.14, "boolean_field": True},
-            {"string_field": "test", "integer_field": 42, "number_field": 3.14, "boolean_field": True},
-            None,
-            None,
-        ),
-        # Edge case: unresolvable $ref (fallback to dict)
-        (
-            "unresolvable_ref",
-            {
-                "type": "object",
-                "properties": {"data": {"$ref": "#/$defs/NonExistent"}},
-                "$defs": {},
-            },
-            {"data": {"key": "value"}},
-            {"data": {"key": "value"}},
-            None,
-            None,
-        ),
-        # Edge case: array without items schema (fallback to bare list)
-        (
-            "array_no_items",
-            {
-                "type": "object",
-                "properties": {"items": {"type": "array"}},
-            },
-            {"items": [1, "two", 3.0]},
-            {"items": [1, "two", 3.0]},
-            None,
-            None,
-        ),
-        # Edge case: object without properties (fallback to dict)
-        (
-            "object_no_properties",
-            {
-                "type": "object",
-                "properties": {"config": {"type": "object"}},
-            },
-            {"config": {"arbitrary": "data", "nested": {"key": "value"}}},
-            {"config": {"arbitrary": "data", "nested": {"key": "value"}}},
-            None,
-            None,
-        ),
+                {"items": [1, "two", 3.0]},
+                {"items": [1, "two", 3.0]},
+                None,
+                None,
+            ),
+            # Edge case: object without properties (fallback to dict)
+            (
+                "object_no_properties",
+                {
+                    "type": "object",
+                    "properties": {"config": {"type": "object"}},
+                },
+                {"config": {"arbitrary": "data", "nested": {"key": "value"}}},
+                {"config": {"arbitrary": "data", "nested": {"key": "value"}}},
+                None,
+                None,
+            ),
+        ]
     ],
 )
-def test_get_input_model_from_mcp_tool_parametrized(
-    test_id, input_schema, valid_data, expected_values, invalid_data, validation_check
-):
-    """Parametrized test for JSON schema to Pydantic model conversion.
+def test_get_input_model_from_mcp_tool_parametrized(test_id: str, input_schema: dict[str, Any]) -> None:
+    """Parametrized test for MCP tool input schema passthrough.
 
-    This test covers various edge cases including:
-    - Basic types with required/optional fields
-    - Nested objects
-    - $ref resolution
-    - Typed arrays (strings, integers, objects)
-    - Deeply nested structures
-    - Complex $ref with nested structures
-    - Mixed types
+    This test verifies that MCP tool schemas are passed through as-is
+    without Pydantic conversion, which improves performance and preserves
+    the original schema structure.
 
     To add a new test case, add a tuple to the parametrize decorator with:
     - test_id: A descriptive name for the test case
     - input_schema: The JSON schema (inputSchema dict)
-    - valid_data: Valid data to instantiate the model
-    - expected_values: Dict of expected values (supports dot notation for nested access)
-    - invalid_data: Invalid data to test validation errors (None to skip)
-    - validation_check: Optional callable to perform additional validation checks
     """
     tool = types.Tool(name="test_tool", description="A test tool", inputSchema=input_schema)
-    model = _get_input_model_from_mcp_tool(tool)
+    schema = tool.inputSchema
 
-    # Test valid data
-    instance = model(**valid_data)
-
-    # Check expected values
-    for field_path, expected_value in expected_values.items():
-        # Support dot notation and array indexing for nested access
-        current = instance
-        parts = field_path.replace("]", "").replace("[", ".").split(".")
-        for part in parts:
-            current = current[int(part)] if part.isdigit() else getattr(current, part)
-        assert current == expected_value, f"Field {field_path} = {current}, expected {expected_value}"
-
-    # Run additional validation checks if provided
-    if validation_check:
-        assert validation_check(instance), f"Validation check failed for {test_id}"
-
-    # Test invalid data if provided
-    if invalid_data is not None:
-        with pytest.raises(ValidationError):
-            model(**invalid_data)
+    # Verify schema is returned as-is (dict)
+    assert isinstance(schema, dict), f"Expected dict, got {type(schema)}"
+    assert schema == input_schema, "Schema should be passed through unchanged"
 
 
 def test_get_input_model_from_mcp_prompt():
-    """Test creation of input model from MCP prompt."""
+    """Test creation of input schema from MCP prompt."""
     prompt = types.Prompt(
         name="test_prompt",
         description="A test prompt",
@@ -728,23 +615,34 @@ def test_get_input_model_from_mcp_prompt():
             types.PromptArgument(name="arg2", description="Second argument", required=False),
         ],
     )
-    model = _get_input_model_from_mcp_prompt(prompt)
+    result = _get_input_model_from_mcp_prompt(prompt)
 
-    # Create an instance to verify the model works
-    instance = model(arg1="test", arg2="optional")
-    assert instance.arg1 == "test"
-    assert instance.arg2 == "optional"
+    # Should return a dict (schema)
+    assert isinstance(result, dict), f"Expected dict, got {type(result)}"
+    assert result["type"] == "object"
+    assert "arg1" in result["properties"]
+    assert "arg2" in result["properties"]
+    assert "arg1" in result["required"]
+    assert "arg2" not in result["required"]
 
-    # Test validation
-    with pytest.raises(ValidationError):  # Missing required arg1
-        model(arg2="optional")
+
+def test_get_input_model_from_mcp_prompt_without_arguments():
+    """Test prompt schema generation when no prompt arguments are defined."""
+    prompt = types.Prompt(name="empty_prompt", description="No args prompt", arguments=[])
+    result = _get_input_model_from_mcp_prompt(prompt)
+
+    assert isinstance(result, dict)
+    assert result == {"type": "object", "properties": {}}
 
 
 # MCPTool tests
 async def test_local_mcp_server_initialization():
     """Test MCPTool initialization."""
     server = MCPTool(name="test_server")
-    assert isinstance(server, ToolProtocol)
+    # MCPTool has the same core attributes as FunctionTool
+    assert hasattr(server, "name")
+    assert hasattr(server, "description")
+    assert hasattr(server, "additional_properties")
     assert server.name == "test_server"
     assert server.session is None
     assert server.functions == []
@@ -795,7 +693,9 @@ async def test_local_mcp_server_load_functions():
             return None
 
     server = TestServer(name="test_server")
-    assert isinstance(server, ToolProtocol)
+    # MCPTool has the same core attributes as FunctionTool
+    assert hasattr(server, "name")
+    assert hasattr(server, "description")
     async with server:
         await server.load_tools()
         assert len(server.functions) == 1
@@ -870,17 +770,7 @@ async def test_mcp_tool_call_tool_with_meta_integration():
         func = server.functions[0]
         result = await func.invoke(param="test_value")
 
-        assert len(result) == 1
-        assert result[0].type == "text"
-        assert result[0].text == "Tool executed with metadata"
-
-        # Verify that _meta data is present in additional_properties
-        props = result[0].additional_properties
-        assert props is not None
-        assert props["executionTime"] == 1.5
-        assert props["cost"] == {"usd": 0.002}
-        assert props["isError"] is False
-        assert props["toolVersion"] == "1.2.3"
+        assert result == "Tool executed with metadata"
 
 
 async def test_local_mcp_server_function_execution():
@@ -919,9 +809,7 @@ async def test_local_mcp_server_function_execution():
         func = server.functions[0]
         result = await func.invoke(param="test_value")
 
-        assert len(result) == 1
-        assert result[0].type == "text"
-        assert result[0].text == "Tool executed successfully"
+        assert result == "Tool executed successfully"
 
 
 async def test_local_mcp_server_function_execution_with_nested_object():
@@ -968,8 +856,7 @@ async def test_local_mcp_server_function_execution_with_nested_object():
         # Call with nested object
         result = await func.invoke(params={"customer_id": 251})
 
-        assert len(result) == 1
-        assert result[0].type == "text"
+        assert result == '{"name": "John Doe", "id": 251}'
 
         # Verify the session.call_tool was called with the correct nested structure
         server.session.call_tool.assert_called_once()
@@ -1053,11 +940,7 @@ async def test_local_mcp_server_prompt_execution():
         prompt = server.functions[0]
         result = await prompt.invoke(arg="test_value")
 
-        assert len(result) == 1
-        assert isinstance(result[0], ChatMessage)
-        assert result[0].role == "user"
-        assert len(result[0].contents) == 1
-        assert result[0].contents[0].text == "Test message"
+        assert result == "Test message"
 
 
 @pytest.mark.parametrize(
@@ -1245,7 +1128,8 @@ async def test_streamable_http_integration():
         assert hasattr(func, "description")
 
         result = await func.invoke(query="What is Agent Framework?")
-        assert result[0].text is not None
+        assert isinstance(result, str)
+        assert len(result) > 0
 
 
 @pytest.mark.flaky
@@ -1310,11 +1194,11 @@ async def test_mcp_connection_reset_integration():
         # Verify tools are still available after reconnection
         assert len(tool.functions) > 0
 
-        # Both results should be valid (we don't compare content as it may vary)
-        if hasattr(first_result[0], "text"):
-            assert first_result[0].text is not None
-        if hasattr(second_result[0], "text"):
-            assert second_result[0].text is not None
+        # Both results should be valid strings (we don't compare content as it may vary)
+        assert isinstance(first_result, str)
+        assert len(first_result) > 0
+        assert isinstance(second_result, str)
+        assert len(second_result) > 0
 
 
 async def test_mcp_tool_message_handler_notification():
@@ -1391,7 +1275,7 @@ async def test_mcp_tool_sampling_callback_chat_client_exception():
     mock_chat_client = AsyncMock()
     mock_chat_client.get_response.side_effect = RuntimeError("Chat client error")
 
-    tool.chat_client = mock_chat_client
+    tool.client = mock_chat_client
 
     # Create mock params
     params = Mock()
@@ -1413,7 +1297,7 @@ async def test_mcp_tool_sampling_callback_chat_client_exception():
 
 async def test_mcp_tool_sampling_callback_no_valid_content():
     """Test sampling callback when response has no valid content types."""
-    from agent_framework import ChatMessage
+    from agent_framework import Message
 
     tool = MCPStdioTool(name="test_tool", command="python")
 
@@ -1421,7 +1305,7 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     mock_chat_client = AsyncMock()
     mock_response = Mock()
     mock_response.messages = [
-        ChatMessage(
+        Message(
             role="assistant",
             contents=[
                 Content.from_uri(
@@ -1434,7 +1318,7 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     mock_response.model_id = "test-model"
     mock_chat_client.get_response.return_value = mock_response
 
-    tool.chat_client = mock_chat_client
+    tool.client = mock_chat_client
 
     # Create mock params
     params = Mock()
@@ -2686,7 +2570,7 @@ async def test_mcp_tool_filters_framework_kwargs():
             chat_options={"some": "option"},  # Should be filtered
             tools=[Mock()],  # Should be filtered
             tool_choice="auto",  # Should be filtered
-            thread=Mock(),  # Should be filtered
+            session=Mock(),  # Should be filtered
             conversation_id="conv-123",  # Should be filtered
             options={"metadata": "value"},  # Should be filtered
         )
@@ -2707,3 +2591,70 @@ async def test_mcp_tool_filters_framework_kwargs():
         assert "thread" not in arguments
         assert "conversation_id" not in arguments
         assert "options" not in arguments
+
+
+# region: OTel trace context propagation via _meta
+
+
+@pytest.mark.parametrize(
+    "use_span,expect_traceparent",
+    [
+        (True, True),
+        (False, False),
+    ],
+)
+async def test_mcp_tool_call_tool_otel_meta(use_span, expect_traceparent, span_exporter):
+    """call_tool propagates OTel trace context via meta only when a span is active."""
+    from opentelemetry import trace
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="result")])
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+
+        if use_span:
+            tracer = trace.get_tracer("test")
+            with tracer.start_as_current_span("test_span"):
+                await server.functions[0].invoke(param="test_value")
+        else:
+            # Use an invalid span to ensure no trace context is injected;
+            # call server.call_tool directly to bypass FunctionTool.invoke's own span.
+            with trace.use_span(trace.NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)):
+                await server.call_tool("test_tool", param="test_value")
+
+        meta = server.session.call_tool.call_args.kwargs.get("meta")
+        if expect_traceparent:
+            # When a valid span is active, we expect some propagation fields to be injected,
+            # but we do not assume any specific header name to keep this test propagator-agnostic.
+            assert meta is not None
+            assert isinstance(meta, dict)
+            assert len(meta) > 0
+        else:
+            assert meta is None
+
+
+# endregion

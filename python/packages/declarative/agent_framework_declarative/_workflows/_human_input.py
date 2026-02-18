@@ -8,11 +8,12 @@ This module implements handlers for human input patterns:
 - ExternalLoop processing: Loop while waiting for external input
 """
 
+from __future__ import annotations
+
+import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
-
-from agent_framework import get_logger
 
 from ._handlers import (
     ActionContext,
@@ -23,7 +24,7 @@ from ._handlers import (
 if TYPE_CHECKING:
     from ._state import WorkflowState
 
-logger = get_logger("agent_framework.declarative.workflows.human_input")
+logger = logging.getLogger("agent_framework.declarative")
 
 
 @dataclass
@@ -75,7 +76,7 @@ class ExternalLoopEvent(WorkflowEvent):
 
 
 @action_handler("Question")
-async def handle_question(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_question(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Handle Question action - request human input with optional validation.
 
     Action schema:
@@ -140,7 +141,7 @@ async def handle_question(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, N
 
 
 @action_handler("RequestExternalInput")
-async def handle_request_external_input(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_request_external_input(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Handle RequestExternalInput action - request input from external system.
 
     Action schema:
@@ -197,7 +198,7 @@ async def handle_request_external_input(ctx: ActionContext) -> AsyncGenerator[Wo
 
 
 @action_handler("WaitForInput")
-async def handle_wait_for_input(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent, None]:  # noqa: RUF029
+async def handle_wait_for_input(ctx: ActionContext) -> AsyncGenerator[WorkflowEvent]:  # noqa: RUF029
     """Handle WaitForInput action - pause and wait for external input.
 
     Action schema:
@@ -231,7 +232,7 @@ async def handle_wait_for_input(ctx: ActionContext) -> AsyncGenerator[WorkflowEv
 
 def process_external_loop(
     input_config: dict[str, Any],
-    state: "WorkflowState",
+    state: WorkflowState,
 ) -> tuple[bool, str | None]:
     """Process the externalLoop.when pattern from action input.
 

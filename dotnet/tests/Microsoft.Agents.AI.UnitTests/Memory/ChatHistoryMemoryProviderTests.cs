@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -18,6 +17,8 @@ namespace Microsoft.Agents.AI.Memory.UnitTests;
 /// </summary>
 public class ChatHistoryMemoryProviderTests
 {
+    private static readonly AIAgent s_mockAgent = new Mock<AIAgent>().Object;
+
     private readonly Mock<ILogger<ChatHistoryMemoryProvider>> _loggerMock;
     private readonly Mock<ILoggerFactory> _loggerFactoryMock;
 
@@ -55,32 +56,81 @@ public class ChatHistoryMemoryProviderTests
     }
 
     [Fact]
+    public void StateKey_ReturnsDefaultKey_WhenNoOptionsProvided()
+    {
+        // Arrange & Act
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }));
+
+        // Assert
+        Assert.Equal("ChatHistoryMemoryProvider", provider.StateKey);
+    }
+
+    [Fact]
+    public void StateKey_ReturnsCustomKey_WhenSetViaOptions()
+    {
+        // Arrange & Act
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            new ChatHistoryMemoryProviderOptions { StateKey = "custom-key" });
+
+        // Assert
+        Assert.Equal("custom-key", provider.StateKey);
+    }
+
+    [Fact]
     public void Constructor_Throws_ForNullVectorStore()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new ChatHistoryMemoryProvider(null!, "testcollection", 1, new ChatHistoryMemoryProviderScope() { UserId = "UID" }));
+        Assert.Throws<ArgumentNullException>(() => new ChatHistoryMemoryProvider(
+            null!,
+            "testcollection",
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" })));
     }
 
     [Fact]
     public void Constructor_Throws_ForNullCollectionName()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new ChatHistoryMemoryProvider(this._vectorStoreMock.Object, null!, 1, new ChatHistoryMemoryProviderScope() { UserId = "UID" }));
+        Assert.Throws<ArgumentNullException>(() => new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            null!,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" })));
     }
 
     [Fact]
-    public void Constructor_Throws_ForNullStorageScope()
+    public void Constructor_Throws_ForNullStateInitializer()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new ChatHistoryMemoryProvider(this._vectorStoreMock.Object, "testcollection", 1, null!));
+        Assert.Throws<ArgumentNullException>(() => new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            "testcollection",
+            1,
+            null!));
     }
 
     [Fact]
     public void Constructor_Throws_ForInvalidVectorDimensions()
     {
         // Act & Assert
-        Assert.Throws<ArgumentOutOfRangeException>(() => new ChatHistoryMemoryProvider(this._vectorStoreMock.Object, "testcollection", 0, new ChatHistoryMemoryProviderScope() { UserId = "UID" }));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new ChatHistoryMemoryProvider(this._vectorStoreMock.Object, "testcollection", -5, new ChatHistoryMemoryProviderScope() { UserId = "UID" }));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            "testcollection",
+            0,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" })));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            "testcollection",
+            -5,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" })));
     }
 
     #region InvokedAsync Tests
@@ -110,16 +160,17 @@ public class ChatHistoryMemoryProviderTests
             UserId = "user1"
         };
 
-        var provider = new ChatHistoryMemoryProvider(this._vectorStoreMock.Object, TestCollectionName, 1, storeScope);
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(storeScope));
 
         var requestMsgWithValues = new ChatMessage(ChatRole.User, "request text") { MessageId = "req-1", AuthorName = "user1", CreatedAt = new DateTimeOffset(new DateTime(2000, 1, 1), TimeSpan.Zero) };
         var requestMsgWithNulls = new ChatMessage(ChatRole.User, "request text nulls");
         var responseMsg = new ChatMessage(ChatRole.Assistant, "response text") { MessageId = "resp-1", AuthorName = "assistant" };
 
-        var invokedContext = new AIContextProvider.InvokedContext([requestMsgWithValues, requestMsgWithNulls], aiContextProviderMessages: null)
-        {
-            ResponseMessages = [responseMsg]
-        };
+        var invokedContext = new AIContextProvider.InvokedContext(s_mockAgent, new TestAgentSession(), [requestMsgWithValues, requestMsgWithNulls], [responseMsg]);
 
         // Act
         await provider.InvokedAsync(invokedContext, CancellationToken.None);
@@ -172,12 +223,9 @@ public class ChatHistoryMemoryProviderTests
             this._vectorStoreMock.Object,
             TestCollectionName,
             1,
-            new ChatHistoryMemoryProviderScope() { UserId = "UID" });
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }));
         var requestMsg = new ChatMessage(ChatRole.User, "request text") { MessageId = "req-1" };
-        var invokedContext = new AIContextProvider.InvokedContext([requestMsg], aiContextProviderMessages: null)
-        {
-            InvokeException = new InvalidOperationException("Invoke failed")
-        };
+        var invokedContext = new AIContextProvider.InvokedContext(s_mockAgent, new TestAgentSession(), [requestMsg], new InvalidOperationException("Invoke failed"));
 
         // Act
         await provider.InvokedAsync(invokedContext, CancellationToken.None);
@@ -200,10 +248,10 @@ public class ChatHistoryMemoryProviderTests
             this._vectorStoreMock.Object,
             TestCollectionName,
             1,
-            new ChatHistoryMemoryProviderScope() { UserId = "UID" },
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
             loggerFactory: this._loggerFactoryMock.Object);
         var requestMsg = new ChatMessage(ChatRole.User, "request text") { MessageId = "req-1" };
-        var invokedContext = new AIContextProvider.InvokedContext([requestMsg], aiContextProviderMessages: null);
+        var invokedContext = new AIContextProvider.InvokedContext(s_mockAgent, new TestAgentSession(), [requestMsg], []);
 
         // Act
         await provider.InvokedAsync(invokedContext, CancellationToken.None);
@@ -249,12 +297,12 @@ public class ChatHistoryMemoryProviderTests
             this._vectorStoreMock.Object,
             TestCollectionName,
             1,
-            new ChatHistoryMemoryProviderScope { UserId = "user1" },
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "user1" }),
             options: options,
             loggerFactory: this._loggerFactoryMock.Object);
 
         var requestMsg = new ChatMessage(ChatRole.User, "request text");
-        var invokedContext = new AIContextProvider.InvokedContext([requestMsg], aiContextProviderMessages: null);
+        var invokedContext = new AIContextProvider.InvokedContext(s_mockAgent, new TestAgentSession(), [requestMsg], []);
 
         // Act
         await provider.InvokedAsync(invokedContext, CancellationToken.None);
@@ -323,14 +371,14 @@ public class ChatHistoryMemoryProviderTests
             this._vectorStoreMock.Object,
             TestCollectionName,
             1,
-            new ChatHistoryMemoryProviderScope() { UserId = "UID" },
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
             options: providerOptions);
 
         var requestMsg = new ChatMessage(ChatRole.User, "requesting relevant history");
-        var invokingContext = new AIContextProvider.InvokingContext([requestMsg]);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), new AIContext { Messages = new List<ChatMessage> { requestMsg } });
 
         // Act
-        await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
 
         // Assert
         this._vectorStoreCollectionMock.Verify(
@@ -340,6 +388,12 @@ public class ChatHistoryMemoryProviderTests
                 It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
                 It.IsAny<CancellationToken>()),
             Times.Once);
+
+        Assert.NotNull(aiContext.Messages);
+        var messages = aiContext.Messages.ToList();
+        Assert.Equal(2, messages.Count);
+        Assert.Equal(AgentRequestMessageSourceType.External, messages[0].GetAgentRequestMessageSourceType());
+        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, messages[1].GetAgentRequestMessageSourceType());
     }
 
     [Fact]
@@ -375,10 +429,15 @@ public class ChatHistoryMemoryProviderTests
             })
             .Returns(ToAsyncEnumerableAsync(new List<VectorSearchResult<Dictionary<string, object?>>>()));
 
-        var provider = new ChatHistoryMemoryProvider(this._vectorStoreMock.Object, TestCollectionName, 1, options: providerOptions, storageScope: searchScope, searchScope: searchScope);
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(searchScope, searchScope),
+            options: providerOptions);
 
         var requestMsg = new ChatMessage(ChatRole.User, "requesting relevant history");
-        var invokingContext = new AIContextProvider.InvokingContext([requestMsg]);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), new AIContext { Messages = new List<ChatMessage> { requestMsg } });
 
         // Act
         await provider.InvokingAsync(invokingContext, CancellationToken.None);
@@ -437,12 +496,11 @@ public class ChatHistoryMemoryProviderTests
             this._vectorStoreMock.Object,
             TestCollectionName,
             1,
-            storageScope: scope,
-            searchScope: scope,
+            _ => new ChatHistoryMemoryProvider.State(scope, scope),
             options: options,
             loggerFactory: this._loggerFactoryMock.Object);
 
-        var invokingContext = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "requesting relevant history")]);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, "requesting relevant history") } });
 
         // Act
         await provider.InvokingAsync(invokingContext, CancellationToken.None);
@@ -476,52 +534,178 @@ public class ChatHistoryMemoryProviderTests
 
     #endregion
 
-    #region Serialization Tests
+    #region Message Filter Tests
 
     [Fact]
-    public void Serialize_Deserialize_RoundtripsScopes()
+    public async Task InvokingAsync_DefaultFilter_ExcludesNonExternalMessagesFromSearchAsync()
     {
         // Arrange
-        var storageScope = new ChatHistoryMemoryProviderScope
+        var providerOptions = new ChatHistoryMemoryProviderOptions
         {
-            ApplicationId = "app",
-            AgentId = "agent",
-            SessionId = "session",
-            UserId = "user"
+            SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke,
         };
 
-        var searchScope = new ChatHistoryMemoryProviderScope
+        string? capturedQuery = null;
+        this._vectorStoreCollectionMock
+            .Setup(c => c.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, int, VectorSearchOptions<Dictionary<string, object?>>, CancellationToken>((query, _, _, _) => capturedQuery = query)
+            .Returns(ToAsyncEnumerableAsync(new List<VectorSearchResult<Dictionary<string, object?>>>()));
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            options: providerOptions);
+
+        var requestMessages = new List<ChatMessage>
         {
-            ApplicationId = "app2",
-            AgentId = "agent2",
-            SessionId = "session2",
-            UserId = "user2"
+            new(ChatRole.User, "External message"),
+            new(ChatRole.System, "From history") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, "HistorySource") } } },
+            new(ChatRole.System, "From context provider") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.AIContextProvider, "ContextSource") } } },
         };
 
-        var provider = new ChatHistoryMemoryProvider(this._vectorStoreMock.Object, TestCollectionName, 1, storageScope: storageScope, searchScope: searchScope);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), new AIContext { Messages = requestMessages });
 
         // Act
-        var stateElement = provider.Serialize();
+        await provider.InvokingAsync(invokingContext, CancellationToken.None);
 
-        using JsonDocument doc = JsonDocument.Parse(stateElement.GetRawText());
-        var storage = doc.RootElement.GetProperty("storageScope");
-        Assert.Equal("app", storage.GetProperty("applicationId").GetString());
-        Assert.Equal("agent", storage.GetProperty("agentId").GetString());
-        Assert.Equal("session", storage.GetProperty("sessionId").GetString());
-        Assert.Equal("user", storage.GetProperty("userId").GetString());
+        // Assert - Only External message used for search query
+        Assert.Equal("External message", capturedQuery);
+    }
 
-        var search = doc.RootElement.GetProperty("searchScope");
-        Assert.Equal("app2", search.GetProperty("applicationId").GetString());
-        Assert.Equal("agent2", search.GetProperty("agentId").GetString());
-        Assert.Equal("session2", search.GetProperty("sessionId").GetString());
-        Assert.Equal("user2", search.GetProperty("userId").GetString());
+    [Fact]
+    public async Task InvokingAsync_CustomSearchInputFilter_OverridesDefaultAsync()
+    {
+        // Arrange
+        var providerOptions = new ChatHistoryMemoryProviderOptions
+        {
+            SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke,
+            SearchInputMessageFilter = messages => messages // No filtering
+        };
 
-        // Act - deserialize and serialize again
-        var provider2 = new ChatHistoryMemoryProvider(this._vectorStoreMock.Object, TestCollectionName, 1, serializedState: stateElement);
-        var stateElement2 = provider2.Serialize();
+        string? capturedQuery = null;
+        this._vectorStoreCollectionMock
+            .Setup(c => c.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, int, VectorSearchOptions<Dictionary<string, object?>>, CancellationToken>((query, _, _, _) => capturedQuery = query)
+            .Returns(ToAsyncEnumerableAsync(new List<VectorSearchResult<Dictionary<string, object?>>>()));
 
-        // Assert - roundtrip the state
-        Assert.Equal(stateElement.GetRawText(), stateElement2.GetRawText());
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            options: providerOptions);
+
+        var requestMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "External message"),
+            new(ChatRole.System, "From history") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, "HistorySource") } } },
+        };
+
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), new AIContext { Messages = requestMessages });
+
+        // Act
+        await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert - Both messages should be included in search query (identity filter)
+        Assert.NotNull(capturedQuery);
+        Assert.Contains("External message", capturedQuery);
+        Assert.Contains("From history", capturedQuery);
+    }
+
+    [Fact]
+    public async Task InvokedAsync_DefaultFilter_ExcludesNonExternalMessagesFromStorageAsync()
+    {
+        // Arrange
+        var stored = new List<Dictionary<string, object?>>();
+
+        this._vectorStoreCollectionMock
+            .Setup(c => c.UpsertAsync(It.IsAny<IEnumerable<Dictionary<string, object?>>>(), It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<Dictionary<string, object?>>, CancellationToken>((items, ct) =>
+            {
+                if (items != null)
+                {
+                    stored.AddRange(items);
+                }
+            })
+            .Returns(Task.CompletedTask);
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }));
+
+        var requestMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "External message"),
+            new(ChatRole.System, "From history") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, "HistorySource") } } },
+            new(ChatRole.System, "From context provider") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.AIContextProvider, "ContextSource") } } },
+        };
+
+        var invokedContext = new AIContextProvider.InvokedContext(s_mockAgent, new TestAgentSession(), requestMessages, [new ChatMessage(ChatRole.Assistant, "Response")]);
+
+        // Act
+        await provider.InvokedAsync(invokedContext, CancellationToken.None);
+
+        // Assert - Only External message + response stored (ChatHistory and AIContextProvider excluded by default)
+        Assert.Equal(2, stored.Count);
+        Assert.Equal("External message", stored[0]["Content"]);
+        Assert.Equal("Response", stored[1]["Content"]);
+    }
+
+    [Fact]
+    public async Task InvokedAsync_CustomStorageInputFilter_OverridesDefaultAsync()
+    {
+        // Arrange
+        var stored = new List<Dictionary<string, object?>>();
+
+        this._vectorStoreCollectionMock
+            .Setup(c => c.UpsertAsync(It.IsAny<IEnumerable<Dictionary<string, object?>>>(), It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<Dictionary<string, object?>>, CancellationToken>((items, ct) =>
+            {
+                if (items != null)
+                {
+                    stored.AddRange(items);
+                }
+            })
+            .Returns(Task.CompletedTask);
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            options: new ChatHistoryMemoryProviderOptions
+            {
+                StorageInputMessageFilter = messages => messages // No filtering - store everything
+            });
+
+        var requestMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "External message"),
+            new(ChatRole.System, "From history") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, "HistorySource") } } },
+        };
+
+        var invokedContext = new AIContextProvider.InvokedContext(s_mockAgent, new TestAgentSession(), requestMessages, [new ChatMessage(ChatRole.Assistant, "Response")]);
+
+        // Act
+        await provider.InvokedAsync(invokedContext, CancellationToken.None);
+
+        // Assert - All messages stored (identity filter overrides default)
+        Assert.Equal(3, stored.Count);
+        Assert.Equal("External message", stored[0]["Content"]);
+        Assert.Equal("From history", stored[1]["Content"]);
+        Assert.Equal("Response", stored[2]["Content"]);
     }
 
     #endregion
@@ -532,6 +716,18 @@ public class ChatHistoryMemoryProviderTests
         foreach (var update in values)
         {
             yield return update;
+        }
+    }
+
+    private sealed class TestAgentSession : AgentSession
+    {
+        public TestAgentSession()
+        {
+        }
+
+        public TestAgentSession(AgentSessionStateBag stateBag)
+        {
+            this.StateBag = stateBag;
         }
     }
 }

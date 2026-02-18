@@ -4,7 +4,7 @@ This sample demonstrates how to add middleware to intercept agent runs and funct
 
 ## What This Sample Shows
 
-1. Azure Foundry Agents integration via `AIProjectClient` and `AzureCliCredential`
+1. Azure Foundry Agents integration via `AIProjectClient` and `DefaultAzureCredential`
 2. Agent run middleware (logging and monitoring)
 3. Function invocation middleware (logging and overriding tool results)
 4. Per-request agent run middleware

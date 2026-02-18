@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Chat;
 using OpenAI.Responses;
@@ -11,6 +13,7 @@ namespace Microsoft.Agents.AI;
 /// Provides extension methods for <see cref="AgentResponse"/> and <see cref="AgentResponseUpdate"/> instances to
 /// create or extract native OpenAI response objects from the Microsoft Agent Framework responses.
 /// </summary>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public static class AgentResponseExtensions
 {
     /// <summary>

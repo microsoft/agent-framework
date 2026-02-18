@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260130"
+version = "1.0.0b260212"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -26,7 +26,7 @@ dependencies = [
     # utilities
     "typing-extensions",
     "pydantic>=2,<3",
-    "pydantic-settings>=2,<3",
+    "python-dotenv>=1,<2",
     # telemetry
     "opentelemetry-api>=1.39.0",
     "opentelemetry-sdk>=1.39.0",
@@ -34,6 +34,7 @@ dependencies = [
     # connectors and functions
     "openai>=1.99.0",
     "azure-identity>=1,<2",
+    "azure-ai-projects >= 2.0.0b3",
     "mcp[ws]>=1.24.0,<2",
     "packaging>=24.1",
 ]
@@ -44,13 +45,16 @@ all = [
     "agent-framework-ag-ui",
     "agent-framework-azure-ai-search",
     "agent-framework-anthropic",
+    "agent-framework-claude",
     "agent-framework-azure-ai",
     "agent-framework-azurefunctions",
+    "agent-framework-bedrock",
     "agent-framework-chatkit",
     "agent-framework-copilotstudio",
     "agent-framework-declarative",
     "agent-framework-devui",
     "agent-framework-durabletask",
+    "agent-framework-foundry-local",
     "agent-framework-github-copilot",
     "agent-framework-lab",
     "agent-framework-mem0",

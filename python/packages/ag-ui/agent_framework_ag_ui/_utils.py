@@ -2,6 +2,8 @@
 
 """Utility functions for AG-UI integration."""
 
+from __future__ import annotations
+
 import copy
 import json
 import uuid
@@ -10,7 +12,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from typing import Any
 
-from agent_framework import AgentResponseUpdate, ChatResponseUpdate, FunctionTool, ToolProtocol
+from agent_framework import AgentResponseUpdate, ChatResponseUpdate, FunctionTool
 
 # Role mapping constants
 AGUI_TO_FRAMEWORK_ROLE: dict[str, str] = {
@@ -160,12 +162,12 @@ def make_json_safe(obj: Any) -> Any:  # noqa: ANN401
 
 def convert_agui_tools_to_agent_framework(
     agui_tools: list[dict[str, Any]] | None,
-) -> list[FunctionTool[Any, Any]] | None:
+) -> list[FunctionTool] | None:
     """Convert AG-UI tool definitions to Agent Framework FunctionTool declarations.
 
     Creates declaration-only FunctionTool instances (no executable implementation).
     These are used to tell the LLM about available tools. The actual execution
-    happens on the client side via @use_function_invocation.
+    happens on the client side via function invocation mixin.
 
     CRITICAL: These tools MUST have func=None so that declaration_only returns True.
     This prevents the server from trying to execute client-side tools.
@@ -179,13 +181,13 @@ def convert_agui_tools_to_agent_framework(
     if not agui_tools:
         return None
 
-    result: list[FunctionTool[Any, Any]] = []
+    result: list[FunctionTool] = []
     for tool_def in agui_tools:
         # Create declaration-only FunctionTool (func=None means no implementation)
         # When func=None, the declaration_only property returns True,
-        # which tells @use_function_invocation to return the function call
+        # which tells the function invocation mixin to return the function call
         # without executing it (so it can be sent back to the client)
-        func: FunctionTool[Any, Any] = FunctionTool(
+        func: FunctionTool = FunctionTool(
             name=tool_def.get("name", ""),
             description=tool_def.get("description", ""),
             func=None,  # CRITICAL: Makes declaration_only=True
@@ -198,10 +200,10 @@ def convert_agui_tools_to_agent_framework(
 
 def convert_tools_to_agui_format(
     tools: (
-        ToolProtocol
+        FunctionTool
         | Callable[..., Any]
         | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
         | None
     ),
 ) -> list[dict[str, Any]] | None:
@@ -209,7 +211,7 @@ def convert_tools_to_agui_format(
 
     This sends only the metadata (name, description, JSON schema) to the server.
     The actual executable implementation stays on the client side.
-    The @use_function_invocation decorator handles client-side execution when
+    The function invocation mixin handles client-side execution when
     the server requests a function.
 
     Args:
@@ -223,7 +225,7 @@ def convert_tools_to_agui_format(
 
     # Normalize to list
     if not isinstance(tools, list):
-        tool_list: list[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] = [tools]  # type: ignore[list-item]
+        tool_list: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]] = [tools]  # type: ignore[list-item]
     else:
         tool_list = tools  # type: ignore[assignment]
 
@@ -254,12 +256,8 @@ def convert_tools_to_agui_format(
                     "parameters": ai_func.parameters(),
                 }
             )
-        elif isinstance(tool_item, ToolProtocol):
-            # Handle other ToolProtocol implementations
-            # For now, we'll skip non-FunctionTool instances as they may not have
-            # the parameters() method. This matches .NET behavior which only
-            # converts FunctionToolDeclaration instances.
-            continue
+        # Note: dict-based hosted tools (CodeInterpreter, WebSearch, etc.) are passed through
+        # as-is in the first branch. Non-FunctionTool, non-dict items are skipped.
 
     return results if results else None
 

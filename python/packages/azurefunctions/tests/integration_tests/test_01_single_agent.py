@@ -16,13 +16,11 @@ Usage:
 
 import pytest
 from agent_framework_durabletask import THREAD_ID_HEADER
-from testutils import SampleTestHelper, skip_if_azure_functions_integration_tests_disabled
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
     pytest.mark.sample("01_single_agent"),
     pytest.mark.usefixtures("function_app_for_test"),
-    skip_if_azure_functions_integration_tests_disabled,
 ]
 
 
@@ -30,20 +28,21 @@ class TestSampleSingleAgent:
     """Tests for 01_single_agent sample."""
 
     @pytest.fixture(autouse=True)
-    def _set_base_url(self, base_url: str) -> None:
-        """Provide agent-specific base URL for the tests."""
+    def _setup(self, base_url: str, sample_helper) -> None:
+        """Provide agent-specific base URL and helper for the tests."""
         self.base_url = f"{base_url}/api/agents/Joker"
+        self.helper = sample_helper
 
-    def test_health_check(self, base_url: str) -> None:
+    def test_health_check(self, base_url: str, sample_helper) -> None:
         """Test health check endpoint."""
-        response = SampleTestHelper.get(f"{base_url}/api/health")
+        response = sample_helper.get(f"{base_url}/api/health")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "healthy"
 
     def test_simple_message_json(self) -> None:
         """Test sending a simple message with JSON payload."""
-        response = SampleTestHelper.post_json(
+        response = self.helper.post_json(
             f"{self.base_url}/run",
             {"message": "Tell me a short joke about cloud computing.", "thread_id": "test-simple-json"},
         )
@@ -62,7 +61,7 @@ class TestSampleSingleAgent:
 
     def test_simple_message_plain_text(self) -> None:
         """Test sending a message with plain text payload."""
-        response = SampleTestHelper.post_text(f"{self.base_url}/run", "Tell me a short joke about networking.")
+        response = self.helper.post_text(f"{self.base_url}/run", "Tell me a short joke about networking.")
         assert response.status_code in [200, 202]
 
         # Agent responded with plain text when the request body was text/plain.
@@ -71,7 +70,7 @@ class TestSampleSingleAgent:
 
     def test_thread_id_in_query(self) -> None:
         """Test using thread_id in query parameter."""
-        response = SampleTestHelper.post_text(
+        response = self.helper.post_text(
             f"{self.base_url}/run?thread_id=test-query-thread", "Tell me a short joke about weather in Texas."
         )
         assert response.status_code in [200, 202]
@@ -84,7 +83,7 @@ class TestSampleSingleAgent:
         thread_id = "test-continuity"
 
         # First message
-        response1 = SampleTestHelper.post_json(
+        response1 = self.helper.post_json(
             f"{self.base_url}/run",
             {"message": "Tell me a short joke about weather in Seattle.", "thread_id": thread_id},
         )
@@ -95,7 +94,7 @@ class TestSampleSingleAgent:
             assert data1["message_count"] == 2  # Initial + reply
 
             # Second message in same session
-            response2 = SampleTestHelper.post_json(
+            response2 = self.helper.post_json(
                 f"{self.base_url}/run", {"message": "What about San Francisco?", "thread_id": thread_id}
             )
             assert response2.status_code == 200
@@ -104,7 +103,7 @@ class TestSampleSingleAgent:
         else:
             # In async mode, we can't easily test message count
             # Just verify we can make multiple calls
-            response2 = SampleTestHelper.post_json(
+            response2 = self.helper.post_json(
                 f"{self.base_url}/run", {"message": "What about Texas?", "thread_id": thread_id}
             )
             assert response2.status_code == 202
