@@ -375,6 +375,12 @@ class HandoffAgentExecutor(AgentExecutor):
         if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
             return
 
+        # Use full conversation history as agent input so the agent sees all prior
+        # turns, not just the latest broadcast. This is critical for APIs like the
+        # Responses API where clearing service_session_id (on handoff) means the
+        # server no longer carries implicit context via previous_response_id.
+        self._cache = list(self._full_conversation)
+
         # Run the agent
         if ctx.is_streaming():
             # Streaming mode: emit incremental updates
@@ -408,6 +414,13 @@ class HandoffAgentExecutor(AgentExecutor):
                     f"Agent '{resolve_agent_id(self._agent)}' attempted to handoff to unknown "
                     f"target '{handoff_target}'. Valid targets are: {', '.join(self._handoff_targets)}"
                 )
+
+            # Clear the session's service_session_id to prevent stale previous_response_id
+            # from being sent on the next run. The handoff response contained a function_call
+            # for the handoff tool; referencing it via previous_response_id after the tool
+            # output has been cleaned would cause "No tool output found" API errors.
+            if self._session and self._session.service_session_id:
+                self._session.service_session_id = None
 
             await cast(WorkflowContext[AgentExecutorRequest], ctx).send_message(
                 AgentExecutorRequest(messages=[], should_respond=True), target_id=handoff_target
