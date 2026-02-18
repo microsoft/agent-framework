@@ -8,11 +8,12 @@ Every sample file should follow this order:
 
 1. PEP 723 inline script metadata (if external dependencies are needed)
 2. Copyright header: `# Copyright (c) Microsoft. All rights reserved.`
-3. Required imports
-4. Module docstring: `"""This sample demonstrates..."""`
-5. Helper functions
-6. Main function(s) demonstrating functionality
-7. Entry point: `if __name__ == "__main__": asyncio.run(main())`
+3. Required imports (including `from dotenv import load_dotenv`)
+4. Environment variable loading: `load_dotenv()`
+5. Module docstring: `"""This sample demonstrates..."""`
+6. Helper functions
+7. Main function(s) demonstrating functionality
+8. Entry point: `if __name__ == "__main__": asyncio.run(main())`
 
 When modifying samples, update associated README files in the same or parent folders.
 
@@ -34,6 +35,30 @@ When samples depend on external packages not included in the dev environment (e.
 ```
 
 This makes samples self-contained and runnable without installing extra packages into the dev environment. Do not add sample-only dependencies to the root `pyproject.toml` dev group.
+
+## Environment Variables
+
+All samples that use environment variables (API keys, endpoints, etc.) must call `load_dotenv()` at the beginning of the file to load variables from a `.env` file. The `python-dotenv` package is already included as a dependency of `agent-framework-core`.
+
+```python
+# Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+import os
+
+from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+
+# Load environment variables from .env file
+load_dotenv()
+"""
+Sample docstring explaining what the sample does.
+"""
+```
+
+Users can create a `.env` file in the `python/` directory based on `.env.example` to set their environment variables without having to export them in their shell.
 
 ## Syntax Checking
 
