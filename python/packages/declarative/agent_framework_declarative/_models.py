@@ -228,11 +228,21 @@ class PropertySchema(SerializationMixin):
         """Get a schema out of this PropertySchema to create pydantic models."""
         json_schema = self.to_dict(exclude={"type"}, exclude_none=True)
         new_props = {}
+        required_fields: list[str] = []
         for prop in json_schema.get("properties", []):
             prop_name = prop.pop("name")
             prop["type"] = prop.pop("kind", None)
+            # Convert property-level 'required' boolean to a top-level 'required' array
+            if prop.pop("required", False):
+                required_fields.append(prop_name)
+            # Remove empty enum arrays
+            if not prop.get("enum"):
+                prop.pop("enum", None)
             new_props[prop_name] = prop
+        json_schema["type"] = "object"
         json_schema["properties"] = new_props
+        if required_fields:
+            json_schema["required"] = required_fields
         return json_schema
 
 

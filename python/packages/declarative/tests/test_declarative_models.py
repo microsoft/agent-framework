@@ -279,7 +279,7 @@ class TestPropertySchema:
         data = {
             "properties": {
                 "language": {"type": "string", "required": True, "description": "The language."},
-                "answer": {"type": "string", "required": True, "description": "The answer."},
+                "answer": {"type": "string", "required": False, "description": "The answer."},
             },
         }
         schema = PropertySchema.from_dict(data)
@@ -289,8 +289,13 @@ class TestPropertySchema:
         assert lang_prop.kind == "string"
 
         json_schema = schema.to_json_schema()
+        assert json_schema["type"] == "object"
         assert json_schema["properties"]["language"]["type"] == "string"
         assert json_schema["properties"]["answer"]["type"] == "string"
+        # required is a top-level array, not a per-property boolean
+        assert json_schema["required"] == ["language"]
+        assert "required" not in json_schema["properties"]["language"]
+        assert "required" not in json_schema["properties"]["answer"]
 
 
 class TestConnection:
