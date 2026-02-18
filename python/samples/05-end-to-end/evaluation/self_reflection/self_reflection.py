@@ -2,6 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "pandas",
+#     "pyarrow",
 # ]
 # ///
 # Run with any PEP 723 compatible runner, e.g.:
