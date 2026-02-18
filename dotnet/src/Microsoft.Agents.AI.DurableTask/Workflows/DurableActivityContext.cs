@@ -133,6 +133,8 @@ internal sealed class DurableActivityContext : IWorkflowContext
         string? scopeName = null,
         CancellationToken cancellationToken = default)
     {
+        ArgumentException.ThrowIfNullOrEmpty(key);
+
         string scopeKey = GetScopeKey(scopeName, key);
         string normalizedScope = scopeName ?? DefaultScopeName;
         bool scopeCleared = this.ClearedScopes.Contains(normalizedScope);
@@ -165,11 +167,19 @@ internal sealed class DurableActivityContext : IWorkflowContext
         string? scopeName = null,
         CancellationToken cancellationToken = default)
     {
-        T? value = await this.ReadStateAsync<T>(key, scopeName, cancellationToken).ConfigureAwait(false);
+        ArgumentException.ThrowIfNullOrEmpty(key);
+        ArgumentNullException.ThrowIfNull(initialStateFactory);
 
-        if (value is not null)
+        // Cannot rely on `value is not null` because T? on an unconstrained generic
+        // parameter does not become Nullable<T> for value types — the null check is
+        // always true for types like int. Instead, check key existence directly.
+        if (this.HasStateKey(key, scopeName))
         {
-            return value;
+            T? value = await this.ReadStateAsync<T>(key, scopeName, cancellationToken).ConfigureAwait(false);
+            if (value is not null)
+            {
+                return value;
+            }
         }
 
         T initialValue = initialStateFactory();
@@ -231,6 +241,8 @@ internal sealed class DurableActivityContext : IWorkflowContext
         string? scopeName = null,
         CancellationToken cancellationToken = default)
     {
+        ArgumentException.ThrowIfNullOrEmpty(key);
+
         string scopeKey = GetScopeKey(scopeName, key);
         this.StateUpdates[scopeKey] = value is null ? null : SerializeState(value);
         return default;
@@ -264,6 +276,28 @@ internal sealed class DurableActivityContext : IWorkflowContext
 
     private static string GetScopeKey(string? scopeName, string key)
         => $"{GetScopePrefix(scopeName)}{key}";
+
+    /// <summary>
+    /// Checks whether the given key exists in local updates or initial state,
+    /// respecting cleared scopes.
+    /// </summary>
+    private bool HasStateKey(string key, string? scopeName)
+    {
+        string scopeKey = GetScopeKey(scopeName, key);
+
+        if (this.StateUpdates.TryGetValue(scopeKey, out string? updated))
+        {
+            return updated is not null;
+        }
+
+        string normalizedScope = scopeName ?? DefaultScopeName;
+        if (this.ClearedScopes.Contains(normalizedScope))
+        {
+            return false;
+        }
+
+        return this._initialState.ContainsKey(scopeKey);
+    }
 
     /// <summary>
     /// Returns the key prefix for the given scope. Scopes partition shared state

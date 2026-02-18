@@ -84,4 +84,12 @@ internal sealed class DurableWorkflowClient : IWorkflowClient
 
         return new DurableStreamingWorkflowRun(this._client, instanceId, workflow);
     }
+
+    /// <inheritdoc/>
+    public ValueTask<IStreamingWorkflowRun> StreamAsync(
+        Workflow workflow,
+        string input,
+        string? runId = null,
+        CancellationToken cancellationToken = default)
+        => this.StreamAsync<string>(workflow, input, runId, cancellationToken);
 }

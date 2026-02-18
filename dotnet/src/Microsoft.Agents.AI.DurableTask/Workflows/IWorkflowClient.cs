@@ -54,4 +54,18 @@ public interface IWorkflowClient
         string? runId = null,
         CancellationToken cancellationToken = default)
         where TInput : notnull;
+
+    /// <summary>
+    /// Starts a workflow with string input and returns a streaming handle to watch events in real-time.
+    /// </summary>
+    /// <param name="workflow">The workflow to execute.</param>
+    /// <param name="input">The string input to pass to the workflow.</param>
+    /// <param name="runId">Optional identifier for the run. If not provided, a new ID will be generated.</param>
+    /// <param name="cancellationToken">A cancellation token to observe.</param>
+    /// <returns>An <see cref="IStreamingWorkflowRun"/> that can be used to stream workflow events.</returns>
+    ValueTask<IStreamingWorkflowRun> StreamAsync(
+        Workflow workflow,
+        string input,
+        string? runId = null,
+        CancellationToken cancellationToken = default);
 }

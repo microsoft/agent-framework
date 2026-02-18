@@ -22,7 +22,6 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows;
 internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
 {
     private readonly DurableTaskClient _client;
-    private readonly Workflow _workflow;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DurableStreamingWorkflowRun"/> class.
@@ -34,7 +33,7 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
     {
         this._client = client;
         this.RunId = instanceId;
-        this._workflow = workflow;
+        this.WorkflowName = workflow.Name ?? string.Empty;
     }
 
     /// <inheritdoc/>
@@ -43,7 +42,7 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
     /// <summary>
     /// Gets the name of the workflow being executed.
     /// </summary>
-    public string WorkflowName => this._workflow.Name ?? string.Empty;
+    public string WorkflowName { get; }
 
     /// <summary>
     /// Gets the current execution status of the workflow run.
@@ -88,13 +87,17 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
         TimeSpan? pollingInterval,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        TimeSpan interval = pollingInterval ?? TimeSpan.FromMilliseconds(100);
+        TimeSpan minInterval = pollingInterval ?? TimeSpan.FromMilliseconds(100);
+        TimeSpan maxInterval = TimeSpan.FromSeconds(2);
+        TimeSpan currentInterval = minInterval;
 
         // Track how many events we've already read from custom status
         int lastReadEventIndex = 0;
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            // Poll with getInputsAndOutputs: true because SerializedCustomStatus
+            // (used for event streaming) is only populated when this flag is set.
             OrchestrationMetadata? metadata = await this._client.GetInstanceAsync(
                 this.RunId,
                 getInputsAndOutputs: true,
@@ -104,6 +107,8 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
             {
                 yield break;
             }
+
+            bool hasNewEvents = false;
 
             // Always drain any unread events from custom status before checking terminal states.
             // The orchestration may complete before the next poll, so events would be lost if we
@@ -116,11 +121,13 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
                     (List<WorkflowEvent> events, lastReadEventIndex) = DrainNewEvents(customStatus.Events, lastReadEventIndex);
                     foreach (WorkflowEvent evt in events)
                     {
+                        hasNewEvents = true;
                         yield return evt;
                     }
                 }
             }
 
+            // On terminal status, re-fetch with outputs to get the final result.
             // Check terminal states after draining events from custom status
             if (metadata.RuntimeStatus == OrchestrationRuntimeStatus.Completed)
             {
@@ -158,7 +165,19 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
                 yield break;
             }
 
-            await Task.Delay(interval, cancellationToken).ConfigureAwait(false);
+            // Adaptive backoff: reset to minimum when events were found, increase otherwise
+            currentInterval = hasNewEvents
+                ? minInterval
+                : TimeSpan.FromMilliseconds(Math.Min(currentInterval.TotalMilliseconds * 2, maxInterval.TotalMilliseconds));
+
+            try
+            {
+                await Task.Delay(currentInterval, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                yield break;
+            }
         }
     }
 
@@ -263,25 +282,58 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
     /// <summary>
     /// Extracts a typed result from the orchestration output, unwrapping the
     /// <see cref="DurableWorkflowResult"/> wrapper if present.
+    /// Falls back to deserializing the raw output when the wrapper is absent
+    /// (e.g., runs started before the wrapper was introduced).
     /// </summary>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow result.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow result.")]
     internal static TResult? ExtractResult<TResult>(string? serializedOutput)
     {
-        DurableWorkflowResult? workflowResult = TryParseWorkflowResult(serializedOutput);
-        string? resultJson = workflowResult?.Result;
-
-        if (resultJson is null)
+        if (serializedOutput is null)
         {
             return default;
         }
 
-        if (typeof(TResult) == typeof(string))
+        DurableWorkflowResult? workflowResult = TryParseWorkflowResult(serializedOutput);
+        string? resultJson = workflowResult?.Result;
+
+        if (resultJson is not null)
         {
-            return (TResult)(object)resultJson;
+            if (typeof(TResult) == typeof(string))
+            {
+                return (TResult)(object)resultJson;
+            }
+
+            return JsonSerializer.Deserialize<TResult>(resultJson);
         }
 
-        return JsonSerializer.Deserialize<TResult>(resultJson);
+        // Fallback: the output is not wrapped in DurableWorkflowResult.
+        // The DurableDataConverter wraps string results in JSON quotes, so
+        // we unwrap the outer JSON string first.
+        try
+        {
+            string? innerString = JsonSerializer.Deserialize<string>(serializedOutput);
+            if (typeof(TResult) == typeof(string) && innerString is not null)
+            {
+                return (TResult)(object)innerString;
+            }
+
+            if (innerString is not null)
+            {
+                return JsonSerializer.Deserialize<TResult>(innerString);
+            }
+        }
+        catch (JsonException)
+        {
+            // Not a JSON-encoded string; try direct deserialization below.
+        }
+
+        if (typeof(TResult) == typeof(string))
+        {
+            return (TResult)(object)serializedOutput;
+        }
+
+        return JsonSerializer.Deserialize<TResult>(serializedOutput);
     }
 
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow event types.")]

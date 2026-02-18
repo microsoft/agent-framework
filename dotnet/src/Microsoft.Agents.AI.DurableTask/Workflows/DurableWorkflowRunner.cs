@@ -394,6 +394,10 @@ internal sealed class DurableWorkflowRunner
     /// <summary>
     /// Merges state updates from an executor into the shared state.
     /// </summary>
+    /// <remarks>
+    /// When concurrent executors in the same superstep modify keys in the same scope,
+    /// last-write-wins semantics apply.
+    /// </remarks>
     private static void MergeStateUpdates(
         SuperstepState state,
         Dictionary<string, string?> stateUpdates,
