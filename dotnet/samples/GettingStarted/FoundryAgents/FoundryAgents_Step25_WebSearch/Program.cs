@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use Web Search Tool with AI Agents.
+// This sample shows how to use the Responses API Web Search Tool with AI Agents.
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
@@ -11,49 +11,20 @@ using OpenAI.Responses;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-string bingConnectionId = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_BING_CONNECTION_ID") ?? throw new InvalidOperationException("AZURE_FOUNDRY_BING_CONNECTION_ID is not set.");
 
 const string AgentInstructions = "You are a helpful assistant that can search the web to find current information and answer questions accurately.";
-const string AgentNameMEAI = "WebSearchAgent-MEAI";
-const string AgentNameNative = "WebSearchAgent-NATIVE";
+const string AgentName = "WebSearchAgent";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-// Option 1 - Using HostedWebSearchTool + AgentOptions (MEAI + AgentFramework)
-// Create the server side agent version with connection ID
-Dictionary<string, object?> webSearchProperties = new()
-{
-    ["connectionId"] = bingConnectionId
-};
-HostedWebSearchTool webSearchTool = new(webSearchProperties);
+// Option 1 - Using HostedWebSearchTool (MEAI + AgentFramework)
+AIAgent agent = await CreateAgentWithMEAIAsync();
 
-AIAgent agentOption1 = await aiProjectClient.CreateAIAgentAsync(
-    model: deploymentName,
-    name: AgentNameMEAI,
-    instructions: AgentInstructions,
-    tools: [webSearchTool]);
+// Option 2 - Using PromptAgentDefinition with the Responses API native type
+// AIAgent agent = await CreateAgentWithNativeSDKAsync();
 
-// Option 2 - Using PromptAgentDefinition SDK native type
-// Create the server side agent version
-AIAgent agentOption2 = await aiProjectClient.CreateAIAgentAsync(
-    name: AgentNameNative,
-    creationOptions: new AgentVersionCreationOptions(
-        new PromptAgentDefinition(model: deploymentName)
-        {
-            Instructions = AgentInstructions,
-            Tools = {
-                ResponseTool.CreateWebSearchTool(),
-            }
-        })
-);
-
-// Either invoke option1 or option2 agent, should have same result
-// Option 1
-AgentResponse response = await agentOption1.RunAsync("What's the weather today in Seattle?");
-
-// Option 2
-// AgentResponse response = await agentOption2.RunAsync("What's the weather today in Seattle?");
+AgentResponse response = await agent.RunAsync("What's the weather today in Seattle?");
 
 // Get the text response
 foreach (ChatMessage message in response.Messages)
@@ -81,5 +52,23 @@ foreach (AIAnnotation annotation in response.Messages.SelectMany(m => m.Contents
 }
 
 // Cleanup by agent name removes the agent version created.
-await aiProjectClient.Agents.DeleteAgentAsync(agentOption1.Name);
-await aiProjectClient.Agents.DeleteAgentAsync(agentOption2.Name);
+await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+
+// Creates the agent using the HostedWebSearchTool MEAI abstraction that maps to the built-in Responses API web search tool.
+async Task<AIAgent> CreateAgentWithMEAIAsync()
+    => await aiProjectClient.CreateAIAgentAsync(
+        name: AgentName,
+        model: deploymentName,
+        instructions: AgentInstructions,
+        tools: [new HostedWebSearchTool()]);
+
+// Creates the agent using the PromptAgentDefinition with the Responses API native ResponseTool.CreateWebSearchTool().
+async Task<AIAgent> CreateAgentWithNativeSDKAsync()
+    => await aiProjectClient.CreateAIAgentAsync(
+        AgentName,
+        new AgentVersionCreationOptions(
+            new PromptAgentDefinition(model: deploymentName)
+            {
+                Instructions = AgentInstructions,
+                Tools = { ResponseTool.CreateWebSearchTool() }
+            }));
