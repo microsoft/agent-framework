@@ -23,7 +23,7 @@ USER_INPUTS = [
 
 def load_openapi_specs() -> tuple[dict[str, Any], dict[str, Any]]:
     """Load OpenAPI specification files."""
-    resources_path = Path(__file__).parents[2] / "shared" / "resources"
+    resources_path = Path(__file__).parents[3] / "shared" / "resources"
 
     with open(resources_path / "weather.json") as weather_file:
         weather_spec = json.load(weather_file)
