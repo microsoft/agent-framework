@@ -213,7 +213,7 @@ def load_settings(
 
     loaded_dotenv_values: dict[str, str] = {}
     if env_file_path is not None:
-        if not os.path.isfile(env_file_path):
+        if not os.path.exists(env_file_path):
             raise FileNotFoundError(env_file_path)
 
         raw_dotenv_values = dotenv_values(dotenv_path=env_file_path, encoding=encoding)
@@ -227,7 +227,7 @@ def load_settings(
     # Get field type hints from the TypedDict
     hints = get_type_hints(settings_type)
 
-    result: SettingsT = {}
+    result: dict[str, Any] = {}
     for field_name, field_type in hints.items():
         # 1. Explicit override wins
         if field_name in overrides:
@@ -294,4 +294,4 @@ def load_settings(
                         f"Only one of {all_names} may be provided, but multiple were set: {set_names}."
                     )
 
-    return result
+    return result  # type: ignore[return-value]
