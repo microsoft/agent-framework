@@ -29,8 +29,24 @@ Start with `01-get-started/` and work through the numbered files:
 pip install agent-framework --pre
 ```
 
-Set the following environment variables for the getting-started samples:
+### Environment Variables
 
+All samples automatically load environment variables from a `.env` file in the `python/` directory if present. To set up your environment:
+
+1. Copy `.env.example` to `.env` in the `python/` directory:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Edit `.env` and set your values (API keys, endpoints, etc.)
+
+For the getting-started samples, you'll need at minimum:
+```bash
+AZURE_AI_PROJECT_ENDPOINT="your-foundry-project-endpoint"
+AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"
+```
+
+Alternatively, you can export environment variables in your shell:
 ```bash
 export AZURE_AI_PROJECT_ENDPOINT="your-foundry-project-endpoint"
 export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"
