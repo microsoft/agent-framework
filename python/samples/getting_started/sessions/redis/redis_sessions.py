@@ -28,7 +28,6 @@ Run:
 
 import asyncio
 import os
-import uuid
 
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.redis import RedisContextProvider
@@ -44,8 +43,6 @@ async def example_global_thread_scope() -> None:
     print("1. Global Thread Scope Example:")
     print("-" * 40)
 
-    global_thread_id = str(uuid.uuid4())
-
     client = OpenAIChatClient(
         model_id=os.getenv("OPENAI_CHAT_MODEL_ID", "gpt-4o-mini"),
         api_key=os.getenv("OPENAI_API_KEY"),
@@ -57,8 +54,6 @@ async def example_global_thread_scope() -> None:
         application_id="threads_demo_app",
         agent_id="threads_demo_agent",
         user_id="threads_demo_user",
-        thread_id=global_thread_id,
-        scope_to_per_operation_thread_id=False,  # Share memories across all sessions
     )
 
     agent = client.as_agent(
@@ -111,12 +106,9 @@ async def example_per_operation_thread_scope() -> None:
     provider = RedisContextProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_threads_dynamic",
-        # overwrite_redis_index=True,
-        # drop_redis_index=True,
         application_id="threads_demo_app",
         agent_id="threads_demo_agent",
         user_id="threads_demo_user",
-        scope_to_per_operation_thread_id=True,  # Isolate memories per session
         redis_vectorizer=vectorizer,
         vector_field_name="vector",
         vector_algorithm="hnsw",

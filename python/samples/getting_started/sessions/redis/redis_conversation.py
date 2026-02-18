@@ -36,8 +36,6 @@ async def main() -> None:
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
 
-    session_id = "test_session"
-
     provider = RedisContextProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_conversation",
@@ -49,7 +47,6 @@ async def main() -> None:
         vector_field_name="vector",
         vector_algorithm="hnsw",
         vector_distance_metric="cosine",
-        thread_id=session_id,
     )
 
     # Create chat client for the agent

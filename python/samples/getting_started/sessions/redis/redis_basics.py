@@ -138,16 +138,14 @@ async def main() -> None:
     from agent_framework import AgentSession, SessionContext
 
     session = AgentSession(session_id="runA")
-    context = SessionContext()
-    context.extend_messages("input", messages)
+    context = SessionContext(input_messages=messages)
     state = session.state
 
     # Store messages via after_run
     await provider.after_run(agent=None, session=session, context=context, state=state)
 
     # Retrieve relevant memories via before_run
-    query_context = SessionContext()
-    query_context.extend_messages("input", [Message("system", ["B: Assistant Message"])])
+    query_context = SessionContext(input_messages=[Message("system", ["B: Assistant Message"])])
     await provider.before_run(agent=None, session=session, context=query_context, state=state)
 
     # Inspect retrieved memories that would be injected into instructions
