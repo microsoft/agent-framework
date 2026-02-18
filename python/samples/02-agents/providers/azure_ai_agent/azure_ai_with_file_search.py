@@ -35,7 +35,7 @@ async def main() -> None:
     ):
         try:
             # 1. Upload file and create vector store
-            pdf_file_path = Path(__file__).parent.parent / "resources" / "employees.pdf"
+            pdf_file_path = Path(__file__).parents[3] / "shared" / "resources" / "employees.pdf"
             print(f"Uploading file from: {pdf_file_path}")
 
             file = await agents_client.files.upload_and_poll(file_path=str(pdf_file_path), purpose="assistants")

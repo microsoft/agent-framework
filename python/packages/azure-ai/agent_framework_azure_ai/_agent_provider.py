@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, MutableMapping, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Generic, cast
 
 from agent_framework import (
@@ -25,7 +25,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import BaseModel
 
 from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions
-from ._shared import AzureAISettings, from_azure_ai_agent_tools, to_azure_ai_agent_tools
+from ._shared import AzureAISettings, to_azure_ai_agent_tools
 
 if sys.version_info >= (3, 13):
     from typing import Self, TypeVar  # type: ignore # pragma: no cover
@@ -238,13 +238,9 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         # Local MCP tools (MCPTool) are handled by Agent at runtime, not stored on the Azure agent
         normalized_tools = normalize_tools(tools)
         if normalized_tools:
-            # Only convert non-MCP tools to Azure AI format
-            non_mcp_tools: list[FunctionTool | MutableMapping[str, Any]] = []
-            for normalized_tool in normalized_tools:
-                if isinstance(normalized_tool, MCPTool):
-                    continue
-                if isinstance(normalized_tool, (FunctionTool, MutableMapping)):
-                    non_mcp_tools.append(normalized_tool)
+            # Collect all non-MCP tools for Azure AI agent creation.
+            # to_azure_ai_agent_tools handles FunctionTool, SDK Tool types (FileSearchTool, etc.), and dicts.
+            non_mcp_tools: list[Any] = [t for t in normalized_tools if not isinstance(t, MCPTool)]
             if non_mcp_tools:
                 # Pass run_options to capture tool_resources (e.g., for file search vector stores)
                 run_options: dict[str, Any] = {}
@@ -429,16 +425,10 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         """
         merged: list[ToolTypes] = []
 
-        # Convert hosted tools from agent definition
-        hosted_tools = from_azure_ai_agent_tools(agent_tools)
-        for hosted_tool in hosted_tools:
-            # Skip function tool dicts - they don't have implementations
-            # Skip OpenAPI tool dicts - they're defined on the agent, not needed at runtime
-            if isinstance(hosted_tool, dict):
-                tool_type = hosted_tool.get("type")
-                if tool_type == "function" or tool_type == "openapi":
-                    continue
-            merged.append(hosted_tool)
+        # Hosted tools (file_search, code_interpreter, bing_grounding, openapi, etc.)
+        # are already defined on the server agent and will be read back by the client
+        # at run time via agent_definition.tools. We skip them here to avoid sending
+        # them again at request time (which causes API errors like unknown vector_store_ids).
 
         # Add user-provided function tools and MCP tools
         if provided_tools:
