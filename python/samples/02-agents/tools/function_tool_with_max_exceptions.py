@@ -67,8 +67,6 @@ Expected Output:
 ============================================================
 Step 1: Call divide(10, 0) - tool raises exception
     Tool failed with error: division by zero
-[2025-10-31 15:39:53 - /Users/edvan/Work/agent-framework/python/packages/core/agent_framework/_tools.py:718 - ERROR]
-Function failed. Error: division by zero
 Response: Division by zero is undefined in standard arithmetic. There is no finite value for 10 ÷ 0.
 
 If you want alternatives:
@@ -80,9 +78,6 @@ If you want alternatives:
 Would you like me to show a safe division snippet in a specific language, or compute something else?
 ============================================================
 Step 2: Call divide(100, 0) - will refuse to execute due to max_invocations
-[2025-10-31 15:40:09 - /Users/edvan/Work/agent-framework/python/packages/core/agent_framework/_tools.py:718 - ERROR]
-Function failed. Error: Function 'safe_divide' has reached its maximum exception limit, you tried to use this
-tool too many times and it kept failing.
 Response: Division by zero is undefined in standard arithmetic, so 100 ÷ 0 has no finite value.
 
 If you’re coding and want safe handling, here are quick patterns in a few languages:

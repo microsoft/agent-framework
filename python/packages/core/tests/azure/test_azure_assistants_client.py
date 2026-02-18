@@ -130,7 +130,7 @@ def test_azure_assistants_client_init_missing_deployment_name(azure_openai_unit_
     """Test AzureOpenAIAssistantsClient initialization with missing deployment name."""
     with pytest.raises(ServiceInitializationError):
         AzureOpenAIAssistantsClient(
-            api_key=azure_openai_unit_test_env.get("AZURE_OPENAI_API_KEY", "test-key"), env_file_path="nonexistent.env"
+            api_key=azure_openai_unit_test_env.get("AZURE_OPENAI_API_KEY", "test-key")
         )
 
 
