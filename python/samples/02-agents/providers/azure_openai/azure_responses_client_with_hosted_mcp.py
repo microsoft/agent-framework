@@ -154,7 +154,7 @@ async def run_hosted_mcp_without_approval() -> None:
         client=client,
         name="DocsAgent",
         instructions="You are a helpful assistant that uses your MCP tool "
-        "to help with microsoft documentation questions.",
+        "to help with Microsoft documentation questions.",
         tools=[mcp_tool],
     ) as agent:
         # First query
