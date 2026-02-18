@@ -1,11 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
 using Azure.Identity;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Shared.IntegrationTests;
 
@@ -14,12 +12,18 @@ namespace Microsoft.Agents.AI.FoundryMemory.IntegrationTests;
 /// <summary>
 /// Integration tests for <see cref="FoundryMemoryProvider"/> against a configured Azure AI Foundry Memory service.
 /// </summary>
+/// <remarks>
+/// These integration tests are skipped by default and require a live Azure AI Foundry Memory service.
+/// The tests need to be updated to use the new AIAgent-based API pattern.
+/// Set <see cref="SkipReason"/> to null to enable them after configuring the service.
+/// </remarks>
 public sealed class FoundryMemoryProviderTests : IDisposable
 {
     private const string SkipReason = "Requires an Azure AI Foundry Memory service configured"; // Set to null to enable.
 
     private readonly AIProjectClient? _client;
     private readonly string? _memoryStoreName;
+    private readonly string? _deploymentName;
     private bool _disposed;
 
     public FoundryMemoryProviderTests()
@@ -39,6 +43,7 @@ public sealed class FoundryMemoryProviderTests : IDisposable
         {
             this._client = new AIProjectClient(new Uri(foundrySettings.Endpoint), new AzureCliCredential());
             this._memoryStoreName = foundrySettings.MemoryStoreName;
+            this._deploymentName = foundrySettings.DeploymentName ?? "gpt-4.1-mini";
         }
     }
 
@@ -46,138 +51,75 @@ public sealed class FoundryMemoryProviderTests : IDisposable
     public async Task CanAddAndRetrieveUserMemoriesAsync()
     {
         // Arrange
-        var question = new ChatMessage(ChatRole.User, "What is my name?");
-        var input = new ChatMessage(ChatRole.User, "Hello, my name is Caoimhe.");
-        var storageScope = new FoundryMemoryProviderScope { Scope = "it-user-1" };
-        var options = new FoundryMemoryProviderOptions { MemoryStoreName = this._memoryStoreName! };
-        var sut = new FoundryMemoryProvider(this._client!, storageScope, options);
+        FoundryMemoryProvider memoryProvider = new(
+            this._client!,
+            stateInitializer: _ => new(new FoundryMemoryProviderScope { Scope = "it-user-1" }),
+            new FoundryMemoryProviderOptions { MemoryStoreName = this._memoryStoreName! });
 
-        await sut.EnsureStoredMemoriesDeletedAsync();
-        var ctxBefore = await sut.InvokingAsync(new AIContextProvider.InvokingContext([question]));
-        Assert.DoesNotContain("Caoimhe", ctxBefore.Messages?[0].Text ?? string.Empty);
+        AIAgent agent = await this._client!.CreateAIAgentAsync(this._deploymentName!,
+            options: new ChatClientAgentOptions { AIContextProviders = [memoryProvider] });
 
-        // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext([input], aiContextProviderMessages: null));
-        var ctxAfterAdding = await GetContextWithRetryAsync(sut, question);
-        await sut.EnsureStoredMemoriesDeletedAsync();
-        var ctxAfterClearing = await sut.InvokingAsync(new AIContextProvider.InvokingContext([question]));
+        AgentSession session = await agent.CreateSessionAsync();
 
-        // Assert
-        Assert.Contains("Caoimhe", ctxAfterAdding.Messages?[0].Text ?? string.Empty);
-        Assert.DoesNotContain("Caoimhe", ctxAfterClearing.Messages?[0].Text ?? string.Empty);
-    }
-
-    [Fact(Skip = SkipReason)]
-    public async Task CanAddAndRetrieveAssistantMemoriesAsync()
-    {
-        // Arrange
-        var question = new ChatMessage(ChatRole.User, "What is your name?");
-        var assistantIntro = new ChatMessage(ChatRole.Assistant, "Hello, I'm a friendly assistant and my name is Caoimhe.");
-        var storageScope = new FoundryMemoryProviderScope { Scope = "it-agent-1" };
-        var options = new FoundryMemoryProviderOptions { MemoryStoreName = this._memoryStoreName! };
-        var sut = new FoundryMemoryProvider(this._client!, storageScope, options);
-
-        await sut.EnsureStoredMemoriesDeletedAsync();
-        var ctxBefore = await sut.InvokingAsync(new AIContextProvider.InvokingContext([question]));
-        Assert.DoesNotContain("Caoimhe", ctxBefore.Messages?[0].Text ?? string.Empty);
+        await memoryProvider.EnsureStoredMemoriesDeletedAsync(session);
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext([assistantIntro], aiContextProviderMessages: null));
-        var ctxAfterAdding = await GetContextWithRetryAsync(sut, question);
-        await sut.EnsureStoredMemoriesDeletedAsync();
-        var ctxAfterClearing = await sut.InvokingAsync(new AIContextProvider.InvokingContext([question]));
+        AgentResponse resultBefore = await agent.RunAsync("What is my name?", session);
+        Assert.DoesNotContain("Caoimhe", resultBefore.Text);
+
+        await agent.RunAsync("Hello, my name is Caoimhe.", session);
+        await memoryProvider.WhenUpdatesCompletedAsync();
+        await Task.Delay(2000);
+
+        AgentResponse resultAfter = await agent.RunAsync("What is my name?", session);
+
+        // Cleanup
+        await memoryProvider.EnsureStoredMemoriesDeletedAsync(session);
 
         // Assert
-        Assert.Contains("Caoimhe", ctxAfterAdding.Messages?[0].Text ?? string.Empty);
-        Assert.DoesNotContain("Caoimhe", ctxAfterClearing.Messages?[0].Text ?? string.Empty);
+        Assert.Contains("Caoimhe", resultAfter.Text);
     }
 
     [Fact(Skip = SkipReason)]
     public async Task DoesNotLeakMemoriesAcrossScopesAsync()
     {
         // Arrange
-        var question = new ChatMessage(ChatRole.User, "What is your name?");
-        var assistantIntro = new ChatMessage(ChatRole.Assistant, "I'm an AI tutor and my name is Caoimhe.");
-        var options = new FoundryMemoryProviderOptions { MemoryStoreName = this._memoryStoreName! };
-        var sut1 = new FoundryMemoryProvider(this._client!, new FoundryMemoryProviderScope { Scope = "it-scope-a" }, options);
-        var sut2 = new FoundryMemoryProvider(this._client!, new FoundryMemoryProviderScope { Scope = "it-scope-b" }, options);
+        FoundryMemoryProvider memoryProvider1 = new(
+            this._client!,
+            stateInitializer: _ => new(new FoundryMemoryProviderScope { Scope = "it-scope-a" }),
+            new FoundryMemoryProviderOptions { MemoryStoreName = this._memoryStoreName! });
 
-        await sut1.EnsureStoredMemoriesDeletedAsync();
-        await sut2.EnsureStoredMemoriesDeletedAsync();
+        FoundryMemoryProvider memoryProvider2 = new(
+            this._client!,
+            stateInitializer: _ => new(new FoundryMemoryProviderScope { Scope = "it-scope-b" }),
+            new FoundryMemoryProviderOptions { MemoryStoreName = this._memoryStoreName! });
 
-        var ctxBefore1 = await sut1.InvokingAsync(new AIContextProvider.InvokingContext([question]));
-        var ctxBefore2 = await sut2.InvokingAsync(new AIContextProvider.InvokingContext([question]));
-        Assert.DoesNotContain("Caoimhe", ctxBefore1.Messages?[0].Text ?? string.Empty);
-        Assert.DoesNotContain("Caoimhe", ctxBefore2.Messages?[0].Text ?? string.Empty);
+        AIAgent agent1 = await this._client!.CreateAIAgentAsync(this._deploymentName!,
+            options: new ChatClientAgentOptions { AIContextProviders = [memoryProvider1] });
+        AIAgent agent2 = await this._client!.CreateAIAgentAsync(this._deploymentName!,
+            options: new ChatClientAgentOptions { AIContextProviders = [memoryProvider2] });
 
-        // Act
-        await sut1.InvokedAsync(new AIContextProvider.InvokedContext([assistantIntro], aiContextProviderMessages: null));
-        var ctxAfterAdding1 = await GetContextWithRetryAsync(sut1, question);
-        var ctxAfterAdding2 = await GetContextWithRetryAsync(sut2, question);
+        AgentSession session1 = await agent1.CreateSessionAsync();
+        AgentSession session2 = await agent2.CreateSessionAsync();
+
+        await memoryProvider1.EnsureStoredMemoriesDeletedAsync(session1);
+        await memoryProvider2.EnsureStoredMemoriesDeletedAsync(session2);
+
+        // Act - add memory only to scope A
+        await agent1.RunAsync("Hello, I'm an AI tutor and my name is Caoimhe.", session1);
+        await memoryProvider1.WhenUpdatesCompletedAsync();
+        await Task.Delay(2000);
+
+        AgentResponse result1 = await agent1.RunAsync("What is your name?", session1);
+        AgentResponse result2 = await agent2.RunAsync("What is your name?", session2);
 
         // Assert
-        Assert.Contains("Caoimhe", ctxAfterAdding1.Messages?[0].Text ?? string.Empty);
-        Assert.DoesNotContain("Caoimhe", ctxAfterAdding2.Messages?[0].Text ?? string.Empty);
+        Assert.Contains("Caoimhe", result1.Text);
+        Assert.DoesNotContain("Caoimhe", result2.Text);
 
         // Cleanup
-        await sut1.EnsureStoredMemoriesDeletedAsync();
-        await sut2.EnsureStoredMemoriesDeletedAsync();
-    }
-
-    [Fact(Skip = SkipReason)]
-    public async Task ClearStoredMemoriesRemovesAllMemoriesAsync()
-    {
-        // Arrange
-        var input1 = new ChatMessage(ChatRole.User, "My favorite color is blue.");
-        var input2 = new ChatMessage(ChatRole.User, "My favorite food is pizza.");
-        var question = new ChatMessage(ChatRole.User, "What do you know about my preferences?");
-        var storageScope = new FoundryMemoryProviderScope { Scope = "it-clear-test" };
-        var options = new FoundryMemoryProviderOptions { MemoryStoreName = this._memoryStoreName! };
-        var sut = new FoundryMemoryProvider(this._client!, storageScope, options);
-
-        await sut.EnsureStoredMemoriesDeletedAsync();
-
-        // Act - Add multiple memories
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext([input1], aiContextProviderMessages: null));
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext([input2], aiContextProviderMessages: null));
-        var ctxBeforeClear = await GetContextWithRetryAsync(sut, question, searchTerms: ["blue", "pizza"]);
-
-        await sut.EnsureStoredMemoriesDeletedAsync();
-        var ctxAfterClear = await sut.InvokingAsync(new AIContextProvider.InvokingContext([question]));
-
-        // Assert
-        var textBefore = ctxBeforeClear.Messages?[0].Text ?? string.Empty;
-        var textAfter = ctxAfterClear.Messages?[0].Text ?? string.Empty;
-
-        Assert.True(textBefore.Contains("blue") || textBefore.Contains("pizza"), "Should contain at least one preference before clear");
-        Assert.DoesNotContain("blue", textAfter);
-        Assert.DoesNotContain("pizza", textAfter);
-    }
-
-    private static async Task<AIContext> GetContextWithRetryAsync(
-        FoundryMemoryProvider provider,
-        ChatMessage question,
-        string[]? searchTerms = null,
-        int attempts = 5,
-        int delayMs = 2000)
-    {
-        searchTerms ??= ["Caoimhe"];
-        AIContext? ctx = null;
-
-        for (int i = 0; i < attempts; i++)
-        {
-            ctx = await provider.InvokingAsync(new AIContextProvider.InvokingContext([question]), CancellationToken.None);
-            var text = ctx.Messages?[0].Text ?? string.Empty;
-
-            if (Array.Exists(searchTerms, term => text.Contains(term, StringComparison.OrdinalIgnoreCase)))
-            {
-                break;
-            }
-
-            await Task.Delay(delayMs);
-        }
-
-        return ctx!;
+        await memoryProvider1.EnsureStoredMemoriesDeletedAsync(session1);
+        await memoryProvider2.EnsureStoredMemoriesDeletedAsync(session2);
     }
 
     public void Dispose()

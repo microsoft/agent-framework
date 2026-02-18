@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.FoundryMemory\Microsoft.Agents.AI.FoundryMemory.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.AzureAI\Microsoft.Agents.AI.AzureAI.csproj" />
   </ItemGroup>
 
   <ItemGroup>

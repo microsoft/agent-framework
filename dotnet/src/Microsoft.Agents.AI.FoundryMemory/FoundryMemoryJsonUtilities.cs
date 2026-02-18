@@ -32,5 +32,5 @@ internal static class FoundryMemoryJsonUtilities
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     WriteIndented = false)]
 [JsonSerializable(typeof(FoundryMemoryProviderScope))]
-[JsonSerializable(typeof(FoundryMemoryProvider.FoundryMemoryState))]
+[JsonSerializable(typeof(FoundryMemoryProvider.State))]
 internal partial class FoundryMemoryJsonContext : JsonSerializerContext;

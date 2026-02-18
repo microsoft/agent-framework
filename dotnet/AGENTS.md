@@ -6,17 +6,19 @@ Instructions for AI coding agents working in the .NET codebase.
 
 ```bash
 # From dotnet/ directory
-dotnet build              # Build all projects
-dotnet test               # Run all tests
+dotnet build --tl:off              # Build all projects
+dotnet test --tl:off               # Run all tests
 dotnet format             # Auto-fix formatting
 
 # Build/test a specific project (preferred for isolated changes)
-dotnet build src/Microsoft.Agents.AI.<Package>
-dotnet test tests/Microsoft.Agents.AI.<Package>.UnitTests
+dotnet build src/Microsoft.Agents.AI.<Package> --tl:off
+dotnet test tests/Microsoft.Agents.AI.<Package>.UnitTests --tl:off
 
 # Run a single test
-dotnet test --filter "FullyQualifiedName~TestClassName.TestMethodName"
+dotnet test --filter "FullyQualifiedName~TestClassName.TestMethodName" --tl:off
 ```
+
+**Note**: Always use `--tl:off` when running `dotnet build`, `dotnet test`, or `dotnet restore` to disable the terminal logger, which can cause issues with non-interactive environments. This flag is not needed for `dotnet format`.
 
 **Note**: Changes to core packages (`Microsoft.Agents.AI`, `Microsoft.Agents.AI.Abstractions`) affect dependent projects - run checks across the entire solution. For isolated changes, build/test only the affected project to save time.
 
@@ -42,6 +44,7 @@ The framework integrates with `Microsoft.Extensions.AI` and `Microsoft.Extension
 
 ## Key Conventions
 
+- **Encoding**: All new files must be saved with UTF-8 encoding with BOM (Byte Order Mark). This is required for `dotnet format` to work correctly.
 - **Copyright header**: `// Copyright (c) Microsoft. All rights reserved.` at top of all `.cs` files
 - **XML docs**: Required for all public methods and classes
 - **Async**: Use `Async` suffix for methods returning `Task`/`ValueTask`

@@ -23,23 +23,25 @@ AzureCliCredential credential = new();
 AIProjectClient projectClient = new(new Uri(foundryEndpoint), credential);
 
 // Get the ChatClient from the AIProjectClient's OpenAI property using the deployment name.
+// The stateInitializer can be used to customize the Foundry Memory scope per session and it will be called each time a session
+// is encountered by the FoundryMemoryProvider that does not already have state stored on the session.
+// If each session should have its own scope, you can create a new id per session via the stateInitializer, e.g.:
+// new FoundryMemoryProvider(projectClient, stateInitializer: _ => new(new FoundryMemoryProviderScope() { Scope = Guid.NewGuid().ToString() }), ...)
+// In our case we are storing memories scoped by user so that memories are retained across sessions.
+FoundryMemoryProvider memoryProvider = new(
+    projectClient,
+    stateInitializer: _ => new(new FoundryMemoryProviderScope() { Scope = "sample-user-123" }),
+    new FoundryMemoryProviderOptions() { MemoryStoreName = memoryStoreName });
+
 AIAgent agent = await projectClient.CreateAIAgentAsync(deploymentName,
     options: new ChatClientAgentOptions()
     {
         Name = "TravelAssistantWithFoundryMemory",
         ChatOptions = new() { Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details." },
-        AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(ctx.SerializedState.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
-            // If each session should have its own scope, you can create a new id per session here:
-            // ? new FoundryMemoryProvider(projectClient, new FoundryMemoryProviderScope() { Scope = Guid.NewGuid().ToString() }, new FoundryMemoryProviderOptions() { MemoryStoreName = memoryStoreName })
-            // In this case we are storing memories scoped by user so that memories are retained across sessions.
-            ? new FoundryMemoryProvider(projectClient, new FoundryMemoryProviderScope() { Scope = "sample-user-123" }, new FoundryMemoryProviderOptions() { MemoryStoreName = memoryStoreName })
-            // For cases where we are restoring from serialized state:
-            : new FoundryMemoryProvider(projectClient, ctx.SerializedState, ctx.JsonSerializerOptions, new FoundryMemoryProviderOptions() { MemoryStoreName = memoryStoreName }))
+        AIContextProviders = [memoryProvider]
     });
 
 AgentSession session = await agent.CreateSessionAsync();
-
-FoundryMemoryProvider memoryProvider = session.GetService<FoundryMemoryProvider>()!;
 
 Console.WriteLine("\n>> Setting up Foundry Memory Store\n");
 
@@ -47,7 +49,7 @@ Console.WriteLine("\n>> Setting up Foundry Memory Store\n");
 await memoryProvider.EnsureMemoryStoreCreatedAsync(deploymentName, embeddingModelName, "Sample memory store for travel assistant");
 
 // Clear any existing memories for this scope to demonstrate fresh behavior.
-await memoryProvider.EnsureStoredMemoriesDeletedAsync();
+await memoryProvider.EnsureStoredMemoriesDeletedAsync(session);
 
 Console.WriteLine(await agent.RunAsync("Hi there! My name is Taylor and I'm planning a hiking trip to Patagonia in November.", session));
 Console.WriteLine(await agent.RunAsync("I'm travelling with my sister and we love finding scenic viewpoints.", session));
@@ -62,7 +64,7 @@ Console.WriteLine("Updates completed.\n");
 Console.WriteLine(await agent.RunAsync("What do you already know about my upcoming trip?", session));
 
 Console.WriteLine("\n>> Serialize and deserialize the session to demonstrate persisted state\n");
-JsonElement serializedSession = session.Serialize();
+JsonElement serializedSession = await agent.SerializeSessionAsync(session);
 AgentSession restoredSession = await agent.DeserializeSessionAsync(serializedSession);
 Console.WriteLine(await agent.RunAsync("Can you recap the personal details you remember?", restoredSession));
 

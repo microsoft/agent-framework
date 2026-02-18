@@ -9,4 +9,5 @@ internal sealed class FoundryMemoryConfiguration
 {
     public string Endpoint { get; set; }
     public string MemoryStoreName { get; set; }
+    public string? DeploymentName { get; set; }
 }
