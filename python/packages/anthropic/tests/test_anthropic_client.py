@@ -240,6 +240,101 @@ def test_prepare_message_for_anthropic_text_reasoning_with_signature(mock_anthro
     assert result["content"][0]["signature"] == "sig_abc123"
 
 
+def test_prepare_message_for_anthropic_mcp_server_tool_call(mock_anthropic_client: MagicMock) -> None:
+    """Test converting MCP server tool call message to Anthropic format."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_mcp_server_tool_call(
+                call_id="mcp_call_123",
+                tool_name="search_docs",
+                server_name="microsoft-learn",
+                arguments={"query": "Azure Functions"},
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["role"] == "assistant"
+    assert len(result["content"]) == 1
+    assert result["content"][0]["type"] == "mcp_tool_use"
+    assert result["content"][0]["id"] == "mcp_call_123"
+    assert result["content"][0]["name"] == "search_docs"
+    assert result["content"][0]["server_name"] == "microsoft-learn"
+    assert result["content"][0]["input"] == {"query": "Azure Functions"}
+
+
+def test_prepare_message_for_anthropic_mcp_server_tool_call_no_server_name(mock_anthropic_client: MagicMock) -> None:
+    """Test converting MCP server tool call with no server name defaults to empty string."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_mcp_server_tool_call(
+                call_id="mcp_call_456",
+                tool_name="list_files",
+                arguments=None,
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["role"] == "assistant"
+    assert len(result["content"]) == 1
+    assert result["content"][0]["type"] == "mcp_tool_use"
+    assert result["content"][0]["id"] == "mcp_call_456"
+    assert result["content"][0]["name"] == "list_files"
+    assert result["content"][0]["server_name"] == ""
+    assert result["content"][0]["input"] == {}
+
+
+def test_prepare_message_for_anthropic_mcp_server_tool_result(mock_anthropic_client: MagicMock) -> None:
+    """Test converting MCP server tool result message to Anthropic format."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_mcp_server_tool_result(
+                call_id="mcp_call_123",
+                output="Found 3 results for Azure Functions.",
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["role"] == "user"
+    assert len(result["content"]) == 1
+    assert result["content"][0]["type"] == "mcp_tool_result"
+    assert result["content"][0]["tool_use_id"] == "mcp_call_123"
+    assert result["content"][0]["content"] == "Found 3 results for Azure Functions."
+
+
+def test_prepare_message_for_anthropic_mcp_server_tool_result_none_output(mock_anthropic_client: MagicMock) -> None:
+    """Test converting MCP server tool result with None output defaults to empty string."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_mcp_server_tool_result(
+                call_id="mcp_call_789",
+                output=None,
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["role"] == "user"
+    assert len(result["content"]) == 1
+    assert result["content"][0]["type"] == "mcp_tool_result"
+    assert result["content"][0]["tool_use_id"] == "mcp_call_789"
+    assert result["content"][0]["content"] == ""
+
+
 def test_prepare_messages_for_anthropic_with_system(mock_anthropic_client: MagicMock) -> None:
     """Test converting messages list with system message."""
     client = create_test_anthropic_client(mock_anthropic_client)
