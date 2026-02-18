@@ -406,9 +406,16 @@ internal static class ChatResponseUpdateAGUIExtensions
                     }
                     else if (content is FunctionResultContent functionResultContent)
                     {
+                        // AG-UI requires each TOOL_CALL_RESULT event to carry a unique messageId,
+                        // but multiple FunctionResultContent items within a single ChatResponseUpdate
+                        // share the same MessageId (per M.E.AI semantics, which groups updates into
+                        // logical messages). We compose a deterministic unique id by combining the
+                        // original MessageId with the CallId, preserving traceability back to the
+                        // source ChatResponseUpdate while satisfying the AG-UI uniqueness constraint.
+                        // See: https://github.com/microsoft/agent-framework/issues/3962
                         yield return new ToolCallResultEvent
                         {
-                            MessageId = chatResponse.MessageId,
+                            MessageId = $"{chatResponse.MessageId!}_{functionResultContent.CallId}",
                             ToolCallId = functionResultContent.CallId,
                             Content = SerializeResultContent(functionResultContent, jsonSerializerOptions) ?? "",
                             Role = AGUIRoles.Tool
