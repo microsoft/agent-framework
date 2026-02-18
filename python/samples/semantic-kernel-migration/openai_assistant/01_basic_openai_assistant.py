@@ -46,11 +46,12 @@ async def run_agent_framework() -> None:
         instructions="Answer questions in one concise paragraph.",
         model=ASSISTANT_MODEL,
     ) as assistant_agent:
-        reply = await assistant_agent.run("What is the capital of Denmark?")
+        session = assistant_agent.create_session()
+        reply = await assistant_agent.run("What is the capital of Denmark?", session=session)
         print("[AF]", reply.text)
         follow_up = await assistant_agent.run(
             "How many residents live there?",
-            session=assistant_agent.create_session(),
+            session=session,
         )
         print("[AF][follow-up]", follow_up.text)
 

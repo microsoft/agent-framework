@@ -670,6 +670,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         tool_choice = options.get("tool_choice")
         tools = options.get("tools")
         response_format = options.get("response_format")
+        tool_resources = options.get("tool_resources")
 
         if max_tokens is not None:
             run_options["max_completion_tokens"] = max_tokens
@@ -682,6 +683,9 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
         if allow_multiple_tool_calls is not None:
             run_options["parallel_tool_calls"] = allow_multiple_tool_calls
+
+        if tool_resources is not None:
+            run_options["tool_resources"] = tool_resources
 
         tool_mode = validate_tool_mode(tool_choice)
         tool_definitions: list[MutableMapping[str, Any]] = []

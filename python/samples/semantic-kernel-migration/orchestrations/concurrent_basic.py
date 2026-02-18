@@ -32,7 +32,7 @@ PROMPT = "Explain the concept of temperature from multiple scientific perspectiv
 ######################################################################
 
 
-def build_semantic_kernel_agents() -> list[Agent]:
+def build_semantic_kernel_agents() -> list[ChatCompletionAgent]:
     credential = AzureCliCredential()
 
     physics_agent = ChatCompletionAgent(
