@@ -154,9 +154,7 @@ def test_init_validation_fail() -> None:
 def test_init_missing_model_id(openai_unit_test_env: dict[str, str]) -> None:
     """Test OpenAIAssistantsClient initialization with missing model ID."""
     with pytest.raises(ServiceInitializationError):
-        OpenAIAssistantsClient(
-            api_key=openai_unit_test_env.get("OPENAI_API_KEY", "test-key")
-        )
+        OpenAIAssistantsClient(api_key=openai_unit_test_env.get("OPENAI_API_KEY", "test-key"))
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)

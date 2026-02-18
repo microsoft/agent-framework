@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import logging
 import os
 from typing import Annotated, Any
 from unittest.mock import MagicMock
@@ -29,6 +30,8 @@ skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
     else "Integration tests are disabled.",
 )
+
+logger = logging.getLogger(__name__)
 
 
 class OutputStruct(BaseModel):
@@ -111,8 +114,7 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]], indirect=True)
 def test_init_with_empty_model_id(azure_openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
-        AzureOpenAIResponsesClient(
-        )
+        AzureOpenAIResponsesClient()
 
 
 def test_init_with_project_client(azure_openai_unit_test_env: dict[str, str]) -> None:

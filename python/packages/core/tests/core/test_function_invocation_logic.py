@@ -2700,3 +2700,74 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
     assert conversation_ids_received[1] == "stream_conv_after_first", (
         "streaming: conversation_id should be updated in options after receiving new conversation_id from API"
     )
+
+
+async def test_streaming_function_calling_response_includes_reasoning_and_tool_results(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Test that the finalized streaming response includes reasoning, function_call,
+    function_result, and final text in its messages.
+
+    This is critical for workflow chaining: when one agent's response is passed as
+    input to the next agent, the conversation must include all items (reasoning,
+    function_call, function_call_output) so the API can validate the history.
+    """
+
+    @tool(name="search", approval_mode="never_require")
+    def search_func(query: str) -> str:
+        return f"Found results for {query}"
+
+    chat_client_base.streaming_responses = [
+        [
+            # First response: reasoning + function_call
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_text_reasoning(
+                        text="Let me search for that",
+                        additional_properties={"reasoning_id": "rs_test123", "status": "completed"},
+                    )
+                ],
+                role="assistant",
+            ),
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_1",
+                        name="search",
+                        arguments='{"query": "test"}',
+                        additional_properties={"fc_id": "fc_test456"},
+                    )
+                ],
+                role="assistant",
+            ),
+        ],
+        [
+            # Second response: final text
+            ChatResponseUpdate(
+                contents=[Content.from_text(text="Here are the results")],
+                role="assistant",
+            ),
+        ],
+    ]
+
+    stream = chat_client_base.get_response(
+        "search for test", options={"tool_choice": "auto", "tools": [search_func]}, stream=True
+    )
+
+    updates = []
+    async for update in stream:
+        updates.append(update)
+    response = await stream.get_final_response()
+
+    # Verify all content types are in the response messages
+    all_content_types = [c.type for msg in response.messages for c in msg.contents]
+    assert "text_reasoning" in all_content_types, "Reasoning must be preserved in response messages"
+    assert "function_call" in all_content_types, "Function call must be preserved in response messages"
+    assert "function_result" in all_content_types, "Function result must be in response messages for chaining"
+    assert "text" in all_content_types, "Final text must be in response messages"
+
+    # Verify reasoning has the reasoning_id preserved
+    reasoning_contents = [c for msg in response.messages for c in msg.contents if c.type == "text_reasoning"]
+    assert len(reasoning_contents) >= 1
+    assert reasoning_contents[0].additional_properties is not None
+    assert reasoning_contents[0].additional_properties.get("reasoning_id") == "rs_test123"
