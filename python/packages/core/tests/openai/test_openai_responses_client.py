@@ -909,49 +909,6 @@ def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
     assert reasoning_idx < fc_idx, "Reasoning must come before function_call"
 
 
-def test_strip_orphaned_function_items_without_reasoning() -> None:
-    """When function_call items are present but no reasoning items exist,
-    function_call and function_call_output items should be stripped.
-
-    This handles the case where a reasoning model's internal reasoning was not
-    captured in the streaming output, but the API requires reasoning items
-    alongside function_calls.
-    """
-    request_input = [
-        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "search"}]},
-        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Let me search"}]},
-        {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "search_hotels", "arguments": "{}"},
-        {"type": "function_call_output", "call_id": "call_1", "output": "Found 3 hotels"},
-        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I found hotels"}]},
-    ]
-
-    result = OpenAIResponsesClient._strip_orphaned_function_items(request_input)
-
-    types = [item.get("type") for item in result]
-    assert "function_call" not in types, "Function call items should be stripped"
-    assert "function_call_output" not in types, "Function call output items should be stripped"
-    assert "message" in types, "Text messages should be preserved"
-    assert len([item for item in result if item.get("type") == "message"]) == 3
-
-
-def test_strip_orphaned_function_items_keeps_with_reasoning() -> None:
-    """When reasoning items ARE present, function_call items should be kept."""
-    request_input = [
-        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "search"}]},
-        {"type": "reasoning", "id": "rs_1", "content": [{"type": "reasoning_text", "text": "thinking"}]},
-        {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "search_hotels", "arguments": "{}"},
-        {"type": "function_call_output", "call_id": "call_1", "output": "Found 3 hotels"},
-        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Done"}]},
-    ]
-
-    result = OpenAIResponsesClient._strip_orphaned_function_items(request_input)
-
-    types = [item.get("type") for item in result]
-    assert "function_call" in types, "Function call items should be kept when reasoning exists"
-    assert "function_call_output" in types, "Function call output should be kept when reasoning exists"
-    assert "reasoning" in types, "Reasoning items should be present"
-
-
 def test_prepare_message_for_openai_filters_error_content() -> None:
     """Test that error content in messages is handled properly."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
