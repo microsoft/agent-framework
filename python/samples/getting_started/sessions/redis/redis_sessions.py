@@ -1,17 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Redis Context Provider: Thread scoping examples
+"""Redis Context Provider: Memory scoping examples
 
 This sample demonstrates how conversational memory can be scoped when using the
 Redis context provider. It covers three scenarios:
 
-1) Global thread scope
-   - Provide a fixed thread_id to share memories across operations/threads.
+1) Cross-session memory
+   - Memories are shared across all sessions for a given app/agent/user.
+   - New sessions can still retrieve memories stored in earlier sessions.
 
-2) Per-operation thread scope
-   - Enable scope_to_per_operation_thread_id to bind the provider to a single
-     thread for the lifetime of that provider instance. Use the same thread
-     object for reads/writes with that provider.
+2) Session-specific memory
+   - Demonstrates storing and retrieving memories within a single session,
+     with memories also accessible from new sessions due to cross-session retrieval.
 
 3) Multiple agents with isolated memory
    - Use different agent_id values to keep memories separated for different
@@ -23,7 +23,7 @@ Requirements:
   - Optionally an OpenAI API key for the chat client in this demo
 
 Run:
-  python redis_threads.py
+  python redis_sessions.py
 """
 
 import asyncio
@@ -38,9 +38,9 @@ from redisvl.utils.vectorize import OpenAITextVectorizer
 # Recommend default for OPENAI_CHAT_MODEL_ID is gpt-4o-mini
 
 
-async def example_global_thread_scope() -> None:
-    """Example 1: Global thread_id scope (memories shared across all operations)."""
-    print("1. Global Thread Scope Example:")
+async def example_cross_session_memory() -> None:
+    """Example 1: Cross-session memory (memories shared across all sessions for a user)."""
+    print("1. Cross-Session Memory Example:")
     print("-" * 40)
 
     client = OpenAIChatClient(
@@ -57,7 +57,7 @@ async def example_global_thread_scope() -> None:
     )
 
     agent = client.as_agent(
-        name="GlobalMemoryAssistant",
+        name="MemoryAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "
             "Before answering, always check for stored context containing information"
@@ -66,13 +66,14 @@ async def example_global_thread_scope() -> None:
         context_providers=[provider],
     )
 
-    # Store a preference in the global scope
+    # Store a preference
     query = "Remember that I prefer technical responses with code examples when discussing programming."
     print(f"User: {query}")
     result = await agent.run(query)
     print(f"Agent: {result}\n")
 
-    # Create a new session - memories should still be accessible due to global scope
+    # Create a new session - memories should still be accessible because
+    # RedisContextProvider retrieves across all sessions for the same app/agent/user
     new_session = agent.create_session()
     query = "What technical responses do I prefer?"
     print(f"User (new session): {query}")
@@ -83,13 +84,14 @@ async def example_global_thread_scope() -> None:
     await provider.redis_index.delete()
 
 
-async def example_per_operation_thread_scope() -> None:
-    """Example 2: Per-operation thread scope (memories isolated per session).
+async def example_session_memory_with_vectorizer() -> None:
+    """Example 2: Session memory with a custom vectorizer for hybrid search.
 
-    Note: When scope_to_per_operation_thread_id=True, the provider is bound to a single session
-    throughout its lifetime. Use the same session object for all operations with that provider.
+    Demonstrates storing and retrieving memories within a session using
+    a custom OpenAI vectorizer for hybrid (text + vector) search. Memories
+    are also accessible from new sessions due to cross-session retrieval.
     """
-    print("2. Per-Operation Thread Scope Example:")
+    print("2. Session Memory with Vectorizer Example:")
     print("-" * 40)
 
     client = OpenAIChatClient(
@@ -116,8 +118,8 @@ async def example_per_operation_thread_scope() -> None:
     )
 
     agent = client.as_agent(
-        name="ScopedMemoryAssistant",
-        instructions="You are an assistant with thread-scoped memory.",
+        name="VectorizerMemoryAssistant",
+        instructions="You are an assistant with hybrid search memory.",
         context_providers=[provider],
     )
 
@@ -153,8 +155,8 @@ async def example_per_operation_thread_scope() -> None:
 
 
 async def example_multiple_agents() -> None:
-    """Example 3: Multiple agents with different thread configurations (isolated via agent_id) but within 1 index."""
-    print("3. Multiple Agents with Different Thread Configurations:")
+    """Example 3: Multiple agents with isolated memory (isolated via agent_id) but within 1 index."""
+    print("3. Multiple Agents with Isolated Memory:")
     print("-" * 40)
 
     client = OpenAIChatClient(
@@ -231,9 +233,9 @@ async def example_multiple_agents() -> None:
 
 
 async def main() -> None:
-    print("=== Redis Thread Scoping Examples ===\n")
-    await example_global_thread_scope()
-    await example_per_operation_thread_scope()
+    print("=== Redis Memory Scoping Examples ===\n")
+    await example_cross_session_memory()
+    await example_session_memory_with_vectorizer()
     await example_multiple_agents()
 
 

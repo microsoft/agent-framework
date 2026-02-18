@@ -112,8 +112,7 @@ async def main() -> None:
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
     # The provider manages persistence and retrieval. application_id/agent_id/user_id
-    # scope data for multi-tenant separation; thread_id (set later) narrows to a
-    # specific conversation.
+    # scope data for multi-tenant separation.
     provider = RedisContextProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_basics",

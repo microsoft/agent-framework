@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import uuid
 
 from agent_framework import tool
 from agent_framework.azure import AzureAIAgentClient
@@ -25,7 +24,7 @@ async def example_cross_session_memory() -> None:
     print("1. Cross-Session Memory Example:")
     print("-" * 40)
 
-    user_id = str(uuid.uuid4())
+    user_id = "user123"
 
     async with (
         AzureCliCredential() as credential,
