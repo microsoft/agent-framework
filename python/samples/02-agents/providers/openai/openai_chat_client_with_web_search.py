@@ -18,7 +18,12 @@ async def main() -> None:
 
     # Create web search tool with location context
     web_search_tool = client.get_web_search_tool(
-        user_location={"city": "Seattle", "country": "US"},
+        web_search_options={
+            "user_location": {
+                "type": "approximate",
+                "approximate": {"city": "Seattle", "country": "US"},
+            },
+        },
     )
 
     agent = Agent(
