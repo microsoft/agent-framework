@@ -37,7 +37,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
     protected override bool EmitResultEvent => false;
     protected override bool IsDiscreteAction => false;
 
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<object?> ExecuteActionAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         await this.InvokeAgentAsync(context, this.GetInputMessages(), cancellationToken).ConfigureAwait(false);
 

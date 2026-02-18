@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 internal sealed class AddConversationMessageExecutor(AddConversationMessage model, ResponseAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<AddConversationMessage>(model, state)
 {
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<object?> ExecuteActionAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(this.Model.Message);
         Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");

@@ -35,7 +35,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
 
     protected override bool IsDiscreteAction => false;
 
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<object?> ExecuteActionAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(this.Model.Items, $"{nameof(this.Model)}.{nameof(this.Model.Items)}");
 

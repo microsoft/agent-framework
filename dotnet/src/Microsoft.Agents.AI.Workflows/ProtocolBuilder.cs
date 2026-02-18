@@ -9,12 +9,12 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
 
-internal static class MethodAttributeExtensions
+internal static class MemberAttributeExtensions
 {
-    public static (IEnumerable<Type> Sent, IEnumerable<Type> Yielded) GetAttributeTypes(this MethodInfo method)
+    public static (IEnumerable<Type> Sent, IEnumerable<Type> Yielded) GetAttributeTypes(this MemberInfo memberInfo)
     {
-        IEnumerable<SendsMessageAttribute> sendsMessageAttrs = method.GetCustomAttributes<SendsMessageAttribute>();
-        IEnumerable<YieldsOutputAttribute> yieldsOutputAttrs = method.GetCustomAttributes<YieldsOutputAttribute>();
+        IEnumerable<SendsMessageAttribute> sendsMessageAttrs = memberInfo.GetCustomAttributes<SendsMessageAttribute>();
+        IEnumerable<YieldsOutputAttribute> yieldsOutputAttrs = memberInfo.GetCustomAttributes<YieldsOutputAttribute>();
         // TODO: Should we include [MessageHandler]?
 
         return (Sent: sendsMessageAttrs.Select(attr => attr.Type), Yielded: yieldsOutputAttrs.Select(attr => attr.Type));
@@ -34,19 +34,47 @@ public sealed class ProtocolBuilder
         this.RouteBuilder = new RouteBuilder(delayRequestContext);
     }
 
-    internal ProtocolBuilder AddHandlerAttributeTypes(MethodInfo method, bool registerSentTypes = true, bool registerYieldTypes = true)
+    /// <summary>
+    /// Adds types registered in <see cref="SendsMessageAttribute"/> or <see cref="YieldsOutputAttribute"/>
+    /// on the target <see cref="Delegate"/>. This can be used to implement delegate-based request handling akin
+    /// to what is provided by <see cref="Executor{TInput}"/> or <see cref="Executor{TIn,TOut}"/>.
+    /// </summary>
+    /// <param name="delegate">The delegate to be registered.</param>
+    /// <returns></returns>
+    public ProtocolBuilder AddDelegateAttributeTypes(Delegate @delegate)
+        => this.AddMethodAttributeTypes(Throw.IfNull(@delegate).Method);
+
+    /// <summary>
+    /// Adds types registered in <see cref="SendsMessageAttribute"/> or <see cref="YieldsOutputAttribute"/>
+    /// on the target <see cref="MethodInfo"/>. This can be used to implement delegate-based request handling akin
+    /// to what is provided by <see cref="Executor{TInput}"/> or <see cref="Executor{TIn,TOut}"/>.
+    /// </summary>
+    /// <param name="method">The method to be registered.</param>
+    /// <returns></returns>
+    public ProtocolBuilder AddMethodAttributeTypes(MethodInfo method)
     {
         (IEnumerable<Type> sentTypes, IEnumerable<Type> yieldTypes) = method.GetAttributeTypes();
 
-        if (registerSentTypes)
-        {
-            this._sendTypes.UnionWith(sentTypes);
-        }
+        this._sendTypes.UnionWith(sentTypes);
+        this._yieldTypes.UnionWith(yieldTypes);
 
-        if (registerYieldTypes)
-        {
-            this._yieldTypes.UnionWith(yieldTypes);
-        }
+        return method.DeclaringType != null ? this.AddClassAttributeTypes(method.DeclaringType)
+                                            : this;
+    }
+
+    /// <summary>
+    /// Adds types registered in <see cref="SendsMessageAttribute"/> or <see cref="YieldsOutputAttribute"/>
+    /// on the target <see cref="Type"/>. This can be used to implement delegate-based request handling akin
+    /// to what is provided by <see cref="Executor{TInput}"/> or <see cref="Executor{TIn,TOut}"/>.
+    /// </summary>
+    /// <param name="executorType">The type to be registered.</param>
+    /// <returns></returns>
+    public ProtocolBuilder AddClassAttributeTypes(Type executorType)
+    {
+        (IEnumerable<Type> sentTypes, IEnumerable<Type> yieldTypes) = executorType.GetAttributeTypes();
+
+        this._sendTypes.UnionWith(sentTypes);
+        this._yieldTypes.UnionWith(yieldTypes);
 
         return this;
     }

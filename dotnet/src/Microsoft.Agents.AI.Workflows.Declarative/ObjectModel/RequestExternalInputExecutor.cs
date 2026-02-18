@@ -12,6 +12,8 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
+[SendsMessage(typeof(ExternalInputRequest))]
+[SendsMessage(typeof(ExternalInputResponse))]
 internal sealed class RequestExternalInputExecutor(RequestExternalInput model, ResponseAgentProvider agentProvider, WorkflowFormulaState state)
     : DeclarativeActionExecutor<RequestExternalInput>(model, state)
 {
@@ -24,7 +26,7 @@ internal sealed class RequestExternalInputExecutor(RequestExternalInput model, R
     protected override bool IsDiscreteAction => false;
     protected override bool EmitResultEvent => false;
 
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<object?> ExecuteActionAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         ExternalInputRequest inputRequest = new(new AgentResponse());
 

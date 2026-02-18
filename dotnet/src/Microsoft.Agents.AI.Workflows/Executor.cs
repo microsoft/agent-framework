@@ -353,7 +353,8 @@ public abstract class Executor<TInput>(string id, ExecutorOptions? options = nul
         Func<TInput, IWorkflowContext, CancellationToken, ValueTask> handlerDelegate = this.HandleAsync;
 
         return protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler(handlerDelegate))
-                              .AddHandlerAttributeTypes(handlerDelegate.Method);
+                              .AddMethodAttributeTypes(handlerDelegate.Method)
+                              .AddClassAttributeTypes(this.GetType());
     }
 
     /// <inheritdoc/>
@@ -378,7 +379,7 @@ public abstract class Executor<TInput, TOutput>(string id, ExecutorOptions? opti
         Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> handlerDelegate = this.HandleAsync;
 
         return protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler(handlerDelegate))
-                              .AddHandlerAttributeTypes(handlerDelegate.Method);
+                              .AddMethodAttributeTypes(handlerDelegate.Method);
     }
 
     /// <inheritdoc/>

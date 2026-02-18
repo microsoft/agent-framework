@@ -49,7 +49,7 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
         return string.Equals(Steps.Else(this.Model), executorMessage.Result as string, StringComparison.Ordinal);
     }
 
-    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<object?> ExecuteActionAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         for (int index = 0; index < this.Model.Conditions.Length; ++index)
         {

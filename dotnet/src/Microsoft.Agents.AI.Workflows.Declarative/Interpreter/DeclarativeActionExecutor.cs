@@ -39,6 +39,14 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
         this.Model = model;
     }
 
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+    {
+        return base.ConfigureProtocol(protocolBuilder)
+                   // We chain to HandleAsync, so let the protocol know we have additional Send/Yield types that may not be
+                   // available on the HandleAsync override.
+                   .AddDelegateAttributeTypes(this.ExecuteActionAsync);
+    }
+
     public DialogAction Model { get; }
 
     public string ParentId { get => field ??= this.Model.GetParentId() ?? WorkflowActionVisitor.Steps.Root(); }
@@ -73,7 +81,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 
         try
         {
-            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._state), cancellationToken).ConfigureAwait(false);
+            object? result = await this.ExecuteActionAsync(new DeclarativeWorkflowContext(context, this._state), cancellationToken).ConfigureAwait(false);
             Debug.WriteLine($"RESULT #{this.Id} - {result ?? "(null)"}");
 
             if (this.EmitResultEvent)
@@ -100,7 +108,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
         }
     }
 
-    protected abstract ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
+    protected abstract ValueTask<object?> ExecuteActionAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Restore the state of the executor from a checkpoint.
