@@ -21,6 +21,8 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+
 @tool(approval_mode="never_require")
 # Tool functions for the agent
 @tool(approval_mode="never_require")

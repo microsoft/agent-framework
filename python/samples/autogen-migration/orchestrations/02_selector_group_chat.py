@@ -21,9 +21,10 @@ from agent_framework import Message
 from dotenv import load_dotenv
 
 
-
 # Load environment variables from .env file
 load_dotenv()
+
+
 async def run_autogen() -> None:
     """AutoGen's SelectorGroupChat with LLM-based speaker selection."""
     from autogen_agentchat.agents import AssistantAgent

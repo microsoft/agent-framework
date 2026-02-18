@@ -26,6 +26,8 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+
 def _create_agent() -> Any:
     """Create a hosted agent backed by Azure OpenAI."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(

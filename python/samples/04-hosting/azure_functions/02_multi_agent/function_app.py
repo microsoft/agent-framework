@@ -44,9 +44,7 @@ def get_weather(location: str) -> dict[str, Any]:
 def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str, Any]:
     """Calculate tip amount and total bill."""
 
-    logger.info(
-        f"🔧 [TOOL CALLED] calculate_tip(bill_amount={bill_amount}, tip_percentage={tip_percentage})"
-    )
+    logger.info(f"🔧 [TOOL CALLED] calculate_tip(bill_amount={bill_amount}, tip_percentage={tip_percentage})")
     tip = bill_amount * (tip_percentage / 100)
     total = bill_amount + tip
     result = {

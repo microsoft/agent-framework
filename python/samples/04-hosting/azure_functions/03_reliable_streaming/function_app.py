@@ -221,9 +221,7 @@ async def stream(req: func.HttpRequest) -> func.HttpResponse:
         # Get optional cursor from query string
         cursor = req.params.get("cursor")
 
-        logger.info(
-            f"Resuming stream for conversation {conversation_id} from cursor: {cursor or '(beginning)'}"
-        )
+        logger.info(f"Resuming stream for conversation {conversation_id} from cursor: {cursor or '(beginning)'}")
 
         # Check Accept header to determine response format
         accept_header = req.headers.get("Accept", "")

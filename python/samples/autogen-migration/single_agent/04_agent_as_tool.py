@@ -19,9 +19,10 @@ import asyncio
 from dotenv import load_dotenv
 
 
-
 # Load environment variables from .env file
 load_dotenv()
+
+
 async def run_autogen() -> None:
     """AutoGen's AgentTool for hierarchical agents with streaming."""
     from autogen_agentchat.agents import AssistantAgent

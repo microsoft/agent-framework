@@ -7,9 +7,10 @@ from azure.identity import DefaultAzureCredential  # pyright: ignore[reportUnkno
 from dotenv import load_dotenv
 
 
-
 # Load environment variables from .env file
 load_dotenv()
+
+
 def main():
     # Create agents
     researcher = AzureOpenAIChatClient(credential=DefaultAzureCredential()).as_agent(

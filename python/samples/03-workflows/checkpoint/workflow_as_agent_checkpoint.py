@@ -37,9 +37,10 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 
-
 # Load environment variables from .env file
 load_dotenv()
+
+
 async def basic_checkpointing() -> None:
     """Demonstrate basic checkpoint storage with workflow-as-agent."""
     print("=" * 60)

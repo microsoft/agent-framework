@@ -50,12 +50,7 @@ async def step3(text: str, ctx: WorkflowContext[Never, str]) -> None:
 
 def build_workflow():
     """Build a simple 3-step sequential workflow (~6 seconds total)."""
-    return (
-        WorkflowBuilder(start_executor=step1)
-        .add_edge(step1, step2)
-        .add_edge(step2, step3)
-        .build()
-    )
+    return WorkflowBuilder(start_executor=step1).add_edge(step1, step2).add_edge(step2, step3).build()
 
 
 async def run_with_cancellation() -> None:

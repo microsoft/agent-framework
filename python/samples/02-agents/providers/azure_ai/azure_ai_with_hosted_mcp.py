@@ -39,7 +39,9 @@ async def handle_approvals_without_session(query: str, agent: "SupportsAgentRun"
     return result
 
 
-async def handle_approvals_with_session(query: str, agent: "SupportsAgentRun", session: "AgentSession") -> AgentResponse:
+async def handle_approvals_with_session(
+    query: str, agent: "SupportsAgentRun", session: "AgentSession"
+) -> AgentResponse:
     """Here we let the session deal with the previous responses, and we just rerun with the approval."""
 
     result = await agent.run(query, session=session)

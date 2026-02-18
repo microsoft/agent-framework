@@ -61,6 +61,8 @@ class UserNameProvider(BaseContextProvider):
             if isinstance(text, str) and "my name is" in text.lower():
                 # Simple extraction — production code should use structured extraction
                 self.user_name = text.lower().split("my name is")[-1].strip().split()[0].capitalize()
+
+
 # </context_provider>
 
 

@@ -19,9 +19,10 @@ from copilot.types import MCPServerConfig, PermissionRequest, PermissionRequestR
 from dotenv import load_dotenv
 
 
-
 # Load environment variables from .env file
 load_dotenv()
+
+
 def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
     """Permission handler that prompts the user for approval."""
     kind = request.get("kind", "unknown")

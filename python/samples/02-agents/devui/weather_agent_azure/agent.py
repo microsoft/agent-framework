@@ -67,9 +67,7 @@ async def security_filter_middleware(
                             role=Role.ASSISTANT,
                         )
 
-                    response = ChatResponse(
-                        messages=[Message(role=Role.ASSISTANT, text=error_message)]
-                    )
+                    response = ChatResponse(messages=[Message(role=Role.ASSISTANT, text=error_message)])
                     context.result = ResponseStream(blocked_stream(), finalizer=lambda _, r=response: r)
                 else:
                     # Non-streaming mode: return complete response

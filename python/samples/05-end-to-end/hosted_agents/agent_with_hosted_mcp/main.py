@@ -6,9 +6,10 @@ from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
 
-
 # Load environment variables from .env file
 load_dotenv()
+
+
 def main():
     # Create MCP tool configuration as dict
     mcp_tool = {

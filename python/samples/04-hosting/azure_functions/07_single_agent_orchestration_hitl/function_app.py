@@ -140,9 +140,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext) 
                 )
                 return {"content": content.content}
 
-            context.set_custom_status(
-                "Content rejected by human reviewer. Incorporating feedback and regenerating..."
-            )
+            context.set_custom_status("Content rejected by human reviewer. Incorporating feedback and regenerating...")
 
             # Check if we've exhausted attempts
             if attempt >= payload.max_review_attempts:
@@ -166,15 +164,11 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext) 
             context.set_custom_status(
                 f"Human approval timed out after {payload.approval_timeout_hours} hour(s). Treating as rejection."
             )
-            raise TimeoutError(
-                f"Human approval timed out after {payload.approval_timeout_hours} hour(s)."
-            )
+            raise TimeoutError(f"Human approval timed out after {payload.approval_timeout_hours} hour(s).")
 
     # If we exit the loop without returning, max attempts were exhausted
     context.set_custom_status("Max review attempts exhausted.")
-    raise RuntimeError(
-        f"Content could not be approved after {payload.max_review_attempts} iteration(s)."
-    )
+    raise RuntimeError(f"Content could not be approved after {payload.max_review_attempts} iteration(s).")
 
 
 # 5. HTTP endpoint that starts the human-in-the-loop orchestration.

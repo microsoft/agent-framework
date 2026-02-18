@@ -21,9 +21,7 @@ the session stores and retrieves them automatically.
 
 
 @tool(approval_mode="always_require")
-def add_to_calendar(
-    event_name: Annotated[str, "Name of the event"], date: Annotated[str, "Date of the event"]
-) -> str:
+def add_to_calendar(event_name: Annotated[str, "Name of the event"], date: Annotated[str, "Date of the event"]) -> str:
     """Add an event to the calendar (requires approval)."""
     print(f">>> EXECUTING: add_to_calendar(event_name='{event_name}', date='{date}')")
     return f"Added '{event_name}' to calendar on {date}"

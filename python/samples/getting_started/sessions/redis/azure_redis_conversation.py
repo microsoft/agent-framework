@@ -28,9 +28,10 @@ from redis.credentials import CredentialProvider
 from dotenv import load_dotenv
 
 
-
 # Load environment variables from .env file
 load_dotenv()
+
+
 class AzureCredentialProvider(CredentialProvider):
     """Credential provider for Azure AD authentication with Redis Enterprise."""
 

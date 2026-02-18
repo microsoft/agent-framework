@@ -16,9 +16,10 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 
-
 # Load environment variables from .env file
 load_dotenv()
+
+
 class ReleaseBrief(BaseModel):
     feature: str
     benefit: str

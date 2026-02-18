@@ -39,9 +39,10 @@ from dotenv import load_dotenv
 # Recommend default for OPENAI_CHAT_MODEL_ID is gpt-4o-mini
 
 
-
 # Load environment variables from .env file
 load_dotenv()
+
+
 async def example_cross_session_memory() -> None:
     """Example 1: Cross-session memory (memories shared across all sessions for a user)."""
     print("1. Cross-Session Memory Example:")

@@ -62,10 +62,7 @@ def single_agent_orchestration(context: DurableOrchestrationContext) -> Generato
         session=writer_session,
     )
 
-    improved_prompt = (
-        "Improve this further while keeping it under 25 words: "
-        f"{initial.text}"
-    )
+    improved_prompt = f"Improve this further while keeping it under 25 words: {initial.text}"
 
     refined = yield writer.run(
         messages=improved_prompt,

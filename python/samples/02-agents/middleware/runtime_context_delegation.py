@@ -289,9 +289,7 @@ async def pattern_2_hierarchical_with_kwargs_propagation() -> None:
         await call_next()
 
     @function_middleware
-    async def sms_kwargs_tracker(
-        context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
-    ) -> None:
+    async def sms_kwargs_tracker(context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
         sms_agent_kwargs.update(context.kwargs)
         print(f"[SMSAgent] Received runtime context: {list(context.kwargs.keys())}")
         await call_next()

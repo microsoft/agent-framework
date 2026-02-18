@@ -16,9 +16,10 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 
-
 # Load environment variables from .env file
 load_dotenv()
+
+
 class UserInfo(BaseModel):
     name: str | None = None
     age: int | None = None

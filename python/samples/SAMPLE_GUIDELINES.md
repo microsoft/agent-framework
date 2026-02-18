@@ -100,12 +100,12 @@ For the getting started samples and the concept samples, we should have the foll
 2. A summary should be included underneath the imports that explains the purpose of the sample and required components/concepts to understand the sample. For example:
 
     ```python
-    '''
+    """
     This sample shows how to create a chatbot. This sample uses the following two main components:
     - a ChatCompletionService: This component is responsible for generating responses to user messages.
     - a ChatHistory: This component is responsible for keeping track of the chat history.
     The chatbot in this sample is called Mosscap, who responds to user messages with long flowery prose.
-    '''
+    """
     ```
 
 3. Mark the code with comments to explain the purpose of each section of the code. For example:
@@ -123,13 +123,13 @@ For the getting started samples and the concept samples, we should have the foll
 4. At the end of the sample, include a section that explains the expected output of the sample. For example:
 
     ```python
-    '''
+    """
     Sample output:
     User:> Why is the sky blue in one sentence?
     Mosscap:> The sky is blue due to the scattering of sunlight by the molecules in the Earth's atmosphere,
     a phenomenon known as Rayleigh scattering, which causes shorter blue wavelengths to become more
     prominent in our visual perception.
-    '''
+    """
     ```
 
 For the demos, a README.md file must be included that explains the purpose of the demo and how to run it. The README.md file should include the following:

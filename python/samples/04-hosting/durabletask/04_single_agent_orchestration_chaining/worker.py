@@ -106,10 +106,7 @@ def single_agent_chaining_orchestration(
     logger.info(f"[Orchestration] Initial response: {initial_response.text}")
 
     # Second run: Refine the initial response on the same thread
-    improved_prompt = (
-        f"Improve this further while keeping it under 25 words: "
-        f"{initial_response.text}"
-    )
+    improved_prompt = f"Improve this further while keeping it under 25 words: {initial_response.text}"
 
     logger.info("[Orchestration] Second agent run: Refining the sentence: %s", improved_prompt)
     refined_response = yield writer.run(
@@ -124,9 +121,7 @@ def single_agent_chaining_orchestration(
 
 
 def get_worker(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
 
@@ -151,7 +146,7 @@ def get_worker(
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
 
@@ -176,7 +171,7 @@ def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
 
     # Register the orchestration function
     logger.debug("Registering orchestration function...")
-    worker.add_orchestrator(single_agent_chaining_orchestration)    # type: ignore
+    worker.add_orchestrator(single_agent_chaining_orchestration)  # type: ignore
     logger.debug(f"✓ Registered orchestration: {single_agent_chaining_orchestration.__name__}")
 
     return agent_worker

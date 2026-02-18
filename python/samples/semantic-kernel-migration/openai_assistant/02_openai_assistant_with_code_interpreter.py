@@ -14,9 +14,10 @@ import asyncio
 from dotenv import load_dotenv
 
 
-
 # Load environment variables from .env file
 load_dotenv()
+
+
 async def run_semantic_kernel() -> None:
     from semantic_kernel.agents import OpenAIAssistantAgent
     from semantic_kernel.connectors.ai.open_ai import OpenAISettings

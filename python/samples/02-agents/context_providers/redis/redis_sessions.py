@@ -40,9 +40,10 @@ from dotenv import load_dotenv
 # For chat responses, also set AZURE_AI_PROJECT_ENDPOINT and AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
 
 
-
 # Load environment variables from .env file
 load_dotenv()
+
+
 def create_chat_client() -> AzureOpenAIResponsesClient:
     """Create an Azure OpenAI Responses client using a Foundry project endpoint."""
     return AzureOpenAIResponsesClient(

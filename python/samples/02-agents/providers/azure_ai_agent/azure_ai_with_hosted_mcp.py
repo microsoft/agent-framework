@@ -19,7 +19,9 @@ servers, including user approval workflows for function call security.
 """
 
 
-async def handle_approvals_with_session(query: str, agent: "SupportsAgentRun", session: "AgentSession") -> AgentResponse:
+async def handle_approvals_with_session(
+    query: str, agent: "SupportsAgentRun", session: "AgentSession"
+) -> AgentResponse:
     """Here we let the session deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import Message
 

@@ -91,25 +91,25 @@ def create_evaluation(openai_client, model_deployment: str):
             "type": "azure_ai_evaluator",
             "name": "relevance",
             "evaluator_name": "builtin.relevance",
-            "initialization_parameters": {"deployment_name": model_deployment}
+            "initialization_parameters": {"deployment_name": model_deployment},
         },
         {
             "type": "azure_ai_evaluator",
             "name": "groundedness",
             "evaluator_name": "builtin.groundedness",
-            "initialization_parameters": {"deployment_name": model_deployment}
+            "initialization_parameters": {"deployment_name": model_deployment},
         },
         {
             "type": "azure_ai_evaluator",
             "name": "tool_call_accuracy",
             "evaluator_name": "builtin.tool_call_accuracy",
-            "initialization_parameters": {"deployment_name": model_deployment}
+            "initialization_parameters": {"deployment_name": model_deployment},
         },
         {
             "type": "azure_ai_evaluator",
             "name": "tool_output_utilization",
             "evaluator_name": "builtin.tool_output_utilization",
-            "initialization_parameters": {"deployment_name": model_deployment}
+            "initialization_parameters": {"deployment_name": model_deployment},
         },
     ]
 
@@ -146,15 +146,13 @@ def run_evaluation(openai_client, eval_object, workflow_data: dict, agent_names:
             "data_mapping": {"response_id": "{{item.resp_id}}"},
             "source": {
                 "type": "file_content",
-                "content": [{"item": {"resp_id": resp_id}} for resp_id in selected_response_ids]
+                "content": [{"item": {"resp_id": resp_id}} for resp_id in selected_response_ids],
             },
         },
     }
 
     eval_run = openai_client.evals.runs.create(
-        eval_id=eval_object.id,
-        name="Multi-Agent Response Evaluation",
-        data_source=data_source
+        eval_id=eval_object.id, name="Multi-Agent Response Evaluation", data_source=data_source
     )
 
     print(f"Evaluation run created: {eval_run.id}")
@@ -169,10 +167,7 @@ def monitor_evaluation(openai_client, eval_object, eval_run):
     print("Waiting for evaluation to complete...")
 
     while eval_run.status not in ["completed", "failed"]:
-        eval_run = openai_client.evals.runs.retrieve(
-            run_id=eval_run.id,
-            eval_id=eval_object.id
-        )
+        eval_run = openai_client.evals.runs.retrieve(run_id=eval_run.id, eval_id=eval_object.id)
         print(f"Status: {eval_run.status}")
         time.sleep(5)
 
@@ -197,7 +192,7 @@ async def main():
     project_client = AIProjectClient(
         endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
         credential=DefaultAzureCredential(),
-        api_version="2025-11-15-preview"
+        api_version="2025-11-15-preview",
     )
     openai_client = project_client.get_openai_client()
 

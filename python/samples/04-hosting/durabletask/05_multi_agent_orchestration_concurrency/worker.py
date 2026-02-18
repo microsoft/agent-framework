@@ -61,7 +61,9 @@ def create_chemist_agent() -> "Agent":
     )
 
 
-def multi_agent_concurrent_orchestration(context: OrchestrationContext, prompt: str) -> Generator[Task[Any], Any, dict[str, str]]:
+def multi_agent_concurrent_orchestration(
+    context: OrchestrationContext, prompt: str
+) -> Generator[Task[Any], Any, dict[str, str]]:
     """Orchestration that runs both agents in parallel and aggregates results.
 
     Uses DurableAIAgentOrchestrationContext to wrap the orchestration context and
@@ -88,7 +90,9 @@ def multi_agent_concurrent_orchestration(context: OrchestrationContext, prompt: 
     physicist_session = physicist.create_session()
     chemist_session = chemist.create_session()
 
-    logger.debug(f"[Orchestration] Created sessions - Physicist: {physicist_session.session_id}, Chemist: {chemist_session.session_id}")
+    logger.debug(
+        f"[Orchestration] Created sessions - Physicist: {physicist_session.session_id}, Chemist: {chemist_session.session_id}"
+    )
 
     # Create tasks from agent.run() calls - these return DurableAgentTask instances
     physicist_task = physicist.run(messages=str(prompt), session=physicist_session)
@@ -116,9 +120,7 @@ def multi_agent_concurrent_orchestration(context: OrchestrationContext, prompt: 
 
 
 def get_worker(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
 
@@ -143,7 +145,7 @@ def get_worker(
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
 
@@ -171,7 +173,7 @@ def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
 
     # Register the orchestration function
     logger.debug("Registering orchestration function...")
-    worker.add_orchestrator(multi_agent_concurrent_orchestration)   # type: ignore
+    worker.add_orchestrator(multi_agent_concurrent_orchestration)  # type: ignore
     logger.debug(f"✓ Registered orchestration: {multi_agent_concurrent_orchestration.__name__}")
 
     return agent_worker

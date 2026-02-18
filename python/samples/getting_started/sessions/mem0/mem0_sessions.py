@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+
 @tool(approval_mode="never_require")
 def get_user_preferences(user_id: str) -> str:
     """Mock function to get user preferences."""

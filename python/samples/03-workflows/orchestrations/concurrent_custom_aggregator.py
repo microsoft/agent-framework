@@ -90,9 +90,7 @@ async def main() -> None:
     #   • Default aggregator -> returns list[Message] (one user + one assistant per agent)
     #   • Custom callback    -> return value becomes workflow output (string here)
     #   The callback can be sync or async; it receives list[AgentExecutorResponse].
-    workflow = (
-        ConcurrentBuilder(participants=[researcher, marketer, legal]).with_aggregator(summarize_results).build()
-    )
+    workflow = ConcurrentBuilder(participants=[researcher, marketer, legal]).with_aggregator(summarize_results).build()
 
     events = await workflow.run("We are launching a new budget-friendly electric bike for urban commuters.")
     outputs = events.get_outputs()

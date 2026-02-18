@@ -22,9 +22,10 @@ from typing import Any
 from dotenv import load_dotenv
 
 
-
 # Load environment variables from .env file
 load_dotenv()
+
+
 async def run_autogen() -> None:
     """AutoGen's Swarm pattern with human-in-the-loop handoffs."""
     from autogen_agentchat.agents import AssistantAgent
