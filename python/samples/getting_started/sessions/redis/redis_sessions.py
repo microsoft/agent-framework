@@ -35,6 +35,10 @@ from agent_framework.redis import RedisContextProvider
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 
+# Default Redis URL for local Redis Stack (docker run -d -p 6379:6379 redis/redis-stack:latest).
+# Override via the REDIS_URL environment variable for remote or authenticated instances.
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+
 # Please set the OPENAI_API_KEY and OPENAI_CHAT_MODEL_ID environment variables to use the OpenAI vectorizer
 # Recommend default for OPENAI_CHAT_MODEL_ID is gpt-4o-mini
 
@@ -52,7 +56,7 @@ async def example_global_thread_scope() -> None:
     )
 
     provider = RedisContextProvider(
-        redis_url="redis://localhost:6379",
+        redis_url=REDIS_URL,
         index_name="redis_threads_global",
         application_id="threads_demo_app",
         agent_id="threads_demo_agent",
@@ -105,11 +109,11 @@ async def example_per_operation_thread_scope() -> None:
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},
-        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
+        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url=REDIS_URL),
     )
 
     provider = RedisContextProvider(
-        redis_url="redis://localhost:6379",
+        redis_url=REDIS_URL,
         index_name="redis_threads_dynamic",
         # overwrite_redis_index=True,
         # drop_redis_index=True,
@@ -173,11 +177,11 @@ async def example_multiple_agents() -> None:
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},
-        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
+        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url=REDIS_URL),
     )
 
     personal_provider = RedisContextProvider(
-        redis_url="redis://localhost:6379",
+        redis_url=REDIS_URL,
         index_name="redis_threads_agents",
         application_id="threads_demo_app",
         agent_id="agent_personal",
@@ -195,7 +199,7 @@ async def example_multiple_agents() -> None:
     )
 
     work_provider = RedisContextProvider(
-        redis_url="redis://localhost:6379",
+        redis_url=REDIS_URL,
         index_name="redis_threads_agents",
         application_id="threads_demo_app",
         agent_id="agent_work",

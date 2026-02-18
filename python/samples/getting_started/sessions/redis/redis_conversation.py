@@ -22,6 +22,10 @@ from agent_framework.redis import RedisContextProvider
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 
+# Default Redis URL for local Redis Stack (docker run -d -p 6379:6379 redis/redis-stack:latest).
+# Override via the REDIS_URL environment variable for remote or authenticated instances.
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+
 
 async def main() -> None:
     """Walk through provider and chat message store usage.
@@ -33,13 +37,13 @@ async def main() -> None:
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},
-        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
+        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url=REDIS_URL),
     )
 
     session_id = "test_session"
 
     provider = RedisContextProvider(
-        redis_url="redis://localhost:6379",
+        redis_url=REDIS_URL,
         index_name="redis_conversation",
         prefix="redis_conversation",
         application_id="matrix_of_kermits",
