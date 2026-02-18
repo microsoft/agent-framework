@@ -440,7 +440,7 @@ def _get_exporters_from_env(
 
     Args:
         env_file_path: Path to a .env file to load environment variables from.
-            Default is None, which loads from '.env' if present.
+            Default is None, which does not load a .env file.
         env_file_encoding: Encoding to use when reading the .env file.
             Default is None, which uses the system default encoding.
 
@@ -451,8 +451,9 @@ def _get_exporters_from_env(
         - https://opentelemetry.io/docs/languages/sdk-configuration/general/
         - https://opentelemetry.io/docs/languages/sdk-configuration/otlp-exporter/
     """
-    # Load environment variables from .env file if present
-    load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
+    # Load environment variables from a .env file only when explicitly provided
+    if env_file_path is not None:
+        load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
 
     # Get base endpoint
     base_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
@@ -513,7 +514,7 @@ def create_resource(
         service_version: Override the service version. If not provided, reads from
             OTEL_SERVICE_VERSION environment variable or defaults to the package version.
         env_file_path: Path to a .env file to load environment variables from.
-            Default is None, which loads from '.env' if present.
+            Default is None, which does not load a .env file.
         env_file_encoding: Encoding to use when reading the .env file.
             Default is None, which uses the system default encoding.
         **attributes: Additional resource attributes to include. These will be merged
@@ -541,8 +542,9 @@ def create_resource(
             # Load from custom .env file
             resource = create_resource(env_file_path="config/.env")
     """
-    # Load environment variables from .env file if present
-    load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
+    # Load environment variables from a .env file only when explicitly provided
+    if env_file_path is not None:
+        load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
 
     # Start with provided attributes
     resource_attributes: dict[str, Any] = dict(attributes)

@@ -50,7 +50,6 @@ def create_test_anthropic_client(
             env_prefix="ANTHROPIC_",
             api_key="test-api-key-12345",
             chat_model_id="claude-3-5-sonnet-20241022",
-            env_file_path="test.env",
         )
 
     # Create client instance directly
@@ -72,7 +71,7 @@ def create_test_anthropic_client(
 
 def test_anthropic_settings_init(anthropic_unit_test_env: dict[str, str]) -> None:
     """Test AnthropicSettings initialization."""
-    settings = load_settings(AnthropicSettings, env_prefix="ANTHROPIC_", env_file_path="test.env")
+    settings = load_settings(AnthropicSettings, env_prefix="ANTHROPIC_")
 
     assert settings["api_key"] is not None
     assert settings["api_key"].get_secret_value() == anthropic_unit_test_env["ANTHROPIC_API_KEY"]
@@ -86,7 +85,6 @@ def test_anthropic_settings_init_with_explicit_values() -> None:
         env_prefix="ANTHROPIC_",
         api_key="custom-api-key",
         chat_model_id="claude-3-opus-20240229",
-        env_file_path="test.env",
     )
 
     assert settings["api_key"] is not None
@@ -97,7 +95,7 @@ def test_anthropic_settings_init_with_explicit_values() -> None:
 @pytest.mark.parametrize("exclude_list", [["ANTHROPIC_API_KEY"]], indirect=True)
 def test_anthropic_settings_missing_api_key(anthropic_unit_test_env: dict[str, str]) -> None:
     """Test AnthropicSettings when API key is missing."""
-    settings = load_settings(AnthropicSettings, env_prefix="ANTHROPIC_", env_file_path="test.env")
+    settings = load_settings(AnthropicSettings, env_prefix="ANTHROPIC_")
     assert settings["api_key"] is None
     assert settings["chat_model_id"] == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"]
 
@@ -119,7 +117,6 @@ def test_anthropic_client_init_auto_create_client(anthropic_unit_test_env: dict[
     client = AnthropicClient(
         api_key=anthropic_unit_test_env["ANTHROPIC_API_KEY"],
         model_id=anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"],
-        env_file_path="test.env",
     )
 
     assert client.anthropic_client is not None

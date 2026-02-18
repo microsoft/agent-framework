@@ -17,7 +17,7 @@ which agent should speak next based on the conversation context.
 
 import asyncio
 
-from agent_framework import AgentResponseUpdate
+from agent_framework import Message
 
 
 async def run_autogen() -> None:
@@ -106,18 +106,12 @@ async def run_agent_framework() -> None:
 
     # Run with a question that requires expert selection
     print("[Agent Framework] Group chat conversation:")
-    current_executor = None
     async for event in workflow.run("How do I connect to a PostgreSQL database using Python?", stream=True):
-        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
-            # Print executor name header when switching to a new agent
-            if current_executor != event.executor_id:
-                if current_executor is not None:
-                    print()  # Newline after previous agent's message
-                print(f"---------- {event.executor_id} ----------")
-                current_executor = event.executor_id
-            if event.data:
-                print(event.data.text, end="", flush=True)
-    print()  # Final newline after conversation
+        if event.type == "output" and isinstance(event.data, list):
+            for message in event.data:
+                if isinstance(message, Message) and message.role == "assistant" and message.text:
+                    print(f"---------- {message.author_name} ----------")
+                    print(message.text)
 
 
 async def main() -> None:

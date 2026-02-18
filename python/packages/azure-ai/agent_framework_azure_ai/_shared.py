@@ -43,10 +43,9 @@ logger = logging.getLogger("agent_framework.azure")
 class AzureAISettings(TypedDict, total=False):
     """Azure AI Project settings.
 
-    The settings are first loaded from environment variables with the prefix 'AZURE_AI_'.
-    If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
-    are ignored; however, validation will fail alerting that the settings are missing.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'AZURE_AI_'. If settings are missing after resolution, validation will fail.
 
     Keyword Args:
         project_endpoint: The Azure AI Project endpoint URL.

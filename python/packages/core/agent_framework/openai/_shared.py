@@ -78,10 +78,9 @@ def _check_openai_version_for_callable_api_key() -> None:
 class OpenAISettings(TypedDict, total=False):
     """OpenAI environment settings.
 
-    The settings are first loaded from environment variables with the prefix 'OPENAI_'.
-    If the environment variables are not found, the settings can be loaded from a .env file with the
-    encoding 'utf-8'. If the settings are not found in the .env file, the settings are ignored;
-    however, validation will fail alerting that the settings are missing.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'OPENAI_'. If settings are missing after resolution, validation will fail.
 
     Keyword Args:
         api_key: OpenAI API key, see https://platform.openai.com/account/api-keys.

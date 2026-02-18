@@ -79,8 +79,6 @@ If you want a numeric surrogate, you can use a small nonzero denominator, e.g., 
 see more on limits or handle it with a tiny epsilon?
 ============================================================
 Step 2: Call set safe to False and call again
-[2025-10-31 16:17:44 - /Users/edvan/Work/agent-framework/python/packages/core/agent_framework/_tools.py:718 - ERROR]
-Function failed. Error: division by zero
 Response: Division by zero is undefined in standard arithmetic. There is no number y such that 0 × y = 10.
 
 If you’re looking at limits:
