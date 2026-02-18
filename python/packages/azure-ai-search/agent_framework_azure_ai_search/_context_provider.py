@@ -111,8 +111,9 @@ _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT = 10
 class AzureAISearchSettings(TypedDict, total=False):
     """Settings for Azure AI Search Context Provider with auto-loading from environment.
 
-    The settings are first loaded from environment variables with the prefix 'AZURE_SEARCH_'.
-    If the environment variables are not found, the settings can be loaded from a .env file.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'AZURE_SEARCH_'.
 
     Keys:
         endpoint: Azure AI Search endpoint URL.

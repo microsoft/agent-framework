@@ -36,7 +36,7 @@ from collections.abc import Callable, Sequence
 from contextlib import suppress
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 from .exceptions import SettingNotFoundError
 
@@ -172,14 +172,14 @@ def load_settings(
     required_fields: Sequence[str | tuple[str, ...]] | None = None,
     **overrides: Any,
 ) -> SettingsT:
-    """Load settings from environment variables, a ``.env`` file, and explicit overrides.
+    """Load settings from explicit overrides, an optional ``.env`` file, and environment variables.
 
     The *settings_type* must be a ``TypedDict`` subclass.  Values are resolved in
     this order (highest priority first):
 
     1. Explicit keyword *overrides* (``None`` values are filtered out).
-    2. Environment variables (``<env_prefix><FIELD_NAME>``).
-    3. A ``.env`` file (loaded via ``python-dotenv``; existing env vars take precedence).
+    2. A ``.env`` file (when *env_file_path* is explicitly provided).
+    3. Environment variables (``<env_prefix><FIELD_NAME>``).
     4. Default values — fields with class-level defaults on the TypedDict, or
        ``None`` for optional fields.
 
@@ -192,7 +192,8 @@ def load_settings(
     Args:
         settings_type: A ``TypedDict`` class describing the settings schema.
         env_prefix: Prefix for environment variable lookup (e.g. ``"OPENAI_"``).
-        env_file_path: Path to ``.env`` file.  Defaults to ``".env"`` when omitted.
+        env_file_path: Path to ``.env`` file. When provided, the file is required
+            and values are resolved before process environment variables.
         env_file_encoding: Encoding for reading the ``.env`` file.  Defaults to ``"utf-8"``.
         required_fields: Field names (``str``) that must resolve to a non-``None``
             value, or tuples of field names where exactly one must be set.
@@ -203,16 +204,22 @@ def load_settings(
         A populated dict matching *settings_type*.
 
     Raises:
+        FileNotFoundError: If *env_file_path* was provided but the file does not exist.
         SettingNotFoundError: If a required field could not be resolved from any
             source, or if a mutually exclusive constraint is violated.
         ServiceInitializationError: If an override value has an incompatible type.
     """
     encoding = env_file_encoding or "utf-8"
 
-    # Load .env file if it exists (existing env vars take precedence by default)
-    env_path = env_file_path or ".env"
-    if os.path.isfile(env_path):
-        load_dotenv(dotenv_path=env_path, encoding=encoding)
+    loaded_dotenv_values: dict[str, str] = {}
+    if env_file_path is not None:
+        if not os.path.exists(env_file_path):
+            raise FileNotFoundError(env_file_path)
+
+        raw_dotenv_values = dotenv_values(dotenv_path=env_file_path, encoding=encoding)
+        loaded_dotenv_values = {
+            key: value for key, value in raw_dotenv_values.items() if key is not None and value is not None
+        }
 
     # Filter out None overrides so defaults / env vars are preserved
     overrides = {k: v for k, v in overrides.items() if v is not None}
@@ -235,8 +242,19 @@ def load_settings(
             result[field_name] = override_value
             continue
 
-        # 2. Environment variable
         env_var_name = f"{env_prefix}{field_name.upper()}"
+
+        # 2. Optional .env value (only when env_file_path is explicitly provided)
+        if loaded_dotenv_values:
+            dotenv_value = loaded_dotenv_values.get(env_var_name)
+            if dotenv_value is not None:
+                try:
+                    result[field_name] = _coerce_value(dotenv_value, field_type)
+                except (ValueError, TypeError):
+                    result[field_name] = dotenv_value
+                continue
+
+        # 3. Environment variable
         env_value = os.getenv(env_var_name)
         if env_value is not None:
             try:
@@ -245,7 +263,7 @@ def load_settings(
                 result[field_name] = env_value
             continue
 
-        # 3. Default from TypedDict class-level defaults, or None for optional fields
+        # 4. Default from TypedDict class-level defaults, or None for optional fields
         if hasattr(settings_type, field_name):
             result[field_name] = getattr(settings_type, field_name)
         else:

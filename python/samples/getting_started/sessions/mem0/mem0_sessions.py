@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import uuid
 
 from agent_framework import tool
 from agent_framework.azure import AzureAIAgentClient
@@ -20,115 +19,57 @@ def get_user_preferences(user_id: str) -> str:
     return preferences.get(user_id, "No specific preferences found")
 
 
-async def example_global_thread_scope() -> None:
-    """Example 1: Global thread_id scope (memories shared across all operations)."""
-    print("1. Global Thread Scope Example:")
+async def example_cross_session_memory() -> None:
+    """Example 1: Cross-session memory (memories shared across all sessions for a user)."""
+    print("1. Cross-Session Memory Example:")
     print("-" * 40)
 
-    global_thread_id = str(uuid.uuid4())
     user_id = "user123"
 
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentClient(credential=credential).as_agent(
-            name="GlobalMemoryAssistant",
+            name="MemoryAssistant",
             instructions="You are an assistant that remembers user preferences across conversations.",
             tools=get_user_preferences,
-            context_providers=[Mem0ContextProvider(
-                user_id=user_id,
-                thread_id=global_thread_id,
-                scope_to_per_operation_thread_id=False,  # Share memories across all sessions
-            )],
-        ) as global_agent,
+            context_providers=[Mem0ContextProvider(user_id=user_id)],
+        ) as agent,
     ):
-        # Store some preferences in the global scope
+        # Store some preferences
         query = "Remember that I prefer technical responses with code examples when discussing programming."
         print(f"User: {query}")
-        result = await global_agent.run(query)
+        result = await agent.run(query)
         print(f"Agent: {result}\n")
 
-        # Create a new session - but memories should still be accessible due to global scope
-        new_session = global_agent.create_session()
+        # Mem0 processes and indexes memories asynchronously.
+        print("Waiting for memories to be processed...")
+        await asyncio.sleep(12)
+
+        # Create a new session - memories should still be accessible
+        # because Mem0 scopes by user_id, not session
+        new_session = agent.create_session()
         query = "What do you know about my preferences?"
         print(f"User (new session): {query}")
-        result = await global_agent.run(query, session=new_session)
+        result = await agent.run(query, session=new_session)
         print(f"Agent: {result}\n")
 
 
-async def example_per_operation_thread_scope() -> None:
-    """Example 2: Per-operation thread scope (memories isolated per session).
-
-    Note: When scope_to_per_operation_thread_id=True, the provider is bound to a single session
-    throughout its lifetime. Use the same session object for all operations with that provider.
-    """
-    print("2. Per-Operation Thread Scope Example:")
+async def example_agent_scoped_memory() -> None:
+    """Example 2: Agent-scoped memory (memories isolated per agent)."""
+    print("2. Agent-Scoped Memory Example:")
     print("-" * 40)
-
-    user_id = "user123"
-
-    async with (
-        AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
-            name="ScopedMemoryAssistant",
-            instructions="You are an assistant with thread-scoped memory.",
-            tools=get_user_preferences,
-            context_providers=[Mem0ContextProvider(
-                user_id=user_id,
-                scope_to_per_operation_thread_id=True,  # Isolate memories per session
-            )],
-        ) as scoped_agent,
-    ):
-        # Create a specific session for this scoped provider
-        dedicated_session = scoped_agent.create_session()
-
-        # Store some information in the dedicated session
-        query = "Remember that for this conversation, I'm working on a Python project about data analysis."
-        print(f"User (dedicated session): {query}")
-        result = await scoped_agent.run(query, session=dedicated_session)
-        print(f"Agent: {result}\n")
-
-        # Test memory retrieval in the same dedicated session
-        query = "What project am I working on?"
-        print(f"User (same dedicated session): {query}")
-        result = await scoped_agent.run(query, session=dedicated_session)
-        print(f"Agent: {result}\n")
-
-        # Store more information in the same session
-        query = "Also remember that I prefer using pandas and matplotlib for this project."
-        print(f"User (same dedicated session): {query}")
-        result = await scoped_agent.run(query, session=dedicated_session)
-        print(f"Agent: {result}\n")
-
-        # Test comprehensive memory retrieval
-        query = "What do you know about my current project and preferences?"
-        print(f"User (same dedicated session): {query}")
-        result = await scoped_agent.run(query, session=dedicated_session)
-        print(f"Agent: {result}\n")
-
-
-async def example_multiple_agents() -> None:
-    """Example 3: Multiple agents with different thread configurations."""
-    print("3. Multiple Agents with Different Thread Configurations:")
-    print("-" * 40)
-
-    agent_id_1 = "agent_personal"
-    agent_id_2 = "agent_work"
 
     async with (
         AzureCliCredential() as credential,
         AzureAIAgentClient(credential=credential).as_agent(
             name="PersonalAssistant",
             instructions="You are a personal assistant that helps with personal tasks.",
-            context_providers=[Mem0ContextProvider(
-                agent_id=agent_id_1,
-            )],
+            context_providers=[Mem0ContextProvider(agent_id="agent_personal")],
         ) as personal_agent,
         AzureAIAgentClient(credential=credential).as_agent(
             name="WorkAssistant",
             instructions="You are a work assistant that helps with professional tasks.",
-            context_providers=[Mem0ContextProvider(
-                agent_id=agent_id_2,
-            )],
+            context_providers=[Mem0ContextProvider(agent_id="agent_work")],
         ) as work_agent,
     ):
         # Store personal information
@@ -143,7 +84,11 @@ async def example_multiple_agents() -> None:
         result = await work_agent.run(query)
         print(f"Work Agent: {result}\n")
 
-        # Test memory isolation
+        # Mem0 processes and indexes memories asynchronously.
+        print("Waiting for memories to be processed...")
+        await asyncio.sleep(12)
+
+        # Test memory isolation - each agent should only recall its own memories
         query = "What do you know about my schedule?"
         print(f"User to Personal Agent: {query}")
         result = await personal_agent.run(query)
@@ -155,12 +100,11 @@ async def example_multiple_agents() -> None:
 
 
 async def main() -> None:
-    """Run all Mem0 thread management examples."""
-    print("=== Mem0 Thread Management Example ===\n")
+    """Run all Mem0 session management examples."""
+    print("=== Mem0 Session Management Example ===\n")
 
-    await example_global_thread_scope()
-    await example_per_operation_thread_scope()
-    await example_multiple_agents()
+    await example_cross_session_memory()
+    await example_agent_scoped_memory()
 
 
 if __name__ == "__main__":

@@ -58,7 +58,7 @@ async def main() -> None:
         print(f"Agent: {result}\n")
 
         # Mem0 processes and indexes memories asynchronously.
-        # Wait for memories to be indexed before querying in a new thread.
+        # Wait for memories to be indexed before querying in a new session.
         # In production, consider implementing retry logic or using Mem0's
         # eventual consistency handling instead of a fixed delay.
         print("Waiting for memories to be processed...")
@@ -66,12 +66,12 @@ async def main() -> None:
 
         print("\nRequest within a new session:")
         # Create a new session for the agent.
-        # The new session has no context of the previous conversation.
+        # The new session has no conversation history from the previous session.
         session = agent.create_session()
 
-        # Since we have the mem0 component in the session, the agent should be able to
-        # retrieve the company report without asking for clarification, as it will
-        # be able to remember the user preferences from Mem0 component.
+        # Since we have the Mem0 context provider, the agent should be able to
+        # retrieve the company report without asking for clarification, as Mem0
+        # remembers user preferences across sessions.
         query = "Please retrieve my company report"
         print(f"User: {query}")
         result = await agent.run(query, session=session)

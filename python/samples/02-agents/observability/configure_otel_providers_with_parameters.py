@@ -7,7 +7,7 @@ from contextlib import suppress
 from random import randint
 from typing import TYPE_CHECKING, Annotated, Literal
 
-from agent_framework import tool
+from agent_framework import Message, tool
 from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from opentelemetry import trace
@@ -74,12 +74,14 @@ async def run_chat_client(client: "SupportsChatGetResponse", stream: bool = Fals
         print(f"User: {message}")
         if stream:
             print("Assistant: ", end="")
-            async for chunk in client.get_response(message, stream=True, tools=get_weather):
-                if str(chunk):
-                    print(str(chunk), end="")
+            async for chunk in client.get_response(
+                [Message(role="user", text=message)], stream=True, tools=get_weather
+            ):
+                if chunk.text:
+                    print(chunk.text, end="")
             print("")
         else:
-            response = await client.get_response(message, tools=get_weather)
+            response = await client.get_response([Message(role="user", text=message)], tools=get_weather)
             print(f"Assistant: {response}")
 
 
@@ -95,8 +97,7 @@ async def run_tool() -> None:
     """
     with get_tracer().start_as_current_span("Scenario: AI Function", kind=trace.SpanKind.CLIENT):
         print("Running scenario: AI Function")
-        func = tool(get_weather)
-        weather = await func.invoke(location="Amsterdam")
+        weather = await get_weather.invoke(location="Amsterdam")
         print(f"Weather in Amsterdam:\n{weather}")
 
 

@@ -1,4 +1,4 @@
-# Agent Framework Python Observability
+# Agent Framework Observability
 
 This sample folder shows how a Python application can be configured to send Agent Framework observability data to the Application Performance Management (APM) vendor(s) of your choice based on the OpenTelemetry standard.
 
@@ -222,7 +222,15 @@ This folder contains different samples demonstrating how to use telemetry in var
 1. Open a terminal and navigate to this folder: `python/samples/02-agents/observability/`. This is necessary for the `.env` file to be read correctly.
 2. Create a `.env` file if one doesn't already exist in this folder. Please refer to the [example file](./.env.example).
     > **Note**: You can start with just `ENABLE_INSTRUMENTATION=true` and add `OTEL_EXPORTER_OTLP_ENDPOINT` or other configuration as needed. If no exporters are configured, you can set `ENABLE_CONSOLE_EXPORTERS=true` for console output.
-3. Activate your python virtual environment, and then run `python configure_otel_providers_with_env_var.py` or others.
+3. Choose one environment-loading approach:
+    - **A. Sample-managed loading (current samples):** run from this folder so the sample's `load_dotenv()` call can find `.env`.
+    - **B. Shell/IDE-managed environment:** set/export environment variables directly, or use an IDE run configuration that injects env vars / `.env`.
+    - **C. Explicit env file in code:** pass `env_file_path` to APIs like `configure_otel_providers(env_file_path=".env")` (or your own settings loader path).
+    - **D. CLI-managed env file:** run with `uv` and pass the file explicitly, for example:
+      `uv run --env-file=.env python configure_otel_providers_with_env_var.py`
+4. Activate your python virtual environment, then run a sample (for example `python configure_otel_providers_with_env_var.py`).
+
+> If you do manual provider setup (e.g., Azure Monitor), call `enable_instrumentation()` to turn on Agent Framework telemetry code paths; if you want Agent Framework to configure exporters/providers for you, call `configure_otel_providers(...)`.
 
 > Each sample will print the Operation/Trace ID, which can be used later for filtering logs and traces in Application Insights or Aspire Dashboard.
 

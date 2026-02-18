@@ -13,6 +13,7 @@ from agent_framework import (
     AgentMiddlewareTypes,
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     AgentSession,
     BaseAgent,
     BaseContextProvider,
@@ -20,11 +21,11 @@ from agent_framework import (
     FunctionTool,
     Message,
     ResponseStream,
+    ToolTypes,
+    load_settings,
     normalize_messages,
+    normalize_tools,
 )
-from agent_framework._settings import load_settings
-from agent_framework._tools import ToolTypes
-from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import ServiceException
 from claude_agent_sdk import (
     AssistantMessage,
@@ -37,8 +38,6 @@ from claude_agent_sdk import (
     ClaudeAgentOptions as SDKOptions,
 )
 from claude_agent_sdk.types import StreamEvent, TextBlock
-
-from ._settings import ClaudeAgentSettings
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -60,14 +59,38 @@ if TYPE_CHECKING:
         SdkBeta,
     )
 
-__all__ = ["ClaudeAgent", "ClaudeAgentOptions"]
 
 logger = logging.getLogger("agent_framework.claude")
+
 
 # Name of the in-process MCP server that hosts Agent Framework tools.
 # FunctionTool instances are converted to SDK MCP tools and served
 # through this server, as Claude Code CLI only supports tools via MCP.
 TOOLS_MCP_SERVER_NAME = "_agent_framework_tools"
+
+
+class ClaudeAgentSettings(TypedDict, total=False):
+    """Claude Agent settings.
+
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'CLAUDE_AGENT_'.
+
+    Keys:
+        cli_path: The path to Claude CLI executable.
+        model: The model to use (sonnet, opus, haiku).
+        cwd: The working directory for Claude CLI.
+        permission_mode: Permission mode (default, acceptEdits, plan, bypassPermissions).
+        max_turns: Maximum number of conversation turns.
+        max_budget_usd: Maximum budget in USD.
+    """
+
+    cli_path: str | None
+    model: str | None
+    cwd: str | None
+    permission_mode: str | None
+    max_turns: int | None
+    max_budget_usd: float | None
 
 
 class ClaudeAgentOptions(TypedDict, total=False):
@@ -402,18 +425,18 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
             opts["resume"] = resume_session_id
 
         # Apply settings from environment
-        if self._settings["cli_path"]:
-            opts["cli_path"] = self._settings["cli_path"]
-        if self._settings["model"]:
-            opts["model"] = self._settings["model"]
-        if self._settings["cwd"]:
-            opts["cwd"] = self._settings["cwd"]
-        if self._settings["permission_mode"]:
-            opts["permission_mode"] = self._settings["permission_mode"]
-        if self._settings["max_turns"]:
-            opts["max_turns"] = self._settings["max_turns"]
-        if self._settings["max_budget_usd"]:
-            opts["max_budget_usd"] = self._settings["max_budget_usd"]
+        if cli_path := self._settings.get("cli_path"):
+            opts["cli_path"] = cli_path
+        if model := self._settings.get("model"):
+            opts["model"] = model
+        if cwd := self._settings.get("cwd"):
+            opts["cwd"] = cwd
+        if permission_mode := self._settings.get("permission_mode"):
+            opts["permission_mode"] = permission_mode
+        if max_turns := self._settings.get("max_turns"):
+            opts["max_turns"] = max_turns
+        if max_budget_usd := self._settings.get("max_budget_usd"):
+            opts["max_budget_usd"] = max_budget_usd
 
         # Apply default options
         for key, value in self._default_options.items():

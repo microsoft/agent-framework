@@ -112,8 +112,7 @@ async def main() -> None:
         cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
     )
     # The provider manages persistence and retrieval. application_id/agent_id/user_id
-    # scope data for multi-tenant separation; thread_id (set later) narrows to a
-    # specific conversation.
+    # scope data for multi-tenant separation.
     provider = RedisContextProvider(
         redis_url="redis://localhost:6379",
         index_name="redis_basics",
@@ -138,16 +137,14 @@ async def main() -> None:
     from agent_framework import AgentSession, SessionContext
 
     session = AgentSession(session_id="runA")
-    context = SessionContext()
-    context.extend_messages("input", messages)
+    context = SessionContext(input_messages=messages)
     state = session.state
 
     # Store messages via after_run
     await provider.after_run(agent=None, session=session, context=context, state=state)
 
     # Retrieve relevant memories via before_run
-    query_context = SessionContext()
-    query_context.extend_messages("input", [Message("system", ["B: Assistant Message"])])
+    query_context = SessionContext(input_messages=[Message("system", ["B: Assistant Message"])])
     await provider.before_run(agent=None, session=session, context=query_context, state=state)
 
     # Inspect retrieved memories that would be injected into instructions
