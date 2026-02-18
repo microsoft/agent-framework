@@ -94,8 +94,10 @@ internal sealed class Program
         // Initial request with screenshot - start with Bing search page
         Console.WriteLine("Starting computer automation session (initial screenshot: cua_browser_search.png)...");
 
-        // Computer-use requires a fresh session per call to avoid previous_response_id being set.
-        // Instead, the full conversation context is sent as input items each time.
+        // IMPORTANT: Computer-use with the Azure Agents API differs from the vanilla OpenAI Responses API.
+        // The Azure Agents API rejects requests that include previous_response_id alongside
+        // computer_call_output items. To work around this, each call uses a fresh session (avoiding
+        // previous_response_id) and re-sends the full conversation context as input items instead.
         AgentSession session = await agent.CreateSessionAsync();
         AgentResponse response = await agent.RunAsync(message, session: session, options: runOptions);
 
@@ -160,8 +162,9 @@ internal sealed class Program
             Console.WriteLine("Sending action result back to agent...");
 
             // Build the follow-up messages with full conversation context.
-            // The Azure Agents API requires all prior output items (reasoning, computer_call, etc.)
-            // to be re-sent as input items alongside the computer_call_output.
+            // The Azure Agents API rejects previous_response_id when computer_call_output items are
+            // present, so we must re-send all prior output items (reasoning, computer_call, etc.)
+            // as input items alongside the computer_call_output to maintain conversation continuity.
             List<ChatMessage> followUpMessages = [];
 
             // Re-send all response output items as an assistant message so the API has full context
@@ -179,8 +182,8 @@ internal sealed class Program
             };
             followUpMessages.Add(new ChatMessage(ChatRole.User, [callOutput]));
 
-            // Create a fresh session to avoid previous_response_id being set from prior ConversationId.
-            // Computer-use with the Azure Agents API requires full context as input items instead.
+            // Create a fresh session so ConversationId does not carry over a previous_response_id.
+            // Without this, the Azure Agents API returns an error when computer_call_output is present.
             session = await agent.CreateSessionAsync();
             response = await agent.RunAsync(followUpMessages, session: session, options: runOptions);
         }
