@@ -23,7 +23,7 @@ from azure.identity import AzureCliCredential
 from typing_extensions import Never
 
 """
-Sample: AzureOpenAI Chat Agents in workflow with human feedback
+Sample: Azure AI Agents in workflow with human feedback
 
 Pipeline layout:
 writer_agent -> Coordinator -> writer_agent -> Coordinator -> final_editor_agent -> Coordinator -> output

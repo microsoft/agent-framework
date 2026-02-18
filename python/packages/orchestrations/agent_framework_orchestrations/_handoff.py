@@ -139,7 +139,10 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
         from agent_framework._middleware import MiddlewareTermination
 
         # Short-circuit execution and provide deterministic response payload for the tool call.
-        context.result = {HANDOFF_FUNCTION_RESULT_KEY: self._handoff_functions[context.function.name]}
+        # Parse the result using the default parser to ensure in a form that can be passed directly to LLM APIs.
+        context.result = FunctionTool.parse_result({
+            HANDOFF_FUNCTION_RESULT_KEY: self._handoff_functions[context.function.name]
+        })
         raise MiddlewareTermination(result=context.result)
 
 
