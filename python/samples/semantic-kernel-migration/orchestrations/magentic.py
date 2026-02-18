@@ -19,7 +19,6 @@ from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 from agent_framework.orchestrations import MagenticBuilder
 from semantic_kernel.agents import (
-    Agent,
     ChatCompletionAgent,
     MagenticOrchestration,
     OpenAIAssistantAgent,
@@ -44,7 +43,7 @@ PROMPT = (
 ######################################################################
 
 
-async def build_semantic_kernel_agents() -> list[Agent]:
+async def build_semantic_kernel_agents() -> list:
     research_agent = ChatCompletionAgent(
         name="ResearchAgent",
         description="A helpful assistant with access to web search. Ask it to perform web searches.",
@@ -135,19 +134,19 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         instructions=(
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
-        client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+        client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
     )
 
-    # Create code interpreter tool using instance method
+    # Create code interpreter tool using static method
     coder_client = OpenAIResponsesClient()
-    code_interpreter_tool = coder_client.get_code_interpreter_tool()
+    code_interpreter_tool = OpenAIResponsesClient.get_code_interpreter_tool()
 
     coder = Agent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
         client=coder_client,
-        tools=code_interpreter_tool,
+        tools=[code_interpreter_tool],
     )
 
     # Create a manager agent for orchestration
@@ -158,12 +157,22 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         client=OpenAIChatClient(),
     )
 
-    workflow = MagenticBuilder(participants=[researcher, coder], manager_agent=manager_agent).build()
+    workflow = MagenticBuilder(
+        participants=[researcher, coder], manager_agent=manager_agent
+    ).build()
 
     final_text: str | None = None
     async for event in workflow.run(prompt, stream=True):
         if event.type == "output":
-            final_text = cast(str, event.data)
+            data = event.data
+            if isinstance(data, str):
+                final_text = data
+            elif isinstance(data, list):
+                # Extract text from the last assistant message
+                for msg in reversed(data):
+                    if hasattr(msg, "text") and msg.text:
+                        final_text = msg.text
+                        break
 
     return final_text
 
