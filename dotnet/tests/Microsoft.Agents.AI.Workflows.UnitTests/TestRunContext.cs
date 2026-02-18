@@ -51,20 +51,7 @@ public class TestRunContext : IRunnerContext
             => runnerContext.AddEventAsync(workflowEvent, cancellationToken);
 
         public ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default)
-        {
-            // Special-case AgentResponse and AgentResponseUpdate to create their specific event types
-            // (consistent with InProcessRunnerContext.YieldOutputAsync)
-            if (output is AgentResponseUpdate update)
-            {
-                return this.AddEventAsync(new AgentResponseUpdateEvent(executorId, update), cancellationToken);
-            }
-            else if (output is AgentResponse response)
-            {
-                return this.AddEventAsync(new AgentResponseEvent(executorId, response), cancellationToken);
-            }
-
-            return this.AddEventAsync(new WorkflowOutputEvent(output, executorId), cancellationToken);
-        }
+            => this.AddEventAsync(new WorkflowOutputEvent(output, executorId), cancellationToken);
 
         public ValueTask RequestHaltAsync()
             => this.AddEventAsync(new RequestHaltEvent());

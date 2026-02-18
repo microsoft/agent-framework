@@ -45,7 +45,7 @@ internal static class Step4EntryPoint
             switch (evt)
             {
                 case WorkflowOutputEvent outputEvent:
-                    switch (outputEvent.ExecutorId)
+                    switch (outputEvent.SourceId)
                     {
                         case JudgeId:
                             if (outputEvent.Is(out NumberSignal newSignal))
