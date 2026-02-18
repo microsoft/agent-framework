@@ -16,9 +16,9 @@ Before you begin, ensure you have the following prerequisites:
 
 - .NET 10 SDK or later
 - Azure Foundry service endpoint and deployment configured
-- Azure CLI installed and authenticated (for Azure credential authentication)
+- Azure authentication configured for `DefaultAzureCredential` (for example, Azure CLI logged in with `az login`, environment variables, managed identity, or IDE sign-in)
 
-**Note**: This demo uses default Azure credentials for authentication. Make sure you're logged in with `az login` or have appropriate credentials configured. For more information, see the [Azure Identity documentation](https://learn.microsoft.com/dotnet/api/overview/azure/identity-readme).
+**Note**: This sample authenticates using `DefaultAzureCredential` from the Azure Identity library, which will try several credential sources (including Azure CLI, environment variables, managed identity, and IDE sign-in). Ensure at least one supported credential source is available. For more information, see the [Azure Identity documentation](https://learn.microsoft.com/dotnet/api/overview/azure/identity-readme).
 
 **Note**: The web search tool uses the built-in web search capability from the OpenAI Responses API.
 
