@@ -3,8 +3,9 @@
 import asyncio
 import json
 import os
+from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
-from typing import Annotated, AsyncIterable
+from typing import Annotated
 
 from agent_framework import (
     Agent,
