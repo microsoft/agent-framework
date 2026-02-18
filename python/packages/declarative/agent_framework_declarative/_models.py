@@ -5,20 +5,32 @@ import logging
 import os
 from collections.abc import MutableMapping
 from contextvars import ContextVar
-from typing import Any, Literal, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, overload
 
 from agent_framework._serialization import SerializationMixin
 
-try:
+if TYPE_CHECKING:
     from powerfx import Engine
 
-    engine: Engine | None = Engine()
-except (ImportError, RuntimeError):
-    # ImportError: powerfx package not installed
-    # RuntimeError: .NET runtime not available or misconfigured
-    engine = None
+_engine_initialized = False
+_engine: Engine | None = None
 
-from typing import overload
+
+def _get_engine() -> Engine | None:
+    """Lazily initialize the PowerFx engine on first use."""
+    global _engine_initialized, _engine
+    if not _engine_initialized:
+        _engine_initialized = True
+        try:
+            from powerfx import Engine
+
+            _engine = Engine()
+        except (ImportError, RuntimeError):
+            # ImportError: powerfx package not installed
+            # RuntimeError: .NET runtime not available or misconfigured
+            pass
+    return _engine
+
 
 logger = logging.getLogger("agent_framework.declarative")
 
@@ -47,6 +59,7 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
         return value
     if not value.startswith("="):
         return value
+    engine = _get_engine()
     if engine is None:
         logger.warning(
             "PowerFx engine not available for evaluating values starting with '='. "

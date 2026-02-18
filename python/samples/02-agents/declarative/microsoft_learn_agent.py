@@ -2,12 +2,11 @@
 import asyncio
 from pathlib import Path
 
+from agent_framework.declarative import AgentFactory
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
-
-from agent_framework.declarative import AgentFactory
-from azure.identity.aio import AzureCliCredential
 
 
 async def main():

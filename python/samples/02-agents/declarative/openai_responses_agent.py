@@ -2,11 +2,10 @@
 import asyncio
 from pathlib import Path
 
+from agent_framework.declarative import AgentFactory
 from dotenv import load_dotenv
 
 load_dotenv()
-
-from agent_framework.declarative import AgentFactory
 
 
 async def main():

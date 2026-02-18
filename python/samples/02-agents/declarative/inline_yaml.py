@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
 
+from agent_framework.declarative import AgentFactory
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
-
-from agent_framework.declarative import AgentFactory
-from azure.identity.aio import AzureCliCredential
 
 """
 This sample shows how to create an agent using an inline YAML string rather than a file.
