@@ -6,7 +6,11 @@ from typing import Annotated, Any
 from agent_framework import AgentSession, tool
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 AI Function with Session Injection Example
 

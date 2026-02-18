@@ -10,7 +10,11 @@ from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Azure AI Agent Provider Methods Example
 

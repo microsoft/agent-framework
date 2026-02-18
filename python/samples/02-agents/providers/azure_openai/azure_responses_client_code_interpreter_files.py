@@ -8,7 +8,11 @@ from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from openai import AsyncAzureOpenAI
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Azure OpenAI Responses Client with Code Interpreter and Files Example
 

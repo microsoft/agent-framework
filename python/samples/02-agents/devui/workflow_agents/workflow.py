@@ -20,9 +20,13 @@ from typing import Any
 from agent_framework import AgentExecutorResponse, WorkflowBuilder
 from agent_framework.azure import AzureOpenAIChatClient
 from pydantic import BaseModel
+from dotenv import load_dotenv
 
 
 # Define structured output for review results
+
+# Load environment variables from .env file
+load_dotenv()
 class ReviewResult(BaseModel):
     """Review evaluation with scores and feedback."""
 

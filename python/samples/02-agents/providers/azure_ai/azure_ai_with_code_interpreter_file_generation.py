@@ -7,7 +7,11 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Azure AI V2 Code Interpreter File Generation Sample
 

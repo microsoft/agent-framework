@@ -33,7 +33,11 @@ from semantic_kernel.contents import (
     StreamingChatMessageContent,
 )
 from semantic_kernel.functions import kernel_function
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 if sys.version_info >= (3, 12):
     pass  # pragma: no cover
 else:

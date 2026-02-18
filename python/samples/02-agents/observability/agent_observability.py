@@ -10,7 +10,11 @@ from agent_framework.openai import OpenAIChatClient
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 This sample shows how you can observe an agent in Agent Framework by using the
 same observability setup function.

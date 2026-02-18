@@ -18,8 +18,12 @@ the task in a round-robin fashion.
 import asyncio
 
 from agent_framework import Message
+from dotenv import load_dotenv
 
 
+
+# Load environment variables from .env file
+load_dotenv()
 async def run_autogen() -> None:
     """AutoGen's RoundRobinGroupChat for sequential agent orchestration."""
     from autogen_agentchat.agents import AssistantAgent

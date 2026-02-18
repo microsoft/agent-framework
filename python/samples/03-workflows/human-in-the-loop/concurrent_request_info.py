@@ -35,8 +35,12 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import AgentRequestInfoResponse, ConcurrentBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
 # Store chat client at module level for aggregator access
+
+# Load environment variables from .env file
+load_dotenv()
 _chat_client: AzureOpenAIResponsesClient | None = None
 
 

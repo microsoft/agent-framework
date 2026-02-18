@@ -19,9 +19,13 @@ from typing import Any
 
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
 
 # <create_agent>
+
+# Load environment variables from .env file
+load_dotenv()
 def _create_agent() -> Any:
     """Create a hosted agent backed by Azure OpenAI."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(

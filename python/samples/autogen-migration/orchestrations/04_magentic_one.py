@@ -25,8 +25,12 @@ from agent_framework import (
     WorkflowEvent,
 )
 from agent_framework.orchestrations import MagenticProgressLedger
+from dotenv import load_dotenv
 
 
+
+# Load environment variables from .env file
+load_dotenv()
 async def run_autogen() -> None:
     """AutoGen's MagenticOneGroupChat for orchestrated collaboration."""
     from autogen_agentchat.agents import AssistantAgent

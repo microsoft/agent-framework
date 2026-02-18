@@ -33,11 +33,15 @@ from agent_framework.openai import OpenAIChatClient
 from agent_framework.redis import RedisContextProvider
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
+from dotenv import load_dotenv
 
 # Please set the OPENAI_API_KEY and OPENAI_CHAT_MODEL_ID environment variables to use the OpenAI vectorizer
 # Recommend default for OPENAI_CHAT_MODEL_ID is gpt-4o-mini
 
 
+
+# Load environment variables from .env file
+load_dotenv()
 async def example_cross_session_memory() -> None:
     """Example 1: Cross-session memory (memories shared across all sessions for a user)."""
     print("1. Cross-Session Memory Example:")

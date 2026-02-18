@@ -8,7 +8,11 @@ from agent_framework import FunctionInvocationContext, tool
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Exception Handling with MiddlewareTypes
 

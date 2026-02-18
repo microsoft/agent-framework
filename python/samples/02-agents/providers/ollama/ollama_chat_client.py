@@ -5,7 +5,11 @@ from datetime import datetime
 
 from agent_framework import Message, tool
 from agent_framework.ollama import OllamaChatClient
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Ollama Chat Client Example
 

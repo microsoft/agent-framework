@@ -4,8 +4,12 @@ from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_orchestrations import ConcurrentBuilder
 from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity import DefaultAzureCredential  # pyright: ignore[reportUnknownVariableType]
+from dotenv import load_dotenv
 
 
+
+# Load environment variables from .env file
+load_dotenv()
 def main():
     # Create agents
     researcher = AzureOpenAIChatClient(credential=DefaultAzureCredential()).as_agent(

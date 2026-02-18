@@ -9,7 +9,11 @@ from agent_framework import AgentSession, BaseContextProvider, Message, SessionC
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework  # pyright: ignore[reportUnknownVariableType]
 from azure.identity import DefaultAzureCredential
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 if sys.version_info >= (3, 12):
     from typing import override
 else:

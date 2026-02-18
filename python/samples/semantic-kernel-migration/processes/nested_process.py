@@ -44,11 +44,15 @@ from semantic_kernel.processes.kernel_process.kernel_process_step_state import K
 from semantic_kernel.processes.local_runtime.local_kernel_process import start
 from semantic_kernel.processes.process_builder import ProcessBuilder
 from typing_extensions import Never
+from dotenv import load_dotenv
 
 ######################################################################
 # endregion
 ######################################################################
 
+
+# Load environment variables from .env file
+load_dotenv()
 logging.basicConfig(level=logging.WARNING)
 
 

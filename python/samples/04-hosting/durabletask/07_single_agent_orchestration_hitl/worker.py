@@ -25,8 +25,12 @@ from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.task import ActivityContext, OrchestrationContext, Task, when_any  # type: ignore
 from pydantic import BaseModel, ValidationError
+from dotenv import load_dotenv
 
 # Configure logging
+
+# Load environment variables from .env file
+load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 

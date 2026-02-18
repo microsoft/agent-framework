@@ -7,7 +7,11 @@ from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Ollama with OpenAI Chat Client Example
 

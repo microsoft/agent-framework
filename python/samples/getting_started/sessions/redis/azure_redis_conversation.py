@@ -25,8 +25,12 @@ from agent_framework.openai import OpenAIChatClient
 from agent_framework.redis import RedisHistoryProvider
 from azure.identity.aio import AzureCliCredential
 from redis.credentials import CredentialProvider
+from dotenv import load_dotenv
 
 
+
+# Load environment variables from .env file
+load_dotenv()
 class AzureCredentialProvider(CredentialProvider):
     """Credential provider for Azure AD authentication with Redis Enterprise."""
 

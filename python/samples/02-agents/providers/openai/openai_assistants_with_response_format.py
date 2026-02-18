@@ -6,7 +6,11 @@ import os
 from agent_framework.openai import OpenAIAssistantProvider
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 OpenAI Assistant Provider Response Format Example
 

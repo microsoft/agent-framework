@@ -28,7 +28,11 @@ from semantic_kernel.agents import (
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion, OpenAISettings
 from semantic_kernel.contents import ChatMessageContent
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 PROMPT = (
     "I am preparing a report on the energy efficiency of different machine learning model architectures. "
     "Compare the estimated training and inference energy consumption of ResNet-50, BERT-base, and GPT-2 "

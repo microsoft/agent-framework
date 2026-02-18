@@ -9,7 +9,11 @@ from agent_framework import AgentSession, tool
 from agent_framework.openai import OpenAIAssistantProvider
 from openai import AsyncOpenAI
 from pydantic import Field
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 OpenAI Assistants with Session Management Example
 

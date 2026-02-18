@@ -29,8 +29,12 @@ from azure.identity import AzureCliCredential, DefaultAzureCredential
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from redis_stream_response_handler import RedisStreamResponseHandler
 from tools import get_local_events, get_weather_forecast
+from dotenv import load_dotenv
 
 # Configure logging
+
+# Load environment variables from .env file
+load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 

@@ -7,7 +7,11 @@ from pathlib import Path
 
 import anyio
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """OpenAI Responses Client Streaming Image Generation Example
 
 Demonstrates streaming partial image generation using OpenAI's image generation tool.

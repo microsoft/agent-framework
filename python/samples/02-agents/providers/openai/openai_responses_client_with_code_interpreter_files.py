@@ -7,7 +7,11 @@ import tempfile
 from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
 from openai import AsyncOpenAI
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 OpenAI Responses Client with Code Interpreter and Files Example
 

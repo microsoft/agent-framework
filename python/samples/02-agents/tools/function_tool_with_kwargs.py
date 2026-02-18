@@ -6,7 +6,11 @@ from typing import Annotated, Any
 from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
 from pydantic import Field
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 AI Function with kwargs Example
 

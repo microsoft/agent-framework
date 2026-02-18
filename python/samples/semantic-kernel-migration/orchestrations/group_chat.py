@@ -35,7 +35,11 @@ from semantic_kernel.contents import AuthorRole, ChatHistory, ChatMessageContent
 from semantic_kernel.functions import KernelArguments
 from semantic_kernel.kernel import Kernel
 from semantic_kernel.prompt_template import KernelPromptTemplate, PromptTemplateConfig
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:

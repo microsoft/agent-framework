@@ -12,7 +12,11 @@ from agent_framework import (
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Shared State Function-based MiddlewareTypes Example
 

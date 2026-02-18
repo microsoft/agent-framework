@@ -13,7 +13,11 @@ from agent_framework import (
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatRequestSentEvent, MagenticBuilder, MagenticProgressLedger
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 

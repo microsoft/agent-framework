@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:

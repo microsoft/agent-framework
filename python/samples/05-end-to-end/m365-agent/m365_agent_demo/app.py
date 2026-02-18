@@ -35,7 +35,11 @@ from microsoft_agents.hosting.core import (
     TurnState,
 )
 from pydantic import Field
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Demo application using Microsoft Agent 365 SDK.
 

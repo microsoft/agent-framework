@@ -12,9 +12,13 @@ from typing import Any
 
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
 
 # 1. Instantiate the agent with the chosen deployment and instructions.
+
+# Load environment variables from .env file
+load_dotenv()
 def _create_agent() -> Any:
     """Create the Joker agent."""
 

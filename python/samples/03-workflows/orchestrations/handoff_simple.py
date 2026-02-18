@@ -14,7 +14,11 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """Sample: Simple handoff workflow.
 
 A handoff workflow defines a pattern that assembles agents in a mesh topology, allowing

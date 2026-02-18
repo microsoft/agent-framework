@@ -13,7 +13,11 @@ from agent_framework import (
 )
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import MagenticBuilder, MagenticPlanReviewRequest, MagenticPlanReviewResponse
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Sample: Magentic Orchestration with Human Plan Review
 

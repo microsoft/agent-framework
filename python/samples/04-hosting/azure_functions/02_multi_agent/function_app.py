@@ -16,7 +16,11 @@ from typing import Any
 from agent_framework import tool
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 logger = logging.getLogger(__name__)
 
 

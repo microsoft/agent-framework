@@ -63,12 +63,16 @@ from weather_widget import (
     render_weather_widget,
     weather_widget_copy_text,
 )
+from dotenv import load_dotenv
 
 # ============================================================================
 # Configuration Constants
 # ============================================================================
 
 # Server configuration
+
+# Load environment variables from .env file
+load_dotenv()
 SERVER_HOST = "127.0.0.1"  # Bind to localhost only for security (local dev)
 SERVER_PORT = 8001
 SERVER_BASE_URL = f"http://localhost:{SERVER_PORT}"

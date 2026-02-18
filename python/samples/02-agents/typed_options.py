@@ -6,7 +6,11 @@ from typing import Literal
 from agent_framework import Agent
 from agent_framework.anthropic import AnthropicClient
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """TypedDict-based Chat Options.
 
 In Agent Framework, we have made ChatClient and Agent generic over a ChatOptions typeddict, this means that

@@ -6,7 +6,11 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from agent_framework import Agent, AgentResponse, Message, tool
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 if TYPE_CHECKING:
     from agent_framework import SupportsAgentRun
 

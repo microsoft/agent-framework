@@ -15,7 +15,11 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """Sample: Handoff Workflow as Agent with Human-in-the-Loop.
 
 This sample demonstrates how to use a handoff workflow as an agent, enabling

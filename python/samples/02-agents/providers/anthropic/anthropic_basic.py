@@ -6,7 +6,11 @@ from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.anthropic import AnthropicClient
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Anthropic Chat Agent Example
 

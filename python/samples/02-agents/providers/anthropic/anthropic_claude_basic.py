@@ -20,8 +20,12 @@ from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.anthropic import ClaudeAgent
+from dotenv import load_dotenv
 
 
+
+# Load environment variables from .env file
+load_dotenv()
 @tool
 def get_weather(location: Annotated[str, "The city name"]) -> str:
     """Get the current weather for a location."""

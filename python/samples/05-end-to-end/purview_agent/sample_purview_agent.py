@@ -37,7 +37,11 @@ from azure.identity import (
     CertificateCredential,
     InteractiveBrowserCredential,
 )
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 JOKER_NAME = "Joker"
 JOKER_INSTRUCTIONS = "You are good at telling jokes. Keep responses concise."
 

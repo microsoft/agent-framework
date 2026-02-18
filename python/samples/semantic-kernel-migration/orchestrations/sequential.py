@@ -23,7 +23,11 @@ from semantic_kernel.agents import Agent, ChatCompletionAgent, SequentialOrchest
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import ChatMessageContent
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 PROMPT = "Write a tagline for a budget-friendly eBike."
 
 

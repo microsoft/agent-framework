@@ -13,7 +13,11 @@ from openai.types.beta.threads.runs import (
     ToolCallDeltaObject,
 )
 from openai.types.beta.threads.runs.code_interpreter_tool_call_delta import CodeInterpreter
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 OpenAI Assistants with Code Interpreter Example
 

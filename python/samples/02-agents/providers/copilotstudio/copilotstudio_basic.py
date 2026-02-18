@@ -3,7 +3,11 @@
 import asyncio
 
 from agent_framework.microsoft import CopilotStudioAgent
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Copilot Studio Agent Basic Example
 

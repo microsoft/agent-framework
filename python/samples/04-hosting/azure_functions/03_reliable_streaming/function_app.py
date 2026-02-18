@@ -31,7 +31,11 @@ from agent_framework.azure import (
 from azure.identity import AzureCliCredential
 from redis_stream_response_handler import RedisStreamResponseHandler, StreamChunk
 from tools import get_local_events, get_weather_forecast
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Configuration

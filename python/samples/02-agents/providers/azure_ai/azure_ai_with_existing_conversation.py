@@ -9,7 +9,11 @@ from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Azure AI Agent Existing Conversation Example
 

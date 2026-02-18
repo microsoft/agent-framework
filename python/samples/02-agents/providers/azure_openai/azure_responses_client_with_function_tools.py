@@ -9,7 +9,11 @@ from agent_framework import Agent, tool
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Azure OpenAI Responses Client with Function Tools Example
 

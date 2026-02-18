@@ -7,7 +7,11 @@ from typing import Annotated
 from agent_framework import FunctionInvocationContext, function_middleware, tool
 from agent_framework.openai import OpenAIChatClient
 from pydantic import Field
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Runtime Context Delegation Patterns
 

@@ -35,9 +35,13 @@ from agent_framework.openai import OpenAIChatClient
 from agent_framework.redis import RedisContextProvider
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
+from dotenv import load_dotenv
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+
+# Load environment variables from .env file
+load_dotenv()
 @tool(approval_mode="never_require")
 def search_flights(origin_airport_code: str, destination_airport_code: str, detailed: bool = False) -> str:
     """Simulated flight-search tool to demonstrate tool memory.

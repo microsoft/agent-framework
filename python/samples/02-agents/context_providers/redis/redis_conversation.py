@@ -22,8 +22,12 @@ from agent_framework.redis import RedisContextProvider
 from azure.identity import AzureCliCredential
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
+from dotenv import load_dotenv
 
 
+
+# Load environment variables from .env file
+load_dotenv()
 async def main() -> None:
     """Walk through provider and chat message store usage.
 

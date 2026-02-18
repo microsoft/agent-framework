@@ -3,7 +3,11 @@
 import asyncio
 
 from agent_framework.ollama import OllamaChatClient
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Ollama Agent Reasoning Example
 

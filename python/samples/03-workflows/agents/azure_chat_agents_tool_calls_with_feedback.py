@@ -26,7 +26,11 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from pydantic import Field
 from typing_extensions import Never
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Sample: Tool-enabled agents with human feedback
 

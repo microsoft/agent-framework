@@ -16,7 +16,11 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework_declarative import ExternalInputRequest, ExternalInputResponse, WorkflowFactory
 from azure.identity import AzureCliCredential
 from pydantic import Field
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 TEMP_DIR = Path(__file__).with_suffix("").parent / "tmp" / "checkpoints"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 

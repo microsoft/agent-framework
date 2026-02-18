@@ -14,7 +14,11 @@ import os
 
 from agent_framework.microsoft import CopilotStudioAgent, acquire_token
 from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Copilot Studio Agent with Explicit Settings Example
 

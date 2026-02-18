@@ -14,9 +14,13 @@ from agent_framework import Agent, Executor, WorkflowBuilder, WorkflowContext, h
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.devui import serve
 from typing_extensions import Never
+from dotenv import load_dotenv
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+
+# Load environment variables from .env file
+load_dotenv()
 @tool(approval_mode="never_require")
 # Tool functions for the agent
 @tool(approval_mode="never_require")

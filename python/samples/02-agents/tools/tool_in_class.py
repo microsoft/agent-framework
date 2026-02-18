@@ -5,7 +5,11 @@ from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 This sample demonstrates using tool within a class,
 showing how to manage state within the class that affects tool behavior.

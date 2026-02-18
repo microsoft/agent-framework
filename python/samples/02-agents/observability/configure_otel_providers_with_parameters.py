@@ -13,7 +13,11 @@ from agent_framework.openai import OpenAIResponsesClient
 from opentelemetry import trace
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 if TYPE_CHECKING:
     from agent_framework import SupportsChatGetResponse
 

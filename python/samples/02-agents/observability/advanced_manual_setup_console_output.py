@@ -20,7 +20,11 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 from opentelemetry.semconv._incubating.attributes.service_attributes import SERVICE_NAME
 from opentelemetry.trace import set_tracer_provider
 from pydantic import Field
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 This sample shows how to manually configure to send traces, logs, and metrics to the console,
 without using the `configure_otel_providers` helper function.

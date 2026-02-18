@@ -34,7 +34,11 @@ from semantic_kernel.processes.kernel_process.kernel_process_step import KernelP
 from semantic_kernel.processes.kernel_process.kernel_process_step_context import KernelProcessStepContext
 from semantic_kernel.processes.kernel_process.kernel_process_step_state import KernelProcessStepState
 from semantic_kernel.processes.process_builder import ProcessBuilder
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 if TYPE_CHECKING:
     from semantic_kernel.processes.kernel_process import KernelProcess
     from semantic_kernel.processes.local_runtime.local_kernel_process import LocalKernelProcessContext

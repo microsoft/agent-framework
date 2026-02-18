@@ -23,7 +23,11 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_devui import register_cleanup
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 logger = logging.getLogger(__name__)
 
 

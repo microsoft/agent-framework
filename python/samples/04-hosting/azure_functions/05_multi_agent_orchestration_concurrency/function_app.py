@@ -20,7 +20,11 @@ from agent_framework import AgentResponse
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 logger = logging.getLogger(__name__)
 
 # 1. Define agent names shared across the orchestration.

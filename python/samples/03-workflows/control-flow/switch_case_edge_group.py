@@ -22,7 +22,11 @@ from agent_framework.azure import AzureOpenAIResponsesClient  # Thin client for 
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from pydantic import BaseModel  # Structured outputs with validation
 from typing_extensions import Never
+from dotenv import load_dotenv
 
+
+# Load environment variables from .env file
+load_dotenv()
 """
 Sample: Switch-Case Edge Group with an explicit Uncertain branch.
 
