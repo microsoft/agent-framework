@@ -22,10 +22,10 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 
-# <create_agent>
-
 # Load environment variables from .env file
 load_dotenv()
+
+# <create_agent>
 
 
 def _create_agent() -> Any:
