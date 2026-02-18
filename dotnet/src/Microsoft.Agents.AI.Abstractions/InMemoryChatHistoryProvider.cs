@@ -24,8 +24,10 @@ namespace Microsoft.Agents.AI;
 /// message reduction strategies or alternative storage implementations.
 /// </para>
 /// </remarks>
-public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider<InMemoryChatHistoryProvider.State>
+public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
 {
+    private readonly ProviderSessionState<State> _sessionState;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="InMemoryChatHistoryProvider"/> class.
     /// </summary>
@@ -35,15 +37,19 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider<InMemoryCh
     /// </param>
     public InMemoryChatHistoryProvider(InMemoryChatHistoryProviderOptions? options = null)
         : base(
-            options?.StateInitializer ?? (_ => new State()),
-            options?.StateKey,
-            options?.JsonSerializerOptions,
             options?.ProvideOutputMessageFilter,
             options?.StorageInputMessageFilter)
     {
+        this._sessionState = new ProviderSessionState<State>(
+            options?.StateInitializer ?? (_ => new State()),
+            options?.StateKey ?? this.GetType().Name,
+            options?.JsonSerializerOptions);
         this.ChatReducer = options?.ChatReducer;
         this.ReducerTriggerEvent = options?.ReducerTriggerEvent ?? InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval;
     }
+
+    /// <inheritdoc />
+    public override string StateKey => this._sessionState.StateKey;
 
     /// <summary>
     /// Gets the chat reducer used to process or reduce chat messages. If null, no reduction logic will be applied.
@@ -61,7 +67,7 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider<InMemoryCh
     /// <param name="session">The agent session containing the state.</param>
     /// <returns>A list of chat messages, or an empty list if no state is found.</returns>
     public List<ChatMessage> GetMessages(AgentSession? session)
-        => this.GetOrInitializeState(session).Messages;
+        => this._sessionState.GetOrInitializeState(session).Messages;
 
     /// <summary>
     /// Sets the chat messages for the specified session.
@@ -73,14 +79,14 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider<InMemoryCh
     {
         _ = Throw.IfNull(messages);
 
-        var state = this.GetOrInitializeState(session);
+        var state = this._sessionState.GetOrInitializeState(session);
         state.Messages = messages;
     }
 
     /// <inheritdoc />
     protected override async ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
-        var state = this.GetOrInitializeState(context.Session);
+        var state = this._sessionState.GetOrInitializeState(context.Session);
 
         if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval && this.ChatReducer is not null)
         {
@@ -93,7 +99,7 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider<InMemoryCh
     /// <inheritdoc />
     protected override async ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        var state = this.GetOrInitializeState(context.Session);
+        var state = this._sessionState.GetOrInitializeState(context.Session);
 
         // Add request and response messages to the provider
         var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);

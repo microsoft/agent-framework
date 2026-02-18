@@ -23,4 +23,7 @@
   <ItemGroup Condition="'$(InjectSharedStructuredOutput)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\StructuredOutput\*.cs" LinkBase="Shared\StructuredOutput" />
   </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedDiagnosticIds)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\DiagnosticIds\*.cs" LinkBase="Shared\DiagnosticIds" />
+  </ItemGroup>
 </Project>

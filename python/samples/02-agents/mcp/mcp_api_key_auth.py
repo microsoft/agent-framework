@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import os
 
 from agent_framework import Agent, MCPStreamableHTTPTool
@@ -54,3 +55,7 @@ async def api_key_auth_example() -> None:
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result.text}")
+
+
+if __name__ == "__main__":
+    asyncio.run(api_key_auth_example())

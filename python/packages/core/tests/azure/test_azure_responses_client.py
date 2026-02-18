@@ -112,7 +112,6 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
 def test_init_with_empty_model_id(azure_openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
         AzureOpenAIResponsesClient(
-            env_file_path="test.env",
         )
 
 

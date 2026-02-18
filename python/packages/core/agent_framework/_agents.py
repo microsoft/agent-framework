@@ -420,13 +420,18 @@ class BaseAgent(SerializationMixin):
             session: The conversation session.
             context: The invocation context with response populated.
         """
-        state = session.state if session else {}
+        provider_session = session
+        if provider_session is None and self.context_providers:
+            provider_session = AgentSession()
+
         for provider in reversed(self.context_providers):
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.after_run(
                 agent=self,  # type: ignore[arg-type]
-                session=session,  # type: ignore[arg-type]
+                session=provider_session,
                 context=context,
-                state=state,
+                state=provider_session.state.setdefault(provider.source_id, {}),
             )
 
     def as_tool(
@@ -988,10 +993,14 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             and not opts.get("store")
             and not (getattr(self.client, "STORES_BY_DEFAULT", False) and opts.get("store") is not False)
         ):
-            self.context_providers.append(InMemoryHistoryProvider("memory"))
+            self.context_providers.append(InMemoryHistoryProvider())
+
+        active_session = session
+        if active_session is None and self.context_providers:
+            active_session = AgentSession()
 
         session_context, chat_options = await self._prepare_session_and_messages(
-            session=session,
+            session=active_session,
             input_messages=input_messages,
             options=opts,
         )
@@ -1015,12 +1024,19 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
 
+        # Merge runtime kwargs into additional_function_arguments so they're available
+        # in function middleware context and tool invocation.
+        existing_additional_args = opts.pop("additional_function_arguments", None) or {}
+        additional_function_arguments = {**kwargs, **existing_additional_args}
+
         # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {
             "model_id": opts.pop("model_id", None),
-            "conversation_id": session.service_session_id if session else opts.pop("conversation_id", None),
+            "conversation_id": active_session.service_session_id
+            if active_session
+            else opts.pop("conversation_id", None),
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
-            "additional_function_arguments": opts.pop("additional_function_arguments", None),
+            "additional_function_arguments": additional_function_arguments or None,
             "frequency_penalty": opts.pop("frequency_penalty", None),
             "logit_bias": opts.pop("logit_bias", None),
             "max_tokens": opts.pop("max_tokens", None),
@@ -1046,12 +1062,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         # Ensure session is forwarded in kwargs for tool invocation
         finalize_kwargs = dict(kwargs)
-        finalize_kwargs["session"] = session
+        finalize_kwargs["session"] = active_session
         # Filter chat_options from kwargs to prevent duplicate keyword argument
         filtered_kwargs = {k: v for k, v in finalize_kwargs.items() if k != "chat_options"}
 
         return {
-            "session": session,
+            "session": active_session,
             "session_context": session_context,
             "input_messages": input_messages,
             "session_messages": session_messages,
@@ -1129,23 +1145,28 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         else:
             chat_options = {}
 
+        provider_session = session
+        if provider_session is None and self.context_providers:
+            provider_session = AgentSession()
+
         session_context = SessionContext(
-            session_id=session.session_id if session else None,
-            service_session_id=session.service_session_id if session else None,
+            session_id=provider_session.session_id if provider_session else None,
+            service_session_id=provider_session.service_session_id if provider_session else None,
             input_messages=input_messages or [],
             options=options or {},
         )
 
         # Run before_run providers (forward order, skip BaseHistoryProvider with load_messages=False)
-        state = session.state if session else {}
         for provider in self.context_providers:
             if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
                 continue
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
                 agent=self,  # type: ignore[arg-type]
-                session=session,  # type: ignore[arg-type]
+                session=provider_session,
                 context=session_context,
-                state=state,
+                state=provider_session.state.setdefault(provider.source_id, {}),
             )
 
         # Merge provider-contributed tools into chat_options

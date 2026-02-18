@@ -155,7 +155,7 @@ def test_init_missing_model_id(openai_unit_test_env: dict[str, str]) -> None:
     """Test OpenAIAssistantsClient initialization with missing model ID."""
     with pytest.raises(ServiceInitializationError):
         OpenAIAssistantsClient(
-            api_key=openai_unit_test_env.get("OPENAI_API_KEY", "test-key"), env_file_path="nonexistent.env"
+            api_key=openai_unit_test_env.get("OPENAI_API_KEY", "test-key")
         )
 
 
@@ -163,7 +163,7 @@ def test_init_missing_model_id(openai_unit_test_env: dict[str, str]) -> None:
 def test_init_missing_api_key(openai_unit_test_env: dict[str, str]) -> None:
     """Test OpenAIAssistantsClient initialization with missing API key."""
     with pytest.raises(ServiceInitializationError):
-        OpenAIAssistantsClient(model_id="gpt-4", env_file_path="nonexistent.env")
+        OpenAIAssistantsClient(model_id="gpt-4")
 
 
 def test_init_with_default_headers(openai_unit_test_env: dict[str, str]) -> None:
