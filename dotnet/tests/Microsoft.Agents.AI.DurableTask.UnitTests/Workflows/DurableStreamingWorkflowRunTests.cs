@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
 using Microsoft.Agents.AI.DurableTask.Workflows;
@@ -585,6 +585,23 @@ public sealed class DurableStreamingWorkflowRunTests
         Assert.NotNull(result);
         Assert.Equal("test", result.Name);
         Assert.Equal(42, result.Value);
+    }
+
+    [Fact]
+    public void ExtractResult_CamelCaseSerializedObject_DeserializesToPascalCaseMembers()
+    {
+        // Arrange — executor outputs are serialized with DurableSerialization.Options (camelCase)
+        TestPayload original = new() { Name = "camel", Value = 99 };
+        string resultJson = JsonSerializer.Serialize(original, DurableSerialization.Options);
+        string serializedOutput = SerializeWorkflowResult(resultJson, []);
+
+        // Act
+        TestPayload? result = DurableStreamingWorkflowRun.ExtractResult<TestPayload>(serializedOutput);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("camel", result.Name);
+        Assert.Equal(99, result.Value);
     }
 
     #endregion

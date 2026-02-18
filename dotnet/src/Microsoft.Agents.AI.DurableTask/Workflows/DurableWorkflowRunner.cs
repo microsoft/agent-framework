@@ -177,7 +177,6 @@ internal sealed class DurableWorkflowRunner
 
             if (haltRequested)
             {
-                logger.LogWorkflowCompleted();
                 break;
             }
 

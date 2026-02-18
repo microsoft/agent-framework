@@ -127,7 +127,6 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
                 }
             }
 
-            // On terminal status, re-fetch with outputs to get the final result.
             // Check terminal states after draining events from custom status
             if (metadata.RuntimeStatus == OrchestrationRuntimeStatus.Completed)
             {
@@ -304,7 +303,7 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
                 return (TResult)(object)resultJson;
             }
 
-            return JsonSerializer.Deserialize<TResult>(resultJson);
+            return JsonSerializer.Deserialize<TResult>(resultJson, DurableSerialization.Options);
         }
 
         // Fallback: the output is not wrapped in DurableWorkflowResult.
@@ -320,7 +319,7 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
 
             if (innerString is not null)
             {
-                return JsonSerializer.Deserialize<TResult>(innerString);
+                return JsonSerializer.Deserialize<TResult>(innerString, DurableSerialization.Options);
             }
         }
         catch (JsonException)
@@ -333,7 +332,7 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
             return (TResult)(object)serializedOutput;
         }
 
-        return JsonSerializer.Deserialize<TResult>(serializedOutput);
+        return JsonSerializer.Deserialize<TResult>(serializedOutput, DurableSerialization.Options);
     }
 
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow event types.")]
