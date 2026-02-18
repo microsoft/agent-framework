@@ -86,35 +86,38 @@ async def main() -> None:
         context_providers=[history_provider],
     )
 
+    # Use a fixed session ID so Redis history persists across separate program runs
+    session = agent.create_session(session_id="redis-demo-session")
+
     # Conversation
     query = "Remember that I enjoy gumbo"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     # Ask the agent to recall the stored preference; it should retrieve from memory
     query = "What do I enjoy?"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "What did I say to you just now?"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "Remember that I have a meeting at 3pm tomorrow"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "Tulips are red"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "What was the first thing I said to you this conversation?"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 

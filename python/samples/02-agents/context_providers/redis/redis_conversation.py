@@ -69,35 +69,38 @@ async def main() -> None:
         context_providers=[provider],
     )
 
+    # Create a session so the provider can scope storage/retrieval to this conversation
+    session = agent.create_session(session_id="redis-conversation-session")
+
     # Teach a user preference; the agent writes this to the provider's memory
     query = "Remember that I enjoy gumbo"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     # Ask the agent to recall the stored preference; it should retrieve from memory
     query = "What do I enjoy?"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "What did I say to you just now?"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "Remember that I have a meeting at 3pm tomorro"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "Tulips are red"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "What was the first thing I said to you this conversation?"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
     # Drop / delete the provider index in Redis

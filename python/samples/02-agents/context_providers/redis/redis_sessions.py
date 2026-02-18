@@ -62,7 +62,6 @@ async def example_global_thread_scope() -> None:
         application_id="threads_demo_app",
         agent_id="threads_demo_agent",
         user_id="threads_demo_user",
-        scope_to_per_operation_thread_id=False,  # Share memories across all sessions
     )
 
     agent = client.as_agent(
@@ -76,9 +75,10 @@ async def example_global_thread_scope() -> None:
     )
 
     # Store a preference in the global scope
+    session = agent.create_session(session_id="global-scope-session")
     query = "Remember that I prefer technical responses with code examples when discussing programming."
     print(f"User: {query}")
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print(f"Agent: {result}\n")
 
     # Create a new session - memories should still be accessible due to global scope
@@ -118,7 +118,6 @@ async def example_per_operation_thread_scope() -> None:
         application_id="threads_demo_app",
         agent_id="threads_demo_agent",
         user_id="threads_demo_user",
-        scope_to_per_operation_thread_id=True,  # Isolate memories per session
         redis_vectorizer=vectorizer,
         vector_field_name="vector",
         vector_algorithm="hnsw",
@@ -214,25 +213,27 @@ async def example_multiple_agents() -> None:
     )
 
     # Store personal information
+    personal_session = personal_agent.create_session(session_id="personal-session")
     query = "Remember that I like to exercise at 6 AM and prefer outdoor activities."
     print(f"User to Personal Agent: {query}")
-    result = await personal_agent.run(query)
+    result = await personal_agent.run(query, session=personal_session)
     print(f"Personal Agent: {result}\n")
 
     # Store work information
+    work_session = work_agent.create_session(session_id="work-session")
     query = "Remember that I have team meetings every Tuesday at 2 PM."
     print(f"User to Work Agent: {query}")
-    result = await work_agent.run(query)
+    result = await work_agent.run(query, session=work_session)
     print(f"Work Agent: {result}\n")
 
     # Test memory isolation
     query = "What do you know about my schedule?"
     print(f"User to Personal Agent: {query}")
-    result = await personal_agent.run(query)
+    result = await personal_agent.run(query, session=personal_session)
     print(f"Personal Agent: {result}\n")
 
     print(f"User to Work Agent: {query}")
-    result = await work_agent.run(query)
+    result = await work_agent.run(query, session=work_session)
     print(f"Work Agent: {result}\n")
 
     # Clean up the Redis index (shared)
