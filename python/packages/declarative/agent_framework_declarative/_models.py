@@ -110,8 +110,12 @@ class Property(SerializationMixin):
             # We're being called on a subclass, use the normal from_dict
             return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
-        # Filter out 'type' (if it exists) field which is not a Property parameter
-        value.pop("type", None)
+        # The YAML spec uses 'type' for the data type, but Property stores it as 'kind'
+        if "type" in value:
+            if "kind" not in value:
+                value["kind"] = value.pop("type")
+            else:
+                value.pop("type")
         kind = value.get("kind", "")
         if kind == "array":
             return ArrayProperty.from_dict(value, dependencies=dependencies)
