@@ -381,20 +381,17 @@ class BaseAgent(SerializationMixin):
         self.additional_properties: dict[str, Any] = cast(dict[str, Any], additional_properties or {})
         self.additional_properties.update(kwargs)
 
-    def create_session(
-        self, *, session_id: str | None = None, service_session_id: str | None = None, **kwargs: Any
-    ) -> AgentSession:
+    def create_session(self, *, session_id: str | None = None, **kwargs: Any) -> AgentSession:
         """Create a new lightweight session.
 
         Keyword Args:
             session_id: Optional session ID (generated if not provided).
-            service_session_id: Optional service-managed session ID for resuming a prior session.
             kwargs: Additional keyword arguments.
 
         Returns:
             A new AgentSession instance.
         """
-        return AgentSession(session_id=session_id, service_session_id=service_session_id)
+        return AgentSession(session_id=session_id)
 
     def get_session(self, *, service_session_id: str, session_id: str | None = None, **kwargs: Any) -> AgentSession:
         """Get or create a session for a service-managed session ID.
