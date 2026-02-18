@@ -40,10 +40,11 @@ async def main() -> None:
             vector_store = await openai_client.vector_stores.create(name="my_vectorstore")
             print(f"Created vector store, vector store ID: {vector_store.id}")
 
-            file = await openai_client.vector_stores.files.upload_and_poll(
-                vector_store_id=vector_store.id,
-                file=open(pdf_file_path, "rb"),
-            )
+            with open(pdf_file_path, "rb") as f:
+                file = await openai_client.vector_stores.files.upload_and_poll(
+                    vector_store_id=vector_store.id,
+                    file=f,
+                )
             print(f"Uploaded file, file ID: {file.id}")
 
             # 2. Create a file search tool
