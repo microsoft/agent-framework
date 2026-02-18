@@ -1344,6 +1344,63 @@ def test_is_hosted_tool_approval_without_server_label():
     assert _is_hosted_tool_approval("not a content") is False
 
 
+async def test_mixed_local_and_hosted_approval_flow(chat_client_base: SupportsChatGetResponse):
+    """Test that mixed local + hosted MCP approvals are handled correctly.
+
+    When a response contains both a local tool approval and a hosted MCP approval,
+    the local approval should be processed normally while the hosted MCP approval
+    should pass through untouched to the API.
+    """
+
+    @tool(name="local_function", approval_mode="always_require")
+    def local_func(arg1: str) -> str:
+        return f"Local {arg1}"
+
+    # Simulate the LLM returning both a local function call and an MCP approval request
+    local_fc = Content.from_function_call(call_id="call_local", name="local_function", arguments='{"arg1": "test"}')
+    mcp_fc = Content.from_function_call(
+        call_id="mcpr_hosted",
+        name="microsoft_docs_search",
+        arguments='{"query": "azure"}',
+        additional_properties={"server_label": "Microsoft_Learn_MCP"},
+    )
+    mcp_approval_request = Content.from_function_approval_request(id="mcpr_hosted", function_call=mcp_fc)
+
+    # First response: LLM returns a local function call that needs approval
+    chat_client_base.run_responses = [
+        ChatResponse(messages=Message(role="assistant", contents=[local_fc])),
+        # After local approval + hosted approval, the final response
+        ChatResponse(messages=Message(role="assistant", text="Done with both tools.")),
+    ]
+
+    # User approves the local function call
+    local_approval_response = Content.from_function_approval_response(
+        approved=True, id="call_local", function_call=local_fc
+    )
+    # User also has an MCP approval response (hosted)
+    mcp_approval_response = mcp_approval_request.to_function_approval_response(approved=True)
+
+    messages = [
+        Message(role="user", text="Search docs and run local"),
+        Message(role="assistant", contents=[local_fc, mcp_approval_request]),
+        Message(role="user", contents=[local_approval_response]),
+        Message(role="user", contents=[mcp_approval_response]),
+    ]
+
+    response = await chat_client_base.get_response(
+        messages,
+        tool_choice="auto",
+        tools=[local_func],
+    )
+
+    assert response is not None
+    # The hosted MCP approval contents should NOT have been mutated
+    assistant_msg = messages[1]
+    assert assistant_msg.contents[1].type == "function_approval_request"
+    mcp_user_msg = messages[3]
+    assert mcp_user_msg.contents[0].type == "function_approval_response"
+
+
 async def test_unapproved_tool_execution_raises_exception(chat_client_base: SupportsChatGetResponse):
     """Test that attempting to execute an unapproved tool raises ToolException."""
 

@@ -1715,6 +1715,9 @@ def _replace_approval_contents_with_results(
 
         for content_idx, content in enumerate(msg.contents):
             if content.type == "function_approval_request":
+                # Skip hosted tool approvals — they must pass through to the API unchanged
+                if _is_hosted_tool_approval(content):
+                    continue
                 # Don't add the function call if it already exists (would create duplicate)
                 if content.function_call.call_id in existing_call_ids:  # type: ignore[attr-defined, union-attr, operator]
                     # Just mark for removal - the function call already exists
@@ -1723,6 +1726,9 @@ def _replace_approval_contents_with_results(
                     # Put back the function call content only if it doesn't exist
                     msg.contents[content_idx] = content.function_call  # type: ignore[attr-defined, assignment]
             elif content.type == "function_approval_response":
+                # Skip hosted tool approvals — they must pass through to the API unchanged
+                if _is_hosted_tool_approval(content):
+                    continue
                 if content.approved and content.id in fcc_todo:  # type: ignore[attr-defined]
                     # Replace with the corresponding result
                     if result_idx < len(approved_function_results):
