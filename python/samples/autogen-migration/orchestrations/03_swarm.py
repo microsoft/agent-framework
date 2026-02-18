@@ -18,7 +18,7 @@ to other specialized agents based on the task requirements.
 import asyncio
 
 from agent_framework import AgentResponseUpdate, WorkflowEvent
-from orderedmultidict import Any
+from typing import Any
 
 
 async def run_autogen() -> None:
@@ -197,7 +197,9 @@ async def run_agent_framework() -> None:
         print("---------- user ----------")
         print(user_response)
 
-        responses: dict[str, Any] = {req.request_id: user_response for req in pending_requests}  # type: ignore
+        responses: dict[str, Any] = {
+            req.request_id: HandoffAgentUserRequest.create_response(user_response) for req in pending_requests
+        }  # type: ignore
         pending_requests = []
         current_executor = None
         stream_line_open = False
