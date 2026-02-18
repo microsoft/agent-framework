@@ -20,7 +20,7 @@ Prerequisites:
 
 async def main() -> None:
     # Load the OpenAPI specification
-    resources_path = Path(__file__).parents[2] / "shared" / "resources" / "countries.json"
+    resources_path = Path(__file__).parents[3] / "shared" / "resources" / "countries.json"
 
     with open(resources_path) as f:
         openapi_countries = json.load(f)

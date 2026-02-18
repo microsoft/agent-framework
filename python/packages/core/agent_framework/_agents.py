@@ -1024,6 +1024,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
 
+        # Merge runtime kwargs into additional_function_arguments so they're available
+        # in function middleware context and tool invocation.
+        existing_additional_args = opts.pop("additional_function_arguments", None) or {}
+        additional_function_arguments = {**kwargs, **existing_additional_args}
+
         # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {
             "model_id": opts.pop("model_id", None),
@@ -1031,7 +1036,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             if active_session
             else opts.pop("conversation_id", None),
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
-            "additional_function_arguments": opts.pop("additional_function_arguments", None),
+            "additional_function_arguments": additional_function_arguments or None,
             "frequency_penalty": opts.pop("frequency_penalty", None),
             "logit_bias": opts.pop("logit_bias", None),
             "max_tokens": opts.pop("max_tokens", None),

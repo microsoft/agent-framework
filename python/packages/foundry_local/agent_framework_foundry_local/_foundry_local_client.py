@@ -118,9 +118,9 @@ FoundryLocalChatOptionsT = TypeVar(
 class FoundryLocalSettings(TypedDict, total=False):
     """Foundry local model settings.
 
-    The settings are first loaded from environment variables with the prefix 'FOUNDRY_LOCAL_'.
-    If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'FOUNDRY_LOCAL_'.
 
     Keys:
         model_id: The name of the model deployment to use.

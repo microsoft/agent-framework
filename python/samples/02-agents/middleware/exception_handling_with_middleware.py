@@ -47,8 +47,8 @@ async def exception_handling_middleware(
         print(f"[ExceptionHandlingMiddleware] Caught TimeoutError: {e}")
         # Override function result to provide custom message in response.
         context.result = (
-            "Request Timeout: The data service is taking longer than expected to respond.",
-            "Respond with message - 'Sorry for the inconvenience, please try again later.'",
+            "Request Timeout: The data service is taking longer than expected to respond."
+            "Respond with message - 'Sorry for the inconvenience, please try again later.'"
         )
 
 

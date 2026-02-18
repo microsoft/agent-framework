@@ -43,8 +43,10 @@ async def main() -> None:
     session = agent.create_session()
 
     # Run the agent with the session
-    print(f"Agent: {await agent.run('What is the weather in London?', session=session)}")
-    print(f"Agent: {await agent.run('What is the weather in Amsterdam?', session=session)}")
+    # Pass session via additional_function_arguments so tools can access it via **kwargs
+    opts = {"additional_function_arguments": {"session": session}}
+    print(f"Agent: {await agent.run('What is the weather in London?', session=session, options=opts)}")
+    print(f"Agent: {await agent.run('What is the weather in Amsterdam?', session=session, options=opts)}")
     print(f"Agent: {await agent.run('What cities did I ask about?', session=session)}")
 
 

@@ -437,7 +437,7 @@ def test_as_agent_with_hosted_tools(
     azure_ai_unit_test_env: dict[str, str],
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test as_agent handles hosted tools correctly."""
+    """Test as_agent excludes hosted tools from local tools (they stay on the server agent)."""
     mock_code_interpreter = MagicMock()
     mock_code_interpreter.type = "code_interpreter"
 
@@ -456,9 +456,10 @@ def test_as_agent_with_hosted_tools(
     agent = provider.as_agent(mock_agent)
 
     assert isinstance(agent, Agent)
-    # Should have code_interpreter dict tool in the default_options tools
+    # Hosted tools (code_interpreter, file_search, etc.) are already on the server agent
+    # and should NOT be in local tools to avoid re-sending them at run time
     tools = agent.default_options.get("tools") or []
-    assert any(isinstance(t, dict) and t.get("type") == "code_interpreter" for t in tools)
+    assert not any(isinstance(t, dict) and t.get("type") == "code_interpreter" for t in tools)
 
 
 def test_as_agent_with_dict_function_tools_validates(

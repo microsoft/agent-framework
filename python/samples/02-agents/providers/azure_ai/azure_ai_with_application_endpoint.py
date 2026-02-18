@@ -24,6 +24,7 @@ async def main() -> None:
         # /api/projects/<project-name>/applications/<application-name>/protocols
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
         Agent(
+            name="ApplicationAgent",
             client=AzureAIClient(
                 project_client=project_client,
             ),
