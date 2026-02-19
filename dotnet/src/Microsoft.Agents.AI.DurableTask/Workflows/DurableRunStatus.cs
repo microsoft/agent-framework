@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 namespace Microsoft.Agents.AI.DurableTask.Workflows;
 
@@ -8,42 +8,42 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows;
 public enum DurableRunStatus
 {
     /// <summary>
-    /// The orchestration instance was not found.
+    /// The workflow instance was not found.
     /// </summary>
     NotFound,
 
     /// <summary>
-    /// The orchestration is pending and has not started.
+    /// The workflow is pending and has not started.
     /// </summary>
     Pending,
 
     /// <summary>
-    /// The orchestration is currently running.
+    /// The workflow is currently running.
     /// </summary>
     Running,
 
     /// <summary>
-    /// The orchestration completed successfully.
+    /// The workflow completed successfully.
     /// </summary>
     Completed,
 
     /// <summary>
-    /// The orchestration failed with an error.
+    /// The workflow failed with an error.
     /// </summary>
     Failed,
 
     /// <summary>
-    /// The orchestration was terminated.
+    /// The workflow was terminated.
     /// </summary>
     Terminated,
 
     /// <summary>
-    /// The orchestration is suspended.
+    /// The workflow is suspended.
     /// </summary>
     Suspended,
 
     /// <summary>
-    /// The orchestration status is unknown.
+    /// The workflow status is unknown.
     /// </summary>
     Unknown
 }

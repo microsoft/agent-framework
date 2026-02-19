@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows;
 
@@ -58,8 +58,8 @@ internal sealed class ValidateOrder() : Executor<string, OrderDetails>("Validate
 
         // Start the audit trail in shared state
         AuditEntry audit = new("ValidateOrder", DateTime.UtcNow.ToString("o"), $"Validated order {message}");
-        await context.QueueStateUpdateAsync("audit:validate", audit, cancellationToken: cancellationToken);
-        Console.WriteLine("    Wrote to shared state: audit:validate");
+        await context.QueueStateUpdateAsync("auditValidate", audit, cancellationToken: cancellationToken);
+        Console.WriteLine("    Wrote to shared state: auditValidate");
 
         await context.YieldOutputAsync($"Order '{message}' validated. Customer: {details.CustomerName}, Amount: {details.Amount:C}", cancellationToken);
 
@@ -90,22 +90,22 @@ internal sealed class EnrichOrder() : Executor<OrderDetails, OrderDetails>("Enri
         Console.WriteLine($"    Read from shared state: shippingTier = {shippingTier}");
 
         // Write shipping details under a custom "shipping" scope.
-        // Scoped keys are isolated from the default namespace, so "carrier" here
-        // won't collide with a "carrier" key in the default scope.
+        // This keeps these keys separate from keys written without a scope,
+        // so "carrier" here won't collide with a "carrier" key written elsewhere.
         await context.QueueStateUpdateAsync("carrier", "Contoso Express", scopeName: "shipping", cancellationToken: cancellationToken);
         await context.QueueStateUpdateAsync("estimatedDays", 2, scopeName: "shipping", cancellationToken: cancellationToken);
-        Console.WriteLine("    Wrote to shared state: shipping:carrier = Contoso Express");
-        Console.WriteLine("    Wrote to shared state: shipping:estimatedDays = 2");
+        Console.WriteLine("    Wrote to shared state: carrier = Contoso Express (scope: shipping)");
+        Console.WriteLine("    Wrote to shared state: estimatedDays = 2 (scope: shipping)");
 
         // Verify we can read the audit entry from the previous step
-        AuditEntry? previousAudit = await context.ReadStateAsync<AuditEntry>("audit:validate", cancellationToken: cancellationToken);
+        AuditEntry? previousAudit = await context.ReadStateAsync<AuditEntry>("auditValidate", cancellationToken: cancellationToken);
         string auditStatus = previousAudit is not null ? $"(previous step: {previousAudit.Step})" : "(no prior audit)";
-        Console.WriteLine($"    Read from shared state: audit:validate {auditStatus}");
+        Console.WriteLine($"    Read from shared state: auditValidate {auditStatus}");
 
         // Append our own audit entry
         AuditEntry audit = new("EnrichOrder", DateTime.UtcNow.ToString("o"), $"Enriched with {shippingTier} shipping {auditStatus}");
-        await context.QueueStateUpdateAsync("audit:enrich", audit, cancellationToken: cancellationToken);
-        Console.WriteLine("    Wrote to shared state: audit:enrich");
+        await context.QueueStateUpdateAsync("auditEnrich", audit, cancellationToken: cancellationToken);
+        Console.WriteLine("    Wrote to shared state: auditEnrich");
 
         await context.YieldOutputAsync($"Order enriched. Shipping: {shippingTier} {auditStatus}", cancellationToken);
 
@@ -136,8 +136,8 @@ internal sealed class ProcessPayment() : Executor<OrderDetails, string>("Process
 
         // Append audit entry
         AuditEntry audit = new("ProcessPayment", DateTime.UtcNow.ToString("o"), $"Charged {total:C} (tax: {tax:C})");
-        await context.QueueStateUpdateAsync("audit:payment", audit, cancellationToken: cancellationToken);
-        Console.WriteLine("    Wrote to shared state: audit:payment");
+        await context.QueueStateUpdateAsync("auditPayment", audit, cancellationToken: cancellationToken);
+        Console.WriteLine("    Wrote to shared state: auditPayment");
 
         await context.YieldOutputAsync($"Payment processed. Total: {total:C} (tax: {tax:C}). Ref: {paymentRef}", cancellationToken);
 
@@ -160,9 +160,9 @@ internal sealed class GenerateInvoice() : Executor<string, string>("GenerateInvo
         await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
 
         // Read the full audit trail from shared state — each step wrote its own entry
-        AuditEntry? validateAudit = await context.ReadStateAsync<AuditEntry>("audit:validate", cancellationToken: cancellationToken);
-        AuditEntry? enrichAudit = await context.ReadStateAsync<AuditEntry>("audit:enrich", cancellationToken: cancellationToken);
-        AuditEntry? paymentAudit = await context.ReadStateAsync<AuditEntry>("audit:payment", cancellationToken: cancellationToken);
+        AuditEntry? validateAudit = await context.ReadStateAsync<AuditEntry>("auditValidate", cancellationToken: cancellationToken);
+        AuditEntry? enrichAudit = await context.ReadStateAsync<AuditEntry>("auditEnrich", cancellationToken: cancellationToken);
+        AuditEntry? paymentAudit = await context.ReadStateAsync<AuditEntry>("auditPayment", cancellationToken: cancellationToken);
         int auditCount = new[] { validateAudit, enrichAudit, paymentAudit }.Count(a => a is not null);
         Console.WriteLine($"    Read from shared state: {auditCount} audit entries");
 
@@ -176,10 +176,6 @@ internal sealed class GenerateInvoice() : Executor<string, string>("GenerateInvo
             validateAudit?.Step, enrichAudit?.Step, paymentAudit?.Step
         }.Where(s => s is not null));
 
-        string invoice = $"Invoice complete. Payment: {message}. Audit trail: [{auditSummary}]";
-
-        await context.YieldOutputAsync(invoice, cancellationToken);
-
-        return invoice;
+        return $"Invoice complete. Payment: {message}. Audit trail: [{auditSummary}]";
     }
 }

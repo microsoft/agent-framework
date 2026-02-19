@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
@@ -44,7 +44,7 @@ internal static class DurableActivityExecutor
         Type inputType = ResolveInputType(inputWithState?.InputTypeName, executor.InputTypes);
         object typedInput = DeserializeInput(executorInput, inputType);
 
-        DurableActivityContext workflowContext = new(sharedState, executor);
+        DurableWorkflowContext workflowContext = new(sharedState, executor);
         object? result = await executor.ExecuteAsync(
             typedInput,
             new TypeId(inputType),
@@ -54,14 +54,14 @@ internal static class DurableActivityExecutor
         return SerializeActivityOutput(result, workflowContext);
     }
 
-    private static string SerializeActivityOutput(object? result, DurableActivityContext context)
+    private static string SerializeActivityOutput(object? result, DurableWorkflowContext context)
     {
         DurableActivityOutput output = new()
         {
             Result = SerializeResult(result),
             StateUpdates = context.StateUpdates,
             ClearedScopes = [.. context.ClearedScopes],
-            Events = context.Events.ConvertAll(SerializeEvent),
+            Events = context.OutboundEvents.ConvertAll(SerializeEvent),
             SentMessages = context.SentMessages,
             HaltRequested = context.HaltRequested
         };

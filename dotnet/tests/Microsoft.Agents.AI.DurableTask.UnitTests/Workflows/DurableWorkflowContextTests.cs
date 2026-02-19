@@ -1,11 +1,11 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Agents.AI.Workflows;
 
 namespace Microsoft.Agents.AI.DurableTask.UnitTests.Workflows;
 
-public sealed class DurableActivityContextTests
+public sealed class DurableWorkflowContextTests
 {
     private static FunctionExecutor<string> CreateTestExecutor(string id = "test-executor")
         => new(id, (_, _, _) => default);
@@ -17,7 +17,7 @@ public sealed class DurableActivityContextTests
     {
         // Arrange
         Dictionary<string, string> state = new() { ["__default__:counter"] = "42" };
-        DurableActivityContext context = new(state, CreateTestExecutor());
+        DurableWorkflowContext context = new(state, CreateTestExecutor());
 
         // Act
         int? result = await context.ReadStateAsync<int>("counter");
@@ -30,7 +30,7 @@ public sealed class DurableActivityContextTests
     public async Task ReadStateAsync_KeyDoesNotExist_ReturnsNull()
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Act
         string? result = await context.ReadStateAsync<string>("missing");
@@ -44,7 +44,7 @@ public sealed class DurableActivityContextTests
     {
         // Arrange
         Dictionary<string, string> state = new() { ["__default__:key"] = "\"old\"" };
-        DurableActivityContext context = new(state, CreateTestExecutor());
+        DurableWorkflowContext context = new(state, CreateTestExecutor());
         await context.QueueStateUpdateAsync("key", "new");
 
         // Act
@@ -59,7 +59,7 @@ public sealed class DurableActivityContextTests
     {
         // Arrange
         Dictionary<string, string> state = new() { ["__default__:key"] = "\"value\"" };
-        DurableActivityContext context = new(state, CreateTestExecutor());
+        DurableWorkflowContext context = new(state, CreateTestExecutor());
         await context.QueueClearScopeAsync();
 
         // Act
@@ -78,7 +78,7 @@ public sealed class DurableActivityContextTests
             ["scopeA:key"] = "\"fromA\"",
             ["scopeB:key"] = "\"fromB\""
         };
-        DurableActivityContext context = new(state, CreateTestExecutor());
+        DurableWorkflowContext context = new(state, CreateTestExecutor());
 
         // Act
         string? resultA = await context.ReadStateAsync<string>("key", "scopeA");
@@ -95,7 +95,7 @@ public sealed class DurableActivityContextTests
     public async Task ReadStateAsync_NullOrEmptyKey_ThrowsArgumentException(string? key)
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Act & Assert
         await Assert.ThrowsAnyAsync<ArgumentException>(() => context.ReadStateAsync<string>(key!).AsTask());
@@ -109,7 +109,7 @@ public sealed class DurableActivityContextTests
     public async Task ReadOrInitStateAsync_KeyDoesNotExist_CallsFactoryAndQueuesUpdate()
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Act
         string result = await context.ReadOrInitStateAsync("key", () => "initialized");
@@ -124,7 +124,7 @@ public sealed class DurableActivityContextTests
     {
         // Arrange
         Dictionary<string, string> state = new() { ["__default__:key"] = "\"existing\"" };
-        DurableActivityContext context = new(state, CreateTestExecutor());
+        DurableWorkflowContext context = new(state, CreateTestExecutor());
         bool factoryCalled = false;
 
         // Act
@@ -145,7 +145,7 @@ public sealed class DurableActivityContextTests
     public async Task ReadOrInitStateAsync_NullOrEmptyKey_ThrowsArgumentException(string? key)
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Act & Assert
         await Assert.ThrowsAnyAsync<ArgumentException>(
@@ -159,7 +159,7 @@ public sealed class DurableActivityContextTests
         // Validates that ReadStateAsync<int> returns null (not 0) for missing keys,
         // because the return type is int? (Nullable<int>). This ensures the factory
         // is correctly invoked for value types when the key does not exist.
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Act
         int result = await context.ReadOrInitStateAsync("counter", () => 42);
@@ -173,7 +173,7 @@ public sealed class DurableActivityContextTests
     public async Task ReadOrInitStateAsync_NullFactory_ThrowsArgumentNullException()
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(
@@ -188,7 +188,7 @@ public sealed class DurableActivityContextTests
     public async Task QueueStateUpdateAsync_SetsValue_VisibleToSubsequentRead()
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Act
         await context.QueueStateUpdateAsync("key", "hello");
@@ -203,7 +203,7 @@ public sealed class DurableActivityContextTests
     {
         // Arrange
         Dictionary<string, string> state = new() { ["__default__:key"] = "\"value\"" };
-        DurableActivityContext context = new(state, CreateTestExecutor());
+        DurableWorkflowContext context = new(state, CreateTestExecutor());
 
         // Act
         await context.QueueStateUpdateAsync<string>("key", null);
@@ -219,7 +219,7 @@ public sealed class DurableActivityContextTests
     public async Task QueueStateUpdateAsync_NullOrEmptyKey_ThrowsArgumentException(string? key)
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Act & Assert
         await Assert.ThrowsAnyAsync<ArgumentException>(
@@ -235,7 +235,7 @@ public sealed class DurableActivityContextTests
     {
         // Arrange
         Dictionary<string, string> state = new() { ["__default__:key"] = "\"value\"" };
-        DurableActivityContext context = new(state, CreateTestExecutor());
+        DurableWorkflowContext context = new(state, CreateTestExecutor());
         await context.QueueStateUpdateAsync("pending", "data");
 
         // Act
@@ -250,7 +250,7 @@ public sealed class DurableActivityContextTests
     public async Task QueueClearScopeAsync_NamedScope_OnlyClearsThatScope()
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
         await context.QueueStateUpdateAsync("keyA", "valueA", scopeName: "scopeA");
         await context.QueueStateUpdateAsync("keyB", "valueB", scopeName: "scopeB");
 
@@ -275,7 +275,7 @@ public sealed class DurableActivityContextTests
             ["__default__:alpha"] = "\"a\"",
             ["__default__:beta"] = "\"b\""
         };
-        DurableActivityContext context = new(state, CreateTestExecutor());
+        DurableWorkflowContext context = new(state, CreateTestExecutor());
 
         // Act
         HashSet<string> keys = await context.ReadStateKeysAsync();
@@ -295,7 +295,7 @@ public sealed class DurableActivityContextTests
             ["__default__:existing"] = "\"val\"",
             ["__default__:toDelete"] = "\"val\""
         };
-        DurableActivityContext context = new(state, CreateTestExecutor());
+        DurableWorkflowContext context = new(state, CreateTestExecutor());
         await context.QueueStateUpdateAsync("newKey", "value");
         await context.QueueStateUpdateAsync<string>("toDelete", null);
 
@@ -313,7 +313,7 @@ public sealed class DurableActivityContextTests
     {
         // Arrange
         Dictionary<string, string> state = new() { ["__default__:old"] = "\"val\"" };
-        DurableActivityContext context = new(state, CreateTestExecutor());
+        DurableWorkflowContext context = new(state, CreateTestExecutor());
         await context.QueueClearScopeAsync();
         await context.QueueStateUpdateAsync("new", "value");
 
@@ -334,7 +334,7 @@ public sealed class DurableActivityContextTests
             ["scopeA:key1"] = "\"val\"",
             ["scopeB:key2"] = "\"val\""
         };
-        DurableActivityContext context = new(state, CreateTestExecutor());
+        DurableWorkflowContext context = new(state, CreateTestExecutor());
 
         // Act
         HashSet<string> keysA = await context.ReadStateKeysAsync("scopeA");
@@ -352,22 +352,22 @@ public sealed class DurableActivityContextTests
     public async Task AddEventAsync_AddsEventToCollection()
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
         WorkflowEvent evt = new ExecutorInvokedEvent("test", "test-data");
 
         // Act
         await context.AddEventAsync(evt);
 
         // Assert
-        Assert.Single(context.Events);
-        Assert.Same(evt, context.Events[0]);
+        Assert.Single(context.OutboundEvents);
+        Assert.Same(evt, context.OutboundEvents[0]);
     }
 
     [Fact]
     public async Task AddEventAsync_NullEvent_DoesNotAdd()
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Act
 #pragma warning disable CS8625 // Cannot convert null literal to non-nullable reference type.
@@ -375,7 +375,7 @@ public sealed class DurableActivityContextTests
 #pragma warning restore CS8625
 
         // Assert
-        Assert.Empty(context.Events);
+        Assert.Empty(context.OutboundEvents);
     }
 
     #endregion
@@ -386,7 +386,7 @@ public sealed class DurableActivityContextTests
     public async Task SendMessageAsync_SerializesMessageWithTypeName()
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Act
         await context.SendMessageAsync("hello");
@@ -401,7 +401,7 @@ public sealed class DurableActivityContextTests
     public async Task SendMessageAsync_NullMessage_DoesNotAdd()
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Act
 #pragma warning disable CS8625 // Cannot convert null literal to non-nullable reference type.
@@ -420,14 +420,14 @@ public sealed class DurableActivityContextTests
     public async Task YieldOutputAsync_AddsWorkflowOutputEvent()
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Act
         await context.YieldOutputAsync("result");
 
         // Assert
-        Assert.Single(context.Events);
-        WorkflowOutputEvent outputEvent = Assert.IsType<WorkflowOutputEvent>(context.Events[0]);
+        Assert.Single(context.OutboundEvents);
+        WorkflowOutputEvent outputEvent = Assert.IsType<WorkflowOutputEvent>(context.OutboundEvents[0]);
         Assert.Equal("result", outputEvent.Data);
     }
 
@@ -435,7 +435,7 @@ public sealed class DurableActivityContextTests
     public async Task YieldOutputAsync_NullOutput_DoesNotAdd()
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Act
 #pragma warning disable CS8625 // Cannot convert null literal to non-nullable reference type.
@@ -443,7 +443,7 @@ public sealed class DurableActivityContextTests
 #pragma warning restore CS8625
 
         // Assert
-        Assert.Empty(context.Events);
+        Assert.Empty(context.OutboundEvents);
     }
 
     #endregion
@@ -454,15 +454,15 @@ public sealed class DurableActivityContextTests
     public async Task RequestHaltAsync_SetsHaltRequestedAndAddsEvent()
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Act
         await context.RequestHaltAsync();
 
         // Assert
         Assert.True(context.HaltRequested);
-        Assert.Single(context.Events);
-        Assert.IsType<DurableHaltRequestedEvent>(context.Events[0]);
+        Assert.Single(context.OutboundEvents);
+        Assert.IsType<DurableHaltRequestedEvent>(context.OutboundEvents[0]);
     }
 
     #endregion
@@ -473,7 +473,7 @@ public sealed class DurableActivityContextTests
     public void TraceContext_ReturnsNull()
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Assert
         Assert.Null(context.TraceContext);
@@ -483,7 +483,7 @@ public sealed class DurableActivityContextTests
     public void ConcurrentRunsEnabled_ReturnsFalse()
     {
         // Arrange
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Assert
         Assert.False(context.ConcurrentRunsEnabled);
@@ -493,7 +493,7 @@ public sealed class DurableActivityContextTests
     public async Task Constructor_NullInitialState_CreatesEmptyState()
     {
         // Arrange & Act
-        DurableActivityContext context = new(null, CreateTestExecutor());
+        DurableWorkflowContext context = new(null, CreateTestExecutor());
 
         // Assert
         string? result = await context.ReadStateAsync<string>("anything");

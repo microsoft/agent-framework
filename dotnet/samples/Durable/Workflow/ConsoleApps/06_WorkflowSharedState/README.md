@@ -21,12 +21,13 @@ Return values carry primary business data through the pipeline (`OrderDetails` �
 
 | Executor | Returns (message flow) | Reads from State | Writes to State |
 |----------|----------------------|-----------------|-----------------|
-| **ValidateOrder** | `OrderDetails` | — | `taxRate`, `audit:validate` |
-| **EnrichOrder** | `OrderDetails` (pass-through) | `audit:validate` | `shippingTier`, `audit:enrich`, `shipping:carrier`, `shipping:estimatedDays` |
-| **ProcessPayment** | payment ref string | `taxRate` | `audit:payment` |
-| **GenerateInvoice** | invoice string | `audit:validate`, `audit:enrich`, `audit:payment` | clears `shipping` scope |
+| **ValidateOrder** | `OrderDetails` | — | `taxRate`, `auditValidate` |
+| **EnrichOrder** | `OrderDetails` (pass-through) | `auditValidate` | `shippingTier`, `auditEnrich`, `carrier` (scope: shipping), `estimatedDays` (scope: shipping) |
+| **ProcessPayment** | payment ref string | `taxRate` | `auditPayment` |
+| **GenerateInvoice** | invoice string | `auditValidate`, `auditEnrich`, `auditPayment` | clears `shipping` scope |
 
-> **Note:** `EnrichOrder` writes `carrier` and `estimatedDays` under the `"shipping"` scope using `scopeName: "shipping"`. Scoped keys are isolated from the default namespace, so a key like `"carrier"` in the `"shipping"` scope won't collide with a `"carrier"` key in the default scope.
+> [!NOTE]
+> `EnrichOrder` writes `carrier` and `estimatedDays` under the `"shipping"` scope using `scopeName: "shipping"`. This keeps these keys separate from keys written without a scope, so a key like `"carrier"` in the `"shipping"` scope won't collide with a `"carrier"` key written elsewhere.
 
 ## Environment Setup
 
@@ -44,16 +45,16 @@ Enter an order ID when prompted. The workflow will process the order through all
 > ORD-001
 Started run: abc123
     Wrote to shared state: taxRate = 8.5%
-    Wrote to shared state: audit:validate
+    Wrote to shared state: auditValidate
   [Output] ValidateOrder: Order 'ORD-001' validated. Customer: Jerry, Amount: $249.99
     Read from shared state: shippingTier = Express
-    Wrote to shared state: shipping:carrier = Contoso Express
-    Wrote to shared state: shipping:estimatedDays = 2
-    Read from shared state: audit:validate (previous step: ValidateOrder)
-    Wrote to shared state: audit:enrich
+    Wrote to shared state: carrier = Contoso Express (scope: shipping)
+    Wrote to shared state: estimatedDays = 2 (scope: shipping)
+    Read from shared state: auditValidate (previous step: ValidateOrder)
+    Wrote to shared state: auditEnrich
   [Output] EnrichOrder: Order enriched. Shipping: Express (previous step: ValidateOrder)
     Read from shared state: taxRate = 8.5%
-    Wrote to shared state: audit:payment
+    Wrote to shared state: auditPayment
   [Output] ProcessPayment: Payment processed. Total: $271.24 (tax: $21.25). Ref: PAY-abc123def456
     Read from shared state: 3 audit entries
     Cleared shared state scope: shipping
@@ -63,6 +64,9 @@ Started run: abc123
 
 ### Viewing Workflows in the DTS Dashboard
 
-After running a workflow, you can navigate to the Durable Task Scheduler (DTS) dashboard to inspect the shared state being passed between activities.
+After running a workflow, you can navigate to the Durable Task Scheduler (DTS) dashboard to inspect the orchestration status, activity inputs/outputs, and events.
 
 If you are using the DTS emulator, the dashboard is available at `http://localhost:8082`.
+
+> [!NOTE]
+> Shared state updates are included in each activity's output (as `stateUpdates` with scoped keys), so they can be viewed in the dashboard by clicking on an activity and inspecting its output. However, there is no dedicated view for the aggregated shared state across all activities.

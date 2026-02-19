@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -8,7 +8,7 @@ using Microsoft.Agents.AI.Workflows;
 namespace Microsoft.Agents.AI.DurableTask.Workflows;
 
 /// <summary>
-/// A workflow context for durable activity execution.
+/// A workflow context for durable workflow execution.
 /// </summary>
 /// <remarks>
 /// State is passed in from the orchestration and updates are collected for return.
@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows;
 /// as part of the activity output for streaming to callers.
 /// </remarks>
 [DebuggerDisplay("Executor = {_executor.Id}, StateEntries = {_initialState.Count}")]
-internal sealed class DurableActivityContext : IWorkflowContext
+internal sealed class DurableWorkflowContext : IWorkflowContext
 {
     /// <summary>
     /// The default scope name used when no explicit scope is specified.
@@ -29,11 +29,11 @@ internal sealed class DurableActivityContext : IWorkflowContext
     private readonly Executor _executor;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="DurableActivityContext"/> class.
+    /// Initializes a new instance of the <see cref="DurableWorkflowContext"/> class.
     /// </summary>
     /// <param name="initialState">The shared state passed from the orchestration.</param>
     /// <param name="executor">The executor running in this context.</param>
-    internal DurableActivityContext(Dictionary<string, string>? initialState, Executor executor)
+    internal DurableWorkflowContext(Dictionary<string, string>? initialState, Executor executor)
     {
         this._executor = executor;
         this._initialState = initialState ?? [];
@@ -45,9 +45,9 @@ internal sealed class DurableActivityContext : IWorkflowContext
     internal List<TypedPayload> SentMessages { get; } = [];
 
     /// <summary>
-    /// Gets the events that were added during activity execution.
+    /// Gets the outbound events that were added during activity execution.
     /// </summary>
-    internal List<WorkflowEvent> Events { get; } = [];
+    internal List<WorkflowEvent> OutboundEvents { get; } = [];
 
     /// <summary>
     /// Gets the state updates made during activity execution.
@@ -71,7 +71,7 @@ internal sealed class DurableActivityContext : IWorkflowContext
     {
         if (workflowEvent is not null)
         {
-            this.Events.Add(workflowEvent);
+            this.OutboundEvents.Add(workflowEvent);
         }
 
         return default;
@@ -113,7 +113,7 @@ internal sealed class DurableActivityContext : IWorkflowContext
                     $"Expecting one of [{string.Join(", ", this._executor.OutputTypes)}].");
             }
 
-            this.Events.Add(new WorkflowOutputEvent(output, this._executor.Id));
+            this.OutboundEvents.Add(new WorkflowOutputEvent(output, this._executor.Id));
         }
 
         return default;
@@ -123,7 +123,7 @@ internal sealed class DurableActivityContext : IWorkflowContext
     public ValueTask RequestHaltAsync()
     {
         this.HaltRequested = true;
-        this.Events.Add(new DurableHaltRequestedEvent(this._executor.Id));
+        this.OutboundEvents.Add(new DurableHaltRequestedEvent(this._executor.Id));
         return default;
     }
 
@@ -257,7 +257,7 @@ internal sealed class DurableActivityContext : IWorkflowContext
 
         // Remove any pending updates in this scope (snapshot keys to allow removal during iteration)
         string scopePrefix = GetScopePrefix(scopeName);
-        foreach (string key in this.StateUpdates.Keys.ToArray())
+        foreach (string key in this.StateUpdates.Keys.ToList())
         {
             if (key.StartsWith(scopePrefix, StringComparison.Ordinal))
             {

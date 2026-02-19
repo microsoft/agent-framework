@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Xunit.Abstractions;
 
@@ -281,7 +281,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
     public async Task WorkflowSharedStateSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
-        string samplePath = Path.Combine(s_samplesPath, "07_WorkflowSharedState");
+        string samplePath = Path.Combine(s_samplesPath, "06_WorkflowSharedState");
 
         await this.RunSampleTestAsync(samplePath, async (process, logs) =>
         {
