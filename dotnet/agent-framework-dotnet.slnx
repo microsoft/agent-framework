@@ -84,7 +84,7 @@
     <Project Path="samples/03-workflows/_StartHere/01_Streaming/01_Streaming.csproj" />
     <Project Path="samples/03-workflows/_StartHere/02_AgentsInWorkflows/02_AgentsInWorkflows.csproj" />
     <Project Path="samples/03-workflows/_StartHere/03_AgentWorkflowPatterns/03_AgentWorkflowPatterns.csproj" />
-    <Project Path="samples/03-workflows/_StartHere/04_MultiModelService/04MultiModelService.csproj" />
+    <Project Path="samples/03-workflows/_StartHere/04_MultiModelService/04_MultiModelService.csproj" />
     <Project Path="samples/03-workflows/_StartHere/05_SubWorkflows/05_SubWorkflows.csproj" />
     <Project Path="samples/03-workflows/_StartHere/06_MixedWorkflowAgentsAndExecutors/06_MixedWorkflowAgentsAndExecutors.csproj" />
     <Project Path="samples/03-workflows/_StartHere/07_WriterCriticWorkflow/07_WriterCriticWorkflow.csproj" />
