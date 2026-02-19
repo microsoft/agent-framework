@@ -795,8 +795,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 return update
             event_type = getattr(raw, "type", None)
 
-            # Capture get_urls from azure_ai_search_call_output items
-            if event_type == "response.output_item.added":
+            # Capture get_urls from azure_ai_search_call_output items.
+            # Check both "added" and "done" events because the output data (including
+            # get_urls) may only be fully populated in the "done" event.
+            if event_type in ("response.output_item.added", "response.output_item.done"):
                 item = getattr(raw, "item", None)
                 if item is not None:
                     urls = self._extract_azure_search_urls([item])
@@ -804,7 +806,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                         search_get_urls.extend(urls)
 
             # Handle url_citation annotations (not handled by the base class in streaming)
-            if event_type == "response.output_text.annotation.added" and search_get_urls:
+            if event_type == "response.output_text.annotation.added":
                 ann = getattr(raw, "annotation", None)
                 if ann is not None:
                     ann_type = ann.get("type") if isinstance(ann, dict) else getattr(ann, "type", None)
