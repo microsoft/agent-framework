@@ -16,7 +16,6 @@ from agent_framework import (
     Message,
     MiddlewareTermination,
     ResponseStream,
-    Role,
     chat_middleware,
     function_middleware,
     tool,
@@ -50,7 +49,7 @@ async def security_filter_middleware(
 
     # Check only the last message (most recent user input)
     last_message = context.messages[-1] if context.messages else None
-    if last_message and last_message.role == Role.USER and last_message.text:
+    if last_message and last_message.role == "user" and last_message.text:
         message_lower = last_message.text.lower()
         for term in blocked_terms:
             if term in message_lower:
@@ -65,17 +64,17 @@ async def security_filter_middleware(
                     async def blocked_stream(msg: str = error_message) -> AsyncIterable[ChatResponseUpdate]:
                         yield ChatResponseUpdate(
                             contents=[Content.from_text(text=msg)],
-                            role=Role.ASSISTANT,
+                            role="assistant",
                         )
 
-                    response = ChatResponse(messages=[Message(role=Role.ASSISTANT, text=error_message)])
+                    response = ChatResponse(messages=[Message(role="assistant", text=error_message)])
                     context.result = ResponseStream(blocked_stream(), finalizer=lambda _, r=response: r)
                 else:
                     # Non-streaming mode: return complete response
                     context.result = ChatResponse(
                         messages=[
                             Message(
-                                role=Role.ASSISTANT,
+                                role="assistant",
                                 text=error_message,
                             )
                         ]
