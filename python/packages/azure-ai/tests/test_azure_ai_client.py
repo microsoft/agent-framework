@@ -13,14 +13,18 @@ import pytest
 from agent_framework import (
     Agent,
     AgentResponse,
+    Annotation,
     ChatOptions,
     ChatResponse,
+    ChatResponseUpdate,
     Content,
     Message,
+    ResponseStream,
     SupportsChatGetResponse,
     tool,
 )
 from agent_framework._settings import load_settings
+from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
@@ -1911,134 +1915,142 @@ def test_enrich_annotations_empty_get_urls(mock_project_client: MagicMock) -> No
     assert "additional_properties" not in content.annotations[0]
 
 
-def test_parse_response_from_openai_with_search_citations(mock_project_client: MagicMock) -> None:
-    """Test _parse_response_from_openai enriches url_citation annotations with search URLs."""
+@pytest.mark.asyncio
+async def test_inner_get_response_enriches_non_streaming(mock_project_client: MagicMock) -> None:
+    """Test _inner_get_response enriches url_citation annotations for non-streaming responses."""
     client = create_test_azure_ai_client(mock_project_client)
 
-    # Build a mock OpenAI response with azure_ai_search_call_output and message with url_citation
+    # Build a ChatResponse with citation annotations and a raw_representation carrying search output
+    content = Content.from_text(text="Here is the result【5:0†source】.")
+    content.annotations = [
+        Annotation(type="citation", title="doc_0", url="https://search.example.com/"),
+    ]
+    msg = Message(role="assistant", contents=[content])
+    mock_raw = MagicMock()
     mock_search_output = MagicMock()
     mock_search_output.type = "azure_ai_search_call_output"
     mock_search_output_data = MagicMock()
     mock_search_output_data.get_urls = [
         "https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01",
-        "https://search.example.com/indexes/idx/docs/41?api-version=2024-07-01",
     ]
     mock_search_output.output = mock_search_output_data
+    mock_raw.output = [mock_search_output]
 
-    mock_annotation = MagicMock()
-    mock_annotation.type = "url_citation"
-    mock_annotation.title = "doc_0"
-    mock_annotation.url = "https://search.example.com/"
-    mock_annotation.start_index = 100
-    mock_annotation.end_index = 112
+    base_response = ChatResponse(messages=[msg], raw_representation=mock_raw)
 
-    mock_text_content = MagicMock()
-    mock_text_content.type = "output_text"
-    mock_text_content.text = "Here is the result【5:0†source】."
-    mock_text_content.annotations = [mock_annotation]
-    mock_text_content.logprobs = None
+    async def _fake_awaitable() -> ChatResponse:
+        return base_response
 
-    mock_message = MagicMock()
-    mock_message.type = "message"
-    mock_message.content = [mock_text_content]
-    mock_message.role = "assistant"
-    mock_message.id = "msg_123"
-    mock_message.status = "completed"
+    with patch.object(
+        RawOpenAIResponsesClient, "_inner_get_response", return_value=_fake_awaitable()
+    ):
+        result_awaitable = client._inner_get_response(messages=[], options={}, stream=False)
+        result = await result_awaitable  # type: ignore[misc]
 
-    mock_response = MagicMock(spec=OpenAIResponse)
-    mock_response.output = [mock_search_output, mock_message]
-    mock_response.id = "resp_123"
-    mock_response.created_at = 1700000000
-    mock_response.model = "gpt-4"
-    mock_response.metadata = {}
-    mock_response.usage = None
-    mock_response.status = "completed"
-
-    result = client._parse_response_from_openai(mock_response, options={"store": False})
-
-    # Find the text content with annotations
-    assert result.messages is not None
-    found_citation = False
-    for msg in result.messages:
-        for content in msg.contents:
-            if hasattr(content, "annotations") and content.annotations:
-                for ann in content.annotations:
-                    if isinstance(ann, dict) and ann.get("title") == "doc_0":
-                        found_citation = True
-                        assert ann["additional_properties"]["get_url"] == (
-                            "https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01"
-                        )
-    assert found_citation, "Expected to find enriched citation annotation"
-
-
-def test_parse_response_from_openai_without_search_output(mock_project_client: MagicMock) -> None:
-    """Test _parse_response_from_openai works normally when no search output exists."""
-    client = create_test_azure_ai_client(mock_project_client)
-
-    mock_text_content = MagicMock()
-    mock_text_content.type = "output_text"
-    mock_text_content.text = "Hello world"
-    mock_text_content.annotations = []
-    mock_text_content.logprobs = None
-
-    mock_message = MagicMock()
-    mock_message.type = "message"
-    mock_message.content = [mock_text_content]
-    mock_message.role = "assistant"
-    mock_message.id = "msg_456"
-    mock_message.status = "completed"
-
-    mock_response = MagicMock(spec=OpenAIResponse)
-    mock_response.output = [mock_message]
-    mock_response.id = "resp_456"
-    mock_response.created_at = 1700000000
-    mock_response.model = "gpt-4"
-    mock_response.metadata = {}
-    mock_response.usage = None
-    mock_response.status = "completed"
-
-    result = client._parse_response_from_openai(mock_response, options={"store": False})
-    assert result.messages is not None
-
-
-def test_parse_chunk_from_openai_captures_search_urls(mock_project_client: MagicMock) -> None:
-    """Test _parse_chunk_from_openai captures search URLs from azure_ai_search_call_output events."""
-    client = create_test_azure_ai_client(mock_project_client)
-
-    # Simulate azure_ai_search_call_output item arriving via response.output_item.added
-    mock_output_data = MagicMock()
-    mock_output_data.get_urls = [
-        "https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01",
-    ]
-    mock_item = MagicMock()
-    mock_item.type = "azure_ai_search_call_output"
-    mock_item.output = mock_output_data
-
-    mock_event = MagicMock()
-    mock_event.type = "response.output_item.added"
-    mock_event.item = mock_item
-    mock_event.output_index = 0
-
-    client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
-
-    assert hasattr(client, "_streaming_search_get_urls")
-    assert len(client._streaming_search_get_urls) == 1
-    assert (
-        client._streaming_search_get_urls[0] == "https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01"
+    ann = result.messages[0].contents[0].annotations[0]
+    assert ann["additional_properties"]["get_url"] == (
+        "https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01"
     )
 
 
-def test_parse_chunk_from_openai_enriches_url_citation(mock_project_client: MagicMock) -> None:
-    """Test _parse_chunk_from_openai enriches url_citation annotations with search URLs."""
+@pytest.mark.asyncio
+async def test_inner_get_response_no_search_output_non_streaming(mock_project_client: MagicMock) -> None:
+    """Test _inner_get_response passes through when no search output exists."""
     client = create_test_azure_ai_client(mock_project_client)
 
-    # Pre-populate search URLs (simulating earlier capture)
-    client._streaming_search_get_urls = [
+    content = Content.from_text(text="Hello world")
+    msg = Message(role="assistant", contents=[content])
+    mock_raw = MagicMock()
+    mock_raw.output = []
+    base_response = ChatResponse(messages=[msg], raw_representation=mock_raw)
+
+    async def _fake_awaitable() -> ChatResponse:
+        return base_response
+
+    with patch.object(
+        RawOpenAIResponsesClient, "_inner_get_response", return_value=_fake_awaitable()
+    ):
+        result_awaitable = client._inner_get_response(messages=[], options={}, stream=False)
+        result = await result_awaitable  # type: ignore[misc]
+
+    assert result.messages[0].contents[0].text == "Hello world"
+
+
+def test_inner_get_response_streaming_registers_hook(mock_project_client: MagicMock) -> None:
+    """Test _inner_get_response appends a transform hook to the stream for streaming responses."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    mock_stream = MagicMock(spec=ResponseStream)
+    mock_stream._transform_hooks = []
+
+    with patch.object(
+        RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream
+    ):
+        result = client._inner_get_response(messages=[], options={}, stream=True)
+
+    assert result is mock_stream
+    assert len(mock_stream._transform_hooks) == 1
+
+
+def test_streaming_hook_captures_search_urls(mock_project_client: MagicMock) -> None:
+    """Test the streaming transform hook captures get_urls from search output events."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    mock_stream = MagicMock(spec=ResponseStream)
+    mock_stream._transform_hooks = []
+
+    with patch.object(
+        RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream
+    ):
+        client._inner_get_response(messages=[], options={}, stream=True)
+
+    hook = mock_stream._transform_hooks[0]
+
+    # Simulate azure_ai_search_call_output event
+    mock_item = MagicMock()
+    mock_item.type = "azure_ai_search_call_output"
+    mock_item.output = MagicMock()
+    mock_item.output.get_urls = [
+        "https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01",
+    ]
+
+    raw_event = MagicMock()
+    raw_event.type = "response.output_item.added"
+    raw_event.item = mock_item
+
+    update = ChatResponseUpdate(raw_representation=raw_event)
+    result = hook(update)
+    assert result is update  # passes through (no annotations to enrich)
+
+
+def test_streaming_hook_enriches_url_citation(mock_project_client: MagicMock) -> None:
+    """Test the streaming transform hook enriches url_citation annotations with get_urls."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    mock_stream = MagicMock(spec=ResponseStream)
+    mock_stream._transform_hooks = []
+
+    with patch.object(
+        RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream
+    ):
+        client._inner_get_response(messages=[], options={}, stream=True)
+
+    hook = mock_stream._transform_hooks[0]
+
+    # Step 1: Feed search output event to capture URLs
+    mock_item = MagicMock()
+    mock_item.type = "azure_ai_search_call_output"
+    mock_item.output = MagicMock()
+    mock_item.output.get_urls = [
         "https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01",
         "https://search.example.com/indexes/idx/docs/41?api-version=2024-07-01",
     ]
+    raw_output_event = MagicMock()
+    raw_output_event.type = "response.output_item.added"
+    raw_output_event.item = mock_item
+    hook(ChatResponseUpdate(raw_representation=raw_output_event))
 
-    # Simulate url_citation annotation event
+    # Step 2: Feed url_citation annotation event
     mock_annotation = MagicMock()
     mock_annotation.type = "url_citation"
     mock_annotation.title = "doc_0"
@@ -2046,19 +2058,19 @@ def test_parse_chunk_from_openai_enriches_url_citation(mock_project_client: Magi
     mock_annotation.start_index = 100
     mock_annotation.end_index = 112
 
-    mock_event = MagicMock()
-    mock_event.type = "response.output_text.annotation.added"
-    mock_event.annotation = mock_annotation
-    mock_event.annotation_index = 0
+    raw_ann_event = MagicMock()
+    raw_ann_event.type = "response.output_text.annotation.added"
+    raw_ann_event.annotation = mock_annotation
+    raw_ann_event.annotation_index = 0
 
-    result = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+    result = hook(ChatResponseUpdate(raw_representation=raw_ann_event))
 
-    # Should have content with annotation containing get_url
+    # Verify the result has enriched annotation
     assert result.contents is not None
     found = False
-    for content in result.contents:
-        if hasattr(content, "annotations") and content.annotations:
-            for ann in content.annotations:
+    for content_item in result.contents:
+        if hasattr(content_item, "annotations") and content_item.annotations:
+            for ann in content_item.annotations:
                 if isinstance(ann, dict) and ann.get("title") == "doc_0":
                     found = True
                     assert ann["additional_properties"]["get_url"] == (
@@ -2067,24 +2079,57 @@ def test_parse_chunk_from_openai_enriches_url_citation(mock_project_client: Magi
     assert found, "Expected url_citation annotation with enriched get_url"
 
 
-def test_parse_chunk_from_openai_clears_state_on_completed(mock_project_client: MagicMock) -> None:
-    """Test _parse_chunk_from_openai clears streaming state on response.completed."""
+def test_build_url_citation_content(mock_project_client: MagicMock) -> None:
+    """Test _build_url_citation_content creates Content with enriched Annotation."""
     client = create_test_azure_ai_client(mock_project_client)
-    client._streaming_search_get_urls = ["https://example.com/doc/0"]
+    get_urls = ["https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01"]
 
-    mock_response = MagicMock()
-    mock_response.id = "resp_123"
-    mock_response.model = "gpt-4"
-    mock_response.usage = None
-    mock_response.status = "completed"
+    annotation_data = MagicMock()
+    annotation_data.type = "url_citation"
+    annotation_data.title = "doc_0"
+    annotation_data.url = "https://search.example.com/"
+    annotation_data.start_index = 100
+    annotation_data.end_index = 112
 
-    mock_event = MagicMock()
-    mock_event.type = "response.completed"
-    mock_event.response = mock_response
+    raw_event = MagicMock()
+    raw_event.annotation_index = 0
 
-    client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+    content = client._build_url_citation_content(annotation_data, get_urls, raw_event)
 
-    assert not hasattr(client, "_streaming_search_get_urls")
+    assert content.annotations is not None
+    ann = content.annotations[0]
+    assert ann["type"] == "citation"
+    assert ann["title"] == "doc_0"
+    assert ann["url"] == "https://search.example.com/"
+    assert ann["additional_properties"]["get_url"] == get_urls[0]
+    assert ann["annotated_regions"][0]["start_index"] == 100
+    assert ann["annotated_regions"][0]["end_index"] == 112
+
+
+def test_build_url_citation_content_with_dict(mock_project_client: MagicMock) -> None:
+    """Test _build_url_citation_content handles dict-style annotation data."""
+    client = create_test_azure_ai_client(mock_project_client)
+    get_urls = ["https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01"]
+
+    annotation_data = {
+        "type": "url_citation",
+        "title": "doc_1",
+        "url": "https://search.example.com/",
+        "start_index": 200,
+        "end_index": 215,
+    }
+
+    raw_event = MagicMock()
+    raw_event.annotation_index = 1
+
+    content = client._build_url_citation_content(annotation_data, get_urls, raw_event)
+
+    assert content.annotations is not None
+    ann = content.annotations[0]
+    assert ann["type"] == "citation"
+    assert ann["title"] == "doc_1"
+    # doc_1 is out of range for a 1-element get_urls, so no get_url
+    assert "get_url" not in ann.get("additional_properties", {})
 
 
 # endregion
