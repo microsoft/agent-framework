@@ -17,7 +17,11 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from typing_extensions import Never
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Concurrent (Fan-out/Fan-in) with Agents + Visualization

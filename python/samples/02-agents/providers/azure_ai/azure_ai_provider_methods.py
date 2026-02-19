@@ -10,7 +10,11 @@ from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import AgentReference, PromptAgentDefinition
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Azure AI Project Agent Provider Methods Example

@@ -92,9 +92,8 @@ namespace SampleApp
         private static void SetTodoItems(AgentSession? session, List<string> items)
             => session?.StateBag.SetValue(nameof(TodoListAIContextProvider), items);
 
-        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
-            var inputContext = context.AIContext;
             var todoItems = GetTodoItems(context.Session);
 
             StringBuilder outputMessageBuilder = new();
@@ -114,18 +113,15 @@ namespace SampleApp
 
             return new ValueTask<AIContext>(new AIContext
             {
-                Instructions = inputContext.Instructions,
-                Tools = (inputContext.Tools ?? []).Concat(new AITool[]
-                {
+                Tools =
+                [
                     AIFunctionFactory.Create((string item) => AddTodoItem(context.Session, item), "AddTodoItem", "Adds an item to the todo list."),
                     AIFunctionFactory.Create((int index) => RemoveTodoItem(context.Session, index), "RemoveTodoItem", "Removes an item from the todo list. Index is zero based.")
-                }),
+                ],
                 Messages =
-                    (inputContext.Messages ?? [])
-                    .Concat(
-                    [
-                        new MEAI.ChatMessage(ChatRole.User, outputMessageBuilder.ToString()).WithAgentRequestMessageSource(AgentRequestMessageSourceType.AIContextProvider, this.GetType().FullName!)
-                    ])
+                [
+                    new MEAI.ChatMessage(ChatRole.User, outputMessageBuilder.ToString())
+                ]
             });
         }
 

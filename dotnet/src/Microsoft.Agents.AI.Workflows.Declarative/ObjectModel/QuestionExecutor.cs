@@ -16,6 +16,8 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
+[SendsMessage(typeof(ExternalInputRequest))]
+[SendsMessage(typeof(ExternalInputResponse))]
 internal sealed class QuestionExecutor(Question model, ResponseAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<Question>(model, state)
 {

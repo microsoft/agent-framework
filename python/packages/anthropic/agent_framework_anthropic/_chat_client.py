@@ -196,9 +196,9 @@ FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
 class AnthropicSettings(TypedDict, total=False):
     """Anthropic Project settings.
 
-    The settings are first loaded from environment variables with the prefix 'ANTHROPIC_'.
-    If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'ANTHROPIC_'.
 
     Keys:
         api_key: The Anthropic API key.

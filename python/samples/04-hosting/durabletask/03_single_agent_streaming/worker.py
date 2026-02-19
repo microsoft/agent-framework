@@ -26,9 +26,13 @@ from agent_framework.azure import (
     DurableAIAgentWorker,
 )
 from azure.identity import AzureCliCredential, DefaultAzureCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from redis_stream_response_handler import RedisStreamResponseHandler
 from tools import get_local_events, get_weather_forecast
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -169,9 +173,7 @@ to make the itinerary easy to scan and visually appealing.""",
 
 
 def get_worker(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
 
@@ -196,7 +198,7 @@ def get_worker(
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
 

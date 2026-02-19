@@ -28,9 +28,9 @@ from ._acquire_token import acquire_token
 class CopilotStudioSettings(TypedDict, total=False):
     """Copilot Studio model settings.
 
-    The settings are first loaded from environment variables with the prefix 'COPILOTSTUDIOAGENT__'.
-    If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'COPILOTSTUDIOAGENT__'.
 
     Keys:
         environmentid: Environment ID of environment with the Copilot Studio App.
