@@ -59,7 +59,7 @@ async def run_with_cancellation() -> None:
     workflow = build_workflow()
 
     # Wrap workflow.run() in a task to enable cancellation
-    task = asyncio.create_task(workflow.run("hello world"))
+    task = asyncio.ensure_future(workflow.run("hello world"))
 
     # Wait 3 seconds (Step1 completes, Step2 is mid-execution), then cancel
     await asyncio.sleep(3)

@@ -57,6 +57,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         Assert.NotNull(this._lastCheckpoint);
         Checkpointed<StreamingRun> run = await InProcessExecution.ResumeStreamAsync(workflow, this._lastCheckpoint, this.GetCheckpointManager());
         IReadOnlyList<WorkflowEvent> workflowEvents = await MonitorAndDisposeWorkflowRunAsync(run, response).ToArrayAsync();
+        this._lastCheckpoint = workflowEvents.OfType<SuperStepCompletedEvent>().LastOrDefault()?.CompletionInfo?.Checkpoint;
         return new WorkflowEvents(workflowEvents);
     }
 
@@ -120,7 +121,11 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                     break;
                 case RequestInfoEvent requestInfo:
                     Console.WriteLine($"REQUEST #{requestInfo.Request.RequestId}");
-                    hasRequest = true;
+                    // Only count as a new request if it's not the one we're responding to
+                    if (response is null || requestInfo.Request.RequestId != response.RequestId)
+                    {
+                        hasRequest = true;
+                    }
                     break;
 
                 case ConversationUpdateEvent conversationEvent:

@@ -27,6 +27,10 @@ import asyncio
 
 from agent_framework.declarative import AgentFactory
 from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 # Example 1: OpenAI.Responses with API key authentication
 # Uses inline API key - suitable for OpenAI provider which supports headers
 YAML_OPENAI_WITH_API_KEY = """

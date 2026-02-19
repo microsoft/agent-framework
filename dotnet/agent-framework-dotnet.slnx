@@ -215,6 +215,7 @@
     <Project Path="samples/GettingStarted/Workflows/Declarative/Marketing/Marketing.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/StudentTeacher/StudentTeacher.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/ToolApproval/ToolApproval.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/InvokeFunctionTool/InvokeFunctionTool.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/Examples/">
     <File Path="../workflow-samples/CustomerSupport.yaml" />

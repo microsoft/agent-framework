@@ -30,6 +30,7 @@ Key properties:
 """
 
 import inspect
+import json
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Sequence
@@ -139,7 +140,10 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
         from agent_framework._middleware import MiddlewareTermination
 
         # Short-circuit execution and provide deterministic response payload for the tool call.
-        context.result = {HANDOFF_FUNCTION_RESULT_KEY: self._handoff_functions[context.function.name]}
+        # Parse the result using the default parser to ensure in a form that can be passed directly to LLM APIs.
+        context.result = FunctionTool.parse_result({
+            HANDOFF_FUNCTION_RESULT_KEY: self._handoff_functions[context.function.name]
+        })
         raise MiddlewareTermination(result=context.result)
 
 
@@ -493,9 +497,22 @@ class HandoffAgentExecutor(AgentExecutor):
         last_message = response.messages[-1]
         for content in last_message.contents:
             if content.type == "function_result":
-                # Use string comparison instead of isinstance to improve performance
-                if content.result and isinstance(content.result, dict):
-                    handoff_target = content.result.get(HANDOFF_FUNCTION_RESULT_KEY)  # type: ignore
+                if not content.result:
+                    continue
+
+                parsed_result: dict[str, Any] | None = None
+                if isinstance(content.result, dict):
+                    parsed_result = content.result
+                elif isinstance(content.result, str):
+                    try:
+                        loaded_result = json.loads(content.result)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(loaded_result, dict):
+                        parsed_result = loaded_result
+
+                if parsed_result is not None:
+                    handoff_target = parsed_result.get(HANDOFF_FUNCTION_RESULT_KEY)
                     if isinstance(handoff_target, str):
                         return handoff_target
             else:
