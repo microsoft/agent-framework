@@ -29,6 +29,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <IsReleaseCandidate>true</IsReleaseCandidate>
     <VersionSuffix>preview</VersionSuffix>
   </PropertyGroup>
 

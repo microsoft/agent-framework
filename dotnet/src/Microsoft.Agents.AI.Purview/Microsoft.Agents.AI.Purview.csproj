@@ -1,6 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <IsReleaseCandidate>true</IsReleaseCandidate>
     <VersionSuffix>alpha</VersionSuffix>
   </PropertyGroup>
 

@@ -3,6 +3,7 @@
   <PropertyGroup>
     <RootNamespace>Microsoft.Agents.AI</RootNamespace>
     <NoWarn>$(NoWarn);MEAI001</NoWarn>
+    <IsReleaseCandidate>true</IsReleaseCandidate>
     <VersionSuffix>preview</VersionSuffix>
   </PropertyGroup>
 
