@@ -23,6 +23,7 @@ from agent_framework import (
 )
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIResponsesOptions
@@ -41,7 +42,6 @@ from azure.ai.projects.models import (
     WebSearchPreviewTool,
 )
 from azure.ai.projects.models import FileSearchTool as ProjectsFileSearchTool
-from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
 
 from ._shared import AzureAISettings, create_text_format_config
@@ -109,7 +109,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         conversation_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
-        credential: AsyncTokenCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
         use_latest_version: bool | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -132,7 +132,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 Ignored when a project_client is passed.
             model_deployment_name: The model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
-            credential: Azure async credential to use for authentication.
+            credential: Azure credential for authentication. Accepts a TokenCredential,
+                AsyncTokenCredential, or a callable token provider.
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
             env_file_path: Path to environment file for loading settings.
@@ -197,7 +198,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
             project_client = AIProjectClient(
                 endpoint=resolved_endpoint,
-                credential=credential,
+                credential=credential,  # type: ignore[arg-type]
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             should_close_client = True
@@ -950,7 +951,7 @@ class AzureAIClient(
         conversation_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
-        credential: AsyncTokenCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
         use_latest_version: bool | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
@@ -972,7 +973,8 @@ class AzureAIClient(
                 Ignored when a project_client is passed.
             model_deployment_name: The model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
-            credential: Azure async credential to use for authentication.
+            credential: Azure credential for authentication. Accepts a TokenCredential
+                or AsyncTokenCredential.
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
             middleware: Optional sequence of chat middlewares to include.

@@ -46,6 +46,8 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
 
     public string RunId => this._stepRunner.RunId;
 
+    public bool IsCheckpointingEnabled => this._checkpointingHandle.IsCheckpointingEnabled;
+
     public IReadOnlyList<CheckpointInfo> Checkpoints => this._checkpointingHandle.Checkpoints;
 
     public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellationToken = default)

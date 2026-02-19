@@ -18,6 +18,7 @@ from agent_framework import (
 from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
@@ -29,7 +30,6 @@ from azure.ai.projects.models import (
 from azure.ai.projects.models import (
     FunctionTool as AzureFunctionTool,
 )
-from azure.core.credentials_async import AsyncTokenCredential
 
 from ._client import AzureAIClient, AzureAIProjectAgentOptions
 from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_tools, to_azure_ai_tools
@@ -103,7 +103,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         *,
         project_endpoint: str | None = None,
         model: str | None = None,
-        credential: AsyncTokenCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -116,7 +116,8 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
                 Ignored when a project_client is passed.
             model: The default model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
-            credential: Azure async credential to use for authentication.
+            credential: Azure credential for authentication. Accepts a TokenCredential,
+                AsyncTokenCredential, or a callable token provider.
                 Required when project_client is not provided.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
@@ -149,7 +150,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
 
             project_client = AIProjectClient(
                 endpoint=resolved_endpoint,
-                credential=credential,
+                credential=credential,  # type: ignore[arg-type]
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             self._should_close_client = True

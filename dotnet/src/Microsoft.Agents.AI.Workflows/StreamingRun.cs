@@ -14,11 +14,11 @@ namespace Microsoft.Agents.AI.Workflows;
 /// A <see cref="Workflow"/> run instance supporting a streaming form of receiving workflow events, and providing
 /// a mechanism to send responses back to the workflow.
 /// </summary>
-public sealed class StreamingRun : IAsyncDisposable
+public sealed class StreamingRun : CheckpointableRunBase, IAsyncDisposable
 {
     private readonly AsyncRunHandle _runHandle;
 
-    internal StreamingRun(AsyncRunHandle runHandle)
+    internal StreamingRun(AsyncRunHandle runHandle) : base(runHandle)
     {
         this._runHandle = Throw.IfNull(runHandle);
     }

@@ -41,7 +41,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     public InProcessRunnerContext(
         Workflow workflow,
         string runId,
-        bool withCheckpointing,
+        bool checkpointingEnabled,
         IEventSink outgoingEvents,
         IStepTracer? stepTracer,
         object? existingOwnershipSignoff = null,
@@ -66,7 +66,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         this._edgeMap = new(this, this._workflow, stepTracer);
         this._outputFilter = new(workflow);
 
-        this.WithCheckpointing = withCheckpointing;
+        this.IsCheckpointingEnabled = checkpointingEnabled;
         this.ConcurrentRunsEnabled = enableConcurrentRuns;
         this.OutgoingEvents = outgoingEvents;
     }
@@ -350,7 +350,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         public bool ConcurrentRunsEnabled => RunnerContext.ConcurrentRunsEnabled;
     }
 
-    public bool WithCheckpointing { get; }
+    public bool IsCheckpointingEnabled { get; }
     public bool ConcurrentRunsEnabled { get; }
 
     internal Task PrepareForCheckpointAsync(CancellationToken cancellationToken = default)

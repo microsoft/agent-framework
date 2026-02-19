@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Mapping
 from copy import copy
 from typing import Any, ClassVar, Final
 
-from azure.core.credentials import TokenCredential
 from openai import AsyncOpenAI
 from openai.lib.azure import AsyncAzureOpenAI
 
@@ -16,7 +15,7 @@ from .._settings import SecretString
 from .._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
 from ..exceptions import ServiceInitializationError
 from ..openai._shared import OpenAIBase
-from ._entra_id_authentication import get_entra_auth_token
+from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider, resolve_credential_to_token_provider
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -135,10 +134,8 @@ class AzureOpenAIConfigMixin(OpenAIBase):
         base_url: str | None = None,
         api_version: str = DEFAULT_AZURE_API_VERSION,
         api_key: str | None = None,
-        ad_token: str | None = None,
-        ad_token_provider: Callable[[], str | Awaitable[str]] | None = None,
         token_endpoint: str | None = None,
-        credential: TokenCredential | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         default_headers: Mapping[str, str] | None = None,
         client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
@@ -155,10 +152,10 @@ class AzureOpenAIConfigMixin(OpenAIBase):
             base_url: The base URL for Azure services.
             api_version: Azure API version. Defaults to the defined DEFAULT_AZURE_API_VERSION.
             api_key: API key for Azure services.
-            ad_token: Azure AD token for authentication.
-            ad_token_provider: A callable or coroutine function providing Azure AD tokens.
-            token_endpoint: Azure AD token endpoint use to get the token.
-            credential: Azure credential for authentication.
+            token_endpoint: Azure AD token scope used to obtain a bearer token from a credential.
+            credential: Azure credential or token provider for authentication. Accepts a
+                ``TokenCredential``, ``AsyncTokenCredential``, or a callable that returns a
+                bearer token string (sync or async).
             default_headers: Default headers for HTTP requests.
             client: An existing client to use.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
@@ -172,16 +169,13 @@ class AzureOpenAIConfigMixin(OpenAIBase):
             merged_headers.update(APP_INFO)
             merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
         if not client:
-            # If the client is None, the api_key is none, the ad_token is none, and the ad_token_provider is none,
-            # then we will attempt to get the ad_token using the default endpoint specified in the Azure OpenAI
-            # settings.
-            if not api_key and not ad_token_provider and not ad_token and token_endpoint and credential:
-                ad_token = get_entra_auth_token(credential, token_endpoint)
+            # Resolve credential to a token provider if needed
+            ad_token_provider = None
+            if not api_key and credential:
+                ad_token_provider = resolve_credential_to_token_provider(credential, token_endpoint)
 
-            if not api_key and not ad_token and not ad_token_provider:
-                raise ServiceInitializationError(
-                    "Please provide either api_key, ad_token or ad_token_provider or a client."
-                )
+            if not api_key and not ad_token_provider:
+                raise ServiceInitializationError("Please provide either api_key, credential, or a client.")
 
             if not endpoint and not base_url:
                 raise ServiceInitializationError("Please provide an endpoint or a base_url")
@@ -191,8 +185,6 @@ class AzureOpenAIConfigMixin(OpenAIBase):
             }
             if api_version:
                 args["api_version"] = api_version
-            if ad_token:
-                args["azure_ad_token"] = ad_token
             if ad_token_provider:
                 args["azure_ad_token_provider"] = ad_token_provider
             if api_key:

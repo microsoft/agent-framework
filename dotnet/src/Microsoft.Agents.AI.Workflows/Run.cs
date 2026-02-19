@@ -14,13 +14,13 @@ namespace Microsoft.Agents.AI.Workflows;
 /// Represents a workflow run that tracks execution status and emitted workflow events, supporting resumption
 /// with responses to <see cref="RequestInfoEvent"/>.
 /// </summary>
-public sealed class Run : IAsyncDisposable
+public sealed class Run : CheckpointableRunBase, IAsyncDisposable
 {
     private readonly List<WorkflowEvent> _eventSink = [];
     private readonly AsyncRunHandle _runHandle;
-    internal Run(AsyncRunHandle _runHandle)
+    internal Run(AsyncRunHandle runHandle) : base(runHandle)
     {
-        this._runHandle = _runHandle;
+        this._runHandle = runHandle;
     }
 
     internal async ValueTask<bool> RunToNextHaltAsync(CancellationToken cancellationToken = default)

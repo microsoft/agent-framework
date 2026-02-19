@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Agents.AI.Workflows.InProc;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -28,14 +29,14 @@ public class CheckpointParentTests
             .Build();
 
         CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
-        IWorkflowExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
+        InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // Act
-        Checkpointed<StreamingRun> checkpointed =
-            await env.StreamAsync(workflow, "Hello", checkpointManager);
+        StreamingRun run =
+            await env.WithCheckpointing(checkpointManager).StreamAsync(workflow, "Hello");
 
         List<CheckpointInfo> checkpoints = [];
-        await foreach (WorkflowEvent evt in checkpointed.Run.WatchStreamAsync())
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
             {
@@ -68,16 +69,15 @@ public class CheckpointParentTests
             .Build();
 
         CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
-        IWorkflowExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
+        InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // Act
-        await using Checkpointed<StreamingRun> checkpointed =
-            await env.StreamAsync(workflow, "Hello", checkpointManager);
+        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).StreamAsync(workflow, "Hello");
 
         List<CheckpointInfo> checkpoints = [];
         using CancellationTokenSource cts = new();
 
-        await foreach (WorkflowEvent evt in checkpointed.Run.WatchStreamAsync(cts.Token))
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync(cts.Token))
         {
             if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
             {
@@ -123,15 +123,14 @@ public class CheckpointParentTests
             .Build();
 
         CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
-        IWorkflowExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
+        InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // First run: collect a checkpoint to resume from
-        await using Checkpointed<StreamingRun> checkpointed =
-            await env.StreamAsync(workflow, "Hello", checkpointManager);
+        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).StreamAsync(workflow, "Hello");
 
         List<CheckpointInfo> firstRunCheckpoints = [];
         using CancellationTokenSource cts = new();
-        await foreach (WorkflowEvent evt in checkpointed.Run.WatchStreamAsync(cts.Token))
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync(cts.Token))
         {
             if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
             {
@@ -147,15 +146,14 @@ public class CheckpointParentTests
         CheckpointInfo resumePoint = firstRunCheckpoints[0];
 
         // Dispose the first run to release workflow ownership before resuming.
-        await checkpointed.DisposeAsync();
+        await run.DisposeAsync();
 
         // Act: Resume from the first checkpoint
-        Checkpointed<StreamingRun> resumed =
-            await env.ResumeStreamAsync(workflow, resumePoint, checkpointManager);
+        StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamAsync(workflow, resumePoint);
 
         List<CheckpointInfo> resumedCheckpoints = [];
         using CancellationTokenSource cts2 = new();
-        await foreach (WorkflowEvent evt in resumed.Run.WatchStreamAsync(cts2.Token))
+        await foreach (WorkflowEvent evt in resumed.WatchStreamAsync(cts2.Token))
         {
             if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
             {

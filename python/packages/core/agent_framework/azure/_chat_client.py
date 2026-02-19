@@ -8,8 +8,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic
 
-from azure.core.credentials import TokenCredential
-from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
+from openai.lib.azure import AsyncAzureOpenAI
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from pydantic import BaseModel
@@ -29,6 +28,7 @@ from agent_framework.openai import OpenAIChatOptions
 from agent_framework.openai._chat_client import RawOpenAIChatClient
 
 from .._settings import load_settings
+from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
@@ -169,10 +169,8 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         endpoint: str | None = None,
         base_url: str | None = None,
         api_version: str | None = None,
-        ad_token: str | None = None,
-        ad_token_provider: AsyncAzureADTokenProvider | None = None,
         token_endpoint: str | None = None,
-        credential: TokenCredential | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
         env_file_path: str | None = None,
@@ -199,11 +197,12 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
             api_version: The deployment API version. If provided will override the value
                 in the env vars or .env file.
                 Can also be set via environment variable AZURE_OPENAI_API_VERSION.
-            ad_token: The Azure Active Directory token.
-            ad_token_provider: The Azure Active Directory token provider.
             token_endpoint: The token endpoint to request an Azure token.
                 Can also be set via environment variable AZURE_OPENAI_TOKEN_ENDPOINT.
-            credential: The Azure credential for authentication.
+            credential: Azure credential or token provider for authentication. Accepts a
+                ``TokenCredential``, ``AsyncTokenCredential``, or a callable that returns a
+                bearer token string (sync or async), for example from
+                ``azure.identity.get_bearer_token_provider()``.
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests.
             async_client: An existing client to use.
@@ -274,8 +273,6 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
             base_url=azure_openai_settings["base_url"],
             api_version=azure_openai_settings["api_version"],  # type: ignore
             api_key=azure_openai_settings["api_key"].get_secret_value() if azure_openai_settings["api_key"] else None,
-            ad_token=ad_token,
-            ad_token_provider=ad_token_provider,
             token_endpoint=azure_openai_settings["token_endpoint"],
             credential=credential,
             default_headers=default_headers,

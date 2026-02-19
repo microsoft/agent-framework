@@ -176,6 +176,7 @@
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step13_Plugins/FoundryAgents_Step13_Plugins.csproj" />
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step14_CodeInterpreter/FoundryAgents_Step14_CodeInterpreter.csproj" />
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step15_ComputerUse/FoundryAgents_Step15_ComputerUse.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step19_OpenAPITools/FoundryAgents_Step19_OpenAPITools.csproj" />
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step18_FileSearch/FoundryAgents_Step18_FileSearch.csproj" />
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Evaluations_Step01_RedTeaming/FoundryAgents_Evaluations_Step01_RedTeaming.csproj" />
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Evaluations_Step02_SelfReflection/FoundryAgents_Evaluations_Step02_SelfReflection.csproj" />
@@ -409,7 +410,6 @@
     <Project Path="src/Microsoft.Agents.AI.Abstractions/Microsoft.Agents.AI.Abstractions.csproj" />
     <Project Path="src/Microsoft.Agents.AI.AGUI/Microsoft.Agents.AI.AGUI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Anthropic/Microsoft.Agents.AI.Anthropic.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.GitHub.Copilot/Microsoft.Agents.AI.GitHub.Copilot.csproj" />
     <Project Path="src/Microsoft.Agents.AI.AzureAI.Persistent/Microsoft.Agents.AI.AzureAI.Persistent.csproj" />
     <Project Path="src/Microsoft.Agents.AI.AzureAI/Microsoft.Agents.AI.AzureAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.CopilotStudio/Microsoft.Agents.AI.CopilotStudio.csproj" />
@@ -417,6 +417,7 @@
     <Project Path="src/Microsoft.Agents.AI.Declarative/Microsoft.Agents.AI.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.DevUI/Microsoft.Agents.AI.DevUI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.DurableTask/Microsoft.Agents.AI.DurableTask.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.GitHub.Copilot/Microsoft.Agents.AI.GitHub.Copilot.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A.AspNetCore/Microsoft.Agents.AI.Hosting.A2A.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A/Microsoft.Agents.AI.Hosting.A2A.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.csproj" />
@@ -428,8 +429,8 @@
     <Project Path="src/Microsoft.Agents.AI.Purview/Microsoft.Agents.AI.Purview.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative.AzureAI/Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative/Microsoft.Agents.AI.Workflows.Declarative.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Generators/Microsoft.Agents.AI.Workflows.Generators.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
     <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
   </Folder>
   <Folder Name="/Tests/" />
@@ -439,8 +440,8 @@
     <Project Path="tests/AzureAI.IntegrationTests/AzureAI.IntegrationTests.csproj" />
     <Project Path="tests/AzureAIAgentsPersistent.IntegrationTests/AzureAIAgentsPersistent.IntegrationTests.csproj" />
     <Project Path="tests/CopilotStudio.IntegrationTests/CopilotStudio.IntegrationTests.csproj" />
-    <Project Path="tests/Microsoft.Agents.AI.GitHub.Copilot.IntegrationTests/Microsoft.Agents.AI.GitHub.Copilot.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.DurableTask.IntegrationTests/Microsoft.Agents.AI.DurableTask.IntegrationTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.GitHub.Copilot.IntegrationTests/Microsoft.Agents.AI.GitHub.Copilot.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests/Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Mem0.IntegrationTests/Microsoft.Agents.AI.Mem0.IntegrationTests.csproj" />
@@ -454,13 +455,13 @@
     <Project Path="tests/Microsoft.Agents.AI.Abstractions.UnitTests/Microsoft.Agents.AI.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AGUI.UnitTests/Microsoft.Agents.AI.AGUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Anthropic.UnitTests/Microsoft.Agents.AI.Anthropic.UnitTests.csproj" />
-    <Project Path="tests/Microsoft.Agents.AI.GitHub.Copilot.UnitTests/Microsoft.Agents.AI.GitHub.Copilot.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.UnitTests/Microsoft.Agents.AI.AzureAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/Microsoft.Agents.AI.CosmosNoSql.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Declarative.UnitTests/Microsoft.Agents.AI.Declarative.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.DevUI.UnitTests/Microsoft.Agents.AI.DevUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.DurableTask.UnitTests/Microsoft.Agents.AI.DurableTask.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.GitHub.Copilot.UnitTests/Microsoft.Agents.AI.GitHub.Copilot.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.A2A.UnitTests/Microsoft.Agents.AI.Hosting.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AzureFunctions.UnitTests/Microsoft.Agents.AI.Hosting.AzureFunctions.UnitTests.csproj" />

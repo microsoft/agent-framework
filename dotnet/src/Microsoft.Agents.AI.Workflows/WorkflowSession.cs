@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -9,6 +10,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -21,26 +23,48 @@ internal sealed class WorkflowSession : AgentSession
     private readonly bool _includeExceptionDetails;
     private readonly bool _includeWorkflowOutputsInResponse;
 
-    private readonly CheckpointManager _checkpointManager;
-    private readonly InMemoryCheckpointManager? _inMemoryCheckpointManager;
+    private InMemoryCheckpointManager? _inMemoryCheckpointManager;
 
-    public WorkflowSession(Workflow workflow, string runId, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
+    internal static bool VerifyCheckpointingConfiguration(IWorkflowExecutionEnvironment executionEnvironment, [NotNullWhen(true)] out InProcessExecutionEnvironment? inProcEnv)
+    {
+        inProcEnv = null;
+        if (executionEnvironment.IsCheckpointingEnabled)
+        {
+            return false;
+        }
+
+        if ((inProcEnv = executionEnvironment as InProcessExecutionEnvironment) == null)
+        {
+            throw new InvalidOperationException("Cannot use a non-checkpointed execution environment. Implicit checkpointing is supported only for InProcess.");
+        }
+
+        return true;
+    }
+
+    public WorkflowSession(Workflow workflow, string runId, IWorkflowExecutionEnvironment executionEnvironment, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
     {
         this._workflow = Throw.IfNull(workflow);
         this._executionEnvironment = Throw.IfNull(executionEnvironment);
         this._includeExceptionDetails = includeExceptionDetails;
         this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
 
-        // If the user provided an external checkpoint manager, use that, otherwise rely on an in-memory one.
-        // TODO: Implement persist-only-last functionality for in-memory checkpoint manager, to avoid unbounded
-        // memory growth.
-        this._checkpointManager = checkpointManager ?? new(this._inMemoryCheckpointManager = new());
+        if (VerifyCheckpointingConfiguration(executionEnvironment, out InProcessExecutionEnvironment? inProcEnv))
+        {
+            // We have an InProcessExecutionEnvironment which is not configured for checkpointing. Ensure it has an externalizable checkpoint manager,
+            // since we are responsible for maintaining the state.
+            this._executionEnvironment = inProcEnv.WithCheckpointing(this.EnsureExternalizedInMemoryCheckpointing());
+        }
 
         this.RunId = Throw.IfNullOrEmpty(runId);
         this.ChatHistoryProvider = new WorkflowChatHistoryProvider();
     }
 
-    public WorkflowSession(Workflow workflow, JsonElement serializedSession, IWorkflowExecutionEnvironment executionEnvironment, CheckpointManager? checkpointManager = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false, JsonSerializerOptions? jsonSerializerOptions = null)
+    private CheckpointManager EnsureExternalizedInMemoryCheckpointing()
+    {
+        return new(this._inMemoryCheckpointManager ??= new());
+    }
+
+    public WorkflowSession(Workflow workflow, JsonElement serializedSession, IWorkflowExecutionEnvironment executionEnvironment, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._workflow = Throw.IfNull(workflow);
         this._executionEnvironment = Throw.IfNull(executionEnvironment);
@@ -51,26 +75,20 @@ internal sealed class WorkflowSession : AgentSession
         SessionState sessionState = marshaller.Marshal<SessionState>(serializedSession);
 
         this._inMemoryCheckpointManager = sessionState.CheckpointManager;
-        if (this._inMemoryCheckpointManager is not null && checkpointManager is not null)
+        if (this._inMemoryCheckpointManager != null &&
+            VerifyCheckpointingConfiguration(executionEnvironment, out InProcessExecutionEnvironment? inProcEnv))
         {
-            // The session was externalized with an in-memory checkpoint manager, but the caller is providing an external one.
-            throw new ArgumentException("Cannot provide an external checkpoint manager when deserializing a session that " +
-                "was serialized with an in-memory checkpoint manager.", nameof(checkpointManager));
+            this._executionEnvironment = inProcEnv.WithCheckpointing(this.EnsureExternalizedInMemoryCheckpointing());
         }
-        else if (this._inMemoryCheckpointManager is null && checkpointManager is null)
+        else if (this._inMemoryCheckpointManager != null)
         {
-            // The session was externalized without an in-memory checkpoint manager, and the caller is not providing an external one.
-            throw new ArgumentException("An external checkpoint manager must be provided when deserializing a session that " +
-                "was serialized without an in-memory checkpoint manager.", nameof(checkpointManager));
-        }
-        else
-        {
-            this._checkpointManager = checkpointManager ?? new(this._inMemoryCheckpointManager!);
+            throw new ArgumentException("The session was saved with an externalized checkpoint manager, but the incoming execution environment does not support it.", nameof(executionEnvironment));
         }
 
         this.RunId = sessionState.RunId;
-        this.LastCheckpoint = sessionState.LastCheckpoint;
         this.ChatHistoryProvider = new WorkflowChatHistoryProvider();
+
+        this.LastCheckpoint = sessionState.LastCheckpoint;
         this.StateBag = sessionState.StateBag;
     }
 
@@ -123,28 +141,26 @@ internal sealed class WorkflowSession : AgentSession
         return update;
     }
 
-    private async ValueTask<Checkpointed<StreamingRun>> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
+    private async ValueTask<StreamingRun> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
         // The workflow is validated to be a ChatProtocol workflow by the WorkflowHostAgent before creating the session,
         // and does not need to be checked again here.
         if (this.LastCheckpoint is not null)
         {
-            Checkpointed<StreamingRun> checkpointed =
+            StreamingRun run =
                 await this._executionEnvironment
                             .ResumeStreamAsync(this._workflow,
                                                this.LastCheckpoint,
-                                               this._checkpointManager,
                                                cancellationToken)
                             .ConfigureAwait(false);
 
-            await checkpointed.Run.TrySendMessageAsync(messages).ConfigureAwait(false);
-            return checkpointed;
+            await run.TrySendMessageAsync(messages).ConfigureAwait(false);
+            return run;
         }
 
         return await this._executionEnvironment
                             .StreamAsync(this._workflow,
                                          messages,
-                                         this._checkpointManager,
                                          this.RunId,
                                          cancellationToken)
                             .ConfigureAwait(false);
@@ -160,11 +176,10 @@ internal sealed class WorkflowSession : AgentSession
             List<ChatMessage> messages = this.ChatHistoryProvider.GetFromBookmark(this).ToList();
 
 #pragma warning disable CA2007 // Analyzer misfiring and not seeing .ConfigureAwait(false) below.
-            await using Checkpointed<StreamingRun> checkpointed =
+            await using StreamingRun run =
                 await this.CreateOrResumeRunAsync(messages, cancellationToken).ConfigureAwait(false);
 #pragma warning restore CA2007
 
-            StreamingRun run = checkpointed.Run;
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
             await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken)
                                                .ConfigureAwait(false)

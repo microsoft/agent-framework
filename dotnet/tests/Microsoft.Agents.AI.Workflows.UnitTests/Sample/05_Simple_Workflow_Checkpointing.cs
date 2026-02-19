@@ -6,12 +6,13 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.AI.Workflows.InProc;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
 internal static class Step5EntryPoint
 {
-    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, IWorkflowExecutionEnvironment environment, bool rehydrateToRestore = false, CheckpointManager? checkpointManager = null)
+    public static async ValueTask<string> RunAsync(TextWriter writer, Func<string, int> userGuessCallback, InProcessExecutionEnvironment environment, bool rehydrateToRestore = false, CheckpointManager? checkpointManager = null)
     {
         Dictionary<CheckpointInfo, (NumberSignal signal, string? prompt)> checkpointedOutputs = [];
 
@@ -22,14 +23,14 @@ internal static class Step5EntryPoint
 
         Workflow workflow = Step4EntryPoint.CreateWorkflowInstance(out JudgeExecutor judge);
 
-        Checkpointed<StreamingRun> checkpointed =
-            await environment.StreamAsync(workflow, NumberSignal.Init, checkpointManager)
+        StreamingRun handle =
+            await environment.WithCheckpointing(checkpointManager)
+                             .StreamAsync(workflow, NumberSignal.Init)
                              .ConfigureAwait(false);
 
         List<CheckpointInfo> checkpoints = [];
         CancellationTokenSource cancellationSource = new();
 
-        StreamingRun handle = checkpointed.Run;
         string? result = await RunStreamToHaltOrMaxStepAsync(maxStep: 6).ConfigureAwait(false);
 
         result.Should().BeNull();
@@ -42,13 +43,13 @@ internal static class Step5EntryPoint
         {
             await handle.DisposeAsync().ConfigureAwait(false);
 
-            checkpointed = await environment.ResumeStreamAsync(workflow, targetCheckpoint, checkpointManager, cancellationToken: CancellationToken.None)
-                                            .ConfigureAwait(false);
-            handle = checkpointed.Run;
+            handle = await environment.WithCheckpointing(checkpointManager)
+                                      .ResumeStreamAsync(workflow, targetCheckpoint, CancellationToken.None)
+                                      .ConfigureAwait(false);
         }
         else
         {
-            await checkpointed.RestoreCheckpointAsync(checkpoints[2], CancellationToken.None).ConfigureAwait(false);
+            await handle.RestoreCheckpointAsync(checkpoints[2], CancellationToken.None).ConfigureAwait(false);
         }
 
         (signal, prompt) = checkpointedOutputs[targetCheckpoint];

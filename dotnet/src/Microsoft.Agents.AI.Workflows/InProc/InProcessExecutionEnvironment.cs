@@ -2,9 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 
 namespace Microsoft.Agents.AI.Workflows.InProc;
@@ -15,24 +15,44 @@ namespace Microsoft.Agents.AI.Workflows.InProc;
 /// </summary>
 public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironment
 {
-    internal InProcessExecutionEnvironment(ExecutionMode mode, bool enableConcurrentRuns = false)
+    internal InProcessExecutionEnvironment(ExecutionMode mode, bool enableConcurrentRuns = false, CheckpointManager? checkpointManager = null)
     {
         this.ExecutionMode = mode;
         this.EnableConcurrentRuns = enableConcurrentRuns;
+
+        this.CheckpointManager = checkpointManager;
+    }
+
+    /// <summary>
+    /// Configure a new execution environment, inheriting configuration for the current one with the specified <see cref="Workflows.CheckpointManager"/>
+    /// for use in checkpointing.
+    /// </summary>
+    /// <param name="checkpointManager">The CheckpointManager to use for checkpointing.</param>
+    /// <returns>
+    /// A new InProcess <see cref="IWorkflowExecutionEnvironment"/> configured for checkpointing, inheriting configuration from the current
+    /// environment.
+    /// </returns>
+    public InProcessExecutionEnvironment WithCheckpointing(CheckpointManager? checkpointManager)
+    {
+        return new(this.ExecutionMode, this.EnableConcurrentRuns, checkpointManager);
     }
 
     internal ExecutionMode ExecutionMode { get; }
     internal bool EnableConcurrentRuns { get; }
+    internal CheckpointManager? CheckpointManager { get; }
 
-    internal ValueTask<AsyncRunHandle> BeginRunAsync(Workflow workflow, ICheckpointManager? checkpointManager, string? runId, IEnumerable<Type> knownValidInputTypes, CancellationToken cancellationToken)
+    /// <inheritdoc/>
+    public bool IsCheckpointingEnabled => this.CheckpointManager != null;
+
+    internal ValueTask<AsyncRunHandle> BeginRunAsync(Workflow workflow, string? runId, IEnumerable<Type> knownValidInputTypes, CancellationToken cancellationToken)
     {
-        InProcessRunner runner = InProcessRunner.CreateTopLevelRunner(workflow, checkpointManager, runId, this.EnableConcurrentRuns, knownValidInputTypes);
+        InProcessRunner runner = InProcessRunner.CreateTopLevelRunner(workflow, this.CheckpointManager, runId, this.EnableConcurrentRuns, knownValidInputTypes);
         return runner.BeginStreamAsync(this.ExecutionMode, cancellationToken);
     }
 
-    internal ValueTask<AsyncRunHandle> ResumeRunAsync(Workflow workflow, ICheckpointManager? checkpointManager, CheckpointInfo fromCheckpoint, IEnumerable<Type> knownValidInputTypes, CancellationToken cancellationToken)
+    internal ValueTask<AsyncRunHandle> ResumeRunAsync(Workflow workflow, CheckpointInfo fromCheckpoint, IEnumerable<Type> knownValidInputTypes, CancellationToken cancellationToken)
     {
-        InProcessRunner runner = InProcessRunner.CreateTopLevelRunner(workflow, checkpointManager, fromCheckpoint.RunId, this.EnableConcurrentRuns, knownValidInputTypes);
+        InProcessRunner runner = InProcessRunner.CreateTopLevelRunner(workflow, this.CheckpointManager, fromCheckpoint.RunId, this.EnableConcurrentRuns, knownValidInputTypes);
         return runner.ResumeStreamAsync(this.ExecutionMode, fromCheckpoint, cancellationToken);
     }
 
@@ -42,7 +62,7 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         string? runId = null,
         CancellationToken cancellationToken = default)
     {
-        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, checkpointManager: null, runId: runId, [], cancellationToken)
+        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, runId, [], cancellationToken)
                                              .ConfigureAwait(false);
 
         return new(runHandle);
@@ -55,63 +75,42 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         string? runId = null,
         CancellationToken cancellationToken = default) where TInput : notnull
     {
-        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, checkpointManager: null, runId: runId, [], cancellationToken)
+        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, runId, [], cancellationToken)
                                              .ConfigureAwait(false);
 
         return await runHandle.EnqueueAndStreamAsync(input, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <inheritdoc/>
-    public async ValueTask<Checkpointed<StreamingRun>> StreamAsync(
-        Workflow workflow,
-        CheckpointManager checkpointManager,
-        string? runId = null,
-        CancellationToken cancellationToken = default)
+    [MemberNotNull(nameof(CheckpointManager))]
+    private void VerifyCheckpointingConfigured()
     {
-        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, checkpointManager, runId: runId, [], cancellationToken)
-                                             .ConfigureAwait(false);
-
-        return await runHandle.WithCheckpointingAsync<StreamingRun>(() => new(new StreamingRun(runHandle)))
-                              .ConfigureAwait(false);
+        if (this.CheckpointManager == null)
+        {
+            throw new InvalidOperationException("Checkpointing is not configured for this execution environment. Please use the InProcessExecutionEnvironment.WithCheckpointing method to attach a CheckpointManager.");
+        }
     }
 
     /// <inheritdoc/>
-    public async ValueTask<Checkpointed<StreamingRun>> StreamAsync<TInput>(
-        Workflow workflow,
-        TInput input,
-        CheckpointManager checkpointManager,
-        string? runId = null,
-        CancellationToken cancellationToken = default) where TInput : notnull
-    {
-        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, checkpointManager, runId: runId, [], cancellationToken)
-                                             .ConfigureAwait(false);
-
-        return await runHandle.WithCheckpointingAsync(() => runHandle.EnqueueAndStreamAsync(input, cancellationToken))
-                              .ConfigureAwait(false);
-    }
-
-    /// <inheritdoc/>
-    public async ValueTask<Checkpointed<StreamingRun>> ResumeStreamAsync(
+    public async ValueTask<StreamingRun> ResumeStreamAsync(
         Workflow workflow,
         CheckpointInfo fromCheckpoint,
-        CheckpointManager checkpointManager,
         CancellationToken cancellationToken = default)
     {
-        AsyncRunHandle runHandle = await this.ResumeRunAsync(workflow, checkpointManager, fromCheckpoint, [], cancellationToken)
+        this.VerifyCheckpointingConfigured();
+
+        AsyncRunHandle runHandle = await this.ResumeRunAsync(workflow, fromCheckpoint, [], cancellationToken)
                                              .ConfigureAwait(false);
 
-        return await runHandle.WithCheckpointingAsync<StreamingRun>(() => new(new StreamingRun(runHandle)))
-                              .ConfigureAwait(false);
+        return new(runHandle);
     }
 
     private async ValueTask<AsyncRunHandle> BeginRunHandlingChatProtocolAsync<TInput>(Workflow workflow,
         TInput input,
-        CheckpointManager? checkpointManager,
         string? runId = null,
         CancellationToken cancellationToken = default)
     {
         ProtocolDescriptor descriptor = await workflow.DescribeProtocolAsync(cancellationToken).ConfigureAwait(false);
-        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, checkpointManager, runId, descriptor.Accepts, cancellationToken)
+        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, runId, descriptor.Accepts, cancellationToken)
                                              .ConfigureAwait(false);
 
         await runHandle.EnqueueMessageAsync(input, cancellationToken).ConfigureAwait(false);
@@ -134,7 +133,6 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         AsyncRunHandle runHandle = await this.BeginRunHandlingChatProtocolAsync(
                                                 workflow,
                                                 input,
-                                                checkpointManager: null,
                                                 runId,
                                                 cancellationToken)
                                              .ConfigureAwait(false);
@@ -145,38 +143,16 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
     }
 
     /// <inheritdoc/>
-    public async ValueTask<Checkpointed<Run>> RunAsync<TInput>(
-        Workflow workflow,
-        TInput input,
-        CheckpointManager checkpointManager,
-        string? runId = null,
-        CancellationToken cancellationToken = default) where TInput : notnull
-    {
-        AsyncRunHandle runHandle = await this.BeginRunHandlingChatProtocolAsync(
-                                                workflow,
-                                                input,
-                                                checkpointManager,
-                                                runId,
-                                                cancellationToken)
-                                             .ConfigureAwait(false);
-
-        Run run = new(runHandle);
-        await run.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
-        return await runHandle.WithCheckpointingAsync(() => new ValueTask<Run>(run))
-                              .ConfigureAwait(false);
-    }
-
-    /// <inheritdoc/>
-    public async ValueTask<Checkpointed<Run>> ResumeAsync(
+    public async ValueTask<Run> ResumeAsync(
         Workflow workflow,
         CheckpointInfo fromCheckpoint,
-        CheckpointManager checkpointManager,
         CancellationToken cancellationToken = default)
     {
-        AsyncRunHandle runHandle = await this.ResumeRunAsync(workflow, checkpointManager, fromCheckpoint, [], cancellationToken)
+        this.VerifyCheckpointingConfigured();
+
+        AsyncRunHandle runHandle = await this.ResumeRunAsync(workflow, fromCheckpoint, [], cancellationToken)
                                              .ConfigureAwait(false);
 
-        return await runHandle.WithCheckpointingAsync<Run>(() => new(new Run(runHandle)))
-                              .ConfigureAwait(false);
+        return new(runHandle);
     }
 }
