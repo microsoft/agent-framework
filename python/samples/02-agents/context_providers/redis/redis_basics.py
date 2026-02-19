@@ -37,6 +37,10 @@ from azure.identity import AzureCliCredential
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 
+# Default Redis URL for local Redis Stack.
+# Override via the REDIS_URL environment variable for remote or authenticated instances.
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+
 
 # NOTE: approval_mode="never_require" is for sample brevity.
 # Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py
@@ -121,14 +125,14 @@ async def main() -> None:
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},
-        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
+        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url=REDIS_URL),
     )
     # The provider manages persistence and retrieval. application_id/agent_id/user_id
     # scope data for multi-tenant separation; thread_id (set later) narrows to a
     # specific conversation.
     provider = RedisContextProvider(
         source_id="redis_context",
-        redis_url="redis://localhost:6379",
+        redis_url=REDIS_URL,
         index_name="redis_basics",
         application_id="matrix_of_kermits",
         agent_id="agent_kermit",
@@ -151,16 +155,14 @@ async def main() -> None:
     from agent_framework import AgentSession, SessionContext
 
     session = AgentSession(session_id="runA")
-    context = SessionContext()
-    context.extend_messages("input", messages)
+    context = SessionContext(input_messages=messages)
     state = session.state
 
     # Store messages via after_run
     await provider.after_run(agent=None, session=session, context=context, state=state)
 
     # Retrieve relevant memories via before_run
-    query_context = SessionContext()
-    query_context.extend_messages("input", [Message("system", ["B: Assistant Message"])])
+    query_context = SessionContext(input_messages=[Message("system", ["B: Assistant Message"])])
     await provider.before_run(agent=None, session=session, context=query_context, state=state)
 
     # Inspect retrieved memories that would be injected into instructions
@@ -179,12 +181,12 @@ async def main() -> None:
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},
-        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
+        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url=REDIS_URL),
     )
     # Recreate a clean index so the next scenario starts fresh
     provider = RedisContextProvider(
         source_id="redis_context",
-        redis_url="redis://localhost:6379",
+        redis_url=REDIS_URL,
         index_name="redis_basics_2",
         prefix="context_2",
         application_id="matrix_of_kermits",
@@ -232,7 +234,7 @@ async def main() -> None:
     # Text-only provider (full-text search only). Omits vectorizer and related params.
     provider = RedisContextProvider(
         source_id="redis_context",
-        redis_url="redis://localhost:6379",
+        redis_url=REDIS_URL,
         index_name="redis_basics_3",
         prefix="context_3",
         application_id="matrix_of_kermits",
