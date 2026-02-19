@@ -10,6 +10,7 @@ description: How to build and test .NET projects in the Agent Framework reposito
 
 ```bash
 # From dotnet/ directory
+dotnet restore --tl:off   # Restore dependencies for all projects
 dotnet build --tl:off     # Build all projects
 dotnet test               # Run all tests
 dotnet format             # Auto-fix formatting for all projects
@@ -40,29 +41,29 @@ The full solution is large. Use these shortcuts:
 Example: Building a single code project for all target frameworks
 
 ```bash
-cd /workspaces/agent-framework/dotnet
+# From dotnet/ directory
 dotnet build ./src/Microsoft.Agents.AI.Abstractions
 ```
 
 Example: Building a single code project for just .NET 10.
 
 ```bash
-cd /workspaces/agent-framework/dotnet
+# From dotnet/ directory
 dotnet build ./src/Microsoft.Agents.AI.Abstractions -f net10.0
 ```
 
 Example: Running tests for a single project using .NET 10.
 
 ```bash
-cd /workspaces/agent-framework/dotnet
+# From dotnet/ directory
 dotnet test ./tests/Microsoft.Agents.AI.Abstractions.UnitTests -f net10.0
 ```
 
 Example: Running a single test in a specific project using .NET 10.
-Provider the full namespace, class name, and method name for the test you want to run:
+Provide the full namespace, class name, and method name for the test you want to run:
 
 ```bash
-cd /workspaces/agent-framework/dotnet
+# From dotnet/ directory
 dotnet test ./tests/Microsoft.Agents.AI.Abstractions.UnitTests -f net10.0 --filter "FullyQualifiedName~Microsoft.Agents.AI.Abstractions.UnitTests.AgentRunOptionsTests.CloningConstructorCopiesProperties"
 ```
 

@@ -18,14 +18,14 @@ See `./.github/skills/project-structure/SKILL.md` for an overview of the project
 - `IChatClient`: Interface for sending messages to an AI provider and receiving responses. Used by `ChatClientAgent` and implemented by provider-specific packages.
 - `FunctionInvokingChatClient`: Decorator for `IChatClient` that adds function invocation capabilities.
 - `AITool`: Represents a tool that an agent/AI provider can use, with metadata and an execution delegate.
-- `FunctionTool`: A specific type of `AITool` that represents a local function the agent/AI provider can call, with parameters and return types defined.
+- `AIFunction`: A specific type of `AITool` that represents a local function the agent/AI provider can call, with parameters and return types defined.
 - `ChatMessage`: Represents a message in a conversation.
 - `AIContent`: Represents content in a message, which can be text, a function call, tool output and more.
 
 ### External Dependencies
 
 The framework integrates with `Microsoft.Extensions.AI` and `Microsoft.Extensions.AI.Abstractions` (external NuGet packages)
-using types like `IChatClient`, `FunctionInvokingChatClient`, `AITool`, `FunctionTool`, `ChatMessage`, and `AIContent`.
+using types like `IChatClient`, `FunctionInvokingChatClient`, `AITool`, `AIFunction`, `ChatMessage`, and `AIContent`.
 
 ## Key Conventions
 
