@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Behaviors;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Observability;
@@ -143,6 +144,38 @@ public abstract class Executor : IIdentified
         => this.ExecuteAsync(message, messageType, context, WorkflowTelemetryContext.Disabled, cancellationToken);
 
     internal async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, CancellationToken cancellationToken = default)
+        => await this.ExecuteAsync(message, messageType, context, telemetryContext, behaviorPipeline: null, runId: null, cancellationToken).ConfigureAwait(false);
+
+    internal async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, BehaviorPipeline? behaviorPipeline, string? runId, CancellationToken cancellationToken = default)
+    {
+        // Check if behaviors are configured
+        if (behaviorPipeline?.HasExecutorBehaviors == true)
+        {
+            var behaviorContext = new ExecutorBehaviorContext
+            {
+                ExecutorId = this.Id,
+                ExecutorType = this.GetType(),
+                Message = message,
+                MessageType = message.GetType(),
+                RunId = runId ?? string.Empty,
+                Stage = ExecutorStage.PreExecution,
+                WorkflowContext = context,
+                TraceContext = context.TraceContext,
+                Properties = null
+            };
+
+            return await behaviorPipeline.ExecuteExecutorPipelineAsync(
+                behaviorContext,
+                async (ct) => await this.ExecuteCoreAsync(message, messageType, context, telemetryContext, ct).ConfigureAwait(false),
+                cancellationToken
+            ).ConfigureAwait(false);
+        }
+
+        // No behaviors - execute directly (fast path)
+        return await this.ExecuteCoreAsync(message, messageType, context, telemetryContext, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<object?> ExecuteCoreAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, CancellationToken cancellationToken)
     {
         using var activity = telemetryContext.StartExecutorProcessActivity(this.Id, this.GetType().FullName, messageType.TypeName, message);
         activity?.CreateSourceLinks(context.TraceContext);
