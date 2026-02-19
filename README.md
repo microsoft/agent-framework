@@ -53,7 +53,7 @@ Still have questions? Join our [weekly office hours](./COMMUNITY.md#public-commu
 ### ✨ **Highlights**
 
 - **Graph-based Workflows**: Connect agents and deterministic functions using data flows with streaming, checkpointing, human-in-the-loop, and time-travel capabilities
-  - [Python workflows](./python/samples/03-workflows/) | [.NET workflows](./dotnet/samples/GettingStarted/Workflows/)
+  - [Python workflows](./python/samples/03-workflows/) | [.NET workflows](./dotnet/samples/03-workflows/)
 - **AF Labs**: Experimental packages for cutting-edge features including benchmarking, reinforcement learning, and research initiatives
   - [Labs directory](./python/packages/lab/)
 - **DevUI**: Interactive developer UI for agent development, testing, and debugging workflows
@@ -167,7 +167,7 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 
 - [Getting Started with Agents](./dotnet/samples/GettingStarted/Agents): basic agent creation and tool usage
 - [Agent Provider Samples](./dotnet/samples/GettingStarted/AgentProviders): samples showing different agent providers
-- [Workflow Samples](./dotnet/samples/GettingStarted/Workflows): advanced multi-agent patterns and workflow orchestration
+- [Workflow Samples](./dotnet/samples/03-workflows): advanced multi-agent patterns and workflow orchestration
 
 ## Contributor Resources
 
