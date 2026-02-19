@@ -30,7 +30,7 @@ The `RedisChatMessageStore` provides persistent conversation storage using Redis
 
 #### Basic Usage Examples
 
-See the complete [Redis history provider examples](../../samples/02-agents/conversations/redis_chat_message_store_session.py) including:
+See the complete [Redis history provider examples](../../samples/02-agents/conversations/redis_history_provider.py) including:
 - User session management
 - Conversation persistence across restarts
 - Session serialization and deserialization
