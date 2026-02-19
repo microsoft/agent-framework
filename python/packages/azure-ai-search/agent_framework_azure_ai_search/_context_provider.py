@@ -17,7 +17,6 @@ from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework._settings import SecretString, load_settings
 from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
-from agent_framework.exceptions import ServiceInitializationError
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
@@ -219,7 +218,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
         )
 
         if mode == "agentic" and settings.get("index_name") and not model_deployment_name:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "model_deployment_name is required for agentic mode when creating Knowledge Base from index."
             )
 
@@ -231,7 +230,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
         elif settings.get("api_key"):
             resolved_credential = AzureKeyCredential(settings["api_key"].get_secret_value())  # type: ignore[union-attr]
         else:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Azure credential is required. Provide 'api_key' or 'credential' parameter "
                 "or set 'AZURE_SEARCH_API_KEY' environment variable."
             )

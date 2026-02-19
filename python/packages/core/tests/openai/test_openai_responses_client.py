@@ -35,11 +35,7 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
-from agent_framework.exceptions import (
-    ServiceInitializationError,
-    ServiceInvalidRequestError,
-    ServiceResponseException,
-)
+from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
 from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
 
@@ -106,7 +102,7 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
 
 def test_init_validation_fail() -> None:
     # Test successful initialization
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         OpenAIResponsesClient(api_key="34523", model_id={"test": "dict"})  # type: ignore
 
 
@@ -138,7 +134,7 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_RESPONSES_MODEL_ID"]], indirect=True)
 def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         OpenAIResponsesClient()
 
 
@@ -146,7 +142,7 @@ def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
     model_id = "test_model_id"
 
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         OpenAIResponsesClient(
             model_id=model_id,
         )
@@ -192,8 +188,8 @@ async def test_get_response_with_invalid_input() -> None:
 
     client = OpenAIResponsesClient(model_id="invalid-model", api_key="test-key")
 
-    # Test with empty messages which should trigger ServiceInvalidRequestError
-    with pytest.raises(ServiceInvalidRequestError, match="Messages are required"):
+    # Test with empty messages which should trigger ChatClientInvalidRequestException
+    with pytest.raises(ChatClientInvalidRequestException, match="Messages are required"):
         await client.get_response(messages=[])
 
 
@@ -201,7 +197,7 @@ async def test_get_response_with_all_parameters() -> None:
     """Test get_response with all possible parameters to cover parameter handling logic."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     # Test with comprehensive parameter set - should fail due to invalid API key
-    with pytest.raises(ServiceResponseException):
+    with pytest.raises(ChatClientException):
         await client.get_response(
             messages=[Message(role="user", text="Test message")],
             options={
@@ -244,7 +240,7 @@ async def test_web_search_tool_with_location() -> None:
     )
 
     # Should raise an authentication error due to invalid API key
-    with pytest.raises(ServiceResponseException):
+    with pytest.raises(ChatClientException):
         await client.get_response(
             messages=[Message(role="user", text="What's the weather?")],
             options={"tools": [web_search_tool], "tool_choice": "auto"},
@@ -258,7 +254,7 @@ async def test_code_interpreter_tool_variations() -> None:
     # Test code interpreter using static method
     code_tool = OpenAIResponsesClient.get_code_interpreter_tool()
 
-    with pytest.raises(ServiceResponseException):
+    with pytest.raises(ChatClientException):
         await client.get_response(
             messages=[Message("user", ["Run some code"])],
             options={"tools": [code_tool]},
@@ -267,7 +263,7 @@ async def test_code_interpreter_tool_variations() -> None:
     # Test code interpreter with files using static method
     code_tool_with_files = OpenAIResponsesClient.get_code_interpreter_tool(file_ids=["file1", "file2"])
 
-    with pytest.raises(ServiceResponseException):
+    with pytest.raises(ChatClientException):
         await client.get_response(
             messages=[Message(role="user", text="Process these files")],
             options={"tools": [code_tool_with_files]},
@@ -303,7 +299,7 @@ async def test_hosted_file_search_tool_validation() -> None:
     file_search_tool = OpenAIResponsesClient.get_file_search_tool(vector_store_ids=["vs_123"])
 
     # Test using file search tool - may raise various exceptions depending on API response
-    with pytest.raises((ValueError, ServiceInvalidRequestError, ServiceResponseException)):
+    with pytest.raises((ValueError, ChatClientInvalidRequestException, ChatClientException)):
         await client.get_response(
             messages=[Message("user", ["Test"])],
             options={"tools": [file_search_tool]},
@@ -331,7 +327,7 @@ async def test_chat_message_parsing_with_function_calls() -> None:
     ]
 
     # This should exercise the message parsing logic - will fail due to invalid API key
-    with pytest.raises(ServiceResponseException):
+    with pytest.raises(ChatClientException):
         await client.get_response(messages=messages)
 
 
@@ -401,7 +397,7 @@ async def test_bad_request_error_non_content_filter() -> None:
     mock_error.code = "invalid_request"
 
     with patch.object(client.client.responses, "parse", side_effect=mock_error):
-        with pytest.raises(ServiceResponseException) as exc_info:
+        with pytest.raises(ChatClientException) as exc_info:
             await client.get_response(
                 messages=[Message(role="user", text="Test message")],
                 options={"response_format": OutputStruct},
@@ -996,7 +992,7 @@ def test_response_format_with_conflicting_definitions() -> None:
     response_format = {"type": "json_schema", "format": {"type": "json_schema", "name": "Test", "schema": {}}}
     text_config = {"format": {"type": "json_object"}}
 
-    with pytest.raises(ServiceInvalidRequestError, match="Conflicting response_format definitions"):
+    with pytest.raises(ChatClientInvalidRequestException, match="Conflicting response_format definitions"):
         client._prepare_response_and_text_format(response_format=response_format, text_config=text_config)
 
 
@@ -1092,7 +1088,7 @@ def test_response_format_json_schema_missing_schema() -> None:
 
     response_format = {"type": "json_schema", "json_schema": {"name": "NoSchema"}}
 
-    with pytest.raises(ServiceInvalidRequestError, match="json_schema response_format requires a schema"):
+    with pytest.raises(ChatClientInvalidRequestException, match="json_schema response_format requires a schema"):
         client._prepare_response_and_text_format(response_format=response_format, text_config=None)
 
 
@@ -1102,7 +1098,7 @@ def test_response_format_unsupported_type() -> None:
 
     response_format = {"type": "unsupported_format"}
 
-    with pytest.raises(ServiceInvalidRequestError, match="Unsupported response_format"):
+    with pytest.raises(ChatClientInvalidRequestException, match="Unsupported response_format"):
         client._prepare_response_and_text_format(response_format=response_format, text_config=None)
 
 
@@ -1112,7 +1108,7 @@ def test_response_format_invalid_type() -> None:
 
     response_format = "invalid"  # Not a Pydantic model or mapping
 
-    with pytest.raises(ServiceInvalidRequestError, match="response_format must be a Pydantic model or mapping"):
+    with pytest.raises(ChatClientInvalidRequestException, match="response_format must be a Pydantic model or mapping"):
         client._prepare_response_and_text_format(response_format=response_format, text_config=None)  # type: ignore
 
 
@@ -1689,7 +1685,7 @@ def test_streaming_annotation_added_with_unknown_type() -> None:
 
 
 async def test_service_response_exception_includes_original_error_details() -> None:
-    """Test that ServiceResponseException messages include original error details in the new format."""
+    """Test that ChatClientException messages include original error details in the new format."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     messages = [Message(role="user", text="test message")]
 
@@ -1704,7 +1700,7 @@ async def test_service_response_exception_includes_original_error_details() -> N
 
     with (
         patch.object(client.client.responses, "parse", side_effect=mock_error),
-        pytest.raises(ServiceResponseException) as exc_info,
+        pytest.raises(ChatClientException) as exc_info,
     ):
         await client.get_response(messages=messages, options={"response_format": OutputStruct})
 
@@ -1719,7 +1715,7 @@ async def test_get_response_streaming_with_response_format() -> None:
     messages = [Message(role="user", text="Test streaming with format")]
 
     # It will fail due to invalid API key, but exercises the code path
-    with pytest.raises(ServiceResponseException):
+    with pytest.raises(ChatClientException):
 
         async def run_streaming():
             async for _ in client.get_response(

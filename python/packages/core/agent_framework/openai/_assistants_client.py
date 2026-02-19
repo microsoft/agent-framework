@@ -47,7 +47,6 @@ from .._types import (
     ResponseStream,
     UsageDetails,
 )
-from ..exceptions import ServiceInitializationError
 from ..observability import ChatTelemetryLayer
 from ._shared import OpenAIConfigMixin, OpenAISettings
 
@@ -350,11 +349,11 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         )
 
         if not async_client and not openai_settings["api_key"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
         if not openai_settings["chat_model_id"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
@@ -452,7 +451,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         # If no assistant is provided, create a temporary assistant
         if self.assistant_id is None:
             if not self.model_id:
-                raise ServiceInitializationError("Parameter 'model_id' is required for assistant creation.")
+                raise ValueError("Parameter 'model_id' is required for assistant creation.")
 
             client = await self._ensure_client()
             created_assistant = await client.beta.assistants.create(

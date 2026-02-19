@@ -24,7 +24,6 @@ from agent_framework import (
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
 from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
-from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIResponsesOptions
 from agent_framework.openai._responses_client import RawOpenAIResponsesClient
@@ -188,14 +187,14 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         if project_client is None:
             resolved_endpoint = azure_ai_settings.get("project_endpoint")
             if not resolved_endpoint:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
                     "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
                 )
 
             # Use provided credential
             if not credential:
-                raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
+                raise ValueError("Azure credential is required when project_client is not provided.")
             project_client = AIProjectClient(
                 endpoint=resolved_endpoint,
                 credential=credential,  # type: ignore[arg-type]
@@ -345,7 +344,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """
         # Agent name must be explicitly provided by the user.
         if self.agent_name is None:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Agent name is required. Provide 'agent_name' when initializing AzureAIClient "
                 "or 'name' when initializing Agent."
             )
@@ -363,7 +362,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                     return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
 
             if "model" not in run_options or not run_options["model"]:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Model deployment name is required for agent creation, "
                     "can also be passed to the get_response methods."
                 )

@@ -9,7 +9,6 @@ from typing import Any, ClassVar, Generic
 from openai.lib.azure import AsyncAzureOpenAI
 
 from .._settings import load_settings
-from ..exceptions import ServiceInitializationError
 from ..openai import OpenAIAssistantsClient
 from ..openai._assistants_client import OpenAIAssistantsOptions
 from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider, resolve_credential_to_token_provider
@@ -147,7 +146,7 @@ class AzureOpenAIAssistantsClient(
         _apply_azure_defaults(azure_openai_settings, default_api_version=self.DEFAULT_AZURE_API_VERSION)
 
         if not azure_openai_settings["chat_deployment_name"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_CHAT_DEPLOYMENT_NAME' environment variable."
             )
@@ -160,7 +159,7 @@ class AzureOpenAIAssistantsClient(
             )
 
         if not async_client and not azure_openai_settings["api_key"] and not ad_token_provider:
-            raise ServiceInitializationError("Please provide either api_key, credential, or a client.")
+            raise ValueError("Please provide either api_key, credential, or a client.")
 
         # Create Azure client if not provided
         if not async_client:

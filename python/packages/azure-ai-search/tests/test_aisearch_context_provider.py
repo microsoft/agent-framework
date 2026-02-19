@@ -216,7 +216,7 @@ class TestInitAgenticValidation:
             )
 
     def test_missing_model_deployment_name_raises(self) -> None:
-        with pytest.raises(ServiceInitializationError, match="model_deployment_name"):
+        with pytest.raises(ValueError, match="model_deployment_name"):
             AzureAISearchContextProvider(
                 source_id="s",
                 endpoint="https://test.search.windows.net",

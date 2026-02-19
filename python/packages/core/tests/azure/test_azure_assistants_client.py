@@ -21,7 +21,6 @@ from agent_framework import (
 )
 from agent_framework._settings import SecretString
 from agent_framework.azure import AzureOpenAIAssistantsClient
-from agent_framework.exceptions import ServiceInitializationError
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -120,7 +119,7 @@ def test_azure_assistants_client_init_auto_create_client(
 
 def test_azure_assistants_client_init_validation_fail() -> None:
     """Test AzureOpenAIAssistantsClient initialization with validation failure."""
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         # Force failure by providing invalid deployment name type - this should cause validation to fail
         AzureOpenAIAssistantsClient(deployment_name=123, api_key="valid-key")  # type: ignore
 
@@ -128,7 +127,7 @@ def test_azure_assistants_client_init_validation_fail() -> None:
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
 def test_azure_assistants_client_init_missing_deployment_name(azure_openai_unit_test_env: dict[str, str]) -> None:
     """Test AzureOpenAIAssistantsClient initialization with missing deployment name."""
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         AzureOpenAIAssistantsClient(api_key=azure_openai_unit_test_env.get("AZURE_OPENAI_API_KEY", "test-key"))
 
 
@@ -607,7 +606,7 @@ def test_azure_assistants_client_no_authentication_error() -> None:
         }
 
         # Test missing authentication raises error
-        with pytest.raises(ServiceInitializationError, match="api_key, credential, or a client"):
+        with pytest.raises(ValueError, match="api_key, credential, or a client"):
             AzureOpenAIAssistantsClient(
                 deployment_name="test-deployment",
                 endpoint="https://test-endpoint.openai.azure.com",
