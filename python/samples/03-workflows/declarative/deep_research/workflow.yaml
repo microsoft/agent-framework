@@ -22,7 +22,7 @@ trigger:
 
     - kind: SetVariable
       id: init_counter
-      variable: Local.IterationCount
+      variable: Local.TurnCount
       value: =0
 
     # Manager evaluates and delegates (loop entry)
@@ -55,14 +55,14 @@ trigger:
     # Increment and loop back if under limit
     - kind: SetVariable
       id: increment_counter
-      variable: Local.IterationCount
-      value: =Local.IterationCount + 1
+      variable: Local.TurnCount
+      value: =Local.TurnCount + 1
 
     - kind: ConditionGroup
       id: check_limit
       conditions:
         - id: can_continue
-          condition: =Local.IterationCount < 10
+          condition: =Local.TurnCount < 10
           actions:
             - kind: GotoAction
               id: loop_back
