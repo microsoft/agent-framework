@@ -12,15 +12,15 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 OpenAI Assistants with Function Tools Example
 
 This sample demonstrates function tool integration with OpenAI Assistants,
 showing both agent-level and query-level tool configuration patterns.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

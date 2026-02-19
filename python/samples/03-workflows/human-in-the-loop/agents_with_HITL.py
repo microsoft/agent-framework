@@ -23,6 +23,9 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from typing_extensions import Never
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Azure AI Agents in workflow with human feedback
 
@@ -43,9 +46,6 @@ Prerequisites:
 - Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
 - Authentication via azure-identity. Run `az login` before executing.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 @dataclass

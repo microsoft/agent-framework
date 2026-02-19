@@ -13,6 +13,9 @@ from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI Project Agent Provider Methods Example
 
@@ -26,9 +29,6 @@ with different configurations, which is efficient for multi-agent scenarios.
 
 Each method returns a Agent that can be used for conversations.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

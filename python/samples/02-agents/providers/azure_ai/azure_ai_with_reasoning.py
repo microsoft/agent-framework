@@ -7,6 +7,9 @@ from azure.ai.projects.models import Reasoning
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI Agent with Reasoning Example
 
@@ -17,9 +20,6 @@ reasoning content (type="text_reasoning") separately from answer content.
 Requires a reasoning-capable model (e.g., gpt-5.2) deployed in your Azure AI Project configured
 as `AZURE_AI_MODEL_DEPLOYMENT_NAME` in your environment.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def non_streaming_example() -> None:

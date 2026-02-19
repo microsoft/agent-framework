@@ -18,6 +18,9 @@ from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 MiddlewareTypes Termination Example
 
@@ -29,9 +32,6 @@ The example includes:
 
 This is useful for implementing security checks, rate limiting, or early exit conditions.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

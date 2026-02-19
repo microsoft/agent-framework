@@ -8,6 +8,9 @@ from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Build a concurrent workflow orchestration and wrap it as an agent.
 
@@ -25,9 +28,6 @@ Prerequisites:
 - Azure OpenAI access configured for AzureOpenAIResponsesClient (use az login + env vars)
 - Familiarity with Workflow events (WorkflowEvent with type "output")
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

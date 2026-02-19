@@ -8,6 +8,9 @@ from agent_framework import AgentSession, BaseHistoryProvider, Message
 from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Custom History Provider Example
 
@@ -15,9 +18,6 @@ This sample demonstrates how to implement and use a custom history provider
 for session management, allowing you to persist conversation history in your
 preferred storage solution (database, file system, etc.).
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 class CustomHistoryProvider(BaseHistoryProvider):

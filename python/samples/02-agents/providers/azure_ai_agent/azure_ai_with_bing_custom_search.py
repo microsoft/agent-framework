@@ -6,6 +6,9 @@ from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 The following sample demonstrates how to create an Azure AI agent that
 uses Bing Custom Search to find real-time information from the web.
@@ -26,9 +29,6 @@ To set up Bing Custom Search:
 3. Add a new connection for "Grounding with Bing Custom Search"
 4. Copy the connection ID and instance name and set the appropriate environment variables
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

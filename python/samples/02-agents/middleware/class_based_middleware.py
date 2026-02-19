@@ -20,6 +20,9 @@ from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Class-based MiddlewareTypes Example
 
@@ -33,9 +36,6 @@ from AgentMiddleware and FunctionMiddleware base classes. The example includes:
 This approach is useful when you need stateful middleware or complex logic that benefits
 from object-oriented design patterns.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

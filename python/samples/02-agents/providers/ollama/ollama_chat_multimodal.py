@@ -6,6 +6,9 @@ from agent_framework import Content, Message
 from agent_framework.ollama import OllamaChatClient
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Ollama Agent Multimodal Example
 
@@ -17,9 +20,6 @@ Set the model to use via the OLLAMA_MODEL_ID environment variable or modify the 
 https://ollama.com/
 
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 def create_sample_image() -> str:

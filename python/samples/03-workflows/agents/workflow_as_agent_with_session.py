@@ -9,6 +9,9 @@ from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Workflow as Agent with Session Conversation History and Checkpointing
 
@@ -37,9 +40,6 @@ Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - Environment variables configured for AzureOpenAIResponsesClient
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

@@ -8,15 +8,15 @@ from azure.ai.agents.aio import AgentsClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI Agent with Existing Agent Example
 
 This sample demonstrates working with pre-existing Azure AI Agents by providing
 agent IDs, showing agent reuse patterns for production scenarios.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

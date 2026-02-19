@@ -9,6 +9,9 @@ from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Concurrent fan-out/fan-in (agent-only API) with default aggregator
 
@@ -26,9 +29,6 @@ Prerequisites:
 - Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
 - Familiarity with Workflow events (WorkflowEvent)
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

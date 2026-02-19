@@ -6,6 +6,9 @@ from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI Agent with Microsoft Fabric Example
 
@@ -17,9 +20,6 @@ Prerequisites:
 2. Ensure you have a Microsoft Fabric connection configured in your Azure AI project
    and set FABRIC_PROJECT_CONNECTION_ID environment variable.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

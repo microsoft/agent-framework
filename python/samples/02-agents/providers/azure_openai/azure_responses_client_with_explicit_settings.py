@@ -11,15 +11,15 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure OpenAI Responses Client with Explicit Settings Example
 
 This sample demonstrates creating Azure OpenAI Responses Client with explicit configuration
 settings rather than relying on environment variable defaults.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

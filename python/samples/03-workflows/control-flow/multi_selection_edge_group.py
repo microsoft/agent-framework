@@ -26,6 +26,9 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 from typing_extensions import Never
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Multi-Selection Edge Group for email triage and response.
 
@@ -49,9 +52,6 @@ Prerequisites:
 - Understanding of multi-selection edge groups and how their selection function maps to target ids.
 - Experience with workflow state for persisting and reusing objects.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 EMAIL_STATE_PREFIX = "email:"

@@ -8,15 +8,15 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure OpenAI Responses Client with local Model Context Protocol (MCP) Example
 
 This sample demonstrates integration of Azure OpenAI Responses Client with local Model Context Protocol (MCP)
 servers.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # --- Below code uses Microsoft Learn MCP server over Streamable HTTP ---

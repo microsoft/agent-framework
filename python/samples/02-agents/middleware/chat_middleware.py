@@ -19,6 +19,9 @@ from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Chat MiddlewareTypes Example
 
@@ -36,9 +39,6 @@ The example covers:
 - MiddlewareTypes registration at agent level (applies to all runs)
 - MiddlewareTypes registration at run level (applies to specific run only)
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

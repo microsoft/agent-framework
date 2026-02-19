@@ -37,6 +37,9 @@ from microsoft_agents.hosting.core import (
 )
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Demo application using Microsoft Agent 365 SDK.
 
@@ -55,9 +58,6 @@ Key features:
 To run, set the appropriate environment variables (check .env.example file) for authentication or use
 anonymous mode for local testing.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 @dataclass

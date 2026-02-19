@@ -16,6 +16,9 @@ from agent_framework.orchestrations import GroupChatBuilder, GroupChatState
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Group Chat Workflow with Tool Approval Requests
 
@@ -44,9 +47,6 @@ Prerequisites:
 - OpenAI or Azure OpenAI configured with the required environment variables.
 - Basic familiarity with GroupChatBuilder and streaming workflow events.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # 1. Define tools for different agents

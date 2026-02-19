@@ -12,6 +12,9 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Workflow kwargs Flow to @tool Tools
 
@@ -28,9 +31,6 @@ Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - Environment variables configured
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # Define tools that accept custom context via **kwargs

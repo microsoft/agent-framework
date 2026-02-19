@@ -12,13 +12,13 @@ from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 This sample shows how you can observe an agent in Agent Framework by using the
 same observability setup function.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

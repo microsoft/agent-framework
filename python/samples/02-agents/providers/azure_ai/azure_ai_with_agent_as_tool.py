@@ -8,6 +8,9 @@ from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI Agent-as-Tool Example
 
@@ -17,9 +20,6 @@ work to specialized sub-agents wrapped as tools using as_tool().
 This pattern is useful when you want a coordinator agent to orchestrate
 multiple specialized agents, each focusing on specific tasks.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def logging_middleware(

@@ -10,13 +10,13 @@ from azure.ai.agents.models import OpenApiAnonymousAuthDetails, OpenApiTool
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 The following sample demonstrates how to create a simple, Azure AI agent that
 uses OpenAPI tools to answer user questions.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 # Simulate a conversation with the agent
 USER_INPUTS = [

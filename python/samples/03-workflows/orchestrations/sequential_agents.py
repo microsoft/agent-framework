@@ -9,6 +9,9 @@ from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Sequential workflow (agent-focused API) with shared conversation context
 
@@ -27,9 +30,6 @@ Note on internal adapters:
 Prerequisites:
 - Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

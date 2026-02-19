@@ -20,6 +20,9 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Simple Loop (with an Agent Judge)
 
@@ -33,9 +36,6 @@ Prerequisites:
 - Azure AI/ Azure OpenAI for `AzureOpenAIResponsesClient` agent.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 class NumberSignal(Enum):

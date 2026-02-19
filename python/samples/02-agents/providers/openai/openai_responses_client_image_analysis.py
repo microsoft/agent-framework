@@ -6,15 +6,15 @@ from agent_framework import Content
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 OpenAI Responses Client Image Analysis Example
 
 This sample demonstrates using OpenAI Responses Client for image analysis and vision tasks,
 showing multi-modal content handling with text and images.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main():

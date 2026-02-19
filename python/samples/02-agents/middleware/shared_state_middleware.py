@@ -14,6 +14,9 @@ from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Shared State Function-based MiddlewareTypes Example
 
@@ -26,9 +29,6 @@ The example includes:
 
 This approach shows how middleware can work together by sharing state within the same class instance.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

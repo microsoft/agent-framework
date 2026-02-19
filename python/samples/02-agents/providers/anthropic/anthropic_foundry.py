@@ -6,6 +6,9 @@ from agent_framework.anthropic import AnthropicClient
 from anthropic import AsyncAnthropicFoundry
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Anthropic Foundry Chat Agent Example
 
@@ -24,9 +27,6 @@ To use the Foundry integration ensure you have the following environment variabl
 - ANTHROPIC_CHAT_MODEL_ID
     Should be something like claude-haiku-4-5
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

@@ -9,6 +9,9 @@ from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Group Chat Orchestration
 
@@ -20,9 +23,6 @@ Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - Environment variables configured for `AzureOpenAIResponsesClient`.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

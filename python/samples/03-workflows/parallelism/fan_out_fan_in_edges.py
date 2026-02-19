@@ -20,6 +20,9 @@ from azure.identity import AzureCliCredential  # Uses your az CLI login for cred
 from dotenv import load_dotenv
 from typing_extensions import Never
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Concurrent fan out and fan in with three domain agents
 
@@ -37,9 +40,6 @@ Prerequisites:
 - Azure OpenAI access configured for AzureOpenAIResponsesClient. Log in with Azure CLI and set any required environment variables.
 - Comfort reading AgentExecutorResponse.agent_response.text for assistant output aggregation.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 class DispatchToExperts(Executor):

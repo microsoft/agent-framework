@@ -11,15 +11,15 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure OpenAI Responses Client with Function Tools Example
 
 This sample demonstrates function tool integration with Azure OpenAI Responses Client,
 showing both agent-level and query-level tool configuration patterns.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

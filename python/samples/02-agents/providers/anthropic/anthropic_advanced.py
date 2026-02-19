@@ -5,6 +5,9 @@ import asyncio
 from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Anthropic Chat Agent Example
 
@@ -13,9 +16,6 @@ This sample demonstrates using Anthropic with:
 - Using the `thinking` feature.
 - Displaying both thinking and usage information during streaming responses.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

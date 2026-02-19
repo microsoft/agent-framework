@@ -8,6 +8,9 @@ from agent_framework.anthropic import AnthropicClient
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """TypedDict-based Chat Options.
 
 In Agent Framework, we have made ChatClient and Agent generic over a ChatOptions typeddict, this means that
@@ -29,9 +32,6 @@ The following environment variables are used:
     - OPENAI_API_KEY=...
 
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def demo_anthropic_chat_client() -> None:

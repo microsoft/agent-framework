@@ -9,6 +9,9 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Step 2: Agents in a Workflow non-streaming
 
@@ -25,9 +28,6 @@ Prerequisites:
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, edges, events, and streaming or non-streaming runs.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main():

@@ -11,14 +11,14 @@ from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI Agent Existing Conversation Example
 
 This sample demonstrates usage of AzureAIProjectAgentProvider with existing conversation created on service side.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

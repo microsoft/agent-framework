@@ -8,14 +8,14 @@ from agent_framework import tool
 from agent_framework.anthropic import AnthropicClient
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Anthropic Chat Agent Example
 
 This sample demonstrates using Anthropic with an agent and a single custom tool.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

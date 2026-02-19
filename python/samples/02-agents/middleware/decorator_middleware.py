@@ -12,6 +12,9 @@ from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Decorator MiddlewareTypes Example
 
@@ -41,9 +44,6 @@ Key benefits of decorator approach:
 - Clear intent in code
 - Prevents type mismatches
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

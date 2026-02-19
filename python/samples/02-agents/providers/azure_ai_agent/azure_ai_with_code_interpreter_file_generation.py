@@ -8,6 +8,9 @@ from azure.ai.agents.aio import AgentsClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI Agent Code Interpreter File Generation Example
 
@@ -20,9 +23,6 @@ The test flow:
 3. Capture the file_id from HostedFileContent in the response
 4. Retrieve the file using the agents_client.files API
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

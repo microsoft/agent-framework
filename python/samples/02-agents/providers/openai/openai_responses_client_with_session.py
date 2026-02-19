@@ -9,15 +9,15 @@ from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 OpenAI Responses Client with Session Management Example
 
 This sample demonstrates session management with OpenAI Responses Client, showing
 persistent conversation context and simplified response handling.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

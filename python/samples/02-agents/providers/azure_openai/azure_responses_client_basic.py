@@ -10,15 +10,15 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure OpenAI Responses Client Basic Example
 
 This sample demonstrates basic usage of AzureOpenAIResponsesClient for structured
 response generation, showing both streaming and non-streaming responses.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

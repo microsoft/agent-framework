@@ -6,6 +6,9 @@ from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI Agent With Web Search
 
@@ -16,9 +19,6 @@ Pre-requisites:
 - Make sure to set up the AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME
   environment variables before running this sample.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

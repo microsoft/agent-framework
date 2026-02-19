@@ -13,6 +13,9 @@ from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI Agent with Multiple Tools Example
 
@@ -32,9 +35,6 @@ To set up Bing Grounding:
 3. Add a new connection for "Grounding with Bing Search"
 4. Copy the connection ID and set it as the BING_CONNECTION_ID environment variable
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

@@ -9,15 +9,15 @@ from dotenv import load_dotenv
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_code_interpreter_tool_call import ResponseCodeInterpreterToolCall
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure OpenAI Responses Client with Code Interpreter Example
 
 This sample demonstrates using get_code_interpreter_tool() with Azure OpenAI Responses
 for Python code execution and mathematical problem solving.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

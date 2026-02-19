@@ -6,6 +6,9 @@ from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 The following sample demonstrates how to create an Azure AI agent that
 uses Bing Grounding search to find real-time information from the web.
@@ -21,9 +24,6 @@ To set up Bing Grounding:
 3. Add a new connection for "Grounding with Bing Search"
 4. Copy either the connection name or ID and set the appropriate environment variable
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

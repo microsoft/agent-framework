@@ -20,6 +20,9 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from typing_extensions import Never
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Concurrent (Fan-out/Fan-in) with Agents + Visualization
 
@@ -34,9 +37,6 @@ Prerequisites:
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 - For visualization export: `pip install graphviz>=0.20.0` and install GraphViz binaries.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 class DispatchToExperts(Executor):

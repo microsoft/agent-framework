@@ -11,15 +11,15 @@ from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI Agent with Explicit Settings Example
 
 This sample demonstrates creating Azure AI Agents with explicit configuration
 settings rather than relying on environment variable defaults.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

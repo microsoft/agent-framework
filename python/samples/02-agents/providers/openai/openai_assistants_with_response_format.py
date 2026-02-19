@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 OpenAI Assistant Provider Response Format Example
 
@@ -16,9 +19,6 @@ for structured outputs in two ways:
 1. Setting default response_format at agent creation time (default_options)
 2. Overriding response_format at runtime (options parameter in agent.run)
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 class WeatherInfo(BaseModel):

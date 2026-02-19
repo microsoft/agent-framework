@@ -8,15 +8,15 @@ from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 AI Function with Session Injection Example
 
 This example demonstrates the behavior when passing 'session' to agent.run()
 and accessing that session in AI function.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # Define the function tool with **kwargs

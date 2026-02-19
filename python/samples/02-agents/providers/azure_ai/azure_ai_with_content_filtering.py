@@ -7,6 +7,9 @@ from azure.ai.projects.models import RaiConfig
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI Agent with Content Filtering (RAI Policy) Example
 
@@ -24,9 +27,6 @@ Prerequisites:
 
 3. Run `az login` to authenticate
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

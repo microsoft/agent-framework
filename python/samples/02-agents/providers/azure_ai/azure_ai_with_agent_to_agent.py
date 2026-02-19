@@ -6,6 +6,9 @@ from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI Agent with Agent-to-Agent (A2A) Example
 
@@ -19,9 +22,6 @@ Prerequisites:
 3. (Optional) A2A_ENDPOINT - If the connection is missing target (e.g., "Custom keys" type),
    set the A2A endpoint URL directly.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

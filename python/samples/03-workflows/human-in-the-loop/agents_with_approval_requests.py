@@ -21,6 +21,9 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from typing_extensions import Never
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Agents in a workflow with AI functions requiring approval
 
@@ -53,9 +56,6 @@ Prerequisites:
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, edges, events, request_info events (type='request_info'), and streaming runs.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

@@ -10,6 +10,9 @@ from agent_framework import Content
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 OpenAI Responses Client Image Generation Example
 
@@ -18,9 +21,6 @@ through the Responses Client. Image generation capabilities enable AI to create 
 making it ideal for creative applications, content creation, design prototyping,
 and automated visual asset generation.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 def save_image(output: Content) -> None:

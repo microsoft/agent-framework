@@ -11,6 +11,9 @@ from agent_framework.orchestrations import MagenticBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Build a Magentic orchestration and wrap it as an agent.
 
@@ -22,9 +25,6 @@ Prerequisites:
 - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - OpenAI credentials configured for `AzureOpenAIResponsesClient` and `AzureOpenAIResponsesClient`.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

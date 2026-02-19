@@ -5,6 +5,9 @@ from agent_framework.declarative import AgentFactory
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 This sample shows how to create an agent using an inline YAML string rather than a file.
 
@@ -16,9 +19,6 @@ Prerequisites:
     - AZURE_AI_PROJECT_ENDPOINT
     - AZURE_OPENAI_MODEL
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main():

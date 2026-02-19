@@ -15,6 +15,9 @@ from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import MagenticBuilder, MagenticPlanReviewRequest, MagenticPlanReviewResponse
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Magentic Orchestration with Human Plan Review
 
@@ -34,9 +37,6 @@ Plan review options:
 Prerequisites:
 - OpenAI credentials configured for `OpenAIChatClient`.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 # Keep track of the last response to format output nicely in streaming mode
 last_response_id: str | None = None

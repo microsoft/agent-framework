@@ -16,6 +16,9 @@ from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Sequential Workflow with Tool Approval Requests
 
@@ -45,9 +48,6 @@ Prerequisites:
 - OpenAI or Azure OpenAI configured with the required environment variables.
 - Basic familiarity with SequentialBuilder and streaming workflow events.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # 1. Define tools - one requiring approval, one that doesn't

@@ -11,6 +11,9 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 OpenAI Assistant Provider Methods Example
 
@@ -19,9 +22,6 @@ This sample demonstrates the methods available on the OpenAIAssistantProvider cl
 - get_agent(): Retrieve an existing assistant by ID
 - as_agent(): Wrap an SDK Assistant object without making HTTP calls
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

@@ -10,6 +10,9 @@ from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Exception Handling with MiddlewareTypes
 
@@ -23,9 +26,6 @@ The example shows:
 The middleware catches TimeoutError from an unstable data service and replaces it with
 a helpful message for the user, preventing raw exceptions from reaching the end user.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

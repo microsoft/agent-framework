@@ -7,6 +7,9 @@ from agent_framework import tool
 from agent_framework.ollama import OllamaChatClient
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Ollama Agent Basic Example
 
@@ -18,9 +21,6 @@ Set the model to use via the OLLAMA_MODEL_ID environment variable or modify the 
 https://ollama.com/
 
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;

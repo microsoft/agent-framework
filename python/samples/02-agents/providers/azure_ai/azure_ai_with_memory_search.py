@@ -9,6 +9,9 @@ from azure.ai.projects.models import MemoryStoreDefaultDefinition, MemoryStoreDe
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI Agent with Memory Search Example
 
@@ -23,9 +26,6 @@ Prerequisites:
 3. Set AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME for the memory embedding model.
 4. Deploy both a chat model (e.g. gpt-4.1) and an embedding model (e.g. text-embedding-3-small).
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

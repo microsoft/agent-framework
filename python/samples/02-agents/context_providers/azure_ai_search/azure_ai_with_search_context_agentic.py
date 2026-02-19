@@ -8,6 +8,9 @@ from agent_framework.azure import AzureAIAgentClient, AzureAISearchContextProvid
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 This sample demonstrates how to use Azure AI Search with agentic mode for RAG
 (Retrieval Augmented Generation) with Azure AI agents.
@@ -39,9 +42,6 @@ For auto-creating a Knowledge Base from an index:
    - AZURE_SEARCH_INDEX_NAME: Your search index name
    - AZURE_OPENAI_RESOURCE_URL: Azure OpenAI resource URL (e.g., "https://myresource.openai.azure.com")
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 # Sample queries to demonstrate agentic RAG
 USER_INPUTS = [

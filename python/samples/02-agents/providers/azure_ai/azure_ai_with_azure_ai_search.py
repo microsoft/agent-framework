@@ -6,6 +6,9 @@ from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI Agent with Azure AI Search Example
 
@@ -17,9 +20,6 @@ Prerequisites:
 2. Ensure you have an Azure AI Search connection configured in your Azure AI project
     and set AI_SEARCH_PROJECT_CONNECTION_ID and AI_SEARCH_INDEX_NAME environment variable.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main() -> None:

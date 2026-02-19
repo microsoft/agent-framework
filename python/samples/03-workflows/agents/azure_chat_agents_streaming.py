@@ -8,6 +8,9 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: AzureOpenAI Chat Agents in a Workflow with Streaming
 
@@ -19,9 +22,6 @@ Prerequisites:
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, edges, events, and streaming runs.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 async def main():

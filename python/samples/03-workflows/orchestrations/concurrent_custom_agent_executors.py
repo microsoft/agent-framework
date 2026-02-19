@@ -17,6 +17,9 @@ from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample: Concurrent Orchestration with Custom Agent Executors
 
@@ -35,9 +38,6 @@ Demonstrates:
 Prerequisites:
 - Azure OpenAI configured for AzureOpenAIChatClient (az login + required env vars)
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 class ResearcherExec(Executor):

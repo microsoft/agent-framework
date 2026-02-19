@@ -9,6 +9,9 @@ from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure AI V2 Code Interpreter File Generation Sample
 
@@ -16,9 +19,6 @@ This sample demonstrates how the AzureAIProjectAgentProvider handles file annota
 when code interpreter generates text files. It shows both non-streaming
 and streaming approaches to verify file ID extraction.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 QUERY = (
     "Write a simple Python script that creates a text file called 'sample.txt' containing "

@@ -8,6 +8,9 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure OpenAI Responses Client with File Search Example
 
@@ -20,9 +23,6 @@ Prerequisites:
   - AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: Your Responses API deployment name
 - Authenticate via 'az login' for AzureCliCredential
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 # Helper functions
 
