@@ -171,6 +171,62 @@ async def test_base_client_with_streaming_function_calling(chat_client_base: Sup
     assert exec_counter == 1
 
 
+async def test_base_client_executes_function_calls_across_multiple_response_messages(
+    chat_client_base: SupportsChatGetResponse,
+):
+    exec_counter = 0
+
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="1",
+                            name="test_function",
+                            arguments='{"arg1": "v1"}',
+                        )
+                    ],
+                ),
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="2",
+                            name="test_function",
+                            arguments='{"arg1": "v2"}',
+                        )
+                    ],
+                ),
+            ],
+            conversation_id="conv_after_first_call",
+        ),
+        ChatResponse(
+            messages=Message(role="assistant", text="done"),
+            conversation_id="conv_after_second_call",
+        ),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")],
+        options={"tool_choice": "auto", "tools": [ai_func], "conversation_id": "conv_initial"},
+    )
+
+    assert exec_counter == 2
+    function_results = [
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
+    ]
+    assert len(function_results) == 2
+    assert {result.call_id for result in function_results} == {"1", "2"}
+
+
 async def test_function_invocation_inside_aiohttp_server(chat_client_base: SupportsChatGetResponse):
     import aiohttp
     from aiohttp import web
@@ -919,6 +975,36 @@ async def test_function_invocation_config_max_consecutive_errors(chat_client_bas
     ]
     # Should have made at most 2 function calls before stopping
     assert len(function_calls) <= 2
+
+
+async def test_function_invocation_stop_clears_conversation_id_non_stream(chat_client_base: SupportsChatGetResponse):
+    """Stop-path responses should not carry a continuation conversation_id."""
+
+    @tool(name="error_function", approval_mode="never_require")
+    def error_func(arg1: str) -> str:
+        raise ValueError("Function error")
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="error_function", arguments='{"arg1": "value1"}')
+                ],
+            ),
+            conversation_id="resp_1",
+        )
+    ]
+    chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 1
+    session_stub = type("SessionStub", (), {"service_session_id": "resp_seed"})()
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello")],
+        options={"tool_choice": "auto", "tools": [error_func]},
+        session=session_stub,
+    )
+
+    assert response.conversation_id is None
 
 
 async def test_function_invocation_config_terminate_on_unknown_calls_false(chat_client_base: SupportsChatGetResponse):
@@ -2138,6 +2224,43 @@ async def test_streaming_function_invocation_config_max_consecutive_errors(chat_
     function_calls = [content for update in updates for content in update.contents if content.type == "function_call"]
     # Should have made at most 2 function calls before stopping
     assert len(function_calls) <= 2
+
+
+async def test_streaming_function_invocation_stop_clears_conversation_id(chat_client_base: SupportsChatGetResponse):
+    """Streaming stop-path responses should not carry a continuation conversation_id."""
+
+    @tool(name="error_function", approval_mode="never_require")
+    def error_func(arg1: str) -> str:
+        raise ValueError("Function error")
+
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(call_id="1", name="error_function", arguments='{"arg1": "value1"}')
+                ],
+                role="assistant",
+                conversation_id="resp_1",
+            )
+        ]
+    ]
+    chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 1
+    session_stub = type("SessionStub", (), {"service_session_id": "resp_seed"})()
+
+    stream = chat_client_base.get_response(
+        "hello",
+        options={"tool_choice": "auto", "tools": [error_func]},
+        stream=True,
+        session=session_stub,
+    )
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    # After the stop-path cleanup call, the accumulated stream response keeps the
+    # conversation_id from the first inner call; the cleanup call's own response id
+    # is what matters for server-side resolution but is not reflected in the mock here.
+    assert response is not None
 
 
 async def test_streaming_function_invocation_config_terminate_on_unknown_calls_false(

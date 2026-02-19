@@ -54,6 +54,111 @@ class _SimpleAgent(BaseAgent):
         return _run()
 
 
+class _ToolHistoryAgent(BaseAgent):
+    """Agent that emits tool-call internals plus a final assistant summary."""
+
+    def __init__(self, *, summary_text: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._summary_text = summary_text
+
+    def _messages(self) -> list[Message]:
+        return [
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_weather_1",
+                        name="get_weather",
+                        arguments='{"location":"Seattle"}',
+                    )
+                ],
+            ),
+            Message(
+                role="tool",
+                contents=[Content.from_function_result(call_id="call_weather_1", result="Sunny, 72F")],
+            ),
+            Message(role="assistant", contents=[Content.from_text(text=self._summary_text)]),
+        ]
+
+    def run(
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        if stream:
+
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call_weather_1",
+                            name="get_weather",
+                            arguments='{"location":"Seattle"}',
+                        )
+                    ],
+                    role="assistant",
+                )
+                yield AgentResponseUpdate(
+                    contents=[Content.from_function_result(call_id="call_weather_1", result="Sunny, 72F")],
+                    role="tool",
+                )
+                yield AgentResponseUpdate(contents=[Content.from_text(text=self._summary_text)], role="assistant")
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=self._messages())
+
+        return _run()
+
+
+class _ReasoningHistoryAgent(BaseAgent):
+    """Agent that emits text_reasoning + tool-call internals plus a final assistant summary."""
+
+    def __init__(self, *, summary_text: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._summary_text = summary_text
+
+    def _messages(self) -> list[Message]:
+        return [
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_text_reasoning(
+                        text="I should call get_weather to answer this.",
+                        additional_properties={"reasoning_id": "rs_abc123"},
+                    ),
+                    Content.from_function_call(
+                        call_id="call_weather_2",
+                        name="get_weather",
+                        arguments='{"location":"Boston"}',
+                    ),
+                ],
+            ),
+            Message(
+                role="tool",
+                contents=[Content.from_function_result(call_id="call_weather_2", result="Rainy, 55F")],
+            ),
+            Message(role="assistant", contents=[Content.from_text(text=self._summary_text)]),
+        ]
+
+    def run(
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=self._messages())
+
+        return _run()
+
+
 class _CaptureFullConversation(Executor):
     """Captures AgentExecutorResponse.full_conversation and completes the workflow."""
 
@@ -151,6 +256,68 @@ async def test_sequential_adapter_uses_full_conversation() -> None:
     assert len(seen) == 2
     assert seen[0].role == "user" and "hello seq" in (seen[0].text or "")
     assert seen[1].role == "assistant" and "A1 reply" in (seen[1].text or "")
+
+
+async def test_sequential_handoff_strips_tool_call_internals_from_prior_history() -> None:
+    # Arrange
+    first = _ToolHistoryAgent(
+        id="tool_history_agent",
+        name="ToolHistory",
+        summary_text="The weather in Seattle is sunny and 72F.",
+    )
+    second = _CaptureAgent(id="capture_agent", name="Capture", reply_text="Captured")
+    wf = SequentialBuilder(participants=[first, second]).build()
+
+    # Act
+    result = await wf.run("Check weather and continue")
+
+    # Assert workflow completed
+    outputs = result.get_outputs()
+    assert outputs
+
+    # Assert second agent sees replay-safe history (no function_call internals; function_result content is retained)
+    seen = second._last_messages  # pyright: ignore[reportPrivateUsage]
+    assert len(seen) == 3  # user, tool(function_result), assistant(summary)
+    assert seen[0].role == "user"
+    assert "Check weather and continue" in (seen[0].text or "")
+    assert seen[1].role == "tool"
+    assert any(content.type == "function_result" for content in seen[1].contents)
+    assert seen[2].role == "assistant"
+    assert "Seattle is sunny" in (seen[2].text or "")
+    assert all(content.type not in {"function_call"} for msg in seen for content in msg.contents)
+
+
+async def test_sequential_handoff_strips_text_reasoning_from_prior_history() -> None:
+    # Arrange: first agent emits text_reasoning + tool call internals + summary
+    first = _ReasoningHistoryAgent(
+        id="reasoning_agent",
+        name="ReasoningAgent",
+        summary_text="The weather in Boston is rainy and 55F.",
+    )
+    second = _CaptureAgent(id="capture_agent", name="Capture", reply_text="Captured")
+    wf = SequentialBuilder(participants=[first, second]).build()
+
+    # Act
+    result = await wf.run("Check weather with reasoning")
+
+    # Assert workflow completed
+    outputs = result.get_outputs()
+    assert outputs
+
+    # Assert second agent sees replay-safe history (no text_reasoning/function_call; function_result is retained)
+    seen = second._last_messages  # pyright: ignore[reportPrivateUsage]
+    assert len(seen) == 3  # user, tool(function_result), assistant(summary)
+    assert seen[0].role == "user"
+    assert "Check weather with reasoning" in (seen[0].text or "")
+    assert seen[1].role == "tool"
+    assert any(content.type == "function_result" for content in seen[1].contents)
+    assert seen[2].role == "assistant"
+    assert "Boston is rainy" in (seen[2].text or "")
+    assert all(
+        content.type not in {"text_reasoning", "function_call"}
+        for msg in seen
+        for content in msg.contents
+    )
 
 
 class _RoundTripCoordinator(Executor):

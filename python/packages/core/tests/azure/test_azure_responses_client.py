@@ -18,6 +18,8 @@ from agent_framework import (
     Content,
     Message,
     SupportsChatGetResponse,
+    WorkflowBuilder,
+    WorkflowEvent,
     tool,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
@@ -251,6 +253,70 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
 
 
 # region Integration Tests
+
+WORKFLOW_REASONING_DEPLOYMENT_NAME = os.getenv(
+    "AZURE_OPENAI_WORKFLOW_REASONING_DEPLOYMENT_NAME",
+    os.getenv("AZURE_OPENAI_REASONING_DEPLOYMENT_NAME", "gpt-5-mini"),
+)
+WORKFLOW_NON_REASONING_DEPLOYMENT_NAME = os.getenv(
+    "AZURE_OPENAI_WORKFLOW_NON_REASONING_DEPLOYMENT_NAME",
+    os.getenv("AZURE_OPENAI_NON_REASONING_DEPLOYMENT_NAME", "gpt-4.1-nano"),
+)
+
+
+async def _run_minimal_handoff_workflow(client: AzureOpenAIResponsesClient) -> list[WorkflowEvent]:
+    first_agent = client.as_agent(
+        id="minimal-handoff-first",
+        name="minimal-handoff-first",
+        instructions="Use get_weather exactly once for Seattle, then provide a short summary.",
+        tools=[get_weather],
+        default_options={"tool_choice": {"mode": "required", "required_function_name": "get_weather"}},
+    )
+    second_agent = client.as_agent(
+        id="minimal-handoff-second",
+        name="minimal-handoff-second",
+        instructions="Summarize the prior weather result in one sentence.",
+    )
+
+    workflow = WorkflowBuilder(start_executor=first_agent).add_edge(first_agent, second_agent).build()
+
+    events: list[WorkflowEvent] = []
+    async for event in workflow.run("Check weather for Seattle and pass result onward.", stream=True):
+        events.append(event)
+
+    return events
+
+
+@pytest.mark.timeout(600)
+@pytest.mark.flaky
+@skip_if_azure_integration_tests_disabled
+@pytest.mark.parametrize(
+    "deployment_name",
+    [
+        param(WORKFLOW_REASONING_DEPLOYMENT_NAME, id="reasoning_gpt_5_mini"),
+        param(WORKFLOW_NON_REASONING_DEPLOYMENT_NAME, id="non_reasoning_gpt_4_1_nano"),
+    ],
+)
+async def test_integration_minimal_workflow_handoff_reasoning_vs_non_reasoning(deployment_name: str) -> None:
+    """Smallest workflow handoff repro should pass across model classes."""
+    client = AzureOpenAIResponsesClient(credential=AzureCliCredential(), deployment_name=deployment_name)
+    client.function_invocation_configuration["max_iterations"] = 3
+
+    try:
+        events = await _run_minimal_handoff_workflow(client)
+    except ServiceResponseException as ex:
+        error_text = str(ex).lower()
+        if (
+            "deploymentnotfound" in error_text
+            or "deployment for this resource does not exist" in error_text
+            or ("deployment" in error_text and "not found" in error_text)
+        ):
+            pytest.skip(f"Deployment '{deployment_name}' is unavailable in this environment: {ex}")
+        raise AssertionError(
+            f"Minimal workflow handoff failed unexpectedly for deployment '{deployment_name}': {ex}"
+        ) from ex
+
+    assert any(event.type == "output" for event in events), "Expected workflow output event for workflow run"
 
 
 @pytest.mark.flaky
