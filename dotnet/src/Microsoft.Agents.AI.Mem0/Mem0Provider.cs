@@ -22,10 +22,11 @@ namespace Microsoft.Agents.AI.Mem0;
 /// for new invocations using a semantic search endpoint. Retrieved memories are injected as user messages
 /// to the model, prefixed by a configurable context prompt.
 /// </remarks>
-public sealed class Mem0Provider : AIContextProvider<Mem0Provider.State>
+public sealed class Mem0Provider : AIContextProvider
 {
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
 
+    private readonly ProviderSessionState<State> _sessionState;
     private readonly string _contextPrompt;
     private readonly bool _enableSensitiveTelemetryData;
 
@@ -51,8 +52,12 @@ public sealed class Mem0Provider : AIContextProvider<Mem0Provider.State>
     /// </code>
     /// </remarks>
     public Mem0Provider(HttpClient httpClient, Func<AgentSession?, State> stateInitializer, Mem0ProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
-        : base(ValidateStateInitializer(Throw.IfNull(stateInitializer)), options?.StateKey, Mem0JsonUtilities.DefaultOptions, options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
     {
+        this._sessionState = new ProviderSessionState<State>(
+            ValidateStateInitializer(Throw.IfNull(stateInitializer)),
+            options?.StateKey ?? this.GetType().Name,
+            Mem0JsonUtilities.DefaultOptions);
         Throw.IfNull(httpClient);
         if (string.IsNullOrWhiteSpace(httpClient.BaseAddress?.AbsoluteUri))
         {
@@ -65,6 +70,9 @@ public sealed class Mem0Provider : AIContextProvider<Mem0Provider.State>
         this._contextPrompt = options?.ContextPrompt ?? DefaultContextPrompt;
         this._enableSensitiveTelemetryData = options?.EnableSensitiveTelemetryData ?? false;
     }
+
+    /// <inheritdoc />
+    public override string StateKey => this._sessionState.StateKey;
 
     private static Func<AgentSession?, State> ValidateStateInitializer(Func<AgentSession?, State> stateInitializer) =>
         session =>
@@ -88,7 +96,7 @@ public sealed class Mem0Provider : AIContextProvider<Mem0Provider.State>
     {
         Throw.IfNull(context);
 
-        var state = this.GetOrInitializeState(context.Session);
+        var state = this._sessionState.GetOrInitializeState(context.Session);
         var searchScope = state.SearchScope;
 
         string queryText = string.Join(
@@ -165,7 +173,7 @@ public sealed class Mem0Provider : AIContextProvider<Mem0Provider.State>
     /// <inheritdoc />
     protected override async ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        var state = this.GetOrInitializeState(context.Session);
+        var state = this._sessionState.GetOrInitializeState(context.Session);
         var storageScope = state.StorageScope;
 
         try
@@ -200,7 +208,7 @@ public sealed class Mem0Provider : AIContextProvider<Mem0Provider.State>
     public Task ClearStoredMemoriesAsync(AgentSession session, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(session);
-        var state = this.GetOrInitializeState(session);
+        var state = this._sessionState.GetOrInitializeState(session);
         var storageScope = state.StorageScope;
 
         return this._client.ClearMemoryAsync(

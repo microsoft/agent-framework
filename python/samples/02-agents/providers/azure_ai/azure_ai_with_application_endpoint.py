@@ -7,6 +7,10 @@ from agent_framework import Agent
 from agent_framework.azure import AzureAIClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Azure AI Agent with Application Endpoint Example
@@ -24,6 +28,7 @@ async def main() -> None:
         # /api/projects/<project-name>/applications/<application-name>/protocols
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
         Agent(
+            name="ApplicationAgent",
             client=AzureAIClient(
                 project_client=project_client,
             ),

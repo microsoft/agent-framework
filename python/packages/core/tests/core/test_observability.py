@@ -901,7 +901,7 @@ def test_console_exporters_opt_in_false(monkeypatch):
     monkeypatch.setenv("ENABLE_CONSOLE_EXPORTERS", "false")
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings()
     assert settings.enable_console_exporters is False
 
 
@@ -911,7 +911,7 @@ def test_console_exporters_opt_in_true(monkeypatch):
 
     monkeypatch.setenv("ENABLE_CONSOLE_EXPORTERS", "true")
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings()
     assert settings.enable_console_exporters is True
 
 
@@ -921,7 +921,7 @@ def test_console_exporters_default_false(monkeypatch):
 
     monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings()
     assert settings.enable_console_exporters is False
 
 
@@ -996,7 +996,7 @@ def test_observability_settings_is_setup_initial(monkeypatch):
     from agent_framework.observability import ObservabilitySettings
 
     monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings()
     assert settings.is_setup is False
 
 
@@ -1464,7 +1464,7 @@ def test_observability_settings_configure_not_enabled(monkeypatch):
     from agent_framework.observability import ObservabilitySettings
 
     monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings()
 
     # Should not raise, should just return early
     settings._configure()
@@ -1485,7 +1485,7 @@ def test_observability_settings_configure_already_setup(monkeypatch):
     ]:
         monkeypatch.delenv(key, raising=False)
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings()
 
     # Manually mark as set up
     settings._executed_setup = True
@@ -2021,7 +2021,7 @@ def test_configure_providers_with_span_exporters(monkeypatch):
     ]:
         monkeypatch.delenv(key, raising=False)
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings()
 
     # Create mock span exporter
     mock_span_exporter = Mock(spec=SpanExporter)
@@ -2437,3 +2437,163 @@ async def test_tool_arguments_pydantic_preserves_non_ascii_characters(
     # Verify JSON is valid and contains the text
     tool_arguments = json.loads(tool_arguments_json)
     assert tool_arguments["greeting"]["message"] == japanese_text
+
+
+# region Test merged options for instructions
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_instructions_from_default_options(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that instructions from default_options are captured in agent telemetry."""
+    import json
+
+    agent = mock_chat_agent()
+    agent.default_options = {"model_id": "TestModel", "instructions": "Default system instructions."}
+
+    messages = [Message(role="user", text="Test message")]
+    span_exporter.clear()
+    response = await agent.run(messages)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Instructions from default_options should be captured
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 1
+    assert system_instructions[0]["content"] == "Default system instructions."
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_instructions_from_options_override(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that instructions from options are captured when no default_options instructions exist."""
+    import json
+
+    agent = mock_chat_agent()
+    agent.default_options = {"model_id": "TestModel"}  # No default instructions
+
+    messages = [Message(role="user", text="Test message")]
+    span_exporter.clear()
+    response = await agent.run(messages, options={"instructions": "Override instructions."})
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 1
+    assert system_instructions[0]["content"] == "Override instructions."
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_instructions_merged_from_default_and_options(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that instructions from both default_options and options are merged (concatenated)."""
+    import json
+
+    agent = mock_chat_agent()
+    agent.default_options = {"model_id": "TestModel", "instructions": "Default instructions."}
+
+    messages = [Message(role="user", text="Test message")]
+    span_exporter.clear()
+    response = await agent.run(messages, options={"instructions": "Additional instructions."})
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Merged instructions should contain both default and override, concatenated with newline
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 1
+    assert "Default instructions." in system_instructions[0]["content"]
+    assert "Additional instructions." in system_instructions[0]["content"]
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_streaming_instructions_from_default_options(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that streaming agent telemetry captures instructions from default_options."""
+    import json
+
+    agent = mock_chat_agent()
+    agent.default_options = {"model_id": "TestModel", "instructions": "Default streaming instructions."}
+
+    messages = [Message(role="user", text="Test message")]
+    span_exporter.clear()
+    updates = []
+    stream = agent.run(messages, stream=True)
+    async for update in stream:
+        updates.append(update)
+    await stream.get_final_response()
+
+    assert len(updates) == 2
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 1
+    assert system_instructions[0]["content"] == "Default streaming instructions."
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_streaming_instructions_merged_from_default_and_options(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that streaming agent telemetry captures merged instructions from default_options and options."""
+    import json
+
+    agent = mock_chat_agent()
+    agent.default_options = {"model_id": "TestModel", "instructions": "Default instructions."}
+
+    messages = [Message(role="user", text="Test message")]
+    span_exporter.clear()
+    updates = []
+    stream = agent.run(messages, stream=True, options={"instructions": "Stream override."})
+    async for update in stream:
+        updates.append(update)
+    await stream.get_final_response()
+
+    assert len(updates) == 2
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 1
+    assert "Default instructions." in system_instructions[0]["content"]
+    assert "Stream override." in system_instructions[0]["content"]
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_no_instructions_in_default_or_options(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that system_instructions is not set when neither default_options nor options have instructions."""
+    agent = mock_chat_agent()
+    agent.default_options = {"model_id": "TestModel"}  # No instructions
+
+    messages = [Message(role="user", text="Test message")]
+    span_exporter.clear()
+    response = await agent.run(messages)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    assert OtelAttr.SYSTEM_INSTRUCTIONS not in span.attributes

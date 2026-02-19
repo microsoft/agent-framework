@@ -19,8 +19,9 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 [RequiresUnreferencedCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with trimming.")]
 [RequiresDynamicCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with NativeAOT.")]
-public sealed class CosmosChatHistoryProvider : ChatHistoryProvider<CosmosChatHistoryProvider.State>, IDisposable
+public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
 {
+    private readonly ProviderSessionState<State> _sessionState;
     private readonly CosmosClient _cosmosClient;
     private readonly Container _container;
     private readonly bool _ownsClient;
@@ -98,14 +99,20 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider<CosmosChatHi
         string? stateKey = null,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputMessageFilter = null)
-        : base(Throw.IfNull(stateInitializer), stateKey, null, provideOutputMessageFilter, storeInputMessageFilter)
+        : base(provideOutputMessageFilter, storeInputMessageFilter)
     {
+        this._sessionState = new ProviderSessionState<State>(
+            Throw.IfNull(stateInitializer),
+            stateKey ?? this.GetType().Name);
         this._cosmosClient = Throw.IfNull(cosmosClient);
         this.DatabaseId = Throw.IfNullOrWhitespace(databaseId);
         this.ContainerId = Throw.IfNullOrWhitespace(containerId);
         this._container = this._cosmosClient.GetContainer(databaseId, containerId);
         this._ownsClient = ownsClient;
     }
+
+    /// <inheritdoc />
+    public override string StateKey => this._sessionState.StateKey;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using a connection string.
@@ -190,7 +197,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider<CosmosChatHi
         }
 #pragma warning restore CA1513
 
-        var state = this.GetOrInitializeState(context.Session);
+        var state = this._sessionState.GetOrInitializeState(context.Session);
         var partitionKey = BuildPartitionKey(state);
 
         // Fetch most recent messages in descending order when limit is set, then reverse to ascending
@@ -253,7 +260,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider<CosmosChatHi
         }
 #pragma warning restore CA1513
 
-        var state = this.GetOrInitializeState(context.Session);
+        var state = this._sessionState.GetOrInitializeState(context.Session);
         var messageList = context.RequestMessages.Concat(context.ResponseMessages ?? []).ToList();
         if (messageList.Count == 0)
         {
@@ -424,7 +431,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider<CosmosChatHi
         }
 #pragma warning restore CA1513
 
-        var state = this.GetOrInitializeState(session);
+        var state = this._sessionState.GetOrInitializeState(session);
         var partitionKey = BuildPartitionKey(state);
 
         // Efficient count query
@@ -458,7 +465,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider<CosmosChatHi
         }
 #pragma warning restore CA1513
 
-        var state = this.GetOrInitializeState(session);
+        var state = this._sessionState.GetOrInitializeState(session);
         var partitionKey = BuildPartitionKey(state);
 
         // Batch delete for efficiency

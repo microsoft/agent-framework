@@ -109,7 +109,7 @@ internal sealed class SloganGeneratedEvent(SloganResult sloganResult) : Workflow
 /// 1. HandleAsync(string message): Handles the initial task to create a slogan.
 /// 2. HandleAsync(Feedback message): Handles feedback to improve the slogan.
 /// </summary>
-internal sealed class SloganWriterExecutor : Executor
+internal sealed partial class SloganWriterExecutor : Executor
 {
     private readonly AIAgent _agent;
     private AgentSession? _session;
@@ -133,10 +133,7 @@ internal sealed class SloganWriterExecutor : Executor
         this._agent = new ChatClientAgent(chatClient, agentOptions);
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-        routeBuilder.AddHandler<string, SloganResult>(this.HandleAsync)
-                    .AddHandler<FeedbackResult, SloganResult>(this.HandleAsync);
-
+    [MessageHandler]
     public async ValueTask<SloganResult> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this._session ??= await this._agent.CreateSessionAsync(cancellationToken);
@@ -149,6 +146,7 @@ internal sealed class SloganWriterExecutor : Executor
         return sloganResult;
     }
 
+    [MessageHandler]
     public async ValueTask<SloganResult> HandleAsync(FeedbackResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         var feedbackMessage = $"""

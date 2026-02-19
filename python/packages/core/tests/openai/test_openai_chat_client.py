@@ -97,9 +97,7 @@ def test_init_base_url_from_settings_env() -> None:
 @pytest.mark.parametrize("exclude_list", [["OPENAI_CHAT_MODEL_ID"]], indirect=True)
 def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
-        OpenAIChatClient(
-            env_file_path="test.env",
-        )
+        OpenAIChatClient()
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
@@ -109,7 +107,6 @@ def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
         OpenAIChatClient(
             model_id=model_id,
-            env_file_path="test.env",
         )
 
 

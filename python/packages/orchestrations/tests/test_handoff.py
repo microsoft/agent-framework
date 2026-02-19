@@ -17,9 +17,16 @@ from agent_framework import (
     resolve_agent_id,
 )
 from agent_framework._clients import BaseChatClient
-from agent_framework._middleware import ChatMiddlewareLayer
-from agent_framework._tools import FunctionInvocationLayer
+from agent_framework._middleware import ChatMiddlewareLayer, FunctionInvocationContext, MiddlewareTermination
+from agent_framework._tools import FunctionInvocationLayer, FunctionTool, tool
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
+
+from agent_framework_orchestrations._handoff import (
+    HANDOFF_FUNCTION_RESULT_KEY,
+    HandoffConfiguration,
+    _AutoHandoffMiddleware,  # pyright: ignore[reportPrivateUsage]
+    get_handoff_tool_name,
+)
 
 
 class MockChatClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], BaseChatClient[Any]):
@@ -365,3 +372,41 @@ def test_handoff_builder_accepts_all_instances_in_add_handoff():
     assert "triage" in workflow.executors
     assert "specialist_a" in workflow.executors
     assert "specialist_b" in workflow.executors
+
+
+async def test_auto_handoff_middleware_intercepts_handoff_tool_call() -> None:
+    """Middleware should short-circuit matching handoff tool calls with a synthetic result."""
+    target_id = "specialist"
+    middleware = _AutoHandoffMiddleware([HandoffConfiguration(target=target_id)])
+
+    @tool(name=get_handoff_tool_name(target_id), approval_mode="never_require")
+    def handoff_tool() -> str:
+        return "unreachable"
+
+    context = FunctionInvocationContext(function=handoff_tool, arguments={})
+    call_next = AsyncMock()
+
+    with pytest.raises(MiddlewareTermination) as exc_info:
+        await middleware.process(context, call_next)
+
+    call_next.assert_not_awaited()
+    expected_result = FunctionTool.parse_result({HANDOFF_FUNCTION_RESULT_KEY: target_id})
+    assert context.result == expected_result
+    assert exc_info.value.result == expected_result
+
+
+async def test_auto_handoff_middleware_calls_next_for_non_handoff_tool() -> None:
+    """Middleware should pass through when the function name is not a configured handoff tool."""
+    middleware = _AutoHandoffMiddleware([HandoffConfiguration(target="specialist")])
+
+    @tool(name="regular_tool", approval_mode="never_require")
+    def regular_tool() -> str:
+        return "ok"
+
+    context = FunctionInvocationContext(function=regular_tool, arguments={})
+    call_next = AsyncMock()
+
+    await middleware.process(context, call_next)
+
+    call_next.assert_awaited_once()
+    assert context.result is None

@@ -1,0 +1,52 @@
+#
+# This workflow tests invoking function tools directly from a workflow.
+# Uses the MenuPlugin functions: GetMenu, GetSpecials, GetItemPrice
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_invoke_function_tool_test
+  actions:
+
+    # Set the item name we want to look up
+    - kind: SetVariable
+      id: set_item_name
+      variable: Local.ItemName
+      value: Chai Tea
+
+    # Invoke GetSpecials function to get today's specials
+    - kind: InvokeFunctionTool
+      id: invoke_get_specials
+      functionName: GetSpecials
+      conversationId: =System.ConversationId
+      output:
+        autoSend: false
+        result: Local.Specials
+
+    # Invoke GetItemPrice function to get the price of a specific item
+    - kind: InvokeFunctionTool
+      id: invoke_get_item_price
+      functionName: GetItemPrice
+      conversationId: =System.ConversationId
+      arguments:
+        name: =Local.ItemName
+      output:
+        autoSend: true
+        result: Local.ItemPrice
+
+    # Ask an agent the price from the results in the conversation
+    - kind: InvokeAzureAgent
+      id: invoke_menu
+      conversationId: =System.ConversationId
+      agent:
+        name: TestAgent
+      input:
+        messages: =UserMessage("What's the price of Chai Tea?")
+      output:
+        messages: Local.AgentResponse
+
+    # Send the result as an activity
+    - kind: SendMessage
+      id: show_price_result
+      message: "{Local.AgentResponse}"

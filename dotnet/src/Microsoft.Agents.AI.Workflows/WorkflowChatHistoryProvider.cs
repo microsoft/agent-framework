@@ -9,8 +9,10 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows;
 
-internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider<WorkflowChatHistoryProvider.StoreState>
+internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
 {
+    private readonly ProviderSessionState<StoreState> _sessionState;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="WorkflowChatHistoryProvider"/> class.
     /// </summary>
@@ -20,9 +22,16 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider<Workflow
     /// and source generated serializers are required, or Native AOT / Trimming is required.
     /// </param>
     public WorkflowChatHistoryProvider(JsonSerializerOptions? jsonSerializerOptions = null)
-        : base(stateInitializer: _ => new StoreState(), stateKey: null, jsonSerializerOptions: jsonSerializerOptions, provideOutputMessageFilter: null, storeInputMessageFilter: null)
+        : base(provideOutputMessageFilter: null, storeInputMessageFilter: null)
     {
+        this._sessionState = new ProviderSessionState<StoreState>(
+            _ => new StoreState(),
+            this.GetType().Name,
+            jsonSerializerOptions);
     }
+
+    /// <inheritdoc />
+    public override string StateKey => this._sessionState.StateKey;
 
     internal sealed class StoreState
     {
@@ -31,21 +40,21 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider<Workflow
     }
 
     internal void AddMessages(AgentSession session, params IEnumerable<ChatMessage> messages)
-        => this.GetOrInitializeState(session).Messages.AddRange(messages);
+        => this._sessionState.GetOrInitializeState(session).Messages.AddRange(messages);
 
     protected override ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
-        => new(this.GetOrInitializeState(context.Session).Messages);
+        => new(this._sessionState.GetOrInitializeState(context.Session).Messages);
 
     protected override ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
         var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);
-        this.GetOrInitializeState(context.Session).Messages.AddRange(allNewMessages);
+        this._sessionState.GetOrInitializeState(context.Session).Messages.AddRange(allNewMessages);
         return default;
     }
 
     public IEnumerable<ChatMessage> GetFromBookmark(AgentSession session)
     {
-        var state = this.GetOrInitializeState(session);
+        var state = this._sessionState.GetOrInitializeState(session);
 
         for (int i = state.Bookmark; i < state.Messages.Count; i++)
         {
@@ -55,7 +64,7 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider<Workflow
 
     public void UpdateBookmark(AgentSession session)
     {
-        var state = this.GetOrInitializeState(session);
+        var state = this._sessionState.GetOrInitializeState(session);
         state.Bookmark = state.Messages.Count;
     }
 }

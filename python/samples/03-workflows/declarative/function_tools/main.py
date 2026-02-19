@@ -15,7 +15,11 @@ from agent_framework import FileCheckpointStorage, tool
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework_declarative import ExternalInputRequest, ExternalInputResponse, WorkflowFactory
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 TEMP_DIR = Path(__file__).with_suffix("").parent / "tmp" / "checkpoints"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -39,7 +43,9 @@ MENU_ITEMS = [
 ]
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_menu() -> list[dict[str, Any]]:
     """Get all menu items."""

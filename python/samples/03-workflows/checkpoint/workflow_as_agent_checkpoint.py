@@ -29,14 +29,20 @@ import os
 
 from agent_framework import (
     InMemoryCheckpointStorage,
+    InMemoryHistoryProvider,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def basic_checkpointing() -> None:
     """Demonstrate basic checkpoint storage with workflow-as-agent."""
+
     print("=" * 60)
     print("Basic Checkpointing with Workflow as Agent")
     print("=" * 60)
@@ -122,7 +128,7 @@ async def checkpointing_with_thread() -> None:
     checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
     print(f"\nTotal checkpoints across both turns: {len(checkpoints)}")
 
-    memory_state = session.state.get("memory", {})
+    memory_state = session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {})
     history = memory_state.get("messages", [])
     print(f"Messages in session history: {len(history)}")
 

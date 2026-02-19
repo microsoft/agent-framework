@@ -8,7 +8,7 @@ from typing import TypedDict
 
 import pytest
 
-from agent_framework._settings import SecretString, load_settings
+from agent_framework import SecretString, load_settings
 
 
 class SimpleSettings(TypedDict, total=False):
@@ -106,7 +106,7 @@ class TestDotenvFile:
         finally:
             os.unlink(env_path)
 
-    def test_env_vars_override_dotenv(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_dotenv_overrides_env_vars_when_env_file_path_is_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TEST_APP_API_KEY", "real-env-key")
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
@@ -117,15 +117,34 @@ class TestDotenvFile:
         try:
             settings = load_settings(SimpleSettings, env_prefix="TEST_APP_", env_file_path=env_path)
 
-            assert settings["api_key"] == "real-env-key"
+            assert settings["api_key"] == "dotenv-key"
         finally:
             os.unlink(env_path)
 
-    def test_missing_dotenv_file(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("TEST_APP_API_KEY", raising=False)
-        settings = load_settings(SimpleSettings, env_prefix="TEST_APP_", env_file_path="/nonexistent/.env")
+    def test_env_vars_are_used_when_env_file_path_is_not_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TEST_APP_API_KEY", "real-env-key")
+        settings = load_settings(SimpleSettings, env_prefix="TEST_APP_")
 
-        assert settings["api_key"] is None
+        assert settings["api_key"] == "real-env-key"
+
+    def test_overrides_beat_dotenv_and_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TEST_APP_TIMEOUT", "120")
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
+            f.write("TEST_APP_TIMEOUT=90\n")
+            f.flush()
+            env_path = f.name
+
+        try:
+            settings = load_settings(SimpleSettings, env_prefix="TEST_APP_", env_file_path=env_path, timeout=60)
+
+            assert settings["timeout"] == 60
+        finally:
+            os.unlink(env_path)
+
+    def test_missing_dotenv_file_raises(self) -> None:
+        with pytest.raises(FileNotFoundError):
+            load_settings(SimpleSettings, env_prefix="TEST_APP_", env_file_path="/nonexistent/.env")
 
 
 class TestSecretString:
