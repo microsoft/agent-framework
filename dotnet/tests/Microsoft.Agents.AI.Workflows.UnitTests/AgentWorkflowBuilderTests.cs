@@ -275,6 +275,114 @@ public class AgentWorkflowBuilderTests
     }
 
     [Fact]
+    public async Task Handoffs_OneTransfer_HandoffTargetDoesNotReceiveHandoffFunctionMessagesAsync()
+    {
+        // Regression test for https://github.com/microsoft/agent-framework/issues/3161
+        // When a handoff occurs, the target agent should receive the original user message
+        // but should NOT receive the handoff function call or tool result messages from the
+        // source agent, as these confuse the target LLM into ignoring the user's question.
+
+        List<ChatMessage>? capturedNextAgentMessages = null;
+
+        var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
+        }), name: "initialAgent");
+
+        var nextAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            capturedNextAgentMessages = messages.ToList();
+            return new(new ChatMessage(ChatRole.Assistant, "The derivative of x^2 is 2x."));
+        }),
+            name: "nextAgent",
+            description: "The second agent");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
+            .WithHandoff(initialAgent, nextAgent)
+            .Build();
+
+        _ = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "What is the derivative of x^2?")]);
+
+        Assert.NotNull(capturedNextAgentMessages);
+
+        // The target agent should see the original user message
+        Assert.Contains(capturedNextAgentMessages, m => m.Role == ChatRole.User && m.Text == "What is the derivative of x^2?");
+
+        // The target agent should NOT see the handoff function call or tool result from the source agent
+        Assert.DoesNotContain(capturedNextAgentMessages, m => m.Contents.Any(c => c is FunctionCallContent fcc && fcc.Name.StartsWith("handoff_to_", StringComparison.Ordinal)));
+        Assert.DoesNotContain(capturedNextAgentMessages, m => m.Role == ChatRole.Tool && m.Contents.Any(c => c is FunctionResultContent frc && frc.Result?.ToString() == "Transferred."));
+    }
+
+    [Fact]
+    public async Task Handoffs_TwoTransfers_HandoffTargetsDoNotReceiveHandoffFunctionMessagesAsync()
+    {
+        // Regression test for https://github.com/microsoft/agent-framework/issues/3161
+        // With two hops (initial -> second -> third), each target agent should receive the
+        // original user message and text responses from prior agents (as User role), but
+        // NOT any handoff function call or tool result messages.
+
+        List<ChatMessage>? capturedSecondAgentMessages = null;
+        List<ChatMessage>? capturedThirdAgentMessages = null;
+
+        var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+
+            // Return both a text message and a handoff function call
+            return new(new ChatMessage(ChatRole.Assistant, [new TextContent("Routing to second agent"), new FunctionCallContent("call1", transferFuncName)]));
+        }), name: "initialAgent");
+
+        var secondAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            capturedSecondAgentMessages = messages.ToList();
+
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+
+            // Return both a text message and a handoff function call
+            return new(new ChatMessage(ChatRole.Assistant, [new TextContent("Routing to third agent"), new FunctionCallContent("call2", transferFuncName)]));
+        }), name: "secondAgent", description: "The second agent");
+
+        var thirdAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            capturedThirdAgentMessages = messages.ToList();
+            return new(new ChatMessage(ChatRole.Assistant, "Hello from agent3"));
+        }),
+            name: "thirdAgent",
+            description: "The third / final agent");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
+            .WithHandoff(initialAgent, secondAgent)
+            .WithHandoff(secondAgent, thirdAgent)
+            .Build();
+
+        (string updateText, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
+
+        Assert.Contains("Hello from agent3", updateText);
+
+        // Second agent should see the original user message and initialAgent's text as context
+        Assert.NotNull(capturedSecondAgentMessages);
+        Assert.Contains(capturedSecondAgentMessages, m => m.Text == "abc");
+        Assert.Contains(capturedSecondAgentMessages, m => m.Text!.Contains("Routing to second agent"));
+        Assert.DoesNotContain(capturedSecondAgentMessages, m => m.Contents.Any(c => c is FunctionCallContent fcc && fcc.Name.StartsWith("handoff_to_", StringComparison.Ordinal)));
+        Assert.DoesNotContain(capturedSecondAgentMessages, m => m.Role == ChatRole.Tool && m.Contents.Any(c => c is FunctionResultContent));
+
+        // Third agent should see the original user message and both prior agents' text as context
+        Assert.NotNull(capturedThirdAgentMessages);
+        Assert.Contains(capturedThirdAgentMessages, m => m.Text == "abc");
+        Assert.Contains(capturedThirdAgentMessages, m => m.Text!.Contains("Routing to second agent"));
+        Assert.Contains(capturedThirdAgentMessages, m => m.Text!.Contains("Routing to third agent"));
+        Assert.DoesNotContain(capturedThirdAgentMessages, m => m.Contents.Any(c => c is FunctionCallContent fcc && fcc.Name.StartsWith("handoff_to_", StringComparison.Ordinal)));
+        Assert.DoesNotContain(capturedThirdAgentMessages, m => m.Role == ChatRole.Tool && m.Contents.Any(c => c is FunctionResultContent));
+    }
+
+    [Fact]
     public async Task Handoffs_TwoTransfers_ResponseServedByThirdAgentAsync()
     {
         var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
