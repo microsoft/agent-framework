@@ -54,7 +54,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         this.StartExecutorId = workflow.StartExecutorId;
 
         this.Workflow = Throw.IfNull(workflow);
-        this.RunContext = new InProcessRunnerContext(workflow, this.RunId, withCheckpointing: checkpointManager != null, this.OutgoingEvents, this.StepTracer, existingOwnerSignoff, subworkflow, enableConcurrentRuns);
+        this.RunContext = new InProcessRunnerContext(workflow, this.RunId, checkpointingEnabled: checkpointManager != null, this.OutgoingEvents, this.StepTracer, existingOwnerSignoff, subworkflow, enableConcurrentRuns);
         this.CheckpointManager = checkpointManager;
 
         this._knownValidInputTypes = knownValidInputTypes != null
@@ -161,7 +161,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
     bool ISuperStepRunner.HasUnservicedRequests => this.RunContext.HasUnservicedRequests;
     bool ISuperStepRunner.HasUnprocessedMessages => this.RunContext.NextStepHasActions;
 
-    public bool IsCheckpointingEnabled => this.RunContext.WithCheckpointing;
+    public bool IsCheckpointingEnabled => this.RunContext.IsCheckpointingEnabled;
 
     public IReadOnlyList<CheckpointInfo> Checkpoints => this._checkpoints;
 
