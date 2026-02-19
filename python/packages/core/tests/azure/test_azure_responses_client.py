@@ -13,17 +13,11 @@ from pytest import param
 
 from agent_framework import (
     Agent,
-    AgentExecutorRequest,
-    AgentExecutorResponse,
     AgentResponse,
     ChatResponse,
     Content,
     Message,
     SupportsChatGetResponse,
-    WorkflowBuilder,
-    WorkflowContext,
-    WorkflowEvent,
-    executor,
     tool,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
@@ -257,64 +251,6 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
 
 
 # region Integration Tests
-
-WORKFLOW_REASONING_DEPLOYMENT_NAME = os.getenv(
-    "AZURE_OPENAI_WORKFLOW_REASONING_DEPLOYMENT_NAME",
-    os.getenv("AZURE_OPENAI_REASONING_DEPLOYMENT_NAME", "gpt-5-mini"),
-)
-WORKFLOW_NON_REASONING_DEPLOYMENT_NAME = os.getenv(
-    "AZURE_OPENAI_WORKFLOW_NON_REASONING_DEPLOYMENT_NAME",
-    os.getenv("AZURE_OPENAI_NON_REASONING_DEPLOYMENT_NAME", "gpt-4.1-nano"),
-)
-
-
-async def _run_minimal_handoff_workflow(client: AzureOpenAIResponsesClient) -> list[WorkflowEvent]:
-    """Run a minimal workflow that hands off from a tool-calling agent to a second agent.
-
-    Uses AgentExecutorRequest to replay full conversation history to the second agent,
-    which triggers the duplicate-item error on reasoning models when service_session_id
-    is not cleared.
-    """
-    first_agent = client.as_agent(
-        id="minimal-handoff-first",
-        name="minimal-handoff-first",
-        instructions="Use get_weather exactly once for Seattle, then provide a short summary.",
-        tools=[get_weather],
-        default_options={"tool_choice": {"mode": "required", "required_function_name": "get_weather"}},
-    )
-
-    second_client = AzureOpenAIResponsesClient(credential=AzureCliCredential(), deployment_name=client.deployment_name)
-    second_agent = second_client.as_agent(
-        id="minimal-handoff-second",
-        name="minimal-handoff-second",
-        instructions="Summarize the prior weather result in one sentence.",
-    )
-
-    @executor(id="coordinator")
-    async def forward_via_request(
-        response: AgentExecutorResponse,
-        ctx: WorkflowContext[AgentExecutorRequest, Any],
-    ) -> None:
-        """Forward full conversation from first agent to second via AgentExecutorRequest."""
-        messages = list(response.full_conversation or response.agent_response.messages)
-        messages.append(Message("user", text="Now summarize the weather."))
-        await ctx.send_message(
-            AgentExecutorRequest(messages=messages, should_respond=True),
-            target_id=second_agent.id,
-        )
-
-    workflow = (
-        WorkflowBuilder(start_executor=first_agent, output_executors=[second_agent])
-        .add_edge(first_agent, forward_via_request)
-        .add_edge(forward_via_request, second_agent)
-        .build()
-    )
-
-    events: list[WorkflowEvent] = []
-    async for event in workflow.run("Check weather for Seattle and pass result onward.", stream=True):
-        events.append(event)
-
-    return events
 
 
 @pytest.mark.flaky

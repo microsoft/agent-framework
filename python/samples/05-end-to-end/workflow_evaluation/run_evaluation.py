@@ -199,7 +199,7 @@ async def main():
     openai_client = create_openai_client()
 
     # Model configuration
-    workflow_agent_model = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME_WORKFLOW", "gpt-5-mini")
+    workflow_agent_model = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME_WORKFLOW", "gpt-4.1-nano")
     eval_model = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME_EVAL", "gpt-5.2")
 
     # Focus on these agents, uncomment other ones you want to have evals run on
