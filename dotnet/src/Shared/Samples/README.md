@@ -17,6 +17,6 @@ To explicitly use `SampleEnvironemnt.cs` outside of this repo, add the following
 </ItemGroup>
 
 <ItemGroup>
-  <Compile Include="$(MSBuildThisFileDirectory)\..\src\Shared\Demos\*.cs" LinkBase="" Visible="false" />
+  <Compile Include="$(MSBuildThisFileDirectory)\..\src\Shared\Samples\*.cs" LinkBase="" Visible="false" />
 </ItemGroup>
 ```
