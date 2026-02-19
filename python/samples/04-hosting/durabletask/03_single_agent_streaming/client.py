@@ -22,8 +22,12 @@ from datetime import timedelta
 import redis.asyncio as aioredis
 from agent_framework.azure import DurableAIAgentClient
 from azure.identity import DefaultAzureCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from redis_stream_response_handler import RedisStreamResponseHandler
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -175,10 +179,6 @@ def run_client(agent_client: DurableAIAgentClient) -> None:
 
 
 if __name__ == "__main__":
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
     # Create the client
     client = get_client()
 
