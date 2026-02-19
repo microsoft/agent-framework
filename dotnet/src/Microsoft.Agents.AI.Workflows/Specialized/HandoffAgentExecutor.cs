@@ -28,12 +28,15 @@ internal sealed class HandoffAgentExecutorOptions
 internal sealed class HandoffMessagesFilter
 {
     private readonly HandoffToolCallFilteringBehavior _filteringBehavior;
-    private readonly HashSet<string> _handoffFunctionNames;
 
-    public HandoffMessagesFilter(HandoffToolCallFilteringBehavior filteringBehavior, HashSet<string> handoffFunctionNames)
+    public HandoffMessagesFilter(HandoffToolCallFilteringBehavior filteringBehavior)
     {
         this._filteringBehavior = filteringBehavior;
-        this._handoffFunctionNames = handoffFunctionNames;
+    }
+
+    internal static bool IsHandoffFunctionName(string name)
+    {
+        return name.StartsWith(HandoffsWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal);
     }
 
     public IEnumerable<ChatMessage> FilterMessages(List<ChatMessage> messages)
@@ -65,9 +68,18 @@ internal sealed class HandoffMessagesFilter
                 for (int i = 0; i < unfilteredMessage.Contents!.Count; i++)
                 {
                     AIContent content = unfilteredMessage.Contents[i];
-                    if (content is not FunctionCallContent fcc || (filterHandoffOnly && !this._handoffFunctionNames.Contains(fcc.Name)))
+                    if (content is not FunctionCallContent fcc || (filterHandoffOnly && !IsHandoffFunctionName(fcc.Name)))
                     {
                         filteredMessage.Contents.Add(content);
+
+                        // Track non-handoff function calls so their tool results are preserved in HandoffOnly mode
+                        if (filterHandoffOnly && content is FunctionCallContent nonHandoffFcc)
+                        {
+                            filteringCandidates[nonHandoffFcc.CallId] = new FilterCandidateState(nonHandoffFcc.CallId)
+                            {
+                                IsHandoffFunction = false,
+                            };
+                        }
                     }
                     else if (filterHandoffOnly)
                     {
@@ -92,7 +104,7 @@ internal sealed class HandoffMessagesFilter
                     }
                     else
                     {
-                        filteredMessage.Contents.Add(content);
+                        // All mode: strip all FunctionCallContent
                     }
                 }
             }
@@ -206,7 +218,7 @@ internal sealed class HandoffAgentExecutor(
         // call and tool result messages before sending to the underlying agent. These
         // are internal workflow mechanics that confuse the target model into ignoring the
         // original user question.
-        HandoffMessagesFilter handoffMessagesFilter = new(options.ToolCallFilteringBehavior, this._handoffFunctionNames);
+        HandoffMessagesFilter handoffMessagesFilter = new(options.ToolCallFilteringBehavior);
         IEnumerable<ChatMessage> messagesForAgent = message.InvokedHandoff is not null
             ? handoffMessagesFilter.FilterMessages(allMessages)
             : allMessages;

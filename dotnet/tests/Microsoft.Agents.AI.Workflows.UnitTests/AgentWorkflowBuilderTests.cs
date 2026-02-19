@@ -383,6 +383,149 @@ public class AgentWorkflowBuilderTests
     }
 
     [Fact]
+    public async Task Handoffs_FilteringNone_HandoffTargetReceivesAllMessagesIncludingToolCallsAsync()
+    {
+        // With filtering set to None, the target agent should see everything including
+        // handoff function calls and tool results.
+
+        List<ChatMessage>? capturedNextAgentMessages = null;
+
+        var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
+        }), name: "initialAgent");
+
+        var nextAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            capturedNextAgentMessages = messages.ToList();
+            return new(new ChatMessage(ChatRole.Assistant, "response"));
+        }),
+            name: "nextAgent",
+            description: "The second agent");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
+            .WithHandoff(initialAgent, nextAgent)
+            .WithToolCallFilteringBehavior(HandoffToolCallFilteringBehavior.None)
+            .Build();
+
+        _ = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "hello")]);
+
+        Assert.NotNull(capturedNextAgentMessages);
+        Assert.Contains(capturedNextAgentMessages, m => m.Text == "hello");
+
+        // With None filtering, handoff function calls and tool results should be visible
+        Assert.Contains(capturedNextAgentMessages, m => m.Contents.Any(c => c is FunctionCallContent fcc && fcc.Name.StartsWith("handoff_to_", StringComparison.Ordinal)));
+        Assert.Contains(capturedNextAgentMessages, m => m.Contents.Any(c => c is FunctionResultContent));
+    }
+
+    [Fact]
+    public async Task Handoffs_FilteringAll_HandoffTargetDoesNotReceiveAnyToolCallsAsync()
+    {
+        // With filtering set to All, the target agent should see no function calls or tool
+        // results at all — not even non-handoff ones from prior conversation history.
+
+        List<ChatMessage>? capturedNextAgentMessages = null;
+
+        var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+
+            return new(new ChatMessage(ChatRole.Assistant, [new TextContent("Routing you now"), new FunctionCallContent("call1", transferFuncName)]));
+        }), name: "initialAgent");
+
+        var nextAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            capturedNextAgentMessages = messages.ToList();
+            return new(new ChatMessage(ChatRole.Assistant, "response"));
+        }),
+            name: "nextAgent",
+            description: "The second agent");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
+            .WithHandoff(initialAgent, nextAgent)
+            .WithToolCallFilteringBehavior(HandoffToolCallFilteringBehavior.All)
+            .Build();
+
+        // Input includes a pre-existing non-handoff tool call in the conversation history
+        List<ChatMessage> input =
+        [
+            new(ChatRole.User, "What's the weather? Also help me with math."),
+            new(ChatRole.Assistant, [new FunctionCallContent("toolcall1", "get_weather")]) { AuthorName = "initialAgent" },
+            new(ChatRole.Tool, [new FunctionResultContent("toolcall1", "sunny")]),
+            new(ChatRole.Assistant, "The weather is sunny. Now let me route your math question.") { AuthorName = "initialAgent" },
+        ];
+
+        _ = await RunWorkflowAsync(workflow, input);
+
+        Assert.NotNull(capturedNextAgentMessages);
+
+        // With All filtering, NO function calls or tool results should be visible
+        Assert.DoesNotContain(capturedNextAgentMessages, m => m.Contents.Any(c => c is FunctionCallContent));
+        Assert.DoesNotContain(capturedNextAgentMessages, m => m.Role == ChatRole.Tool);
+
+        // But text content should still be visible
+        Assert.Contains(capturedNextAgentMessages, m => m.Text!.Contains("What's the weather"));
+        Assert.Contains(capturedNextAgentMessages, m => m.Text!.Contains("Routing you now"));
+    }
+
+    [Fact]
+    public async Task Handoffs_FilteringHandoffOnly_PreservesNonHandoffToolCallsAsync()
+    {
+        // With HandoffOnly filtering (the default), non-handoff function calls and tool
+        // results should be preserved while handoff ones are stripped.
+
+        List<ChatMessage>? capturedNextAgentMessages = null;
+
+        var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
+        }), name: "initialAgent");
+
+        var nextAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            capturedNextAgentMessages = messages.ToList();
+            return new(new ChatMessage(ChatRole.Assistant, "response"));
+        }),
+            name: "nextAgent",
+            description: "The second agent");
+
+        var workflow =
+            AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
+            .WithHandoff(initialAgent, nextAgent)
+            .WithToolCallFilteringBehavior(HandoffToolCallFilteringBehavior.HandoffOnly)
+            .Build();
+
+        // Input includes a pre-existing non-handoff tool call in the conversation history
+        List<ChatMessage> input =
+        [
+            new(ChatRole.User, "What's the weather? Also help me with math."),
+            new(ChatRole.Assistant, [new FunctionCallContent("toolcall1", "get_weather")]) { AuthorName = "initialAgent" },
+            new(ChatRole.Tool, [new FunctionResultContent("toolcall1", "sunny")]),
+            new(ChatRole.Assistant, "The weather is sunny. Now let me route your math question.") { AuthorName = "initialAgent" },
+        ];
+
+        _ = await RunWorkflowAsync(workflow, input);
+
+        Assert.NotNull(capturedNextAgentMessages);
+
+        // Handoff function calls and their tool results should be filtered
+        Assert.DoesNotContain(capturedNextAgentMessages, m => m.Contents.Any(c => c is FunctionCallContent fcc && fcc.Name.StartsWith("handoff_to_", StringComparison.Ordinal)));
+
+        // Non-handoff function calls and their tool results should be preserved
+        Assert.Contains(capturedNextAgentMessages, m => m.Contents.Any(c => c is FunctionCallContent fcc && fcc.Name == "get_weather"));
+        Assert.Contains(capturedNextAgentMessages, m => m.Role == ChatRole.Tool && m.Contents.Any(c => c is FunctionResultContent frc && frc.CallId == "toolcall1"));
+    }
+
+    [Fact]
     public async Task Handoffs_TwoTransfers_ResponseServedByThirdAgentAsync()
     {
         var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
