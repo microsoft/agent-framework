@@ -8,7 +8,6 @@ from typing import Any
 
 from agent_framework import (
     Agent,
-    AgentResponseUpdate,
     Content,
     FileCheckpointStorage,
     Workflow,
@@ -124,7 +123,6 @@ def print_handoff_agent_user_request(request: HandoffAgentUserRequest, request_i
     print(f"\n{'=' * 60}")
     print("User input needed")
     print(f"Request ID: {request_id}")
-    print(f"Awaiting agent: {request.agent_response.agent_id}")
 
     response = request.agent_response
     if not response.messages:
@@ -211,7 +209,7 @@ async def main() -> None:
     # This creates a new workflow instance to simulate a fresh process start,
     # but points it to the same checkpoint storage
     while request_events:
-        print("=" * 60)
+        print("\n" + "=" * 60)
         print("Simulating process restart...")
         print("=" * 60)
 
@@ -244,11 +242,8 @@ async def main() -> None:
         # Iterate through streamed events and collect request_info events
         request_events: list[WorkflowEvent] = []
         async for event in results:
-            event: WorkflowEvent
             if event.type == "request_info":
                 request_events.append(event)
-            elif event.type == "output" and isinstance(event.data, AgentResponseUpdate):
-                print(event.data.text, end="", flush=True)
 
     print("\n" + "=" * 60)
     print("DEMO COMPLETE")
