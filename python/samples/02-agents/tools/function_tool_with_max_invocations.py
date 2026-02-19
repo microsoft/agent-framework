@@ -58,9 +58,6 @@ Step 1: Call unicorn_function
 Response: Five unicorns summoned: 🦄🦄🦄🦄🦄✨
 ============================================================
 Step 2: Call unicorn_function again - will refuse to execute due to max_invocations
-[2025-10-31 15:54:40 - /Users/edvan/Work/agent-framework/python/packages/core/agent_framework/_tools.py:718 - ERROR]
-Function failed. Error: Function 'unicorn_function' has reached its maximum invocation limit,
-you can no longer use this tool.
 Response: The unicorn function has reached its maximum invocation limit. I can’t call it again right now.
 
 Here are 10 unicorns manually: 🦄 🦄 🦄 🦄 🦄 🦄 🦄 🦄 🦄 🦄

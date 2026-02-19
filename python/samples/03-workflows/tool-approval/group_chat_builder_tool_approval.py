@@ -148,21 +148,23 @@ async def main() -> None:
         name="DevOpsEngineer",
         instructions=(
             "You are a DevOps engineer responsible for deployments. First check staging "
-            "status and create a rollback plan, then proceed with production deployment. "
-            "Always ensure safety measures are in place before deploying."
+            "status and create a rollback plan, then proceed with production deployment "
+            "without the need for further instructions."
         ),
         tools=[check_staging_status, create_rollback_plan, deploy_to_production],
     )
 
     # 4. Build a group chat workflow with the selector function
-    # max_rounds=4: Set a hard limit to 4 rounds
+    # max_rounds=2: Set a hard limit to 2 rounds
     # First round: QAEngineer speaks
-    # Second round: DevOpsEngineer speaks (check staging + create rollback)
-    # Third round: DevOpsEngineer speaks with an approval request (deploy to production)
-    # Fourth round: DevOpsEngineer speaks again after approval
+    # Second round: DevOpsEngineer speaks
+    # If the round limit is larger than 2, the selector will keep selecting DevOpsEngineer,
+    # which could result in empty messages sent to the DevOpsEngineer after the second round
+    # since there is no more input from the QAEngineer. This could lead to error from some LLMs
+    # if they do not accept empty input. Setting max_rounds=2 prevents this issue.
     workflow = GroupChatBuilder(
         participants=[qa_engineer, devops_engineer],
-        max_rounds=4,
+        max_rounds=2,
         selection_func=select_next_speaker,
     ).build()
 

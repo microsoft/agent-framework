@@ -24,7 +24,7 @@ $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-
 
 ## Setup and Running
 
-Run the ModelContextProtocolPluginAuth sample
+Run the Agent_MCP_Server sample
 
 ```bash
 dotnet run

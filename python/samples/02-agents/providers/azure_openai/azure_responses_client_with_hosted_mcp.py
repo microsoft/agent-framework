@@ -70,13 +70,14 @@ async def handle_approvals_with_session_streaming(query: str, agent: "SupportsAg
     """Here we let the session deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import Message
 
-    new_input: list[Message] = []
+    new_input: list[Message | str] = [query]
     new_input_added = True
     while new_input_added:
         new_input_added = False
-        new_input.append(Message(role="user", text=query))
         async for update in agent.run(new_input, session=session, options={"store": True}, stream=True):
             if update.user_input_requests:
+                # Reset input to only contain new approval responses for the next iteration
+                new_input = []
                 for user_input_needed in update.user_input_requests:
                     print(
                         f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"
@@ -114,7 +115,8 @@ async def run_hosted_mcp_without_session_and_specific_approval() -> None:
     async with Agent(
         client=client,
         name="DocsAgent",
-        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+        instructions="You are a helpful assistant that uses your MCP tool "
+        "to help with microsoft documentation questions.",
         tools=[mcp_tool],
     ) as agent:
         # First query
@@ -151,7 +153,8 @@ async def run_hosted_mcp_without_approval() -> None:
     async with Agent(
         client=client,
         name="DocsAgent",
-        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+        instructions="You are a helpful assistant that uses your MCP tool "
+        "to help with Microsoft documentation questions.",
         tools=[mcp_tool],
     ) as agent:
         # First query
@@ -186,7 +189,8 @@ async def run_hosted_mcp_with_session() -> None:
     async with Agent(
         client=client,
         name="DocsAgent",
-        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+        instructions="You are a helpful assistant that uses your MCP tool "
+        "to help with microsoft documentation questions.",
         tools=[mcp_tool],
     ) as agent:
         # First query
@@ -222,7 +226,8 @@ async def run_hosted_mcp_with_session_streaming() -> None:
     async with Agent(
         client=client,
         name="DocsAgent",
-        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+        instructions="You are a helpful assistant that uses your MCP tool "
+        "to help with microsoft documentation questions.",
         tools=[mcp_tool],
     ) as agent:
         # First query

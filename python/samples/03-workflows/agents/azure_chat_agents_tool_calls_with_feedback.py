@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 from typing import Annotated
 
@@ -12,7 +13,6 @@ from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponse,
-    AgentResponseUpdate,
     Executor,
     Message,
     WorkflowBuilder,
@@ -246,6 +246,31 @@ def display_agent_run_update(event: WorkflowEvent, last_executor: str | None) ->
     print(update, end="", flush=True)
 
 
+async def consume_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str, str] | None:
+    """Consume a workflow event stream, printing outputs and returning any pending human responses."""
+    requests: list[WorkflowEvent] = []
+    async for event in stream:
+        if event.type == "request_info" and isinstance(event.data, DraftFeedbackRequest):
+            # Stash the request so we can prompt the human after the stream completes.
+            requests.append(event)
+
+    if requests:
+        pending_responses: dict[str, str] = {}
+        for request in requests:
+            print("\n----- Writer draft -----")
+            print(request.data.draft_text.strip())
+            print("\nProvide guidance for the editor (or 'approve' to accept the draft).")
+            answer = input("Human feedback: ").strip()  # noqa: ASYNC250
+            if answer.lower() == "exit":
+                print("Exiting...")
+                exit(0)
+            pending_responses[request.request_id] = answer
+
+        return pending_responses
+
+    return None
+
+
 async def main() -> None:
     """Run the workflow and bridge human feedback between two agents."""
 
@@ -267,66 +292,23 @@ async def main() -> None:
         .build()
     )
 
-    # Switch to turn on agent run update display.
-    # By default this is off to reduce clutter during human input.
-    display_agent_run_update_switch = False
-
     print(
         "Interactive mode. When prompted, provide a short feedback note for the editor.",
         flush=True,
     )
 
-    pending_responses: dict[str, str] | None = None
-    completed = False
-    initial_run = True
+    # Initiate the first run of the workflow.
+    # Runs are not isolated; state is preserved across multiple calls to run.
+    stream = workflow.run(
+        "Create a short launch blurb for the LumenX desk lamp. Emphasize adjustability and warm lighting.",
+        stream=True,
+    )
+    pending_responses = await consume_stream(stream)
 
-    while not completed:
-        last_executor: str | None = None
-        if initial_run:
-            stream = workflow.run(
-                "Create a short launch blurb for the LumenX desk lamp. Emphasize adjustability and warm lighting.",
-                stream=True,
-            )
-            initial_run = False
-        elif pending_responses is not None:
-            stream = workflow.run(stream=True, responses=pending_responses)
-            pending_responses = None
-        else:
-            break
-
-        requests: list[tuple[str, DraftFeedbackRequest]] = []
-
-        async for event in stream:
-            if (
-                event.type == "output"
-                and isinstance(event.data, AgentResponseUpdate)
-                and display_agent_run_update_switch
-            ):
-                display_agent_run_update(event, last_executor)
-            if event.type == "request_info" and isinstance(event.data, DraftFeedbackRequest):
-                # Stash the request so we can prompt the human after the stream completes.
-                requests.append((event.request_id, event.data))
-                last_executor = None
-            elif event.type == "output" and not isinstance(event.data, AgentResponseUpdate):
-                # Only mark as completed for final outputs, not streaming updates
-                last_executor = None
-                response = event.data
-                final_text = getattr(response, "text", str(response))
-                print(final_text, flush=True, end="")
-                completed = True
-
-        if requests and not completed:
-            responses: dict[str, str] = {}
-            for request_id, request in requests:
-                print("\n----- Writer draft -----")
-                print(request.draft_text.strip())
-                print("\nProvide guidance for the editor (or 'approve' to accept the draft).")
-                answer = input("Human feedback: ").strip()  # noqa: ASYNC250
-                if answer.lower() == "exit":
-                    print("Exiting...")
-                    return
-                responses[request_id] = answer
-            pending_responses = responses
+    # Run until there are no more requests
+    while pending_responses is not None:
+        stream = workflow.run(stream=True, responses=pending_responses)
+        pending_responses = await consume_stream(stream)
 
     print("Workflow complete.")
 

@@ -23,7 +23,7 @@ async def run_semantic_kernel() -> None:
 
     # Enable the hosted code interpreter tool on the assistant definition.
     definition = await client.beta.assistants.create(
-        model=OpenAISettings().chat_deployment_name,
+        model=OpenAISettings().chat_model_id,
         name="CodeRunner",
         instructions="Run the provided request as code and return the result.",
         tools=code_interpreter_tool,

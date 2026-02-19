@@ -12,7 +12,7 @@ import json
 import sys
 from functools import reduce
 from operator import and_
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 import numpy as np
 from agent_framework import Message
@@ -50,10 +50,11 @@ class RedisContextProvider(BaseContextProvider):
     """
 
     DEFAULT_CONTEXT_PROMPT = "## Memories\nConsider the following memories when answering user questions:"
+    DEFAULT_SOURCE_ID: ClassVar[str] = "redis"
 
     def __init__(
         self,
-        source_id: str,
+        source_id: str = DEFAULT_SOURCE_ID,
         redis_url: str = "redis://localhost:6379",
         index_name: str = "context",
         prefix: str = "context",
@@ -128,7 +129,7 @@ class RedisContextProvider(BaseContextProvider):
         if not input_text.strip():
             return
 
-        memories = await self._redis_search(text=input_text, session_id=context.session_id)
+        memories = await self._redis_search(text=input_text)
         line_separated_memories = "\n".join(
             str(memory.get("content", "")) for memory in memories if memory.get("content")
         )
@@ -336,7 +337,7 @@ class RedisContextProvider(BaseContextProvider):
         filter_expression: Any | None = None,
         return_fields: list[str] | None = None,
         num_results: int = 10,
-        alpha: float = 0.7,
+        linear_alpha: float = 0.7,
     ) -> list[dict[str, Any]]:
         """Runs a text or hybrid vector-text search with optional filters."""
         await self._ensure_index()
@@ -373,7 +374,7 @@ class RedisContextProvider(BaseContextProvider):
                     vector_field_name=self.vector_field_name,
                     text_scorer=text_scorer,
                     filter_expression=combined_filter,
-                    alpha=alpha,
+                    linear_alpha=linear_alpha,
                     dtype=self.redis_vectorizer.dtype,
                     num_results=num_results,
                     return_fields=return_fields,
