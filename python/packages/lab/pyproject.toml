@@ -22,7 +22,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "agent-framework-core>=1.0.0b260219",
+  "agent-framework-core>=1.0.0rc1",
 ]
 
 [project.optional-dependencies]
