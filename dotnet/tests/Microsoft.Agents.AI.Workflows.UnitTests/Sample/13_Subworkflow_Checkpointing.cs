@@ -30,7 +30,7 @@ internal static class Step13EntryPoint
 
     public static async ValueTask<AgentSession> RunAsAgentAsync(TextWriter writer, string input, IWorkflowExecutionEnvironment environment, AgentSession? session)
     {
-        AIAgent hostAgent = WorkflowInstance.AsAgent("echo-workflow", "EchoW", executionEnvironment: environment, includeWorkflowOutputsInResponse: true);
+        AIAgent hostAgent = WorkflowInstance.AsAIAgent("echo-workflow", "EchoW", executionEnvironment: environment, includeWorkflowOutputsInResponse: true);
 
         session ??= await hostAgent.CreateSessionAsync();
         AgentResponse response;
