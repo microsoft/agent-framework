@@ -7,7 +7,7 @@ using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
-public class InProcessStateTests
+public partial class InProcessStateTests
 {
     private sealed class TurnToken
     {

@@ -7,7 +7,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Reflection;
 
@@ -45,7 +44,7 @@ internal static class IMessageHandlerReflection
 
 internal static class RouteBuilderExtensions
 {
-    private static IEnumerable<MessageHandlerInfo> GetHandlerInfos(
+    public static IEnumerable<MessageHandlerInfo> GetHandlerInfos(
         [DynamicallyAccessedMembers(ReflectionDemands.RuntimeInterfaceDiscoveryAndInvocation)]
         this Type executorType)
     {
@@ -76,26 +75,5 @@ internal static class RouteBuilderExtensions
                 yield return new MessageHandlerInfo(method) { InType = inType, OutType = outType };
             }
         }
-    }
-
-    public static RouteBuilder ReflectHandlers<
-        [DynamicallyAccessedMembers(
-            ReflectionDemands.RuntimeInterfaceDiscoveryAndInvocation)
-        ] TExecutor>
-        (this RouteBuilder builder, ReflectingExecutor<TExecutor> executor)
-        where TExecutor : ReflectingExecutor<TExecutor>
-    {
-        Throw.IfNull(builder);
-
-        Type executorType = typeof(TExecutor);
-        Debug.Assert(executorType.IsInstanceOfType(executor),
-            "executorType must be the same type or a base type of the executor instance.");
-
-        foreach (MessageHandlerInfo handlerInfo in executorType.GetHandlerInfos())
-        {
-            builder = builder.AddHandlerInternal(handlerInfo.InType, handlerInfo.Bind(executor, checkType: true), handlerInfo.OutType);
-        }
-
-        return builder;
     }
 }

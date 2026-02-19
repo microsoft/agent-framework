@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
-internal abstract class TestingExecutor<TIn, TOut> : Executor, IDisposable
+internal abstract partial class TestingExecutor<TIn, TOut> : Executor, IDisposable
 {
     private readonly bool _loop;
     private readonly Func<TIn, IWorkflowContext, CancellationToken, ValueTask<TOut>>[] _actions;
@@ -39,11 +39,10 @@ internal abstract class TestingExecutor<TIn, TOut> : Executor, IDisposable
     public void SetCancel() =>
         Volatile.Read(ref this._internalCts).Cancel();
 
-    protected sealed override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-        routeBuilder.AddHandler<TIn, TOut>(this.RouteToActionsAsync);
-
     private int _nextActionIndex;
-    private ValueTask<TOut> RouteToActionsAsync(TIn message, IWorkflowContext context)
+
+    [MessageHandler]
+    public ValueTask<TOut> RouteToActionsAsync(TIn message, IWorkflowContext context)
     {
         if (this.AtEnd)
         {

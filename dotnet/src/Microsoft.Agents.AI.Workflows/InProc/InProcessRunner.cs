@@ -201,13 +201,42 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         this.StepTracer.TraceActivated(receiverId);
         while (envelopes.TryDequeue(out var envelope))
         {
-            await executor.ExecuteAsync(
-                envelope.Message,
-                envelope.MessageType,
+            (object message, TypeId messageType) = await TranslateMessageAsync(envelope).ConfigureAwait(false);
+
+            await executor.ExecuteCoreAsync(
+                message,
+                messageType,
                 this.RunContext.BindWorkflowContext(receiverId, envelope.TraceContext),
                 this.TelemetryContext,
                 cancellationToken
             ).ConfigureAwait(false);
+        }
+
+        async ValueTask<(object, TypeId)> TranslateMessageAsync(MessageEnvelope envelope)
+        {
+            object? value = envelope.Message;
+            TypeId messageType = envelope.MessageType;
+
+            if (!envelope.IsExternal)
+            {
+                Executor source = await this.RunContext.EnsureExecutorAsync(envelope.SourceId, this.StepTracer, cancellationToken).ConfigureAwait(false);
+                Type? actualType = source.Protocol.SendTypeTranslator.MapTypeId(envelope.MessageType);
+                if (actualType == null)
+                {
+                    // In principle, this should never happen, since we always use the SendTypeTranslator to generate the outgoing TypeId in the first place.
+                    throw new InvalidOperationException($"Cannot translate message type ID '{envelope.MessageType}' from executor '{source.Id}'.");
+                }
+
+                messageType = new(actualType);
+
+                if (value is PortableValue portableValue &&
+                    !portableValue.IsType(actualType, out value))
+                {
+                    throw new InvalidOperationException($"Cannot interpret incoming message of type '{portableValue.TypeId}' as type '{actualType.FullName}'.");
+                }
+            }
+
+            return (value, messageType);
         }
     }
 
