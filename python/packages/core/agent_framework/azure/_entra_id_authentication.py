@@ -9,7 +9,7 @@ from typing import Union
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
-from ..exceptions import ServiceInvalidAuthError
+from ..exceptions import ChatClientInvalidAuthException
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def resolve_credential_to_token_provider(
         return credential
 
     if not token_endpoint:
-        raise ServiceInvalidAuthError(
+        raise ChatClientInvalidAuthException(
             "A token endpoint must be provided either in settings, as an environment variable, or as an argument."
         )
 

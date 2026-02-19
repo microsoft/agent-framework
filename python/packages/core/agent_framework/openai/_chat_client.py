@@ -41,9 +41,8 @@ from .._types import (
     UsageDetails,
 )
 from ..exceptions import (
-    ServiceInitializationError,
-    ServiceInvalidRequestError,
-    ServiceResponseException,
+    ChatClientException,
+    ChatClientInvalidRequestException,
 )
 from ..observability import ChatTelemetryLayer
 from ._exceptions import OpenAIContentFilterException
@@ -234,12 +233,12 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             f"{type(self)} service encountered a content error: {ex}",
                             inner_exception=ex,
                         ) from ex
-                    raise ServiceResponseException(
+                    raise ChatClientException(
                         f"{type(self)} service failed to complete the prompt: {ex}",
                         inner_exception=ex,
                     ) from ex
                 except Exception as ex:
-                    raise ServiceResponseException(
+                    raise ChatClientException(
                         f"{type(self)} service failed to complete the prompt: {ex}",
                         inner_exception=ex,
                     ) from ex
@@ -259,12 +258,12 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         f"{type(self)} service encountered a content error: {ex}",
                         inner_exception=ex,
                     ) from ex
-                raise ServiceResponseException(
+                raise ChatClientException(
                     f"{type(self)} service failed to complete the prompt: {ex}",
                     inner_exception=ex,
                 ) from ex
             except Exception as ex:
-                raise ServiceResponseException(
+                raise ChatClientException(
                     f"{type(self)} service failed to complete the prompt: {ex}",
                     inner_exception=ex,
                 ) from ex
@@ -320,7 +319,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if messages and "messages" not in run_options:
             run_options["messages"] = self._prepare_messages_for_openai(messages)
         if "messages" not in run_options:
-            raise ServiceInvalidRequestError("Messages are required for chat completions")
+            raise ChatClientInvalidRequestException("Messages are required for chat completions")
 
         # Translation between options keys and Chat Completion API
         for old_key, new_key in OPTION_TRANSLATIONS.items():
@@ -732,11 +731,11 @@ class OpenAIChatClient(  # type: ignore[misc]
         )
 
         if not async_client and not openai_settings["api_key"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
         if not openai_settings["chat_model_id"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )

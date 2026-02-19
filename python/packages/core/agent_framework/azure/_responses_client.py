@@ -14,7 +14,6 @@ from .._middleware import ChatMiddlewareLayer
 from .._settings import load_settings
 from .._telemetry import AGENT_FRAMEWORK_USER_AGENT
 from .._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
-from ..exceptions import ServiceInitializationError
 from ..observability import ChatTelemetryLayer
 from ..openai._responses_client import RawOpenAIResponsesClient
 from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
@@ -217,7 +216,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             azure_openai_settings["base_url"] = urljoin(str(azure_openai_settings["endpoint"]), "/openai/v1/")
 
         if not azure_openai_settings["responses_deployment_name"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME' environment variable."
             )
@@ -255,20 +254,16 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             An AsyncAzureOpenAI client obtained from the project client.
 
         Raises:
-            ServiceInitializationError: If required parameters are missing or
+            ValueError: If required parameters are missing or
                 the azure-ai-projects package is not installed.
         """
         if project_client is not None:
             return project_client.get_openai_client()
 
         if not project_endpoint:
-            raise ServiceInitializationError(
-                "Azure AI project endpoint is required when project_client is not provided."
-            )
+            raise ValueError("Azure AI project endpoint is required when project_client is not provided.")
         if not credential:
-            raise ServiceInitializationError(
-                "Azure credential is required when using project_endpoint without a project_client."
-            )
+            raise ValueError("Azure credential is required when using project_endpoint without a project_client.")
         project_client = AIProjectClient(
             endpoint=project_endpoint,
             credential=credential,  # type: ignore[arg-type]

@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
-from agent_framework.exceptions import ServiceInitializationError
 
 from agent_framework_redis._context_provider import RedisContextProvider
 from agent_framework_redis._history_provider import RedisHistoryProvider
@@ -108,7 +107,7 @@ class TestRedisContextProviderInit:
 class TestRedisContextProviderValidateFilters:
     def test_no_filters_raises(self, patch_index_from_dict: MagicMock):  # noqa: ARG002
         provider = RedisContextProvider(source_id="ctx")
-        with pytest.raises(ServiceInitializationError, match="(?i)at least one"):
+        with pytest.raises(ValueError, match="(?i)at least one"):
             provider._validate_filters()
 
     def test_any_single_filter_ok(self, patch_index_from_dict: MagicMock):  # noqa: ARG002

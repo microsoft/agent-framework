@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from agent_framework.exceptions import ServiceException
+from agent_framework.exceptions import AgentException
 
 from agent_framework_copilotstudio._acquire_token import DEFAULT_SCOPES, acquire_token
 
@@ -12,23 +12,23 @@ class TestAcquireToken:
     """Test class for token acquisition functionality."""
 
     def test_acquire_token_missing_client_id(self) -> None:
-        """Test that acquire_token raises ServiceException when client_id is missing."""
-        with pytest.raises(ServiceException, match="Client ID is required for token acquisition"):
+        """Test that acquire_token raises ValueError when client_id is missing."""
+        with pytest.raises(ValueError, match="Client ID is required for token acquisition"):
             acquire_token(client_id="", tenant_id="test-tenant-id")
 
     def test_acquire_token_missing_tenant_id(self) -> None:
-        """Test that acquire_token raises ServiceException when tenant_id is missing."""
-        with pytest.raises(ServiceException, match="Tenant ID is required for token acquisition"):
+        """Test that acquire_token raises ValueError when tenant_id is missing."""
+        with pytest.raises(ValueError, match="Tenant ID is required for token acquisition"):
             acquire_token(client_id="test-client-id", tenant_id="")
 
     def test_acquire_token_none_client_id(self) -> None:
-        """Test that acquire_token raises ServiceException when client_id is None."""
-        with pytest.raises(ServiceException, match="Client ID is required for token acquisition"):
+        """Test that acquire_token raises ValueError when client_id is None."""
+        with pytest.raises(ValueError, match="Client ID is required for token acquisition"):
             acquire_token(client_id=None, tenant_id="test-tenant-id")  # type: ignore
 
     def test_acquire_token_none_tenant_id(self) -> None:
-        """Test that acquire_token raises ServiceException when tenant_id is None."""
-        with pytest.raises(ServiceException, match="Tenant ID is required for token acquisition"):
+        """Test that acquire_token raises ValueError when tenant_id is None."""
+        with pytest.raises(ValueError, match="Tenant ID is required for token acquisition"):
             acquire_token(client_id="test-client-id", tenant_id=None)  # type: ignore
 
     @patch("agent_framework_copilotstudio._acquire_token.PublicClientApplication")
@@ -186,7 +186,7 @@ class TestAcquireToken:
         mock_error_response = {"error": "access_denied", "error_description": "User denied consent"}
         mock_pca.acquire_token_interactive.return_value = mock_error_response
 
-        with pytest.raises(ServiceException, match="Authentication token cannot be acquired"):
+        with pytest.raises(AgentException, match="Authentication token cannot be acquired"):
             acquire_token(
                 client_id="test-client-id",
                 tenant_id="test-tenant-id",
@@ -203,7 +203,7 @@ class TestAcquireToken:
         # Interactive acquisition throws exception
         mock_pca.acquire_token_interactive.side_effect = Exception("Authentication service unavailable")
 
-        with pytest.raises(ServiceException, match="Failed to acquire authentication token"):
+        with pytest.raises(AgentException, match="Failed to acquire authentication token"):
             acquire_token(
                 client_id="test-client-id",
                 tenant_id="test-tenant-id",

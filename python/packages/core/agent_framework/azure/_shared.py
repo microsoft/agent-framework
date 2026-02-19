@@ -13,7 +13,6 @@ from openai.lib.azure import AsyncAzureOpenAI
 
 from .._settings import SecretString
 from .._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
-from ..exceptions import ServiceInitializationError
 from ..openai._shared import OpenAIBase
 from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider, resolve_credential_to_token_provider
 
@@ -175,10 +174,10 @@ class AzureOpenAIConfigMixin(OpenAIBase):
                 ad_token_provider = resolve_credential_to_token_provider(credential, token_endpoint)
 
             if not api_key and not ad_token_provider:
-                raise ServiceInitializationError("Please provide either api_key, credential, or a client.")
+                raise ValueError("Please provide either api_key, credential, or a client.")
 
             if not endpoint and not base_url:
-                raise ServiceInitializationError("Please provide an endpoint or a base_url")
+                raise ValueError("Please provide an endpoint or a base_url")
 
             args: dict[str, Any] = {
                 "default_headers": merged_headers,

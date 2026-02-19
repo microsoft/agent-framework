@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
-from agent_framework.exceptions import ServiceInitializationError
 from mem0 import AsyncMemory, AsyncMemoryClient
 
 if sys.version_info >= (3, 11):
@@ -172,9 +171,7 @@ class Mem0ContextProvider(BaseContextProvider):
     def _validate_filters(self) -> None:
         """Validates that at least one filter is provided."""
         if not self.agent_id and not self.user_id and not self.application_id:
-            raise ServiceInitializationError(
-                "At least one of the filters: agent_id, user_id, or application_id is required."
-            )
+            raise ValueError("At least one of the filters: agent_id, user_id, or application_id is required.")
 
     def _build_filters(self) -> dict[str, Any]:
         """Build search filters from initialization parameters."""

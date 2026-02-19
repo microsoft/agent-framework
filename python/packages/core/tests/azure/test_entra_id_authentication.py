@@ -9,7 +9,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 from agent_framework.azure._entra_id_authentication import (
     resolve_credential_to_token_provider,
 )
-from agent_framework.exceptions import ServiceInvalidAuthError
+from agent_framework.exceptions import ChatClientInvalidAuthException
 
 TOKEN_ENDPOINT = "https://cognitiveservices.azure.com/.default"
 
@@ -51,11 +51,11 @@ def test_resolve_callable_provider_passthrough() -> None:
 
 
 def test_resolve_missing_endpoint_raises() -> None:
-    """Test that missing token endpoint raises ServiceInvalidAuthError."""
+    """Test that missing token endpoint raises ChatClientInvalidAuthException."""
     mock_credential = MagicMock(spec=TokenCredential)
 
-    with pytest.raises(ServiceInvalidAuthError, match="A token endpoint must be provided"):
+    with pytest.raises(ChatClientInvalidAuthException, match="A token endpoint must be provided"):
         resolve_credential_to_token_provider(mock_credential, "")
 
-    with pytest.raises(ServiceInvalidAuthError, match="A token endpoint must be provided"):
+    with pytest.raises(ChatClientInvalidAuthException, match="A token endpoint must be provided"):
         resolve_credential_to_token_provider(mock_credential, None)  # type: ignore[arg-type]
