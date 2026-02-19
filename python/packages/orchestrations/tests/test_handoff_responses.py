@@ -240,4 +240,3 @@ async def test_handoff_preserves_full_context_for_resumed_agent():
         f"{[f'{m.role}: {m.text}' for m in second_call_messages]}. "
         f"This means conversation context is lost after handoff."
     )
-
