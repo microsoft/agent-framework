@@ -6,7 +6,7 @@
     <PackageVersion Condition="'$(IsReleaseCandidate)' == 'true'">$(VersionPrefix)-rc$(RCNumber)</PackageVersion>
     <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).260219.1</PackageVersion>
     <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' == ''">$(VersionPrefix)-preview.260219.1</PackageVersion>
-    <GitTag>1.0.0-preview.260219.1</GitTag>
+    <GitTag>1.0.0-rc1</GitTag>
 
     <Configurations>Debug;Release;Publish</Configurations>
     <IsPackable>true</IsPackable>
