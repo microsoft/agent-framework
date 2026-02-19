@@ -384,10 +384,10 @@ async def test_run_request_with_full_history_clears_service_session_id() -> None
     assert spy_agent._captured_service_session_id is None  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_from_response_clears_service_session_id() -> None:
+async def test_from_response_preserves_service_session_id() -> None:
     """from_response hands off a prior agent's full conversation to the next executor.
-    The receiving executor's service_session_id must be cleared so the API does not
-    see the same items twice (via previous_response_id and in the explicit input)."""
+    The receiving executor's service_session_id is preserved so the API can continue
+    the conversation using previous_response_id."""
     tool_agent = _ToolHistoryAgent(
         id="tool_agent2", name="ToolAgent", summary_text="Done."
     )
@@ -407,4 +407,4 @@ async def test_from_response_clears_service_session_id() -> None:
     result = await wf.run("start")
     assert result.get_outputs() is not None
 
-    assert spy_agent._captured_service_session_id is None  # pyright: ignore[reportPrivateUsage]
+    assert spy_agent._captured_service_session_id == "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
