@@ -214,6 +214,7 @@ def print_coverage_table(
 
     Args:
         packages: Dictionary of package name to coverage data.
+        files: Dictionary of file path to coverage data, used for per-file enforcement.
         threshold: Minimum required coverage percentage.
         overall_line_rate: Overall line coverage rate (0-1).
         overall_branch_rate: Overall branch coverage rate (0-1).
