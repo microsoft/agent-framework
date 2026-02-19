@@ -20,7 +20,7 @@ from agent_framework import (
     WorkflowEvent,
 )
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework.orchestrations import HandoffBuilder, HandoffUserInputRequest
+from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from semantic_kernel.agents import Agent, ChatCompletionAgent, HandoffOrchestration, OrchestrationHandoffs
 from semantic_kernel.agents.runtime import InProcessRuntime
@@ -223,7 +223,7 @@ async def _drain_events(stream: AsyncIterable[WorkflowEvent]) -> list[WorkflowEv
 def _collect_handoff_requests(events: list[WorkflowEvent]) -> list[WorkflowEvent]:
     requests: list[WorkflowEvent] = []
     for event in events:
-        if event.type == "request_info" and isinstance(event.data, HandoffUserInputRequest):
+        if event.type == "request_info" and isinstance(event.data, HandoffAgentUserRequest):
             requests.append(event)
     return requests
 
@@ -241,12 +241,16 @@ async def run_agent_framework_example(initial_task: str, scripted_responses: Seq
     triage, refund, status, returns = _create_af_agents(client)
 
     workflow = (
-        HandoffBuilder(name="sk_af_handoff_migration", participants=[triage, refund, status, returns])
-        .set_coordinator(triage)
+        HandoffBuilder(
+            name="sk_af_handoff_migration",
+            participants=[triage, refund, status, returns],
+            termination_condition=lambda conv: sum(1 for m in conv if m.role == "user") >= 4,
+        )
+        .with_start_agent(triage)
         .add_handoff(triage, [refund, status, returns])
         .add_handoff(refund, [status, triage])
         .add_handoff(status, [refund, triage])
-        .add_handoff(returns, triage)
+        .add_handoff(returns, [triage])
         .build()
     )
 
@@ -260,7 +264,7 @@ async def run_agent_framework_example(initial_task: str, scripted_responses: Seq
             user_reply = next(scripted_iter)
         except StopIteration:
             user_reply = "Thanks, that's all."
-        responses = {request.request_id: user_reply for request in pending}
+        responses = {request.request_id: [Message(role="user", text=user_reply)] for request in pending}
         final_events = await _drain_events(workflow.run(stream=True, responses=responses))
         pending = _collect_handoff_requests(final_events)
 

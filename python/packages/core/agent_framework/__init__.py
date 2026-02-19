@@ -1,5 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Public API surface for Agent Framework core.
+
+This module exposes the primary abstractions for agents, chat clients, tools, sessions,
+middleware, observability, and workflows. Connector namespaces such as
+``agent_framework.azure`` and ``agent_framework.anthropic`` provide provider-specific
+integrations, many of which are lazy-loaded from optional packages.
+"""
+
 import importlib.metadata
 from typing import Final
 
@@ -19,7 +27,6 @@ from ._clients import (
     SupportsMCPTool,
     SupportsWebSearchTool,
 )
-from ._logging import get_logger, setup_logging
 from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPWebsocketTool
 from ._middleware import (
     AgentContext,
@@ -34,7 +41,6 @@ from ._middleware import (
     FunctionInvocationContext,
     FunctionMiddleware,
     FunctionMiddlewareTypes,
-    MiddlewareException,
     MiddlewareTermination,
     MiddlewareType,
     MiddlewareTypes,
@@ -50,6 +56,7 @@ from ._sessions import (
     SessionContext,
     register_state_type,
 )
+from ._settings import SecretString, load_settings
 from ._telemetry import (
     AGENT_FRAMEWORK_USER_AGENT,
     APP_INFO,
@@ -61,12 +68,14 @@ from ._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
+    ToolTypes,
     normalize_function_invocation_configuration,
     tool,
 )
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     Annotation,
     ChatOptions,
     ChatResponse,
@@ -152,6 +161,7 @@ from ._workflows import (
     response_handler,
     validate_workflow_graph,
 )
+from .exceptions import MiddlewareException
 
 __all__ = [
     "AGENT_FRAMEWORK_USER_AGENT",
@@ -169,6 +179,7 @@ __all__ = [
     "AgentMiddlewareTypes",
     "AgentResponse",
     "AgentResponseUpdate",
+    "AgentRunInputs",
     "AgentSession",
     "Annotation",
     "BaseAgent",
@@ -225,6 +236,7 @@ __all__ = [
     "RoleLiteral",
     "Runner",
     "RunnerContext",
+    "SecretString",
     "SessionContext",
     "SingleEdgeGroup",
     "SubWorkflowRequestMessage",
@@ -241,6 +253,7 @@ __all__ = [
     "SwitchCaseEdgeGroupDefault",
     "TextSpanRegion",
     "ToolMode",
+    "ToolTypes",
     "TypeCompatibilityError",
     "UpdateT",
     "UsageDetails",
@@ -264,6 +277,7 @@ __all__ = [
     "WorkflowRunnerException",
     "WorkflowValidationError",
     "WorkflowViz",
+    "__version__",
     "add_usage_details",
     "agent_middleware",
     "chat_middleware",
@@ -271,8 +285,8 @@ __all__ = [
     "detect_media_type_from_base64",
     "executor",
     "function_middleware",
-    "get_logger",
     "handler",
+    "load_settings",
     "map_chat_to_agent_update",
     "merge_chat_options",
     "normalize_function_invocation_configuration",
@@ -283,7 +297,6 @@ __all__ = [
     "register_state_type",
     "resolve_agent_id",
     "response_handler",
-    "setup_logging",
     "tool",
     "validate_chat_options",
     "validate_tool_mode",

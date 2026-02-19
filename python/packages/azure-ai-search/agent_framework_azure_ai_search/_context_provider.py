@@ -8,12 +8,12 @@ This module provides ``AzureAISearchContextProvider``, built on the new
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict
 
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message
-from agent_framework._logging import get_logger
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework._settings import SecretString, load_settings
 from agent_framework.exceptions import ServiceInitializationError
@@ -103,7 +103,7 @@ try:
 except ImportError:
     _agentic_retrieval_available = False
 
-logger = get_logger(__name__)
+logger = logging.getLogger("agent_framework.azure_ai_search")
 
 _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT = 10
 
@@ -111,8 +111,9 @@ _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT = 10
 class AzureAISearchSettings(TypedDict, total=False):
     """Settings for Azure AI Search Context Provider with auto-loading from environment.
 
-    The settings are first loaded from environment variables with the prefix 'AZURE_SEARCH_'.
-    If the environment variables are not found, the settings can be loaded from a .env file.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'AZURE_SEARCH_'.
 
     Keys:
         endpoint: Azure AI Search endpoint URL.
@@ -139,10 +140,11 @@ class AzureAISearchContextProvider(BaseContextProvider):
     """
 
     _DEFAULT_SEARCH_CONTEXT_PROMPT: ClassVar[str] = "Use the following context to answer the question:"
+    DEFAULT_SOURCE_ID: ClassVar[str] = "azure_ai_search"
 
     def __init__(
         self,
-        source_id: str,
+        source_id: str = DEFAULT_SOURCE_ID,
         endpoint: str | None = None,
         index_name: str | None = None,
         api_key: str | AzureKeyCredential | None = None,

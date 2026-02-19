@@ -42,7 +42,7 @@
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.3" />
     <PackageVersion Include="System.Linq.AsyncEnumerable" Version="10.0.0" />
     <PackageVersion Include="System.Net.Http.Json" Version="10.0.0" />
-    <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.1" />
+    <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.3" />
     <PackageVersion Include="System.Text.Json" Version="10.0.3" />
     <PackageVersion Include="System.Threading.Channels" Version="10.0.3" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
@@ -63,6 +63,9 @@
     <!-- Microsoft.Extensions.* -->
     <PackageVersion Include="Microsoft.Extensions.AI" Version="10.3.0" />
     <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.3.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation" Version="10.3.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Quality" Version="10.3.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Safety" Version="10.3.0-preview.1.26109.11" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.3.0" />
     <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
@@ -99,7 +102,7 @@
     <PackageVersion Include="A2A" Version="0.3.3-preview" />
     <PackageVersion Include="A2A.AspNetCore" Version="0.3.3-preview" />
     <!-- MCP -->
-    <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.3" />
+    <PackageVersion Include="ModelContextProtocol" Version="0.8.0-preview.1" />
     <!-- Inference SDKs -->
     <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.5.1" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
@@ -108,10 +111,10 @@
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.78.0" />
     <!-- Workflows -->
-    <PackageVersion Include="Microsoft.Agents.ObjectModel" Version="2026.1.2.3" />
-    <PackageVersion Include="Microsoft.Agents.ObjectModel.Json" Version="2026.1.2.3" />
-    <PackageVersion Include="Microsoft.Agents.ObjectModel.PowerFx" Version="2026.1.2.3" />
-    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.5.0-build.20251008-1002" />
+    <PackageVersion Include="Microsoft.Agents.ObjectModel" Version="2026.2.3.1" />
+    <PackageVersion Include="Microsoft.Agents.ObjectModel.Json" Version="2026.2.3.1" />
+    <PackageVersion Include="Microsoft.Agents.ObjectModel.PowerFx" Version="2026.2.3.1" />
+    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.8.1" />
     <!-- Durable Task -->
     <PackageVersion Include="Microsoft.DurableTask.Client" Version="1.18.0" />
     <PackageVersion Include="Microsoft.DurableTask.Client.AzureManaged" Version="1.18.0" />

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -173,6 +174,7 @@ public class AgentResponse
     /// to poll for completion.
     /// </para>
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AIResponseContinuations)]
     public ResponseContinuationToken? ContinuationToken { get; set; }
 
     /// <summary>

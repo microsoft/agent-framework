@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import sys
 from collections.abc import (
     AsyncIterable,
     Awaitable,
     Callable,
     Mapping,
-    MutableMapping,
     Sequence,
 )
 from functools import partial, wraps
@@ -24,6 +24,7 @@ from typing import (
     Final,
     Generic,
     Literal,
+    TypeAlias,
     TypedDict,
     Union,
     get_args,
@@ -34,7 +35,6 @@ from typing import (
 from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import BaseModel, Field, ValidationError, create_model
 
-from ._logging import get_logger
 from ._serialization import SerializationMixin
 from .exceptions import ToolException
 from .observability import (
@@ -58,6 +58,7 @@ else:
 
 if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
+    from ._mcp import MCPTool
     from ._middleware import FunctionMiddlewarePipeline, FunctionMiddlewareTypes
     from ._types import (
         ChatOptions,
@@ -69,20 +70,12 @@ if TYPE_CHECKING:
     )
 
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+else:
+    MCPTool = Any  # type: ignore[assignment,misc]
 
 
-logger = get_logger()
+logger = logging.getLogger("agent_framework")
 
-__all__ = [
-    "FunctionInvocationConfiguration",
-    "FunctionInvocationLayer",
-    "FunctionTool",
-    "normalize_function_invocation_configuration",
-    "tool",
-]
-
-
-logger = get_logger()
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
@@ -516,9 +509,7 @@ class FunctionTool(SerializationMixin):
         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
             attributes.update({
                 OtelAttr.TOOL_ARGUMENTS: (
-                    json.dumps(serializable_kwargs, default=str, ensure_ascii=False)
-                    if serializable_kwargs
-                    else "None"
+                    json.dumps(serializable_kwargs, default=str, ensure_ascii=False) if serializable_kwargs else "None"
                 )
             })
         with get_function_span(attributes=attributes) as span:
@@ -633,14 +624,46 @@ class FunctionTool(SerializationMixin):
         return as_dict
 
 
+ToolTypes: TypeAlias = FunctionTool | MCPTool | Mapping[str, Any] | Any
+
+
+def normalize_tools(
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+) -> list[ToolTypes]:
+    """Normalize tool inputs while preserving non-callable tool objects.
+
+    Args:
+        tools: A single tool or sequence of tools.
+
+    Returns:
+        A normalized list where callable inputs are converted to ``FunctionTool``
+        using :func:`tool`, and existing tool objects are passed through unchanged.
+    """
+    if not tools:
+        return []
+
+    tool_items = (
+        list(tools)
+        if isinstance(tools, Sequence) and not isinstance(tools, (str, bytes, bytearray, Mapping))
+        else [tools]
+    )
+    from ._mcp import MCPTool
+
+    normalized: list[ToolTypes] = []
+    for tool_item in tool_items:
+        # check known types, these are also callable, so we need to do that first
+        if isinstance(tool_item, (FunctionTool, Mapping, MCPTool)):
+            normalized.append(tool_item)
+            continue
+        if callable(tool_item):
+            normalized.append(tool(tool_item))
+            continue
+        normalized.append(tool_item)
+    return normalized
+
+
 def _tools_to_dict(
-    tools: (
-        FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None
-    ),
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
 ) -> list[str | dict[str, Any]] | None:
     """Parse the tools to a dict.
 
@@ -650,32 +673,20 @@ def _tools_to_dict(
     Returns:
         A list of tool specifications as dictionaries, or None if no tools provided.
     """
-    if not tools:
+    normalized_tools = normalize_tools(tools)
+    if not normalized_tools:
         return None
-    if not isinstance(tools, list):
-        if isinstance(tools, FunctionTool):
-            return [tools.to_json_schema_spec()]
-        if isinstance(tools, SerializationMixin):
-            return [tools.to_dict()]
-        if isinstance(tools, dict):
-            return [tools]
-        if callable(tools):
-            return [tool(tools).to_json_schema_spec()]
-        logger.warning("Can't parse tool.")
-        return None
+
     results: list[str | dict[str, Any]] = []
-    for tool_item in tools:
+    for tool_item in normalized_tools:
         if isinstance(tool_item, FunctionTool):
             results.append(tool_item.to_json_schema_spec())
             continue
         if isinstance(tool_item, SerializationMixin):
             results.append(tool_item.to_dict())
             continue
-        if isinstance(tool_item, dict):
-            results.append(tool_item)
-            continue
-        if callable(tool_item):
-            results.append(tool(tool_item).to_json_schema_spec())
+        if isinstance(tool_item, Mapping):
+            results.append(dict(tool_item))
             continue
         logger.warning("Can't parse tool.")
     return results
@@ -1440,20 +1451,12 @@ async def _auto_invoke_function(
 
 
 def _get_tool_map(
-    tools: FunctionTool
-    | Callable[..., Any]
-    | MutableMapping[str, Any]
-    | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]],
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]],
 ) -> dict[str, FunctionTool]:
     tool_list: dict[str, FunctionTool] = {}
-    for tool_item in tools if isinstance(tools, list) else [tools]:
+    for tool_item in normalize_tools(tools):
         if isinstance(tool_item, FunctionTool):
             tool_list[tool_item.name] = tool_item
-            continue
-        if callable(tool_item):
-            # Convert to AITool if it's a function or callable
-            ai_tool = tool(tool_item)
-            tool_list[ai_tool.name] = ai_tool
     return tool_list
 
 
@@ -1461,10 +1464,7 @@ async def _try_execute_function_calls(
     custom_args: dict[str, Any],
     attempt_idx: int,
     function_calls: Sequence[Content],
-    tools: FunctionTool
-    | Callable[..., Any]
-    | MutableMapping[str, Any]
-    | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]],
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]],
     config: FunctionInvocationConfiguration,
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline to avoid circular imports
 ) -> tuple[Sequence[Content], bool]:
@@ -1643,32 +1643,50 @@ async def _ensure_response_stream(
     return stream
 
 
-def _extract_tools(options: dict[str, Any] | None) -> Any:
+def _extract_tools(
+    options: dict[str, Any] | None,
+) -> ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None:
     """Extract tools from options dict.
 
     Args:
         options: The options dict containing chat options.
 
     Returns:
-        FunctionTool | Callable[..., Any] | MutableMapping[str, Any] |
-        Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]] | None
+        ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None
     """
     if options and isinstance(options, dict):
         return options.get("tools")
     return None
 
 
+def _is_hosted_tool_approval(content: Any) -> bool:
+    """Check if a function_approval_request/response is for a hosted tool (e.g. MCP).
+
+    Hosted tool approvals have a server_label in function_call.additional_properties
+    and should be passed through to the API untouched rather than processed locally.
+    """
+    fc = getattr(content, "function_call", None)
+    if fc is None:
+        return False
+    ap = getattr(fc, "additional_properties", None)
+    return bool(ap and ap.get("server_label"))
+
+
 def _collect_approval_responses(
     messages: list[Message],
 ) -> dict[str, Content]:
-    """Collect approval responses (both approved and rejected) from messages."""
+    """Collect approval responses (both approved and rejected) from messages.
+
+    Hosted tool approvals (e.g. MCP) are excluded because they must be
+    forwarded to the API as-is rather than processed locally.
+    """
     from ._types import Message
 
     fcc_todo: dict[str, Content] = {}
     for msg in messages:
         for content in msg.contents if isinstance(msg, Message) else []:
-            # Collect BOTH approved and rejected responses
-            if content.type == "function_approval_response":
+            # Collect BOTH approved and rejected responses, but skip hosted tool approvals
+            if content.type == "function_approval_response" and not _is_hosted_tool_approval(content):
                 fcc_todo[content.id] = content  # type: ignore[attr-defined, index]
     return fcc_todo
 
@@ -1697,6 +1715,9 @@ def _replace_approval_contents_with_results(
 
         for content_idx, content in enumerate(msg.contents):
             if content.type == "function_approval_request":
+                # Skip hosted tool approvals — they must pass through to the API unchanged
+                if _is_hosted_tool_approval(content):
+                    continue
                 # Don't add the function call if it already exists (would create duplicate)
                 if content.function_call.call_id in existing_call_ids:  # type: ignore[attr-defined, union-attr, operator]
                     # Just mark for removal - the function call already exists
@@ -1705,6 +1726,9 @@ def _replace_approval_contents_with_results(
                     # Put back the function call content only if it doesn't exist
                     msg.contents[content_idx] = content.function_call  # type: ignore[attr-defined, assignment]
             elif content.type == "function_approval_response":
+                # Skip hosted tool approvals — they must pass through to the API unchanged
+                if _is_hosted_tool_approval(content):
+                    continue
                 if content.approved and content.id in fcc_todo:  # type: ignore[attr-defined]
                     # Replace with the corresponding result
                     if result_idx < len(approved_function_results):
@@ -1941,7 +1965,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -1951,7 +1975,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
@@ -1961,7 +1985,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1970,7 +1994,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1982,7 +2006,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             ChatResponse,
             ChatResponseUpdate,
             ResponseStream,
-            prepare_messages,
         )
 
         super_get_response = super().get_response  # type: ignore[misc]
@@ -2007,6 +2030,11 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # Remove additional_function_arguments from options passed to underlying chat client
         # It's for tool invocation only and not recognized by chat service APIs
         mutable_options.pop("additional_function_arguments", None)
+        # Support tools passed via kwargs in direct client.get_response(...) calls.
+        if "tools" in filtered_kwargs:
+            if mutable_options.get("tools") is None:
+                mutable_options["tools"] = filtered_kwargs["tools"]
+            filtered_kwargs.pop("tools", None)
 
         if not stream:
 
@@ -2014,7 +2042,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 nonlocal mutable_options
                 nonlocal filtered_kwargs
                 errors_in_a_row: int = 0
-                prepped_messages = prepare_messages(messages)
+                prepped_messages = list(messages)
                 fcc_messages: list[Message] = []
                 response: ChatResponse | None = None
 
@@ -2108,7 +2136,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             nonlocal mutable_options
             nonlocal stream_result_hooks
             errors_in_a_row: int = 0
-            prepped_messages = prepare_messages(messages)
+            prepped_messages = list(messages)
             fcc_messages: list[Message] = []
             response: ChatResponse | None = None
 

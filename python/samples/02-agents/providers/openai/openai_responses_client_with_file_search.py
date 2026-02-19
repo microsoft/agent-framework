@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import Agent, Content
+from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -15,7 +15,7 @@ for direct document-based question answering and information retrieval.
 # Helper functions
 
 
-async def create_vector_store(client: OpenAIResponsesClient) -> tuple[str, Content]:
+async def create_vector_store(client: OpenAIResponsesClient) -> tuple[str, str]:
     """Create a vector store with sample documents."""
     file = await client.client.files.create(
         file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."), purpose="user_data"
@@ -28,7 +28,7 @@ async def create_vector_store(client: OpenAIResponsesClient) -> tuple[str, Conte
     if result.last_error is not None:
         raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
 
-    return file.id, Content.from_hosted_vector_store(vector_store_id=vector_store.id)
+    return file.id, vector_store.id
 
 
 async def delete_vector_store(client: OpenAIResponsesClient, file_id: str, vector_store_id: str) -> None:
@@ -53,14 +53,14 @@ async def main() -> None:
     )
 
     if stream:
-        print("Assistant: ", end="")
+        print("Agent: ", end="")
         async for chunk in agent.run(message, stream=True):
             if chunk.text:
                 print(chunk.text, end="")
         print("")
     else:
         response = await agent.run(message)
-        print(f"Assistant: {response}")
+        print(f"Agent: {response}")
     await delete_vector_store(client, file_id, vector_store_id)
 
 

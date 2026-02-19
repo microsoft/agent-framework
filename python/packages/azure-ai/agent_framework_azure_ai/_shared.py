@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import Mapping, MutableMapping, Sequence
 from typing import Any, cast
 
 from agent_framework import (
     FunctionTool,
-    get_logger,
 )
 from agent_framework.exceptions import ServiceInvalidRequestError
 from azure.ai.agents.models import (
@@ -37,16 +37,15 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-logger = get_logger("agent_framework.azure")
+logger = logging.getLogger("agent_framework.azure")
 
 
 class AzureAISettings(TypedDict, total=False):
     """Azure AI Project settings.
 
-    The settings are first loaded from environment variables with the prefix 'AZURE_AI_'.
-    If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
-    are ignored; however, validation will fail alerting that the settings are missing.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'AZURE_AI_'. If settings are missing after resolution, validation will fail.
 
     Keyword Args:
         project_endpoint: The Azure AI Project endpoint URL.

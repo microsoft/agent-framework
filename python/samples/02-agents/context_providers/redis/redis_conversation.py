@@ -17,10 +17,15 @@ Run:
 import asyncio
 import os
 
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.redis import RedisContextProvider
+from azure.identity import AzureCliCredential
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
+
+# Default Redis URL for local Redis Stack.
+# Override via the REDIS_URL environment variable for remote or authenticated instances.
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 
 async def main() -> None:
@@ -33,13 +38,12 @@ async def main() -> None:
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},
-        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
+        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url=REDIS_URL),
     )
 
-    session_id = "test_session"
-
     provider = RedisContextProvider(
-        redis_url="redis://localhost:6379",
+        source_id="redis_context",
+        redis_url=REDIS_URL,
         index_name="redis_conversation",
         prefix="redis_conversation",
         application_id="matrix_of_kermits",
@@ -49,11 +53,14 @@ async def main() -> None:
         vector_field_name="vector",
         vector_algorithm="hnsw",
         vector_distance_metric="cosine",
-        thread_id=session_id,
     )
 
     # Create chat client for the agent
-    client = OpenAIChatClient(model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
     # Create agent wired to the Redis context provider. The provider automatically
     # persists conversational details and surfaces relevant context on each turn.
     agent = client.as_agent(

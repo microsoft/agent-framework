@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 import sys
 from asyncio import iscoroutine
@@ -13,9 +14,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewTyp
 
 from pydantic import BaseModel
 
-from ._logging import get_logger
 from ._serialization import SerializationMixin
-from ._tools import FunctionTool, tool
+from ._tools import ToolTypes
+from ._tools import normalize_tools as _normalize_tools
 from .exceptions import AdditionItemMismatch, ContentError
 
 if sys.version_info >= (3, 13):
@@ -27,41 +28,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-__all__ = [
-    "AgentResponse",
-    "AgentResponseUpdate",
-    "Annotation",
-    "ChatOptions",
-    "ChatResponse",
-    "ChatResponseUpdate",
-    "Content",
-    "ContinuationToken",
-    "FinalT",
-    "FinishReason",
-    "FinishReasonLiteral",
-    "Message",
-    "OuterFinalT",
-    "OuterUpdateT",
-    "ResponseStream",
-    "Role",
-    "RoleLiteral",
-    "TextSpanRegion",
-    "ToolMode",
-    "UpdateT",
-    "UsageDetails",
-    "add_usage_details",
-    "detect_media_type_from_base64",
-    "map_chat_to_agent_update",
-    "merge_chat_options",
-    "normalize_messages",
-    "normalize_tools",
-    "prepend_instructions_to_messages",
-    "validate_chat_options",
-    "validate_tool_mode",
-    "validate_tools",
-]
-
-logger = get_logger("agent_framework")
+logger = logging.getLogger("agent_framework")
 
 
 # region Content Parsing Utilities
@@ -1536,47 +1503,11 @@ class Message(SerializationMixin):
         return " ".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
 
 
-def prepare_messages(
-    messages: str | Content | Message | Sequence[str | Content | Message],
-    system_instructions: str | Sequence[str] | None = None,
-) -> list[Message]:
-    """Convert various message input formats into a list of Message objects.
-
-    Args:
-        messages: The input messages in various supported formats. Can be:
-            - A string (converted to a user message)
-            - A Content object (wrapped in a user Message)
-            - A Message object
-            - A sequence containing any mix of the above
-        system_instructions: The system instructions. They will be inserted to the start of the messages list.
-
-    Returns:
-        A list of Message objects.
-    """
-    if system_instructions is not None:
-        if isinstance(system_instructions, str):
-            system_instructions = [system_instructions]
-        system_instruction_messages = [Message("system", [instr]) for instr in system_instructions]
-    else:
-        system_instruction_messages = []
-
-    if isinstance(messages, str):
-        return [*system_instruction_messages, Message("user", [messages])]
-    if isinstance(messages, Content):
-        return [*system_instruction_messages, Message("user", [messages])]
-    if isinstance(messages, Message):
-        return [*system_instruction_messages, messages]
-
-    return_messages: list[Message] = system_instruction_messages
-    for msg in messages:
-        if isinstance(msg, (str, Content)):
-            msg = Message("user", [msg])
-        return_messages.append(msg)
-    return return_messages
+AgentRunInputs = str | Content | Message | Sequence[str | Content | Message]
 
 
 def normalize_messages(
-    messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+    messages: AgentRunInputs | None = None,
 ) -> list[Message]:
     """Normalize message inputs to a list of Message objects.
 
@@ -2940,13 +2871,7 @@ class _ChatOptionsBase(TypedDict, total=False):
     presence_penalty: float
 
     # Tool configuration (forward reference to avoid circular import)
-    tools: (
-        FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None
-    )
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None
     tool_choice: ToolMode | Literal["auto", "required", "none"]
     allow_multiple_tool_calls: bool
 
@@ -3033,18 +2958,11 @@ async def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_tools(
-    tools: (
-        FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None
-    ),
-) -> list[FunctionTool | MutableMapping[str, Any]]:
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+) -> list[ToolTypes]:
     """Normalize tools into a list.
 
-    Converts callables to FunctionTool objects and ensures all tools are either
-    FunctionTool instances or MutableMappings.
+    Converts callables to FunctionTool objects and preserves existing tool objects.
 
     Args:
         tools: Tools to normalize - can be a single tool, callable, or sequence.
@@ -3069,37 +2987,16 @@ def normalize_tools(
             # List of tools
             tools = normalize_tools([my_tool, another_tool])
     """
-    final_tools: list[FunctionTool | MutableMapping[str, Any]] = []
-    if not tools:
-        return final_tools
-    if not isinstance(tools, Sequence) or isinstance(tools, (str, MutableMapping)):
-        # Single tool (not a sequence, or is a mapping which shouldn't be treated as sequence)
-        if not isinstance(tools, (FunctionTool, MutableMapping)):
-            return [tool(tools)]
-        return [tools]
-    for tool_item in tools:
-        if isinstance(tool_item, (FunctionTool, MutableMapping)):
-            final_tools.append(tool_item)
-        else:
-            # Convert callable to FunctionTool
-            final_tools.append(tool(tool_item))
-    return final_tools
+    return _normalize_tools(tools)
 
 
 async def validate_tools(
-    tools: (
-        FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None
-    ),
-) -> list[FunctionTool | MutableMapping[str, Any]]:
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+) -> list[ToolTypes]:
     """Validate and normalize tools into a list.
 
     Converts callables to FunctionTool objects, expands MCP tools to their constituent
-    functions (connecting them if needed), and ensures all tools are either FunctionTool
-    instances or MutableMappings.
+    functions (connecting them if needed), while preserving non-callable tool objects.
 
     Args:
         tools: Tools to validate - can be a single tool, callable, or sequence.
@@ -3128,7 +3025,7 @@ async def validate_tools(
     normalized = normalize_tools(tools)
 
     # Handle MCP tool expansion (async-only)
-    final_tools: list[FunctionTool | MutableMapping[str, Any]] = []
+    final_tools: list[ToolTypes] = []
     for tool_ in normalized:
         # Import MCPTool here to avoid circular imports
         from ._mcp import MCPTool
@@ -3146,20 +3043,21 @@ async def validate_tools(
 
 def validate_tool_mode(
     tool_choice: ToolMode | Literal["auto", "required", "none"] | None,
-) -> ToolMode:
+) -> ToolMode | None:
     """Validate and normalize tool_choice to a ToolMode dict.
 
     Args:
         tool_choice: The tool choice value to validate.
 
     Returns:
-        A ToolMode dict (contains keys: "mode", and optionally "required_function_name").
+        A ToolMode dict (contains keys: "mode", and optionally
+        "required_function_name"), or ``None`` when not provided.
 
     Raises:
         ContentError: If the tool_choice string is invalid.
     """
-    if not tool_choice:
-        return {"mode": "none"}
+    if tool_choice is None:
+        return None
     if isinstance(tool_choice, str):
         if tool_choice not in ("auto", "required", "none"):
             raise ContentError(f"Invalid tool choice: {tool_choice}")

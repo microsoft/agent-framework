@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework import AgentSession
+from agent_framework import AgentSession, InMemoryHistoryProvider
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
@@ -109,7 +109,7 @@ async def main() -> None:
     print("\n" + "=" * 60)
     print("Full Session History")
     print("=" * 60)
-    memory_state = session.state.get("memory", {})
+    memory_state = session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {})
     history = memory_state.get("messages", [])
     for i, msg in enumerate(history, start=1):
         role = msg.role if hasattr(msg.role, "value") else str(msg.role)

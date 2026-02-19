@@ -55,7 +55,7 @@ class StreamingChatClientStub(
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[Any],
@@ -65,7 +65,7 @@ class StreamingChatClientStub(
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = ...,
@@ -75,7 +75,7 @@ class StreamingChatClientStub(
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = ...,
@@ -84,7 +84,7 @@ class StreamingChatClientStub(
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -175,7 +175,7 @@ class StubAgent(SupportsAgentRun):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -185,7 +185,7 @@ class StubAgent(SupportsAgentRun):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -194,7 +194,7 @@ class StubAgent(SupportsAgentRun):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,

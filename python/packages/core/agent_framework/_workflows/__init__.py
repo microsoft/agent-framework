@@ -1,5 +1,18 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Workflow namespace for built-in Agent Framework orchestration primitives.
+
+This module re-exports objects from workflow implementation modules under
+``agent_framework._workflows``.
+
+Supported classes include:
+- Workflow
+- WorkflowBuilder
+- AgentExecutor
+- Runner
+- WorkflowExecutor
+"""
+
 from ._agent import WorkflowAgent
 from ._agent_executor import (
     AgentExecutor,
@@ -12,6 +25,10 @@ from ._checkpoint import (
     FileCheckpointStorage,
     InMemoryCheckpointStorage,
     WorkflowCheckpoint,
+)
+from ._checkpoint_encoding import (
+    decode_checkpoint_value,
+    encode_checkpoint_value,
 )
 from ._const import (
     DEFAULT_MAX_ITERATIONS,
@@ -54,6 +71,7 @@ from ._runner_context import (
     RunnerContext,
     WorkflowMessage,
 )
+from ._state import State
 from ._validation import (
     EdgeDuplicationError,
     GraphConnectivityError,
@@ -94,6 +112,7 @@ __all__ = [
     "Runner",
     "RunnerContext",
     "SingleEdgeGroup",
+    "State",
     "SubWorkflowRequestMessage",
     "SubWorkflowResponseMessage",
     "SwitchCaseEdgeGroup",
@@ -121,6 +140,8 @@ __all__ = [
     "WorkflowValidationError",
     "WorkflowViz",
     "create_edge_runner",
+    "decode_checkpoint_value",
+    "encode_checkpoint_value",
     "executor",
     "handler",
     "resolve_agent_id",

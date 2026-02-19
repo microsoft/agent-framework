@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Exception hierarchy used across Agent Framework core and connectors."""
+
 import logging
 from typing import Any, Literal
 

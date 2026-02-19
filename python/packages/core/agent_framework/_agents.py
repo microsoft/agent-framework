@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import re
 import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
@@ -29,7 +30,6 @@ from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, Field, create_model
 
 from ._clients import BaseChatClient, SupportsChatGetResponse
-from ._logging import get_logger
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._middleware import AgentMiddlewareLayer, MiddlewareTypes
 from ._serialization import SerializationMixin
@@ -37,10 +37,13 @@ from ._sessions import AgentSession, BaseContextProvider, BaseHistoryProvider, I
 from ._tools import (
     FunctionInvocationLayer,
     FunctionTool,
+    ToolTypes,
+    normalize_tools,
 )
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
     Message,
@@ -67,7 +70,7 @@ else:
 if TYPE_CHECKING:
     from ._types import ChatOptions
 
-logger = get_logger("agent_framework")
+logger = logging.getLogger("agent_framework")
 
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 OptionsCoT = TypeVar(
@@ -159,9 +162,6 @@ class _RunContext(TypedDict):
     finalize_kwargs: dict[str, Any]
 
 
-__all__ = ["Agent", "BaseAgent", "RawAgent", "SupportsAgentRun"]
-
-
 # region Agent Protocol
 
 
@@ -230,7 +230,7 @@ class SupportsAgentRun(Protocol):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -242,7 +242,7 @@ class SupportsAgentRun(Protocol):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -253,7 +253,7 @@ class SupportsAgentRun(Protocol):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -420,13 +420,18 @@ class BaseAgent(SerializationMixin):
             session: The conversation session.
             context: The invocation context with response populated.
         """
-        state = session.state if session else {}
+        provider_session = session
+        if provider_session is None and self.context_providers:
+            provider_session = AgentSession()
+
         for provider in reversed(self.context_providers):
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.after_run(
                 agent=self,  # type: ignore[arg-type]
-                session=session,  # type: ignore[arg-type]
+                session=provider_session,
                 context=context,
-                state=state,
+                state=provider_session.state.setdefault(provider.source_id, {}),
             )
 
     def as_tool(
@@ -616,12 +621,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         **kwargs: Any,
@@ -667,24 +667,14 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
-        tools_ = cast(
-            FunctionTool
-            | Callable[..., Any]
-            | MutableMapping[str, Any]
-            | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-            | None,
-            tools_,
-        )
 
         # Handle instructions - named parameter takes precedence over options
         instructions_ = instructions if instructions is not None else opts.pop("instructions", None)
 
         # We ignore the MCP Servers here and store them separately,
         # we add their functions to the tools list at runtime
-        normalized_tools: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]] = (  # type:ignore[reportUnknownVariableType]
-            [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]  # type: ignore[list-item]
-        )
-        self.mcp_tools: list[MCPTool] = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]  # type: ignore[misc]
+        normalized_tools = normalize_tools(tools_)
+        self.mcp_tools: list[MCPTool] = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
 
         # Build chat options dict
@@ -763,16 +753,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[ResponseModelBoundT],
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[ResponseModelBoundT]]: ...
@@ -780,16 +765,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[None] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
@@ -797,32 +777,22 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
@@ -951,6 +921,20 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 **ctx["filtered_kwargs"],
             )
 
+        def _propagate_conversation_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
+            """Eagerly propagate conversation_id to session as updates arrive.
+
+            This ensures session.service_session_id is set even when the user
+            only iterates the stream without calling get_final_response().
+            """
+            if session is None:
+                return update
+            raw = update.raw_representation
+            conv_id = getattr(raw, "conversation_id", None) if raw else None
+            if isinstance(conv_id, str) and conv_id and session.service_session_id != conv_id:
+                session.service_session_id = conv_id
+            return update
+
         return (
             ResponseStream
             .from_awaitable(_get_stream())
@@ -963,6 +947,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     self._finalize_response_updates, response_format=options.get("response_format") if options else None
                 ),
             )
+            .with_transform_hook(_propagate_conversation_id)
             .with_result_hook(_post_hook)
         )
 
@@ -1000,14 +985,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     async def _prepare_run_context(
         self,
         *,
-        messages: str | Message | Sequence[str | Message] | None,
+        messages: AgentRunInputs | None,
         session: AgentSession | None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
         options: Mapping[str, Any] | None,
         kwargs: dict[str, Any],
     ) -> _RunContext:
@@ -1028,18 +1008,20 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             and not opts.get("store")
             and not (getattr(self.client, "STORES_BY_DEFAULT", False) and opts.get("store") is not False)
         ):
-            self.context_providers.append(InMemoryHistoryProvider("memory"))
+            self.context_providers.append(InMemoryHistoryProvider())
+
+        active_session = session
+        if active_session is None and self.context_providers:
+            active_session = AgentSession()
 
         session_context, chat_options = await self._prepare_session_and_messages(
-            session=session,
+            session=active_session,
             input_messages=input_messages,
             options=opts,
         )
 
         # Normalize tools
-        normalized_tools: list[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any] = (
-            [] if tools_ is None else tools_ if isinstance(tools_, list) else [tools_]
-        )
+        normalized_tools = normalize_tools(tools_)
         agent_name = self._get_agent_name()
 
         # Resolve final tool list (runtime provided tools + local MCP server tools)
@@ -1057,12 +1039,19 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
 
+        # Merge runtime kwargs into additional_function_arguments so they're available
+        # in function middleware context and tool invocation.
+        existing_additional_args = opts.pop("additional_function_arguments", None) or {}
+        additional_function_arguments = {**kwargs, **existing_additional_args}
+
         # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {
             "model_id": opts.pop("model_id", None),
-            "conversation_id": session.service_session_id if session else opts.pop("conversation_id", None),
+            "conversation_id": active_session.service_session_id
+            if active_session
+            else opts.pop("conversation_id", None),
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
-            "additional_function_arguments": opts.pop("additional_function_arguments", None),
+            "additional_function_arguments": additional_function_arguments or None,
             "frequency_penalty": opts.pop("frequency_penalty", None),
             "logit_bias": opts.pop("logit_bias", None),
             "max_tokens": opts.pop("max_tokens", None),
@@ -1088,12 +1077,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         # Ensure session is forwarded in kwargs for tool invocation
         finalize_kwargs = dict(kwargs)
-        finalize_kwargs["session"] = session
+        finalize_kwargs["session"] = active_session
         # Filter chat_options from kwargs to prevent duplicate keyword argument
         filtered_kwargs = {k: v for k, v in finalize_kwargs.items() if k != "chat_options"}
 
         return {
-            "session": session,
+            "session": active_session,
             "session_context": session_context,
             "input_messages": input_messages,
             "session_messages": session_messages,
@@ -1171,23 +1160,28 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         else:
             chat_options = {}
 
+        provider_session = session
+        if provider_session is None and self.context_providers:
+            provider_session = AgentSession()
+
         session_context = SessionContext(
-            session_id=session.session_id if session else None,
-            service_session_id=session.service_session_id if session else None,
+            session_id=provider_session.session_id if provider_session else None,
+            service_session_id=provider_session.service_session_id if provider_session else None,
             input_messages=input_messages or [],
             options=options or {},
         )
 
         # Run before_run providers (forward order, skip BaseHistoryProvider with load_messages=False)
-        state = session.state if session else {}
         for provider in self.context_providers:
             if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
                 continue
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
                 agent=self,  # type: ignore[arg-type]
-                session=session,  # type: ignore[arg-type]
+                session=provider_session,
                 context=session_context,
-                state=state,
+                state=provider_session.state.setdefault(provider.source_id, {}),
             )
 
         # Merge provider-contributed tools into chat_options
@@ -1345,12 +1339,7 @@ class Agent(
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Any
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any] | Any]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
