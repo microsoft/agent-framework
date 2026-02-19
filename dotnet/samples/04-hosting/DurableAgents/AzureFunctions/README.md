@@ -1,14 +1,18 @@
 # Azure Functions Samples
 
+To get started with Azure Functions, begin with the introduction sample under [Get Started (`01-get-started`)](../../01-get-started).
+
+- **[06_host_your_agent](../../01-get-started/06_host_your_agent)**: A sample that demonstrates how to host a single conversational agent in an Azure Functions app and invoke it directly over HTTP.
+
 This directory contains samples for Azure Functions.
 
-- **[02_AgentOrchestration_Chaining](02_AgentOrchestration_Chaining)**: A sample that demonstrates how to host a single conversational agent in an Azure Functions app and invoke it using a durable orchestration.
-- **[03_AgentOrchestration_Concurrency](03_AgentOrchestration_Concurrency)**: A sample that demonstrates how to host multiple agents in an Azure Functions app and run them concurrently using a durable orchestration.
-- **[04_AgentOrchestration_Conditionals](04_AgentOrchestration_Conditionals)**: A sample that demonstrates how to host multiple agents in an Azure Functions app and run them sequentially using a durable orchestration with conditionals.
-- **[05_AgentOrchestration_HITL](05_AgentOrchestration_HITL)**: A sample that demonstrates how to implement a human-in-the-loop workflow using durable orchestration, including external event handling for human approval.
-- **[06_LongRunningTools](06_LongRunningTools)**: A sample that demonstrates how agents can start and interact with durable orchestrations from tool calls to enable long-running tool scenarios.
-- **[07_AgentAsMcpTool](07_AgentAsMcpTool)**: A sample that demonstrates how to configure durable AI agents to be accessible as Model Context Protocol (MCP) tools.
-- **[08_ReliableStreaming](08_ReliableStreaming)**: A sample that demonstrates how to implement reliable streaming for durable agents using Redis Streams, enabling clients to disconnect and reconnect without losing messages.
+- **[01_AgentOrchestration_Chaining](01_AgentOrchestration_Chaining)**: A sample that demonstrates how to host a single conversational agent in an Azure Functions app and invoke it using a durable orchestration.
+- **[02_AgentOrchestration_Concurrency](02_AgentOrchestration_Concurrency)**: A sample that demonstrates how to host multiple agents in an Azure Functions app and run them concurrently using a durable orchestration.
+- **[03_AgentOrchestration_Conditionals](03_AgentOrchestration_Conditionals)**: A sample that demonstrates how to host multiple agents in an Azure Functions app and run them sequentially using a durable orchestration with conditionals.
+- **[04_AgentOrchestration_HITL](04_AgentOrchestration_HITL)**: A sample that demonstrates how to implement a human-in-the-loop workflow using durable orchestration, including external event handling for human approval.
+- **[05_LongRunningTools](05_LongRunningTools)**: A sample that demonstrates how agents can start and interact with durable orchestrations from tool calls to enable long-running tool scenarios.
+- **[06_AgentAsMcpTool](06_AgentAsMcpTool)**: A sample that demonstrates how to configure durable AI agents to be accessible as Model Context Protocol (MCP) tools.
+- **[07_ReliableStreaming](07_ReliableStreaming)**: A sample that demonstrates how to implement reliable streaming for durable agents using Redis Streams, enabling clients to disconnect and reconnect without losing messages.
 
 ## Running the Samples
 
