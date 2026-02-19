@@ -114,11 +114,7 @@ public sealed class AgentforceClient : IDisposable
         {
             Message = new MessagePayload
             {
-#if NETSTANDARD2_0 || NET472
                 SequenceId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-#else
-                SequenceId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-#endif
                 Type = "Text",
                 Text = text,
             },
