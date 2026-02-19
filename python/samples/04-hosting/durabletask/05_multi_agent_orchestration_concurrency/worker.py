@@ -21,9 +21,12 @@ from typing import Any
 from agent_framework import Agent, AgentResponse
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.task import OrchestrationContext, Task, when_all
-from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -40,9 +43,6 @@ def create_physicist_agent() -> "Agent":
     Returns:
         Agent: The configured Physicist agent
     """
-
-# Load environment variables from .env file
-load_dotenv()
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name=PHYSICIST_AGENT_NAME,
         instructions="You are an expert in physics. You answer questions from a physics perspective.",

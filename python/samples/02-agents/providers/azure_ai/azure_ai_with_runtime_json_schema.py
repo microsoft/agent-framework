@@ -5,6 +5,7 @@ import asyncio
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Azure AI Agent Response Format Example with Runtime JSON Schema
 

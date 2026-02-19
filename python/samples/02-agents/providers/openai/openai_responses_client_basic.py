@@ -16,8 +16,9 @@ from agent_framework import (
     tool,
 )
 from agent_framework.openai import OpenAIResponsesClient
-from pydantic import Field
 from dotenv import load_dotenv
+from pydantic import Field
+
 """
 OpenAI Responses Client Basic Example
 

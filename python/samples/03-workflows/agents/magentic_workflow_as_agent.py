@@ -10,6 +10,7 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import MagenticBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Sample: Build a Magentic orchestration and wrap it as an agent.
 

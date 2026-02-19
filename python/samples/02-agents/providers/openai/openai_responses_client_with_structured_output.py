@@ -4,8 +4,9 @@ import asyncio
 
 from agent_framework import AgentResponse
 from agent_framework.openai import OpenAIResponsesClient
-from pydantic import BaseModel
 from dotenv import load_dotenv
+from pydantic import BaseModel
+
 """
 OpenAI Responses Client with Structured Output Example
 

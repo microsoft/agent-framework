@@ -7,6 +7,7 @@ from agent_framework import AgentResponse, AgentSession, SupportsAgentRun
 from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Azure AI Agent with Hosted MCP Example
 

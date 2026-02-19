@@ -6,6 +6,7 @@ from agent_framework import Content
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Azure OpenAI Responses Client with Image Analysis Example
 

@@ -19,17 +19,16 @@ from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
-from pydantic import BaseModel, Field
 from dotenv import load_dotenv
-
-
-# Approach 1: Pydantic model as explicit schema
-
-class WeatherInput(BaseModel):
-    """Input schema for the weather tool."""
+from pydantic import BaseModel, Field
 
 # Load environment variables from .env file
 load_dotenv()
+
+
+# Approach 1: Pydantic model as explicit schema
+class WeatherInput(BaseModel):
+    """Input schema for the weather tool."""
 
     location: Annotated[str, Field(description="The city name to get weather for")]
     unit: Annotated[str, Field(description="Temperature unit: celsius or fahrenheit")] = "celsius"

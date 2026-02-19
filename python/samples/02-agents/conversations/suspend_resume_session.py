@@ -7,6 +7,7 @@ from agent_framework.azure import AzureAIAgentClient
 from agent_framework.openai import OpenAIChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Session Suspend and Resume Example
 

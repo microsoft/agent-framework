@@ -13,15 +13,18 @@
 import asyncio
 import os
 from typing import Any
+
 from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 ASSISTANT_MODEL = os.environ.get("OPENAI_ASSISTANT_MODEL", "gpt-4o-mini")
 
 
 async def fake_weather_lookup(city: str, day: str) -> dict[str, Any]:
     """Pretend to call a weather service."""
 
-# Load environment variables from .env file
-load_dotenv()
     return {
         "city": city,
         "day": day,

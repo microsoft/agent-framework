@@ -37,6 +37,9 @@ from agent_framework.orchestrations import AgentRequestInfoResponse, ConcurrentB
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 # Store chat client at module level for aggregator access
 _chat_client: AzureOpenAIResponsesClient | None = None
 
@@ -54,9 +57,6 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
     Returns:
         The synthesized summary text
     """
-
-# Load environment variables from .env file
-load_dotenv()
     if not _chat_client:
         return "Error: Chat client not initialized"
 

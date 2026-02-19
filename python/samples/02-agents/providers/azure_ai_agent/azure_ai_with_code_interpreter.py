@@ -9,6 +9,7 @@ from azure.ai.agents.models import (
 )
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Azure AI Agent with Code Interpreter Example
 

@@ -7,6 +7,7 @@ from typing import Any
 from agent_framework import AgentSession, BaseHistoryProvider, Message
 from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
+
 """
 Custom History Provider Example
 

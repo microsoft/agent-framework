@@ -24,14 +24,16 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_devui import register_cleanup
 from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 logger = logging.getLogger(__name__)
 
 
 def cleanup_resources():
     """Cleanup function that runs when DevUI shuts down."""
 
-# Load environment variables from .env file
-load_dotenv()
     logger.info("=" * 60)
     logger.info(" Cleaning up resources...")
     logger.info("   (In production, this would close credentials, sessions, etc.)")

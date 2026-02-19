@@ -17,8 +17,9 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
-from typing_extensions import Never
 from dotenv import load_dotenv
+from typing_extensions import Never
+
 """
 Sample: Concurrent (Fan-out/Fan-in) with Agents + Visualization
 

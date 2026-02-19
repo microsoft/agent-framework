@@ -6,7 +6,6 @@ from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity import DefaultAzureCredential  # pyright: ignore[reportUnknownVariableType]
 from dotenv import load_dotenv
 
-
 # Load environment variables from .env file
 load_dotenv()
 

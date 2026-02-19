@@ -7,6 +7,7 @@ from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Azure OpenAI Responses Client with File Search Example
 

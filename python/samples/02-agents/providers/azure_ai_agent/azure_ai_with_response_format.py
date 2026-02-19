@@ -4,8 +4,9 @@ import asyncio
 
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
-from pydantic import BaseModel, ConfigDict
 from dotenv import load_dotenv
+from pydantic import BaseModel, ConfigDict
+
 """
 Azure AI Agent Provider Response Format Example
 

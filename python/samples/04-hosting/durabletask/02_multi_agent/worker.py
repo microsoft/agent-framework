@@ -20,8 +20,11 @@ from typing import Any
 from agent_framework import tool
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
-from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from dotenv import load_dotenv
+from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -35,9 +38,6 @@ MATH_AGENT_NAME = "MathAgent"
 @tool
 def get_weather(location: str) -> dict[str, Any]:
     """Get current weather for a location."""
-
-# Load environment variables from .env file
-load_dotenv()
     logger.info(f"🔧 [TOOL CALLED] get_weather(location={location})")
     result = {
         "location": location,

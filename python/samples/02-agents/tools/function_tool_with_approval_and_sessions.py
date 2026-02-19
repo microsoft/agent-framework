@@ -7,6 +7,7 @@ from agent_framework import Agent, Message, tool
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Tool Approvals with Sessions
 

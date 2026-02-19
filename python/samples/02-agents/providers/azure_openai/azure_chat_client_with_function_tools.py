@@ -8,8 +8,9 @@ from typing import Annotated
 from agent_framework import Agent, tool
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
-from pydantic import Field
 from dotenv import load_dotenv
+from pydantic import Field
+
 """
 Azure OpenAI Chat Client with Function Tools Example
 

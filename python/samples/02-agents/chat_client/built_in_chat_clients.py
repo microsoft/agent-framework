@@ -13,8 +13,9 @@ from agent_framework.azure import (
 from agent_framework.openai import OpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
-from pydantic import Field
 from dotenv import load_dotenv
+from pydantic import Field
+
 """
 Built-in Chat Clients Example
 

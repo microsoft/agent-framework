@@ -6,6 +6,7 @@ from typing import Annotated
 from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
+
 """
 This sample demonstrates how to configure function invocation settings
 for an client and use a simple tool as a tool in an agent.

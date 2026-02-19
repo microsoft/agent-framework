@@ -7,6 +7,7 @@ from agent_framework import Agent
 from agent_framework.azure import AzureAIAgentClient, AzureAISearchContextProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 This sample demonstrates how to use Azure AI Search with semantic mode for RAG
 (Retrieval Augmented Generation) with Azure AI agents.

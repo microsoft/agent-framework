@@ -11,8 +11,8 @@
 """Attach a lightweight function tool to the Responses API in SK and AF."""
 
 import asyncio
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
@@ -42,8 +42,7 @@ async def run_semantic_kernel() -> None:
 
 
 async def run_agent_framework() -> None:
-    from agent_framework import Agent
-    from agent_framework import tool
+    from agent_framework import Agent, tool
     from agent_framework.openai import OpenAIResponsesClient
 
     @tool(name="add", description="Add two numbers")

@@ -19,8 +19,9 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
-from pydantic import BaseModel
 from dotenv import load_dotenv
+from pydantic import BaseModel
+
 """
 Sample: Human in the loop guessing game
 

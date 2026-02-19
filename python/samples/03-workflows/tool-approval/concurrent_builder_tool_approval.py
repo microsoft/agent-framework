@@ -15,6 +15,7 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Sample: Concurrent Workflow with Tool Approval Requests
 

@@ -12,6 +12,7 @@ from agent_framework import (
 from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Azure AI Agent with Multiple Tools Example
 

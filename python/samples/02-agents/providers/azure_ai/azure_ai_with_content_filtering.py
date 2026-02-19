@@ -6,6 +6,7 @@ from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.ai.projects.models import RaiConfig
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Azure AI Agent with Content Filtering (RAI Policy) Example
 

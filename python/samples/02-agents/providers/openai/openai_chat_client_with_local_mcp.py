@@ -5,6 +5,7 @@ import asyncio
 from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
+
 """
 OpenAI Chat Client with Local MCP Example
 

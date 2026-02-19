@@ -22,10 +22,13 @@ from typing import Any, cast
 from agent_framework import Agent, AgentResponse
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.task import ActivityContext, OrchestrationContext, Task, when_any  # type: ignore
 from pydantic import BaseModel, ValidationError
-from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -38,9 +41,6 @@ HUMAN_APPROVAL_EVENT = "HumanApproval"
 
 class ContentGenerationInput(BaseModel):
     """Input for content generation orchestration."""
-
-# Load environment variables from .env file
-load_dotenv()
 
     topic: str
     max_review_attempts: int = 3

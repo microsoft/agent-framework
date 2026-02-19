@@ -9,8 +9,9 @@ from agent_framework import Message, tool
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
-from pydantic import Field
 from dotenv import load_dotenv
+from pydantic import Field
+
 """
 Sample: Workflow kwargs Flow to @tool Tools
 

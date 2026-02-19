@@ -18,8 +18,11 @@ import os
 from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
-from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from dotenv import load_dotenv
+from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
@@ -32,9 +35,6 @@ def create_joker_agent() -> Agent:
     Returns:
         Agent: The configured Joker agent
     """
-
-# Load environment variables from .env file
-load_dotenv()
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="Joker",
         instructions="You are good at telling jokes.",

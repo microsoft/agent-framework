@@ -18,8 +18,9 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
-from typing_extensions import Never
 from dotenv import load_dotenv
+from typing_extensions import Never
+
 """
 Sample: Agents in a workflow with AI functions requiring approval
 

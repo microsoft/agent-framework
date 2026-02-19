@@ -5,8 +5,9 @@ import os
 
 from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIResponsesClient
-from httpx import AsyncClient
 from dotenv import load_dotenv
+from httpx import AsyncClient
+
 """
 MCP Authentication Example
 

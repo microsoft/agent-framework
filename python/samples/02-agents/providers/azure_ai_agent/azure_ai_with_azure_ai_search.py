@@ -10,6 +10,7 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import ConnectionType
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Azure AI Agent with Azure AI Search Example
 

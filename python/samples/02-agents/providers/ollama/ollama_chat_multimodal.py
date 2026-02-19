@@ -5,6 +5,7 @@ import asyncio
 from agent_framework import Content, Message
 from agent_framework.ollama import OllamaChatClient
 from dotenv import load_dotenv
+
 """
 Ollama Agent Multimodal Example
 

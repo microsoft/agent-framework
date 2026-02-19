@@ -11,8 +11,8 @@
 """Stream responses from Copilot Studio agents in SK and AF."""
 
 import asyncio
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()

@@ -15,8 +15,8 @@ exposes a "specials" tool that both SDKs call during the conversation.
 """
 
 import asyncio
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()

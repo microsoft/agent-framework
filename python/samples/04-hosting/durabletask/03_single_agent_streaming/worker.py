@@ -26,10 +26,13 @@ from agent_framework.azure import (
     DurableAIAgentWorker,
 )
 from azure.identity import AzureCliCredential, DefaultAzureCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from redis_stream_response_handler import RedisStreamResponseHandler
 from tools import get_local_events, get_weather_forecast
-from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -46,9 +49,6 @@ async def get_stream_handler() -> RedisStreamResponseHandler:
     This avoids event loop conflicts by creating a fresh Redis client
     in the current event loop context.
     """
-
-# Load environment variables from .env file
-load_dotenv()
     # Create a new Redis client in the current event loop
     redis_client = aioredis.from_url(  # type: ignore[reportUnknownMemberType]
         REDIS_CONNECTION_STRING,

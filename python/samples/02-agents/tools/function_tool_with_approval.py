@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from agent_framework import Agent, AgentResponse, Message, tool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
+
 if TYPE_CHECKING:
     from agent_framework import SupportsAgentRun
 
@@ -23,7 +24,9 @@ load_dotenv()
 conditions = ["sunny", "cloudy", "raining", "snowing", "clear"]
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(location: Annotated[str, "The city and state, e.g. San Francisco, CA"]) -> str:
     """Get the current weather for a given location."""

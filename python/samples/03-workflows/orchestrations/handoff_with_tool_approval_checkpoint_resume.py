@@ -19,6 +19,7 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Sample: Handoff Workflow with Tool Approvals + Checkpoint Resume
 

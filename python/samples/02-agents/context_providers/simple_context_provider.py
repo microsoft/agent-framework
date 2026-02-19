@@ -8,8 +8,12 @@ from typing import Any
 from agent_framework import Agent, AgentSession, BaseContextProvider, SessionContext, SupportsChatGetResponse
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
-from pydantic import BaseModel
 from dotenv import load_dotenv
+from pydantic import BaseModel
+
+# Load environment variables from .env file
+load_dotenv()
+
 
 class UserInfo(BaseModel):
     name: str | None = None
@@ -24,9 +28,6 @@ class UserInfoMemory(BaseContextProvider):
 
         If you pass in kwargs, they will be attempted to be used to create a UserInfo object.
         """
-
-# Load environment variables from .env file
-load_dotenv()
         super().__init__(source_id)
         self._chat_client = client
 

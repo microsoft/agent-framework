@@ -24,17 +24,14 @@ Environment variables:
 # Load environment variables from .env file
 load_dotenv()
 
+
 # <create_agent>
-
-
 def _create_agent() -> Any:
     """Create a hosted agent backed by Azure OpenAI."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         name="HostedAgent",
         instructions="You are a helpful assistant hosted in Azure Functions.",
     )
-
-
 # </create_agent>
 
 # <host_agent>

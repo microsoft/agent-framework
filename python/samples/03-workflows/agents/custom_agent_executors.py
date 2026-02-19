@@ -14,6 +14,7 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Sample: Custom Agent Executors in a Workflow
 

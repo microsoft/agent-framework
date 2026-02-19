@@ -7,6 +7,7 @@ from pathlib import Path
 from agent_framework import Content
 from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
 from dotenv import load_dotenv
+
 logger = logging.getLogger(__name__)
 """
 Anthropic Skills Agent Example

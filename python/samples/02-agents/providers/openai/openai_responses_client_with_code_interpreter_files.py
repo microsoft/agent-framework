@@ -6,8 +6,9 @@ import tempfile
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
-from openai import AsyncOpenAI
 from dotenv import load_dotenv
+from openai import AsyncOpenAI
+
 """
 OpenAI Responses Client with Code Interpreter and Files Example
 

@@ -9,8 +9,9 @@ from agent_framework import tool
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.identity.aio import AzureCliCredential
-from pydantic import Field
 from dotenv import load_dotenv
+from pydantic import Field
+
 """
 Azure AI Agent Provider Methods Example
 

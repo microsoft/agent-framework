@@ -5,7 +5,6 @@ from azure.ai.agentserver.agentframework import from_agent_framework  # pyright:
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
-
 # Load environment variables from .env file
 load_dotenv()
 

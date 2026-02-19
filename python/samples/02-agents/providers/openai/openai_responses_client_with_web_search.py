@@ -5,6 +5,7 @@ import asyncio
 from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
+
 """
 OpenAI Responses Client with Web Search Example
 

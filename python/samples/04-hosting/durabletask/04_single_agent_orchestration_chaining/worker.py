@@ -20,9 +20,12 @@ from collections.abc import Generator
 from agent_framework import Agent, AgentResponse
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.task import OrchestrationContext, Task
-from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -41,9 +44,6 @@ def create_writer_agent() -> "Agent":
     Returns:
         Agent: The configured Writer agent
     """
-
-# Load environment variables from .env file
-load_dotenv()
     instructions = (
         "You refine short pieces of text. When given an initial sentence you enhance it;\n"
         "when given an improved sentence you polish it further."

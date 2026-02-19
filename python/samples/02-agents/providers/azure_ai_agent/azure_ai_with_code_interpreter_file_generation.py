@@ -7,6 +7,7 @@ from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Azure AI Agent Code Interpreter File Generation Example
 

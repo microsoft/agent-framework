@@ -7,10 +7,11 @@ from typing import TYPE_CHECKING, Annotated
 from agent_framework import Message, tool
 from agent_framework.observability import get_tracer
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
-from dotenv import load_dotenv
+
 if TYPE_CHECKING:
     from agent_framework import SupportsChatGetResponse
 

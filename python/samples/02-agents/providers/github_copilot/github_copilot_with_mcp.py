@@ -18,11 +18,12 @@ from agent_framework.github import GitHubCopilotAgent
 from copilot.types import MCPServerConfig, PermissionRequest, PermissionRequestResult
 from dotenv import load_dotenv
 
-def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
-    """Permission handler that prompts the user for approval."""
-
 # Load environment variables from .env file
 load_dotenv()
+
+
+def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+    """Permission handler that prompts the user for approval."""
     kind = request.get("kind", "unknown")
     print(f"\n[Permission Request: {kind}]")
 

@@ -19,8 +19,11 @@ import os
 
 from agent_framework.azure import DurableAIAgentClient
 from azure.identity import DefaultAzureCredential
-from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from dotenv import load_dotenv
+from durabletask.azuremanaged.client import DurableTaskSchedulerClient
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -40,9 +43,6 @@ def get_client(
     Returns:
         Configured DurableAIAgentClient instance
     """
-
-# Load environment variables from .env file
-load_dotenv()
     taskhub_name = taskhub or os.getenv("TASKHUB", "default")
     endpoint_url = endpoint or os.getenv("ENDPOINT", "http://localhost:8080")
 

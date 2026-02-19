@@ -8,6 +8,7 @@ from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Sample: Concurrent fan-out/fan-in (agent-only API) with default aggregator
 

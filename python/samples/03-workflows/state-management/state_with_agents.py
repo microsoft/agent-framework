@@ -18,9 +18,10 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import BaseModel
 from typing_extensions import Never
-from dotenv import load_dotenv
+
 """
 Sample: Workflow state with agents and conditional routing.
 

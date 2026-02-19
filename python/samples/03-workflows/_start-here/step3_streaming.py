@@ -7,6 +7,7 @@ from agent_framework import AgentResponseUpdate, Message, WorkflowBuilder
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Step 3: Agents in a workflow with streaming
 

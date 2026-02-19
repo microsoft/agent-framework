@@ -9,6 +9,7 @@ from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.models import OpenApiAnonymousAuthDetails, OpenApiTool
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 The following sample demonstrates how to create a simple, Azure AI agent that
 uses OpenAPI tools to answer user questions.

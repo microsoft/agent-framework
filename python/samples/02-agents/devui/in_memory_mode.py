@@ -13,22 +13,21 @@ from typing import Annotated
 from agent_framework import Agent, Executor, WorkflowBuilder, WorkflowContext, handler, tool
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.devui import serve
-from typing_extensions import Never
 from dotenv import load_dotenv
+from typing_extensions import Never
+
+# Load environment variables from .env file
+load_dotenv()
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
-
-@tool(approval_mode="never_require")
-# Tool functions for the agent
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, "The location to get the weather for."],
 ) -> str:
     """Get the weather for a given location."""
-
-# Load environment variables from .env file
-load_dotenv()
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
     temperature = 53
     return f"The weather in {location} is {conditions[0]} with a high of {temperature}°C."

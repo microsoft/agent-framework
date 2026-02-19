@@ -9,6 +9,7 @@ from pathlib import Path
 from agent_framework import Content
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
+
 """
 OpenAI Responses Client Image Generation Example
 

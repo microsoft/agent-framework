@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from agent_framework import FunctionInvocationContext
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
+
 """
 OpenAI Responses Client Agent-as-Tool Example
 

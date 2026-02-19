@@ -4,6 +4,7 @@ import asyncio
 
 from agent_framework import Agent, AgentResponseUpdate, ChatResponseUpdate
 from agent_framework.azure import AzureOpenAIAssistantsClient
+from dotenv import load_dotenv
 from openai.types.beta.threads.runs import (
     CodeInterpreterToolCallDelta,
     RunStepDelta,
@@ -11,7 +12,7 @@ from openai.types.beta.threads.runs import (
     ToolCallDeltaObject,
 )
 from openai.types.beta.threads.runs.code_interpreter_tool_call_delta import CodeInterpreter
-from dotenv import load_dotenv
+
 """
 Azure OpenAI Assistants with Code Interpreter Example
 

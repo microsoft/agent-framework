@@ -8,9 +8,10 @@ from typing import Annotated
 from agent_framework import Agent, tool
 from agent_framework.azure import AzureOpenAIAssistantsClient
 from azure.identity import AzureCliCredential, get_bearer_token_provider
+from dotenv import load_dotenv
 from openai import AsyncAzureOpenAI
 from pydantic import Field
-from dotenv import load_dotenv
+
 """
 Azure OpenAI Assistants with Existing Assistant Example
 

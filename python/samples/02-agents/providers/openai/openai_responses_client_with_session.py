@@ -6,8 +6,9 @@ from typing import Annotated
 
 from agent_framework import Agent, AgentSession, tool
 from agent_framework.openai import OpenAIResponsesClient
-from pydantic import Field
 from dotenv import load_dotenv
+from pydantic import Field
+
 """
 OpenAI Responses Client with Session Management Example
 

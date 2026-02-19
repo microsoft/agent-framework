@@ -25,14 +25,15 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.redis import RedisHistoryProvider
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
-from redis.credentials import CredentialProvider
 from dotenv import load_dotenv
-
-class AzureCredentialProvider(CredentialProvider):
-    """Credential provider for Azure AD authentication with Redis Enterprise."""
+from redis.credentials import CredentialProvider
 
 # Load environment variables from .env file
 load_dotenv()
+
+
+class AzureCredentialProvider(CredentialProvider):
+    """Credential provider for Azure AD authentication with Redis Enterprise."""
 
     def __init__(self, azure_credential: AsyncAzureCliCredential, user_object_id: str):
         self.azure_credential = azure_credential

@@ -20,9 +20,13 @@ import os
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.redis import RedisContextProvider
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
-from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 
 async def main() -> None:
     """Walk through provider and chat message store usage.
@@ -31,9 +35,6 @@ async def main() -> None:
       - print(await provider.redis_index.info())
       - print(await provider.search_all())
     """
-
-# Load environment variables from .env file
-load_dotenv()
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},

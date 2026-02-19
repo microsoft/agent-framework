@@ -21,10 +21,13 @@ from typing import Any, cast
 from agent_framework import Agent, AgentResponse
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.task import ActivityContext, OrchestrationContext, Task
 from pydantic import BaseModel, ValidationError
-from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -37,9 +40,6 @@ EMAIL_AGENT_NAME = "EmailAssistantAgent"
 
 class SpamDetectionResult(BaseModel):
     """Result from spam detection agent."""
-
-# Load environment variables from .env file
-load_dotenv()
 
     is_spam: bool
     reason: str

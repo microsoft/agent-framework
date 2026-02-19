@@ -20,6 +20,7 @@ from agent_framework import Agent, Message
 from agent_framework.azure import AzureOpenAIChatClient, AzureOpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from semantic_kernel.agents import ChatCompletionAgent, GroupChatOrchestration
 from semantic_kernel.agents.orchestration.group_chat import (
     BooleanResult,
@@ -35,11 +36,14 @@ from semantic_kernel.contents import AuthorRole, ChatHistory, ChatMessageContent
 from semantic_kernel.functions import KernelArguments
 from semantic_kernel.kernel import Kernel
 from semantic_kernel.prompt_template import KernelPromptTemplate, PromptTemplateConfig
-from dotenv import load_dotenv
+
 if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 DISCUSSION_TOPIC = "What are the essential steps for launching a community hackathon?"
@@ -77,9 +81,6 @@ def build_semantic_kernel_agents() -> list[ChatCompletionAgent]:
 
 class ChatCompletionGroupChatManager(GroupChatManager):
     """Group chat manager that delegates orchestration decisions to an Azure OpenAI deployment."""
-
-# Load environment variables from .env file
-load_dotenv()
 
     service: ChatCompletionClientBase
     topic: str

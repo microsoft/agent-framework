@@ -6,6 +6,7 @@ from datetime import datetime
 from agent_framework import tool
 from agent_framework.ollama import OllamaChatClient
 from dotenv import load_dotenv
+
 """
 Ollama Agent Basic Example
 
@@ -22,7 +23,9 @@ https://ollama.com/
 load_dotenv()
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_time(location: str) -> str:
     """Get the current time."""

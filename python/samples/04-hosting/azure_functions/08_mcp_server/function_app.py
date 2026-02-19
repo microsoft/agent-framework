@@ -27,11 +27,11 @@ Authentication uses AzureCliCredential (Azure Identity).
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from dotenv import load_dotenv
 
-# Create Azure OpenAI Chat Client
-# This uses AzureCliCredential for authentication (requires 'az login')
-
 # Load environment variables from .env file
 load_dotenv()
+
+# Create Azure OpenAI Chat Client
+# This uses AzureCliCredential for authentication (requires 'az login')
 client = AzureOpenAIChatClient()
 
 # Define three AI agents with different roles

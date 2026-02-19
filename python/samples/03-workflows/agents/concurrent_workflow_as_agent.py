@@ -7,6 +7,7 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Sample: Build a concurrent workflow orchestration and wrap it as an agent.
 

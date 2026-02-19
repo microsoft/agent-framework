@@ -6,6 +6,7 @@ from agent_framework import MCPStreamableHTTPTool
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Azure AI Agent with Local MCP Example
 

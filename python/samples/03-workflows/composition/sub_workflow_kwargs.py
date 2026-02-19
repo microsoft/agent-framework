@@ -14,6 +14,7 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+
 """
 Sample: Sub-Workflow kwargs Propagation
 

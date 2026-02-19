@@ -11,8 +11,8 @@
 """Issue a basic Responses API call using SK and Agent Framework."""
 
 import asyncio
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
