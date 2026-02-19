@@ -81,13 +81,13 @@
     <Project Path="samples/03-workflows/Visualization/Visualization.csproj" />
   </Folder>
   <Folder Name="/Samples/03-workflows/_StartHere/">
-    <Project Path="samples/03-workflows/_StartHere/02_Streaming/02_Streaming.csproj" />
-    <Project Path="samples/03-workflows/_StartHere/03_AgentsInWorkflows/03_AgentsInWorkflows.csproj" />
-    <Project Path="samples/03-workflows/_StartHere/04_AgentWorkflowPatterns/04_AgentWorkflowPatterns.csproj" />
-    <Project Path="samples/03-workflows/_StartHere/05_MultiModelService/05_MultiModelService.csproj" />
-    <Project Path="samples/03-workflows/_StartHere/06_SubWorkflows/06_SubWorkflows.csproj" />
-    <Project Path="samples/03-workflows/_StartHere/07_MixedWorkflowAgentsAndExecutors/07_MixedWorkflowAgentsAndExecutors.csproj" />
-    <Project Path="samples/03-workflows/_StartHere/08_WriterCriticWorkflow/08_WriterCriticWorkflow.csproj" />
+    <Project Path="samples/03-workflows/_StartHere/01_Streaming/01_Streaming.csproj" />
+    <Project Path="samples/03-workflows/_StartHere/02_AgentsInWorkflows/02_AgentsInWorkflows.csproj" />
+    <Project Path="samples/03-workflows/_StartHere/03_AgentWorkflowPatterns/03_AgentWorkflowPatterns.csproj" />
+    <Project Path="samples/03-workflows/_StartHere/04_MultiModelService/04MultiModelService.csproj" />
+    <Project Path="samples/03-workflows/_StartHere/05_SubWorkflows/05_SubWorkflows.csproj" />
+    <Project Path="samples/03-workflows/_StartHere/06_MixedWorkflowAgentsAndExecutors/06_MixedWorkflowAgentsAndExecutors.csproj" />
+    <Project Path="samples/03-workflows/_StartHere/07_WriterCriticWorkflow/07_WriterCriticWorkflow.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/" />
   <Folder Name="/Samples/04-hosting/DurableAgents/" />
