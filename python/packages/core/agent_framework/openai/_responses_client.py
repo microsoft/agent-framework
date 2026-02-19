@@ -967,10 +967,10 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 }
             case "text_reasoning":
                 ret: dict[str, Any] = {"type": "reasoning", "summary": []}
+                if content.id:
+                    ret["id"] = content.id
                 props: dict[str, Any] | None = getattr(content, "additional_properties", None)
                 if props:
-                    if reasoning_id := props.get("reasoning_id"):
-                        ret["id"] = reasoning_id
                     if status := props.get("status"):
                         ret["status"] = status
                     if reasoning_text := props.get("reasoning_text"):
@@ -1187,30 +1187,28 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                     )
                                 )
                 case "reasoning":  # ResponseOutputReasoning
-                    reasoning_id = getattr(item, "id", None)
                     added_reasoning = False
-                    if hasattr(item, "content") and item.content:
-                        for index, reasoning_content in enumerate(item.content):
+                    if item_content := getattr(item, "content", None):
+                        for index, reasoning_content in enumerate(item_content):
                             additional_properties: dict[str, Any] = {}
-                            if reasoning_id:
-                                additional_properties["reasoning_id"] = reasoning_id
                             if hasattr(item, "summary") and item.summary and index < len(item.summary):
                                 additional_properties["summary"] = item.summary[index]
                             contents.append(
                                 Content.from_text_reasoning(
+                                    id=item.id,
                                     text=reasoning_content.text,
                                     raw_representation=reasoning_content,
                                     additional_properties=additional_properties or None,
                                 )
                             )
                             added_reasoning = True
-                    if hasattr(item, "summary") and item.summary:
-                        for summary in item.summary:
+                    if item_summary := getattr(item, "summary", None):
+                        for summary in item_summary:
                             contents.append(
                                 Content.from_text_reasoning(
+                                    id=item.id,
                                     text=summary.text,
                                     raw_representation=summary,  # type: ignore[arg-type]
-                                    additional_properties={"reasoning_id": reasoning_id} if reasoning_id else None,
                                 )
                             )
                             added_reasoning = True
@@ -1219,12 +1217,11 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         # Always emit an empty marker so co-occurrence detection in
                         # _prepare_handoff_messages can identify reasoning-model responses.
                         additional_properties_empty: dict[str, Any] = {}
-                        if reasoning_id:
-                            additional_properties_empty["reasoning_id"] = reasoning_id
                         if encrypted := getattr(item, "encrypted_content", None):
                             additional_properties_empty["encrypted_content"] = encrypted
                         contents.append(
                             Content.from_text_reasoning(
+                                id=item.id,
                                 text="",
                                 raw_representation=item,
                                 additional_properties=additional_properties_empty or None,
@@ -1444,36 +1441,36 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             case "response.reasoning_text.delta":
                 contents.append(
                     Content.from_text_reasoning(
+                        id=event.item_id,
                         text=event.delta,
                         raw_representation=event,
-                        additional_properties={"reasoning_id": event.item_id},
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_text.done":
                 contents.append(
                     Content.from_text_reasoning(
+                        id=event.item_id,
                         text=event.text,
                         raw_representation=event,
-                        additional_properties={"reasoning_id": event.item_id},
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_summary_text.delta":
                 contents.append(
                     Content.from_text_reasoning(
+                        id=event.item_id,
                         text=event.delta,
                         raw_representation=event,
-                        additional_properties={"reasoning_id": event.item_id},
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_summary_text.done":
                 contents.append(
                     Content.from_text_reasoning(
+                        id=event.item_id,
                         text=event.text,
                         raw_representation=event,
-                        additional_properties={"reasoning_id": event.item_id},
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
@@ -1651,8 +1648,6 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         if hasattr(event_item, "content") and event_item.content:
                             for index, reasoning_content in enumerate(event_item.content):
                                 additional_properties: dict[str, Any] = {}
-                                if reasoning_id:
-                                    additional_properties["reasoning_id"] = reasoning_id
                                 if (
                                     hasattr(event_item, "summary")
                                     and event_item.summary
@@ -1661,6 +1656,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                     additional_properties["summary"] = event_item.summary[index]
                                 contents.append(
                                     Content.from_text_reasoning(
+                                        id=reasoning_id or None,
                                         text=reasoning_content.text,
                                         raw_representation=reasoning_content,
                                         additional_properties=additional_properties or None,
@@ -1672,12 +1668,11 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                             # Always emit an empty marker so co-occurrence detection in
                             # _prepare_handoff_messages can identify reasoning-model responses.
                             additional_properties_empty: dict[str, Any] = {}
-                            if reasoning_id:
-                                additional_properties_empty["reasoning_id"] = reasoning_id
                             if encrypted := getattr(event_item, "encrypted_content", None):
                                 additional_properties_empty["encrypted_content"] = encrypted
                             contents.append(
                                 Content.from_text_reasoning(
+                                    id=reasoning_id or None,
                                     text="",
                                     raw_representation=event_item,
                                     additional_properties=additional_properties_empty or None,

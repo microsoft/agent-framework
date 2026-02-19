@@ -2992,8 +2992,9 @@ async def test_streaming_function_calling_response_includes_reasoning_and_tool_r
             ChatResponseUpdate(
                 contents=[
                     Content.from_text_reasoning(
+                        id="rs_test123",
                         text="Let me search for that",
-                        additional_properties={"reasoning_id": "rs_test123", "status": "completed"},
+                        additional_properties={"status": "completed"},
                     )
                 ],
                 role="assistant",
@@ -3035,8 +3036,7 @@ async def test_streaming_function_calling_response_includes_reasoning_and_tool_r
     assert "function_result" in all_content_types, "Function result must be in response messages for chaining"
     assert "text" in all_content_types, "Final text must be in response messages"
 
-    # Verify reasoning has the reasoning_id preserved
+    # Verify reasoning has the id preserved
     reasoning_contents = [c for msg in response.messages for c in msg.contents if c.type == "text_reasoning"]
     assert len(reasoning_contents) >= 1
-    assert reasoning_contents[0].additional_properties is not None
-    assert reasoning_contents[0].additional_properties.get("reasoning_id") == "rs_test123"
+    assert reasoning_contents[0].id == "rs_test123"
