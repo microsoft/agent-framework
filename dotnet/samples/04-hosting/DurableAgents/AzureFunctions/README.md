@@ -1,8 +1,8 @@
 # Azure Functions Samples
 
-To get started with Azure Functions, begin with the introduction sample under [Get Started (`01-get-started`)](../../01-get-started).
+To get started with Azure Functions, begin with the introduction sample under [Get Started (`01-get-started`)](../../../01-get-started).
 
-- **[06_host_your_agent](../../01-get-started/06_host_your_agent)**: A sample that demonstrates how to host a single conversational agent in an Azure Functions app and invoke it directly over HTTP.
+- **[06_host_your_agent](../../../01-get-started/06_host_your_agent)**: A sample that demonstrates how to host a single conversational agent in an Azure Functions app and invoke it directly over HTTP.
 
 This directory contains samples for Azure Functions.
 
