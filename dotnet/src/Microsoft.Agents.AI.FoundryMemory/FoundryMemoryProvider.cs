@@ -2,8 +2,8 @@
 
 using System;
 using System.ClientModel;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using Azure.AI.Projects;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
 
@@ -25,6 +26,7 @@ namespace Microsoft.Agents.AI.FoundryMemory;
 /// for new invocations using the memory search endpoint. Retrieved memories are injected as user messages
 /// to the model, prefixed by a configurable context prompt.
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public sealed class FoundryMemoryProvider : AIContextProvider
 {
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
@@ -39,24 +41,32 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     private readonly AIProjectClient _client;
     private readonly ILogger<FoundryMemoryProvider>? _logger;
 
-    private readonly ConcurrentQueue<string> _pendingUpdateIds = new();
+    private string? _lastPendingUpdateId;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FoundryMemoryProvider"/> class.
     /// </summary>
     /// <param name="client">The Azure AI Project client configured for your Foundry project.</param>
+    /// <param name="memoryStoreName">The name of the memory store in Azure AI Foundry.</param>
     /// <param name="stateInitializer">A delegate that initializes the provider state on the first invocation, providing the scope for memory storage and retrieval.</param>
-    /// <param name="options">Provider options including memory store name.</param>
+    /// <param name="options">Provider options.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="stateInitializer"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="memoryStoreName"/> is null or whitespace.</exception>
     public FoundryMemoryProvider(
         AIProjectClient client,
+        string memoryStoreName,
         Func<AgentSession?, State> stateInitializer,
         FoundryMemoryProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
         : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
     {
         Throw.IfNull(client);
+        Throw.IfNull(memoryStoreName);
+        if (string.IsNullOrWhiteSpace(memoryStoreName))
+        {
+            throw new ArgumentException("The memory store name must not be empty or whitespace.", nameof(memoryStoreName));
+        }
 
         this._sessionState = new ProviderSessionState<State>(
             ValidateStateInitializer(Throw.IfNull(stateInitializer)),
@@ -65,16 +75,11 @@ public sealed class FoundryMemoryProvider : AIContextProvider
 
         FoundryMemoryProviderOptions effectiveOptions = options ?? new FoundryMemoryProviderOptions();
 
-        if (string.IsNullOrWhiteSpace(effectiveOptions.MemoryStoreName))
-        {
-            throw new ArgumentException("The MemoryStoreName option must be provided.", nameof(options));
-        }
-
         this._logger = loggerFactory?.CreateLogger<FoundryMemoryProvider>();
         this._client = client;
 
         this._contextPrompt = effectiveOptions.ContextPrompt ?? DefaultContextPrompt;
-        this._memoryStoreName = effectiveOptions.MemoryStoreName;
+        this._memoryStoreName = memoryStoreName;
         this._maxMemories = effectiveOptions.MaxMemories;
         this._updateDelay = effectiveOptions.UpdateDelay;
         this._enableSensitiveTelemetryData = effectiveOptions.EnableSensitiveTelemetryData;
@@ -88,9 +93,9 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         {
             State state = stateInitializer(session);
 
-            if (state?.Scope is null || string.IsNullOrWhiteSpace(state.Scope.Scope))
+            if (state is null)
             {
-                throw new InvalidOperationException("State initializer must return a non-null state with a valid scope where the Scope property is set.");
+                throw new InvalidOperationException("State initializer must return a non-null state.");
             }
 
             return state;
@@ -116,7 +121,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
 
         try
         {
-            MemorySearchOptions searchOptions = new(scope.Scope!)
+            MemorySearchOptions searchOptions = new(scope.Scope)
             {
                 ResultOptions = new MemorySearchResultOptions { MaxMemories = this._maxMemories }
             };
@@ -203,7 +208,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
                 return;
             }
 
-            MemoryUpdateOptions updateOptions = new(scope.Scope!)
+            MemoryUpdateOptions updateOptions = new(scope.Scope)
             {
                 UpdateDelay = this._updateDelay
             };
@@ -222,7 +227,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
 
             if (response.UpdateId is not null)
             {
-                this._pendingUpdateIds.Enqueue(response.UpdateId);
+                Interlocked.Exchange(ref this._lastPendingUpdateId, response.UpdateId);
             }
 
             if (this._logger?.IsEnabled(LogLevel.Information) is true)
@@ -262,7 +267,15 @@ public sealed class FoundryMemoryProvider : AIContextProvider
 
         try
         {
-            await this._client.MemoryStores.DeleteScopeAsync(this._memoryStoreName, scope.Scope!, cancellationToken).ConfigureAwait(false);
+            await this._client.MemoryStores.DeleteScopeAsync(this._memoryStoreName, scope.Scope, cancellationToken).ConfigureAwait(false);
+
+            if (this._logger?.IsEnabled(LogLevel.Information) is true)
+            {
+                this._logger.LogInformation(
+                    "FoundryMemoryProvider: Deleted stored memories for scope. MemoryStore: '{MemoryStoreName}', Scope: '{Scope}'.",
+                    this._memoryStoreName,
+                    this.SanitizeLogData(scope.Scope));
+            }
         }
         catch (ClientResultException ex) when (ex.Status == 404)
         {
@@ -321,32 +334,28 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     /// Waits for all pending memory update operations to complete.
     /// </summary>
     /// <remarks>
-    /// Memory extraction in Azure AI Foundry is asynchronous. This method polls all pending updates
-    /// in parallel and returns when all have completed, failed, or been superseded.
+    /// Memory extraction in Azure AI Foundry is asynchronous. This method polls the latest pending update
+    /// and returns when it has completed, failed, or been superseded. Since updates are processed in order,
+    /// completion of the latest update implies all prior updates have also been processed.
     /// </remarks>
     /// <param name="pollingInterval">The interval between status checks. Defaults to 5 seconds.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <exception cref="AggregateException">Thrown if any update operation failed, containing all failures.</exception>
+    /// <exception cref="InvalidOperationException">Thrown if the update operation failed.</exception>
     public async Task WhenUpdatesCompletedAsync(
         TimeSpan? pollingInterval = null,
         CancellationToken cancellationToken = default)
     {
-        TimeSpan interval = pollingInterval ?? TimeSpan.FromSeconds(5);
-
-        // Collect all pending update IDs
-        List<string> updateIds = [];
-        while (this._pendingUpdateIds.TryDequeue(out string? updateId))
-        {
-            updateIds.Add(updateId);
-        }
-
-        if (updateIds.Count == 0)
+        string? updateId = Volatile.Read(ref this._lastPendingUpdateId);
+        if (updateId is null)
         {
             return;
         }
 
-        // Poll all updates in parallel
-        await Task.WhenAll(updateIds.Select(updateId => this.WaitForUpdateAsync(updateId, interval, cancellationToken))).ConfigureAwait(false);
+        TimeSpan interval = pollingInterval ?? TimeSpan.FromSeconds(5);
+        await this.WaitForUpdateAsync(updateId, interval, cancellationToken).ConfigureAwait(false);
+
+        // Only clear the pending update ID after successful completion
+        Interlocked.CompareExchange(ref this._lastPendingUpdateId, null, updateId);
     }
 
     private async Task WaitForUpdateAsync(string updateId, TimeSpan interval, CancellationToken cancellationToken)

@@ -53,8 +53,8 @@ public sealed class FoundryMemoryProviderTests : IDisposable
         // Arrange
         FoundryMemoryProvider memoryProvider = new(
             this._client!,
-            stateInitializer: _ => new(new FoundryMemoryProviderScope { Scope = "it-user-1" }),
-            new FoundryMemoryProviderOptions { MemoryStoreName = this._memoryStoreName! });
+            this._memoryStoreName!,
+            stateInitializer: _ => new(new FoundryMemoryProviderScope("it-user-1")));
 
         AIAgent agent = await this._client!.CreateAIAgentAsync(this._deploymentName!,
             options: new ChatClientAgentOptions { AIContextProviders = [memoryProvider] });
@@ -86,13 +86,13 @@ public sealed class FoundryMemoryProviderTests : IDisposable
         // Arrange
         FoundryMemoryProvider memoryProvider1 = new(
             this._client!,
-            stateInitializer: _ => new(new FoundryMemoryProviderScope { Scope = "it-scope-a" }),
-            new FoundryMemoryProviderOptions { MemoryStoreName = this._memoryStoreName! });
+            this._memoryStoreName!,
+            stateInitializer: _ => new(new FoundryMemoryProviderScope("it-scope-a")));
 
         FoundryMemoryProvider memoryProvider2 = new(
             this._client!,
-            stateInitializer: _ => new(new FoundryMemoryProviderScope { Scope = "it-scope-b" }),
-            new FoundryMemoryProviderOptions { MemoryStoreName = this._memoryStoreName! });
+            this._memoryStoreName!,
+            stateInitializer: _ => new(new FoundryMemoryProviderScope("it-scope-b")));
 
         AIAgent agent1 = await this._client!.CreateAIAgentAsync(this._deploymentName!,
             options: new ChatClientAgentOptions { AIContextProviders = [memoryProvider1] });

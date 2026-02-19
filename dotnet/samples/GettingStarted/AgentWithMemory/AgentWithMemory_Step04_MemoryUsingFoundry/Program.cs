@@ -26,12 +26,12 @@ AIProjectClient projectClient = new(new Uri(foundryEndpoint), credential);
 // The stateInitializer can be used to customize the Foundry Memory scope per session and it will be called each time a session
 // is encountered by the FoundryMemoryProvider that does not already have state stored on the session.
 // If each session should have its own scope, you can create a new id per session via the stateInitializer, e.g.:
-// new FoundryMemoryProvider(projectClient, stateInitializer: _ => new(new FoundryMemoryProviderScope() { Scope = Guid.NewGuid().ToString() }), ...)
+// new FoundryMemoryProvider(projectClient, memoryStoreName, stateInitializer: _ => new(new FoundryMemoryProviderScope(Guid.NewGuid().ToString())), ...)
 // In our case we are storing memories scoped by user so that memories are retained across sessions.
 FoundryMemoryProvider memoryProvider = new(
     projectClient,
-    stateInitializer: _ => new(new FoundryMemoryProviderScope() { Scope = "sample-user-123" }),
-    new FoundryMemoryProviderOptions() { MemoryStoreName = memoryStoreName });
+    memoryStoreName,
+    stateInitializer: _ => new(new FoundryMemoryProviderScope("sample-user-123")));
 
 AIAgent agent = await projectClient.CreateAIAgentAsync(deploymentName,
     options: new ChatClientAgentOptions()

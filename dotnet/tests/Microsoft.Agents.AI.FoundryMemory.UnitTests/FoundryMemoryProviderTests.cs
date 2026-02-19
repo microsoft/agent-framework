@@ -21,8 +21,8 @@ public sealed class FoundryMemoryProviderTests
         // Act & Assert
         ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() => new FoundryMemoryProvider(
             null!,
-            stateInitializer: _ => new(new FoundryMemoryProviderScope { Scope = "test" }),
-            new FoundryMemoryProviderOptions { MemoryStoreName = "store" }));
+            "store",
+            stateInitializer: _ => new(new FoundryMemoryProviderScope("test"))));
         Assert.Equal("client", ex.ParamName);
     }
 
@@ -35,13 +35,13 @@ public sealed class FoundryMemoryProviderTests
         // Act & Assert
         ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() => new FoundryMemoryProvider(
             testClient.Client,
-            stateInitializer: null!,
-            new FoundryMemoryProviderOptions { MemoryStoreName = "store" }));
+            "store",
+            stateInitializer: null!));
         Assert.Equal("stateInitializer", ex.ParamName);
     }
 
     [Fact]
-    public void Constructor_Throws_WhenMemoryStoreNameIsMissing()
+    public void Constructor_Throws_WhenMemoryStoreNameIsEmpty()
     {
         // Arrange
         using TestableAIProjectClient testClient = new();
@@ -49,9 +49,9 @@ public sealed class FoundryMemoryProviderTests
         // Act & Assert
         ArgumentException ex = Assert.Throws<ArgumentException>(() => new FoundryMemoryProvider(
             testClient.Client,
-            stateInitializer: _ => new(new FoundryMemoryProviderScope { Scope = "test" }),
-            new FoundryMemoryProviderOptions()));
-        Assert.StartsWith("The MemoryStoreName option must be provided.", ex.Message);
+            "",
+            stateInitializer: _ => new(new FoundryMemoryProviderScope("test"))));
+        Assert.Equal("memoryStoreName", ex.ParamName);
     }
 
     [Fact]
@@ -61,11 +61,25 @@ public sealed class FoundryMemoryProviderTests
         using TestableAIProjectClient testClient = new();
 
         // Act & Assert
-        ArgumentException ex = Assert.Throws<ArgumentException>(() => new FoundryMemoryProvider(
+        ArgumentNullException ex = Assert.Throws<ArgumentNullException>(() => new FoundryMemoryProvider(
             testClient.Client,
-            stateInitializer: _ => new(new FoundryMemoryProviderScope { Scope = "test" }),
-            null));
-        Assert.StartsWith("The MemoryStoreName option must be provided.", ex.Message);
+            null!,
+            stateInitializer: _ => new(new FoundryMemoryProviderScope("test"))));
+        Assert.Equal("memoryStoreName", ex.ParamName);
+    }
+
+    [Fact]
+    public void Scope_Throws_WhenScopeIsNull()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => new FoundryMemoryProviderScope(null!));
+    }
+
+    [Fact]
+    public void Scope_Throws_WhenScopeIsEmpty()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentException>(() => new FoundryMemoryProviderScope(""));
     }
 
     [Fact]
@@ -75,8 +89,8 @@ public sealed class FoundryMemoryProviderTests
         using TestableAIProjectClient testClient = new();
         FoundryMemoryProvider sut = new(
             testClient.Client,
-            stateInitializer: _ => new(null!),
-            new FoundryMemoryProviderOptions { MemoryStoreName = "store" });
+            "store",
+            stateInitializer: _ => new(null!));
 
         // Act & Assert - state initializer validation is deferred to first use
         Assert.Throws<ArgumentNullException>(() =>
@@ -99,34 +113,6 @@ public sealed class FoundryMemoryProviderTests
     }
 
     [Fact]
-    public void StateInitializer_Throws_WhenScopeValueIsEmpty()
-    {
-        // Arrange
-        using TestableAIProjectClient testClient = new();
-        FoundryMemoryProvider sut = new(
-            testClient.Client,
-            stateInitializer: _ => new(new FoundryMemoryProviderScope()),
-            new FoundryMemoryProviderOptions { MemoryStoreName = "store" });
-
-        // Act & Assert - state initializer validation is deferred to first use
-        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() =>
-        {
-            try
-            {
-                var field = typeof(FoundryMemoryProvider).GetField("_sessionState", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                var sessionState = field!.GetValue(sut);
-                var method = sessionState!.GetType().GetMethod("GetOrInitializeState");
-                method!.Invoke(sessionState, [null]);
-            }
-            catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException is not null)
-            {
-                throw tie.InnerException;
-            }
-        });
-        Assert.StartsWith("State initializer must return a non-null state", ex.Message);
-    }
-
-    [Fact]
     public void Constructor_Succeeds_WithValidParameters()
     {
         // Arrange
@@ -135,8 +121,8 @@ public sealed class FoundryMemoryProviderTests
         // Act
         FoundryMemoryProvider sut = new(
             testClient.Client,
-            stateInitializer: _ => new(new FoundryMemoryProviderScope { Scope = "user-456" }),
-            new FoundryMemoryProviderOptions { MemoryStoreName = "my-store" });
+            "my-store",
+            stateInitializer: _ => new(new FoundryMemoryProviderScope("user-456")));
 
         // Assert
         Assert.NotNull(sut);

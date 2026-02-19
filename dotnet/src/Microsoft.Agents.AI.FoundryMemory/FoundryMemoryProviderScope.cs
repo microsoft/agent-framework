@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.FoundryMemory;
@@ -15,27 +16,28 @@ namespace Microsoft.Agents.AI.FoundryMemory;
 public sealed class FoundryMemoryProviderScope
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="FoundryMemoryProviderScope"/> class.
+    /// Initializes a new instance of the <see cref="FoundryMemoryProviderScope"/> class with the specified scope identifier.
     /// </summary>
-    public FoundryMemoryProviderScope() { }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="FoundryMemoryProviderScope"/> class by cloning an existing scope.
-    /// </summary>
-    /// <param name="sourceScope">The scope to clone.</param>
-    public FoundryMemoryProviderScope(FoundryMemoryProviderScope sourceScope)
+    /// <param name="scope">The scope identifier used to partition memories. Must not be null or whitespace.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="scope"/> is null or whitespace.</exception>
+    public FoundryMemoryProviderScope(string scope)
     {
-        Throw.IfNull(sourceScope);
-        this.Scope = sourceScope.Scope;
+        Throw.IfNull(scope);
+        if (string.IsNullOrWhiteSpace(scope))
+        {
+            throw new ArgumentException("Scope must not be empty or whitespace.", nameof(scope));
+        }
+
+        this.Scope = scope;
     }
 
     /// <summary>
-    /// Gets or sets the scope identifier used to partition memories.
+    /// Gets the scope identifier used to partition memories.
     /// </summary>
     /// <remarks>
     /// This value controls how memory is partitioned in the memory store.
     /// Each unique scope maintains its own isolated collection of memory items.
     /// For example, use a user ID to ensure each user has their own individual memory.
     /// </remarks>
-    public string? Scope { get; set; }
+    public string Scope { get; }
 }

@@ -12,14 +12,6 @@ namespace Microsoft.Agents.AI.FoundryMemory;
 public sealed class FoundryMemoryProviderOptions
 {
     /// <summary>
-    /// Gets or sets the name of the pre-existing memory store in Azure AI Foundry.
-    /// </summary>
-    /// <remarks>
-    /// The memory store must be created in your Azure AI Foundry project before using this provider.
-    /// </remarks>
-    public string? MemoryStoreName { get; set; }
-
-    /// <summary>
     /// When providing memories to the model, this string is prefixed to the retrieved memories to supply context.
     /// </summary>
     /// <value>Defaults to "## Memories\nConsider the following memories when answering user questions:".</value>
