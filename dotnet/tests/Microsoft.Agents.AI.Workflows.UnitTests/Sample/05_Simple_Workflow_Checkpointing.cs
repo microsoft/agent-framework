@@ -38,7 +38,7 @@ internal static class Step5EntryPoint
 
         CheckpointInfo targetCheckpoint = checkpoints[2];
 
-        Console.WriteLine($"Restoring to checkpoint {targetCheckpoint} from run {targetCheckpoint.RunId}");
+        Console.WriteLine($"Restoring to checkpoint {targetCheckpoint} from session {targetCheckpoint.SessionId}");
         if (rehydrateToRestore)
         {
             await handle.DisposeAsync().ConfigureAwait(false);
