@@ -66,5 +66,5 @@ The sample will show:
 ## Related Samples
 
 - [Agent Function Tools with Approvals](../../../Agents/Agent_Step04_UsingFunctionToolsWithApprovals) - Basic function approval pattern
-- [Agent Workflow Patterns](../../_Foundational/04_AgentWorkflowPatterns) - Group chat without approvals
+- [Agent Workflow Patterns](../../_StartHere/03_AgentWorkflowPatterns) - Group chat without approvals
 - [Human-in-the-Loop Basic](../../HumanInTheLoop/HumanInTheLoopBasic) - Workflow-level human interaction

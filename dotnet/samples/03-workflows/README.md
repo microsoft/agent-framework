@@ -6,19 +6,19 @@ The getting started with workflow samples demonstrate the fundamental concepts a
 
 ### Foundational Concepts - Start Here
 
-Please begin with the [Foundational](./_Foundational) samples in order. These three samples introduce the core concepts of executors, edges, agents in workflows, streaming, and workflow construction.
+Please begin with the [Start Here](./_StartHere) samples in order. These three samples introduce the core concepts of executors, edges, agents in workflows, streaming, and workflow construction.
 
-> The folder name starts with an underscore (`_Foundational`) to ensure it appears first in the explorer view.
+> The folder name starts with an underscore (`_StartHere`) to ensure it appears first in the explorer view.
 
 | Sample | Concepts |
 |--------|----------|
-| [Streaming](./_Foundational/02_Streaming) | Extends workflows with event streaming |
-| [Agents](./_Foundational/03_AgentsInWorkflows) | Use agents in workflows |
-| [Agentic Workflow Patterns](./_Foundational/04_AgentWorkflowPatterns) | Demonstrates common agentic workflow patterns |
-| [Multi-Service Workflows](./_Foundational/05_MultiModelService) | Shows using multiple AI services in the same workflow |
-| [Sub-Workflows](./_Foundational/06_SubWorkflows) | Demonstrates composing workflows hierarchically by embedding workflows as executors |
-| [Mixed Workflow with Agents and Executors](./_Foundational/07_MixedWorkflowAgentsAndExecutors) | Shows how to mix agents and executors with adapter pattern for type conversion and protocol handling |
-| [Writer-Critic Workflow](./_Foundational/08_WriterCriticWorkflow) | Demonstrates iterative refinement with quality gates, max iteration safety, multiple message handlers, and conditional routing for feedback loops |
+| [Streaming](./_StartHere/01_Streaming) | Extends workflows with event streaming |
+| [Agents](./_StartHere/02_AgentsInWorkflows) | Use agents in workflows |
+| [Agentic Workflow Patterns](./_StartHere/03_AgentWorkflowPatterns) | Demonstrates common agentic workflow patterns |
+| [Multi-Service Workflows](./_StartHere/04_MultiModelService) | Shows using multiple AI services in the same workflow |
+| [Sub-Workflows](./_StartHere/05_SubWorkflows) | Demonstrates composing workflows hierarchically by embedding workflows as executors |
+| [Mixed Workflow with Agents and Executors](./_StartHere/06_MixedWorkflowAgentsAndExecutors) | Shows how to mix agents and executors with adapter pattern for type conversion and protocol handling |
+| [Writer-Critic Workflow](./_StartHere/07_WriterCriticWorkflow) | Demonstrates iterative refinement with quality gates, max iteration safety, multiple message handlers, and conditional routing for feedback loops |
 
 Once completed, please proceed to other samples listed below.
 
