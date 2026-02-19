@@ -3,6 +3,10 @@
 import asyncio
 
 from agent_framework.openai import OpenAIResponsesClient, OpenAIResponsesOptions
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 OpenAI Responses Client Reasoning Example

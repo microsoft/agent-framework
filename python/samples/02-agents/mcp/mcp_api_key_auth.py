@@ -1,10 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import os
 
 from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 from httpx import AsyncClient
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 MCP Authentication Example
@@ -54,3 +59,7 @@ async def api_key_auth_example() -> None:
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result.text}")
+
+
+if __name__ == "__main__":
+    asyncio.run(api_key_auth_example())

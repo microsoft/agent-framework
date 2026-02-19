@@ -4,10 +4,14 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import Agent, AgentSession, tool
+from agent_framework import Agent, AgentSession, InMemoryHistoryProvider, tool
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Azure OpenAI Chat Client with Session Management Example
@@ -112,7 +116,7 @@ async def example_with_existing_session_messages() -> None:
     print(f"Agent: {result1.text}")
 
     # The session now contains the conversation history in state
-    memory_state = session.state.get("memory", {})
+    memory_state = session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {})
     messages = memory_state.get("messages", [])
     if messages:
         print(f"Session contains {len(messages)} messages")

@@ -7,6 +7,10 @@ from typing import Any
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Agent Memory with Context Providers

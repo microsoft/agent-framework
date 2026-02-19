@@ -6,6 +6,10 @@ from typing import Any
 from agent_framework import AgentResponse, AgentSession, Message, SupportsAgentRun
 from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Azure AI Agent with Hosted MCP Example
@@ -35,7 +39,9 @@ async def handle_approvals_without_session(query: str, agent: "SupportsAgentRun"
     return result
 
 
-async def handle_approvals_with_session(query: str, agent: "SupportsAgentRun", session: "AgentSession") -> AgentResponse:
+async def handle_approvals_with_session(
+    query: str, agent: "SupportsAgentRun", session: "AgentSession"
+) -> AgentResponse:
     """Here we let the session deal with the previous responses, and we just rerun with the approval."""
 
     result = await agent.run(query, session=session)

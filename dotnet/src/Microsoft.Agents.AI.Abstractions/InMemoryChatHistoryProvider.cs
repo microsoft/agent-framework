@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,14 +26,7 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
 {
-    private static IEnumerable<ChatMessage> DefaultExcludeChatHistoryFilter(IEnumerable<ChatMessage> messages)
-        => messages.Where(m => m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory);
-
-    private readonly string _stateKey;
-    private readonly Func<AgentSession?, State> _stateInitializer;
-    private readonly JsonSerializerOptions _jsonSerializerOptions;
-    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> _storageInputMessageFilter;
-    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? _retrievalOutputMessageFilter;
+    private readonly ProviderSessionState<State> _sessionState;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="InMemoryChatHistoryProvider"/> class.
@@ -44,18 +36,20 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     /// message reduction, and serialization settings. If <see langword="null"/>, default settings will be used.
     /// </param>
     public InMemoryChatHistoryProvider(InMemoryChatHistoryProviderOptions? options = null)
+        : base(
+            options?.ProvideOutputMessageFilter,
+            options?.StorageInputMessageFilter)
     {
-        this._stateInitializer = options?.StateInitializer ?? (_ => new State());
+        this._sessionState = new ProviderSessionState<State>(
+            options?.StateInitializer ?? (_ => new State()),
+            options?.StateKey ?? this.GetType().Name,
+            options?.JsonSerializerOptions);
         this.ChatReducer = options?.ChatReducer;
         this.ReducerTriggerEvent = options?.ReducerTriggerEvent ?? InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval;
-        this._stateKey = options?.StateKey ?? base.StateKey;
-        this._jsonSerializerOptions = options?.JsonSerializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions;
-        this._storageInputMessageFilter = options?.StorageInputMessageFilter ?? DefaultExcludeChatHistoryFilter;
-        this._retrievalOutputMessageFilter = options?.RetrievalOutputMessageFilter;
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._stateKey;
+    public override string StateKey => this._sessionState.StateKey;
 
     /// <summary>
     /// Gets the chat reducer used to process or reduce chat messages. If null, no reduction logic will be applied.
@@ -73,7 +67,7 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     /// <param name="session">The agent session containing the state.</param>
     /// <returns>A list of chat messages, or an empty list if no state is found.</returns>
     public List<ChatMessage> GetMessages(AgentSession? session)
-        => this.GetOrInitializeState(session).Messages;
+        => this._sessionState.GetOrInitializeState(session).Messages;
 
     /// <summary>
     /// Sets the chat messages for the specified session.
@@ -85,67 +79,30 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     {
         _ = Throw.IfNull(messages);
 
-        var state = this.GetOrInitializeState(session);
+        var state = this._sessionState.GetOrInitializeState(session);
         state.Messages = messages;
     }
 
-    /// <summary>
-    /// Gets the state from the session's StateBag, or initializes it using the state initializer if not present.
-    /// </summary>
-    /// <param name="session">The agent session containing the StateBag.</param>
-    /// <returns>The provider state, or null if no session is available.</returns>
-    private State GetOrInitializeState(AgentSession? session)
-    {
-        if (session?.StateBag.TryGetValue<State>(this._stateKey, out var state, this._jsonSerializerOptions) is true && state is not null)
-        {
-            return state;
-        }
-
-        state = this._stateInitializer(session);
-        if (session is not null)
-        {
-            session.StateBag.SetValue(this._stateKey, state, this._jsonSerializerOptions);
-        }
-
-        return state;
-    }
-
     /// <inheritdoc />
-    protected override async ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(context);
-
-        var state = this.GetOrInitializeState(context.Session);
+        var state = this._sessionState.GetOrInitializeState(context.Session);
 
         if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval && this.ChatReducer is not null)
         {
             state.Messages = (await this.ChatReducer.ReduceAsync(state.Messages, cancellationToken).ConfigureAwait(false)).ToList();
         }
 
-        IEnumerable<ChatMessage> output = state.Messages;
-        if (this._retrievalOutputMessageFilter is not null)
-        {
-            output = this._retrievalOutputMessageFilter(output);
-        }
-        return output
-            .Select(message => message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, this.GetType().FullName!))
-            .Concat(context.RequestMessages);
+        return state.Messages;
     }
 
     /// <inheritdoc />
-    protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        _ = Throw.IfNull(context);
-
-        if (context.InvokeException is not null)
-        {
-            return;
-        }
-
-        var state = this.GetOrInitializeState(context.Session);
+        var state = this._sessionState.GetOrInitializeState(context.Session);
 
         // Add request and response messages to the provider
-        var allNewMessages = this._storageInputMessageFilter(context.RequestMessages).Concat(context.ResponseMessages ?? []);
+        var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);
         state.Messages.AddRange(allNewMessages);
 
         if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded && this.ChatReducer is not null)
