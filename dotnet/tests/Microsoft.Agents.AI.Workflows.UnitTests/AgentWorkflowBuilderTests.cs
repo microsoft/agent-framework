@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Extensions.AI;
 
 #pragma warning disable SYSLIB1045 // Use GeneratedRegex
@@ -389,7 +390,7 @@ public class AgentWorkflowBuilderTests
     {
         StringBuilder sb = new();
 
-        IWorkflowExecutionEnvironment environment = executionEnvironment.ToWorkflowExecutionEnvironment();
+        InProcessExecutionEnvironment environment = executionEnvironment.ToWorkflowExecutionEnvironment();
         await using StreamingRun run = await environment.StreamAsync(workflow, input);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 

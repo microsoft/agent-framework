@@ -4,7 +4,7 @@ import asyncio
 import os
 from typing import Any
 
-from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
+from agent_framework import AgentSession, BaseContextProvider, SessionContext
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -13,11 +13,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 """
-Agent Memory with Context Providers
+Agent Memory with Context Providers and Session State
 
-Context providers let you inject dynamic instructions and context into each
-agent invocation. This sample defines a simple provider that tracks the user's
-name and enriches every request with personalization instructions.
+Context providers inject dynamic context into each agent call. This sample
+shows a provider that stores the user's name in session state and personalizes
+responses — the name persists across turns via the session.
 
 Environment variables:
   AZURE_AI_PROJECT_ENDPOINT        — Your Azure AI Foundry project endpoint
@@ -26,41 +26,45 @@ Environment variables:
 
 
 # <context_provider>
-class UserNameProvider(BaseContextProvider):
-    """A simple context provider that remembers the user's name."""
+class UserMemoryProvider(BaseContextProvider):
+    """A context provider that remembers user info in session state."""
 
-    def __init__(self) -> None:
-        super().__init__(source_id="user-name-provider")
-        self.user_name: str | None = None
+    DEFAULT_SOURCE_ID = "user_memory"
 
     async def before_run(
         self,
         *,
         agent: Any,
-        session: AgentSession,
+        session: AgentSession | None,
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
-        """Called before each agent invocation — add extra instructions."""
-        if self.user_name:
-            context.instructions.append(f"The user's name is {self.user_name}. Always address them by name.")
+        """Inject personalization instructions based on stored user info."""
+        user_name = state.get("user_name")
+        if user_name:
+            context.extend_instructions(
+                self.source_id,
+                f"The user's name is {user_name}. Always address them by name.",
+            )
         else:
-            context.instructions.append("You don't know the user's name yet. Ask for it politely.")
+            context.extend_instructions(
+                self.source_id,
+                "You don't know the user's name yet. Ask for it politely.",
+            )
 
     async def after_run(
         self,
         *,
         agent: Any,
-        session: AgentSession,
+        session: AgentSession | None,
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
-        """Called after each agent invocation — extract information."""
+        """Extract and store user info in session state after each call."""
         for msg in context.input_messages:
             text = msg.text if hasattr(msg, "text") else ""
             if isinstance(text, str) and "my name is" in text.lower():
-                # Simple extraction — production code should use structured extraction
-                self.user_name = text.lower().split("my name is")[-1].strip().split()[0].capitalize()
+                state["user_name"] = text.lower().split("my name is")[-1].strip().split()[0].capitalize()
 # </context_provider>
 
 
@@ -73,12 +77,10 @@ async def main() -> None:
         credential=credential,
     )
 
-    memory = UserNameProvider()
-
     agent = client.as_agent(
         name="MemoryAgent",
         instructions="You are a friendly assistant.",
-        context_providers=[memory],
+        context_providers=[UserMemoryProvider()],
     )
     # </create_agent>
 
@@ -89,15 +91,17 @@ async def main() -> None:
     result = await agent.run("Hello! What's the square root of 9?", session=session)
     print(f"Agent: {result}\n")
 
-    # Now provide the name — the provider extracts and stores it
+    # Now provide the name — the provider stores it in session state
     result = await agent.run("My name is Alice", session=session)
     print(f"Agent: {result}\n")
 
-    # Subsequent calls are personalized
+    # Subsequent calls are personalized — name persists via session state
     result = await agent.run("What is 2 + 2?", session=session)
     print(f"Agent: {result}\n")
 
-    print(f"[Memory] Stored user name: {memory.user_name}")
+    # Inspect session state to see what the provider stored
+    provider_state = session.state.get("user_memory", {})
+    print(f"[Session State] Stored user name: {provider_state.get('user_name')}")
     # </run_with_memory>
 
 

@@ -60,4 +60,7 @@ internal sealed class InMemoryCheckpointManager : ICheckpointManager
 
     public bool TryGetLastCheckpoint(string runId, [NotNullWhen(true)] out CheckpointInfo? checkpoint)
         => this.GetRunStore(runId).TryGetLastCheckpointInfo(out checkpoint);
+
+    public ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string runId, CheckpointInfo? withParent = null)
+        => new(this.GetRunStore(runId).CheckpointIndex.AsReadOnly());
 }

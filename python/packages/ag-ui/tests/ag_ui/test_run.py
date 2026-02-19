@@ -8,7 +8,7 @@ from ag_ui.core import (
     TextMessageStartEvent,
 )
 from agent_framework import AgentResponseUpdate, Content, Message, ResponseStream
-from agent_framework.exceptions import AgentExecutionException
+from agent_framework.exceptions import AgentInvalidResponseException
 
 from agent_framework_ag_ui._run import (
     FlowState,
@@ -226,7 +226,7 @@ class TestNormalizeResponseStream:
 
     async def test_rejects_non_stream_values(self):
         """Reject unsupported stream return values."""
-        with pytest.raises(AgentExecutionException):
+        with pytest.raises(AgentInvalidResponseException):
             await _normalize_response_stream("not-a-stream")
 
 

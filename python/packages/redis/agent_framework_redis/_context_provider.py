@@ -19,8 +19,7 @@ from agent_framework import Message
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework.exceptions import (
     AgentException,
-    ServiceInitializationError,
-    ServiceInvalidRequestError,
+    IntegrationInvalidRequestException,
 )
 from redisvl.index import AsyncSearchIndex
 from redisvl.query import HybridQuery, TextQuery
@@ -285,7 +284,7 @@ class RedisContextProvider(BaseContextProvider):
         existing_sig = _schema_signature(existing_schema)
         current_sig = _schema_signature(current_schema)
         if existing_sig != current_sig:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Existing Redis index schema is incompatible with the current configuration.\n"
                 f"Existing (significant): {json.dumps(existing_sig, indent=2, sort_keys=True)}\n"
                 f"Current  (significant): {json.dumps(current_sig, indent=2, sort_keys=True)}\n"
@@ -313,7 +312,7 @@ class RedisContextProvider(BaseContextProvider):
             d.setdefault("thread_id", session_id)
             d.setdefault("conversation_id", session_id)
             if "content" not in d:
-                raise ServiceInvalidRequestError("add() requires a 'content' field in data")
+                raise IntegrationInvalidRequestException("add() requires a 'content' field in data")
             if self.vector_field_name:
                 d.setdefault(self.vector_field_name, None)
             prepared.append(d)
@@ -345,7 +344,7 @@ class RedisContextProvider(BaseContextProvider):
 
         q = (text or "").strip()
         if not q:
-            raise ServiceInvalidRequestError("text_search() requires non-empty text")
+            raise IntegrationInvalidRequestException("text_search() requires non-empty text")
         num_results = max(int(num_results or 10), 1)
 
         combined_filter = self._build_filter_from_dict({
@@ -394,14 +393,12 @@ class RedisContextProvider(BaseContextProvider):
             text_results = await self.redis_index.query(query)
             return cast(list[dict[str, Any]], text_results)
         except Exception as exc:  # pragma: no cover
-            raise ServiceInvalidRequestError(f"Redis text search failed: {exc}") from exc
+            raise IntegrationInvalidRequestException(f"Redis text search failed: {exc}") from exc
 
     def _validate_filters(self) -> None:
         """Validates that at least one filter is provided."""
         if not self.agent_id and not self.user_id and not self.application_id:
-            raise ServiceInitializationError(
-                "At least one of the filters: agent_id, user_id, or application_id is required."
-            )
+            raise ValueError("At least one of the filters: agent_id, user_id, or application_id is required.")
 
     async def search_all(self, page_size: int = 200) -> list[dict[str, Any]]:
         """Returns all documents in the index."""

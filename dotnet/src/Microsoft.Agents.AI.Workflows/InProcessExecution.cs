@@ -49,27 +49,27 @@ public static class InProcessExecution
     public static ValueTask<StreamingRun> StreamAsync<TInput>(Workflow workflow, TInput input, string? runId = null, CancellationToken cancellationToken = default) where TInput : notnull
         => Default.StreamAsync(workflow, input, runId, cancellationToken);
 
-    /// <inheritdoc cref="IWorkflowExecutionEnvironment.StreamAsync(Workflow, CheckpointManager, string?, CancellationToken)"/>
-    public static ValueTask<Checkpointed<StreamingRun>> StreamAsync(Workflow workflow, CheckpointManager checkpointManager, string? runId = null, CancellationToken cancellationToken = default)
-        => Default.StreamAsync(workflow, checkpointManager, runId, cancellationToken);
+    /// <inheritdoc cref="IWorkflowExecutionEnvironment.OpenStreamAsync(Workflow, string?, CancellationToken)"/>
+    public static ValueTask<StreamingRun> OpenStreamAsync(Workflow workflow, CheckpointManager checkpointManager, string? runId = null, CancellationToken cancellationToken = default)
+        => Default.WithCheckpointing(checkpointManager).OpenStreamAsync(workflow, runId, cancellationToken);
 
-    /// <inheritdoc cref="IWorkflowExecutionEnvironment.StreamAsync{TInput}(Workflow, TInput, CheckpointManager, string?, CancellationToken)"/>
-    public static ValueTask<Checkpointed<StreamingRun>> StreamAsync<TInput>(Workflow workflow, TInput input, CheckpointManager checkpointManager, string? runId = null, CancellationToken cancellationToken = default) where TInput : notnull
-        => Default.StreamAsync(workflow, input, checkpointManager, runId, cancellationToken);
+    /// <inheritdoc cref="IWorkflowExecutionEnvironment.StreamAsync{TInput}(Workflow, TInput, string?, CancellationToken)"/>
+    public static ValueTask<StreamingRun> StreamAsync<TInput>(Workflow workflow, TInput input, CheckpointManager checkpointManager, string? runId = null, CancellationToken cancellationToken = default) where TInput : notnull
+        => Default.WithCheckpointing(checkpointManager).StreamAsync(workflow, input, runId, cancellationToken);
 
-    /// <inheritdoc cref="IWorkflowExecutionEnvironment.ResumeStreamAsync(Workflow, CheckpointInfo, CheckpointManager, CancellationToken)"/>
-    public static ValueTask<Checkpointed<StreamingRun>> ResumeStreamAsync(Workflow workflow, CheckpointInfo fromCheckpoint, CheckpointManager checkpointManager, CancellationToken cancellationToken = default)
-        => Default.ResumeStreamAsync(workflow, fromCheckpoint, checkpointManager, cancellationToken);
+    /// <inheritdoc cref="IWorkflowExecutionEnvironment.ResumeStreamAsync(Workflow, CheckpointInfo, CancellationToken)"/>
+    public static ValueTask<StreamingRun> ResumeStreamAsync(Workflow workflow, CheckpointInfo fromCheckpoint, CheckpointManager checkpointManager, CancellationToken cancellationToken = default)
+        => Default.WithCheckpointing(checkpointManager).ResumeStreamAsync(workflow, fromCheckpoint, cancellationToken);
 
     /// <inheritdoc cref="IWorkflowExecutionEnvironment.RunAsync{TInput}(Workflow, TInput, string?, CancellationToken)"/>
     public static ValueTask<Run> RunAsync<TInput>(Workflow workflow, TInput input, string? runId = null, CancellationToken cancellationToken = default) where TInput : notnull
         => Default.RunAsync(workflow, input, runId, cancellationToken);
 
-    /// <inheritdoc cref="IWorkflowExecutionEnvironment.RunAsync{TInput}(Workflow, TInput, CheckpointManager, string?, CancellationToken)"/>
-    public static ValueTask<Checkpointed<Run>> RunAsync<TInput>(Workflow workflow, TInput input, CheckpointManager checkpointManager, string? runId = null, CancellationToken cancellationToken = default) where TInput : notnull
-        => Default.RunAsync(workflow, input, checkpointManager, runId, cancellationToken);
+    /// <inheritdoc cref="IWorkflowExecutionEnvironment.RunAsync{TInput}(Workflow, TInput, string?, CancellationToken)"/>
+    public static ValueTask<Run> RunAsync<TInput>(Workflow workflow, TInput input, CheckpointManager checkpointManager, string? runId = null, CancellationToken cancellationToken = default) where TInput : notnull
+        => Default.WithCheckpointing(checkpointManager).RunAsync(workflow, input, runId, cancellationToken);
 
-    /// <inheritdoc cref="IWorkflowExecutionEnvironment.ResumeAsync(Workflow, CheckpointInfo, CheckpointManager, CancellationToken)"/>
-    public static ValueTask<Checkpointed<Run>> ResumeAsync(Workflow workflow, CheckpointInfo fromCheckpoint, CheckpointManager checkpointManager, CancellationToken cancellationToken = default)
-        => Default.ResumeAsync(workflow, fromCheckpoint, checkpointManager, cancellationToken);
+    /// <inheritdoc cref="IWorkflowExecutionEnvironment.ResumeAsync(Workflow, CheckpointInfo, CancellationToken)"/>
+    public static ValueTask<Run> ResumeAsync(Workflow workflow, CheckpointInfo fromCheckpoint, CheckpointManager checkpointManager, CancellationToken cancellationToken = default)
+        => Default.WithCheckpointing(checkpointManager).ResumeAsync(workflow, fromCheckpoint, cancellationToken);
 }

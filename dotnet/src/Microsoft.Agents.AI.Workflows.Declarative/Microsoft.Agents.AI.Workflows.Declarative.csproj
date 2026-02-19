@@ -1,14 +1,14 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <VersionSuffix>preview</VersionSuffix>
+    <IsReleaseCandidate>true</IsReleaseCandidate>
     <NoWarn>$(NoWarn);MEAI001;OPENAI001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
-    <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>    
+    <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

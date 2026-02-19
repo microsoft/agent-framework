@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <VersionSuffix>preview</VersionSuffix>
+    <IsReleaseCandidate>true</IsReleaseCandidate>
     <ImplicitUsings>enable</ImplicitUsings>
     <InjectSharedThrow>true</InjectSharedThrow>
   </PropertyGroup>

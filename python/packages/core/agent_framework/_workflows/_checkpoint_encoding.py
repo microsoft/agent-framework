@@ -7,6 +7,8 @@ import logging
 import pickle  # nosec  # noqa: S403
 from typing import Any
 
+from ..exceptions import WorkflowCheckpointException
+
 """Checkpoint encoding using JSON structure with pickle+base64 for arbitrary data.
 
 This hybrid approach provides:
@@ -27,10 +29,6 @@ _TYPE_MARKER = "__type__"
 
 # Types that are natively JSON-serializable and don't need pickling
 _JSON_NATIVE_TYPES = (str, int, float, bool, type(None))
-
-
-class CheckpointDecodingError(Exception):
-    """Raised when checkpoint decoding fails due to type mismatch or corruption."""
 
 
 def encode_checkpoint_value(value: Any) -> Any:
@@ -68,7 +66,7 @@ def decode_checkpoint_value(value: Any) -> Any:
         The original Python value.
 
     Raises:
-        CheckpointDecodingError: If the unpickled object's type doesn't match
+        WorkflowCheckpointException: If the unpickled object's type doesn't match
             the recorded type, indicating corruption, or if the base64/pickle
             data is malformed.
     """
@@ -133,11 +131,11 @@ def _verify_type(obj: Any, expected_type_key: str) -> None:
         expected_type_key: The recorded type key (module:qualname format).
 
     Raises:
-        CheckpointDecodingError: If the types don't match.
+        WorkflowCheckpointException: If the types don't match.
     """
     actual_type_key = _type_to_key(type(obj))  # type: ignore
     if actual_type_key != expected_type_key:
-        raise CheckpointDecodingError(
+        raise WorkflowCheckpointException(
             f"Type mismatch during checkpoint decoding: "
             f"expected '{expected_type_key}', got '{actual_type_key}'. "
             f"The checkpoint may be corrupted or tampered with."
@@ -154,14 +152,14 @@ def _base64_to_unpickle(encoded: str) -> Any:
     """Decode base64 string and unpickle.
 
     Raises:
-        CheckpointDecodingError: If the base64 data is corrupted or the pickle
+        WorkflowCheckpointException: If the base64 data is corrupted or the pickle
             format is incompatible.
     """
     try:
         pickled = base64.b64decode(encoded.encode("ascii"))
         return pickle.loads(pickled)  # nosec  # noqa: S301
     except Exception as exc:
-        raise CheckpointDecodingError(f"Failed to decode pickled checkpoint data: {exc}") from exc
+        raise WorkflowCheckpointException(f"Failed to decode pickled checkpoint data: {exc}") from exc
 
 
 def _type_to_key(t: type) -> str:

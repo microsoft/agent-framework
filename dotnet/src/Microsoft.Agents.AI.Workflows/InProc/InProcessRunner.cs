@@ -54,7 +54,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         this.StartExecutorId = workflow.StartExecutorId;
 
         this.Workflow = Throw.IfNull(workflow);
-        this.RunContext = new InProcessRunnerContext(workflow, this.RunId, withCheckpointing: checkpointManager != null, this.OutgoingEvents, this.StepTracer, existingOwnerSignoff, subworkflow, enableConcurrentRuns);
+        this.RunContext = new InProcessRunnerContext(workflow, this.RunId, checkpointingEnabled: checkpointManager != null, this.OutgoingEvents, this.StepTracer, existingOwnerSignoff, subworkflow, enableConcurrentRuns);
         this.CheckpointManager = checkpointManager;
 
         this._knownValidInputTypes = knownValidInputTypes != null
@@ -160,6 +160,8 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
     bool ISuperStepRunner.HasUnservicedRequests => this.RunContext.HasUnservicedRequests;
     bool ISuperStepRunner.HasUnprocessedMessages => this.RunContext.NextStepHasActions;
+
+    public bool IsCheckpointingEnabled => this.RunContext.IsCheckpointingEnabled;
 
     public IReadOnlyList<CheckpointInfo> Checkpoints => this._checkpoints;
 
@@ -325,6 +327,8 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
             throw new InvalidDataException("The specified checkpoint is not compatible with the workflow associated with this runner.");
         }
 
+        ValueTask restoreCheckpointIndexTask = UpdateCheckpointIndexAsync();
+
         await this.RunContext.StateManager.ImportStateAsync(checkpoint).ConfigureAwait(false);
         await this.RunContext.ImportStateAsync(checkpoint).ConfigureAwait(false);
 
@@ -332,10 +336,18 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         ValueTask republishRequestsTask = this.RunContext.RepublishUnservicedRequestsAsync(cancellationToken);
 
         await this.EdgeMap.ImportStateAsync(checkpoint).ConfigureAwait(false);
-        await Task.WhenAll(executorNotifyTask, republishRequestsTask.AsTask()).ConfigureAwait(false);
+        await Task.WhenAll(executorNotifyTask,
+                           republishRequestsTask.AsTask(),
+                           restoreCheckpointIndexTask.AsTask()).ConfigureAwait(false);
 
         this._lastCheckpointInfo = checkpointInfo;
         this.StepTracer.Reload(this.StepTracer.StepNumber);
+
+        async ValueTask UpdateCheckpointIndexAsync()
+        {
+            this._checkpoints.Clear();
+            this._checkpoints.AddRange(await this.CheckpointManager!.RetrieveIndexAsync(this.RunId).ConfigureAwait(false));
+        }
     }
 
     private bool CheckWorkflowMatch(Checkpoint checkpoint) =>

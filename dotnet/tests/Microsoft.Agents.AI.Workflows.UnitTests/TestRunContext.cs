@@ -144,7 +144,7 @@ public class TestRunContext : IRunnerContext
     public Dictionary<string, Executor> Executors { get; set; } = [];
     public string StartingExecutorId { get; set; } = string.Empty;
 
-    public bool WithCheckpointing => false;
+    public bool IsCheckpointingEnabled => false;
     public bool ConcurrentRunsEnabled => false;
 
     WorkflowTelemetryContext IRunnerContext.TelemetryContext => WorkflowTelemetryContext.Disabled;

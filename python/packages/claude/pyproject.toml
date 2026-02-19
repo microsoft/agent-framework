@@ -4,7 +4,7 @@ description = "Claude Agent SDK integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260212"
+version = "1.0.0b260219"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0b260212",
+    "agent-framework-core>=1.0.0rc1",
     "claude-agent-sdk>=0.1.25",
 ]
 

@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Workflows.Checkpointing;
@@ -27,4 +28,7 @@ internal sealed class CheckpointManagerImpl<TStoreObject> : ICheckpointManager
         TStoreObject result = await this._store.RetrieveCheckpointAsync(runId, checkpointInfo).ConfigureAwait(false);
         return this._marshaller.Marshal<Checkpoint>(result);
     }
+
+    public ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string runId, CheckpointInfo? withParent = null)
+        => this._store.RetrieveIndexAsync(runId, withParent);
 }

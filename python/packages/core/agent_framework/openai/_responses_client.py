@@ -61,9 +61,8 @@ from .._types import (
     validate_tool_mode,
 )
 from ..exceptions import (
-    ServiceInitializationError,
-    ServiceInvalidRequestError,
-    ServiceResponseException,
+    ChatClientException,
+    ChatClientInvalidRequestException,
 )
 from ..observability import ChatTelemetryLayer
 from ._exceptions import OpenAIContentFilterException
@@ -264,7 +263,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 f"{type(self)} service encountered a content error: {ex}",
                 inner_exception=ex,
             ) from ex
-        raise ServiceResponseException(
+        raise ChatClientException(
             f"{type(self)} service failed to complete the prompt: {ex}",
             inner_exception=ex,
         ) from ex
@@ -352,7 +351,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
     ) -> tuple[type[BaseModel] | None, dict[str, Any] | None]:
         """Normalize response_format into Responses text configuration and parse target."""
         if text_config is not None and not isinstance(text_config, MutableMapping):
-            raise ServiceInvalidRequestError("text must be a mapping when provided.")
+            raise ChatClientInvalidRequestException("text must be a mapping when provided.")
         text_config = cast(dict[str, Any], text_config) if isinstance(text_config, MutableMapping) else None
 
         if response_format is None:
@@ -360,7 +359,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
         if isinstance(response_format, type) and issubclass(response_format, BaseModel):
             if text_config and "format" in text_config:
-                raise ServiceInvalidRequestError("response_format cannot be combined with explicit text.format.")
+                raise ChatClientInvalidRequestException("response_format cannot be combined with explicit text.format.")
             return response_format, text_config
 
         if isinstance(response_format, Mapping):
@@ -368,11 +367,11 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             if text_config is None:
                 text_config = {}
             elif "format" in text_config and text_config["format"] != format_config:
-                raise ServiceInvalidRequestError("Conflicting response_format definitions detected.")
+                raise ChatClientInvalidRequestException("Conflicting response_format definitions detected.")
             text_config["format"] = format_config
             return None, text_config
 
-        raise ServiceInvalidRequestError("response_format must be a Pydantic model or mapping.")
+        raise ChatClientInvalidRequestException("response_format must be a Pydantic model or mapping.")
 
     def _convert_response_format(self, response_format: Mapping[str, Any]) -> dict[str, Any]:
         """Convert Chat style response_format into Responses text format config."""
@@ -383,11 +382,11 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         if format_type == "json_schema":
             schema_section = response_format.get("json_schema", response_format)
             if not isinstance(schema_section, Mapping):
-                raise ServiceInvalidRequestError("json_schema response_format must be a mapping.")
+                raise ChatClientInvalidRequestException("json_schema response_format must be a mapping.")
             schema_section_typed = cast("Mapping[str, Any]", schema_section)
             schema: Any = schema_section_typed.get("schema")
             if schema is None:
-                raise ServiceInvalidRequestError("json_schema response_format requires a schema.")
+                raise ChatClientInvalidRequestException("json_schema response_format requires a schema.")
             name: str = str(
                 schema_section_typed.get("name")
                 or schema_section_typed.get("title")
@@ -408,7 +407,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         if format_type in {"json_object", "text"}:
             return {"type": format_type}
 
-        raise ServiceInvalidRequestError("Unsupported response_format provided for Responses client.")
+        raise ChatClientInvalidRequestException("Unsupported response_format provided for Responses client.")
 
     def _get_conversation_id(
         self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool | None
@@ -787,10 +786,8 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         # Continuation turn: instructions already exist in conversation context, skip prepending
         request_input = self._prepare_messages_for_openai(messages)
         if not request_input:
-            raise ServiceInvalidRequestError("Messages are required for chat completions")
-
+            raise ChatClientInvalidRequestException("Messages are required for chat completions")
         conversation_id = self._get_current_conversation_id(options, **kwargs)
-
         run_options["input"] = request_input
 
         # model id
@@ -1876,11 +1873,11 @@ class OpenAIResponsesClient(  # type: ignore[misc]
         )
 
         if not async_client and not openai_settings["api_key"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
         if not openai_settings["responses_model_id"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_RESPONSES_MODEL_ID' environment variable."
             )
