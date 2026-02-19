@@ -111,6 +111,20 @@ var contextProviderAgent = originalAgent
 var contextResponse = await contextProviderAgent.RunAsync("Is it almost time for lunch?");
 Console.WriteLine($"Context-enriched response: {contextResponse}");
 
+// AIContextProvider at the chat client level. Unlike the agent-level MessageAIContextProvider,
+// this operates within the IChatClient pipeline and can also enrich tools and instructions.
+// It must be used within the context of a running AIAgent (uses AIAgent.CurrentRunContext).
+Console.WriteLine("\n\n=== Example 6: AIContextProvider on chat client pipeline ===");
+
+var chatClientProviderAgent = azureOpenAIClient.AsIChatClient()
+    .AsBuilder()
+    .Use(new DateTimeContextProvider())
+    .BuildAIAgent(
+        instructions: "You are an AI assistant that helps people find information.");
+
+var chatClientContextResponse = await chatClientProviderAgent.RunAsync("Is it almost time for lunch?");
+Console.WriteLine($"Chat client context-enriched response: {chatClientContextResponse}");
+
 // Function invocation middleware that logs before and after function calls.
 async ValueTask<object?> FunctionCallMiddleware(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
 {
