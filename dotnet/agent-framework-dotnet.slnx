@@ -7,21 +7,21 @@
   <Folder Name="/Samples/">
     <File Path="samples/README.md" />
   </Folder>
-  <Folder Name="/Samples/A2AClientServer/">
-    <File Path="samples/A2AClientServer/README.md" />
-    <Project Path="samples/A2AClientServer/A2AClient/A2AClient.csproj" />
-    <Project Path="samples/A2AClientServer/A2AServer/A2AServer.csproj" />
+  <Folder Name="/Samples/05-end-to-end/A2AClientServer/">
+    <File Path="samples/05-end-to-end/A2AClientServer/README.md" />
+    <Project Path="samples/05-end-to-end/A2AClientServer/A2AClient/A2AClient.csproj" />
+    <Project Path="samples/05-end-to-end/A2AClientServer/A2AServer/A2AServer.csproj" />
   </Folder>
-  <Folder Name="/Samples/AgentWebChat/">
-    <Project Path="samples/AgentWebChat/AgentWebChat.AgentHost/AgentWebChat.AgentHost.csproj" />
-    <Project Path="samples/AgentWebChat/AgentWebChat.AppHost/AgentWebChat.AppHost.csproj" />
-    <Project Path="samples/AgentWebChat/AgentWebChat.ServiceDefaults/AgentWebChat.ServiceDefaults.csproj" />
-    <Project Path="samples/AgentWebChat/AgentWebChat.Web/AgentWebChat.Web.csproj" />
+  <Folder Name="/Samples/05-end-to-end/AgentWebChat/">
+    <Project Path="samples/05-end-to-end/AgentWebChat/AgentWebChat.AgentHost/AgentWebChat.AgentHost.csproj" />
+    <Project Path="samples/05-end-to-end/AgentWebChat/AgentWebChat.AppHost/AgentWebChat.AppHost.csproj" />
+    <Project Path="samples/05-end-to-end/AgentWebChat/AgentWebChat.ServiceDefaults/AgentWebChat.ServiceDefaults.csproj" />
+    <Project Path="samples/05-end-to-end/AgentWebChat/AgentWebChat.Web/AgentWebChat.Web.csproj" />
   </Folder>
-  <Folder Name="/Samples/AGUIClientServer/">
-    <Project Path="samples/AGUIClientServer/AGUIClient/AGUIClient.csproj" />
-    <Project Path="samples/AGUIClientServer/AGUIDojoServer/AGUIDojoServer.csproj" />
-    <Project Path="samples/AGUIClientServer/AGUIServer/AGUIServer.csproj" />
+  <Folder Name="/Samples/05-end-to-end/AGUIClientServer/">
+    <Project Path="samples/05-end-to-end/AGUIClientServer/AGUIClient/AGUIClient.csproj" />
+    <Project Path="samples/05-end-to-end/AGUIClientServer/AGUIDojoServer/AGUIDojoServer.csproj" />
+    <Project Path="samples/05-end-to-end/AGUIClientServer/AGUIServer/AGUIServer.csproj" />
   </Folder>
   <Folder Name="/Samples/Durable/" />
   <Folder Name="/Samples/Durable/Agents/" />

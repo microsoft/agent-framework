@@ -18,7 +18,7 @@ To run the sample, follow these steps:
 The agent urls are provided as a ` ` delimited list of strings
 
 ```powershell
-cd dotnet/samples/A2AClientServer/A2AClient
+cd dotnet/samples/05-end-to-end/A2AClientServer/A2AClient
 
 $env:OPENAI_MODEL="gpt-4o-mini"
 $env:OPENAI_API_KEY="<Your OPENAI api key>"
