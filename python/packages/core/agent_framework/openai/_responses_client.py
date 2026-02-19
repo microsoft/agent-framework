@@ -1664,8 +1664,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                 added_reasoning = True
                         if not added_reasoning:
                             # Reasoning item with no visible text (e.g. encrypted reasoning).
-                            # Always emit an empty marker so co-occurrence detection in
-                            # _prepare_handoff_messages can identify reasoning-model responses.
+                            # Always emit an empty marker so co-occurrence detection can occur.
                             additional_properties_empty: dict[str, Any] = {}
                             if encrypted := getattr(event_item, "encrypted_content", None):
                                 additional_properties_empty["encrypted_content"] = encrypted
