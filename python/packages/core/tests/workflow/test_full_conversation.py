@@ -348,7 +348,7 @@ class _FullHistoryReplayCoordinator(Executor):
         # Simulate a prior run: the target executor has a stored previous_response_id.
         self._target_exec._session.service_session_id = "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
         await ctx.send_message(
-            AgentExecutorRequest(messages=full_conv, should_respond=True),
+            AgentExecutorRequest(messages=full_conv, should_respond=True, reset_service_session=True),
             target_id=self._target_exec.id,
         )
 

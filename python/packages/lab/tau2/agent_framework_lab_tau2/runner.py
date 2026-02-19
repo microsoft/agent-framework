@@ -267,7 +267,7 @@ class TaskRunner:
         # Send flipped messages to the opposite agent
         # Critical: Target ID must be specified to prevent broadcasting to both agents
         await ctx.send_message(
-            AgentExecutorRequest(messages=flipped, should_respond=True),
+            AgentExecutorRequest(messages=flipped, should_respond=True, reset_service_session=True),
             target_id=USER_SIMULATOR_ID if is_from_agent else ASSISTANT_AGENT_ID,
         )
 
