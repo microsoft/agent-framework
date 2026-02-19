@@ -2,13 +2,15 @@
 
 import argparse
 import asyncio
+import logging
 from contextlib import suppress
 from random import randint
 from typing import TYPE_CHECKING, Annotated, Literal
 
-from agent_framework import setup_logging, tool
+from agent_framework import Message, tool
 from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 from opentelemetry import trace
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
@@ -27,11 +29,16 @@ For standard OTLP setup, it's recommended to use environment variables (see conf
 Use this approach when you need custom exporter configuration beyond what environment variables provide.
 """
 
+# Load environment variables from .env file
+load_dotenv()
+
 # Define the scenarios that can be run to show the telemetry data collected by the SDK
 SCENARIOS = ["client", "client_stream", "tool", "all"]
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity.
+# Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -71,12 +78,14 @@ async def run_chat_client(client: "SupportsChatGetResponse", stream: bool = Fals
         print(f"User: {message}")
         if stream:
             print("Assistant: ", end="")
-            async for chunk in client.get_response(message, stream=True, tools=get_weather):
-                if str(chunk):
-                    print(str(chunk), end="")
+            async for chunk in client.get_response(
+                [Message(role="user", text=message)], stream=True, tools=get_weather
+            ):
+                if chunk.text:
+                    print(chunk.text, end="")
             print("")
         else:
-            response = await client.get_response(message, tools=get_weather)
+            response = await client.get_response([Message(role="user", text=message)], tools=get_weather)
             print(f"Assistant: {response}")
 
 
@@ -92,8 +101,7 @@ async def run_tool() -> None:
     """
     with get_tracer().start_as_current_span("Scenario: AI Function", kind=trace.SpanKind.CLIENT):
         print("Running scenario: AI Function")
-        func = tool(get_weather)
-        weather = await func.invoke(location="Amsterdam")
+        weather = await get_weather.invoke(location="Amsterdam")
         print(f"Weather in Amsterdam:\n{weather}")
 
 
@@ -101,7 +109,10 @@ async def main(scenario: Literal["client", "client_stream", "tool", "all"] = "al
     """Run the selected scenario(s)."""
 
     # Setup the logging with the more complete format
-    setup_logging()
+    logging.basicConfig(
+        format="[%(asctime)s - %(pathname)s:%(lineno)d - %(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
     # Create custom OTLP exporters with specific configuration
     # Note: You need to install opentelemetry-exporter-otlp-proto-grpc or -http separately

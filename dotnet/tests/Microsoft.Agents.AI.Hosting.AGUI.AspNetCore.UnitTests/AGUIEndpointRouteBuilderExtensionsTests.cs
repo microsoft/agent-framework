@@ -436,7 +436,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         {
             if (session is not TestAgentSession testSession)
             {
-                throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+                throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(TestAgentSession)}' can be serialized by this agent.");
             }
 
             return new(JsonSerializer.SerializeToElement(testSession, jsonSerializerOptions));
@@ -535,7 +535,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         {
             if (session is not TestAgentSession testSession)
             {
-                throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+                throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(TestAgentSession)}' can be serialized by this agent.");
             }
 
             return new(JsonSerializer.SerializeToElement(testSession, jsonSerializerOptions));

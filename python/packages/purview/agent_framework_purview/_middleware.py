@@ -1,11 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
 from collections.abc import Awaitable, Callable
 
 from agent_framework import AgentContext, AgentMiddleware, ChatContext, ChatMiddleware, MiddlewareTermination
-from agent_framework._logging import get_logger
-from azure.core.credentials import TokenCredential
-from azure.core.credentials_async import AsyncTokenCredential
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
 
 from ._cache import CacheProvider
 from ._client import PurviewClient
@@ -14,13 +13,13 @@ from ._models import Activity
 from ._processor import ScopedContentProcessor
 from ._settings import PurviewSettings
 
-logger = get_logger("agent_framework.purview")
+logger = logging.getLogger("agent_framework.purview")
 
 
 class PurviewPolicyMiddleware(AgentMiddleware):
     """Agent middleware that enforces Purview policies on prompt and response.
 
-    Accepts either a synchronous TokenCredential or an AsyncTokenCredential.
+    Accepts a TokenCredential, AsyncTokenCredential, or callable token provider.
 
     Usage:
 
@@ -28,14 +27,14 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
         from agent_framework import Agent
 
-        credential = ...  # TokenCredential or AsyncTokenCredential
+        credential = ...  # TokenCredential, AsyncTokenCredential, or callable
         settings = PurviewSettings(app_name="My App")
         agent = Agent(client=client, instructions="...", middleware=[PurviewPolicyMiddleware(credential, settings)])
     """
 
     def __init__(
         self,
-        credential: TokenCredential | AsyncTokenCredential,
+        credential: AzureCredentialTypes | AzureTokenProvider,
         settings: PurviewSettings,
         cache_provider: CacheProvider | None = None,
     ) -> None:
@@ -153,14 +152,14 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
         from agent_framework.microsoft import PurviewChatPolicyMiddleware, PurviewSettings
         from agent_framework import ChatClient
 
-        credential = ...  # TokenCredential or AsyncTokenCredential
+        credential = ...  # TokenCredential, AsyncTokenCredential, or callable
         settings = PurviewSettings(app_name="My App")
         client = ChatClient(..., middleware=[PurviewChatPolicyMiddleware(credential, settings)])
     """
 
     def __init__(
         self,
-        credential: TokenCredential | AsyncTokenCredential,
+        credential: AzureCredentialTypes | AzureTokenProvider,
         settings: PurviewSettings,
         cache_provider: CacheProvider | None = None,
     ) -> None:

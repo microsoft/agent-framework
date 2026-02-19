@@ -53,6 +53,7 @@ async def main() -> None:
     # Create Azure AI Search context provider with semantic mode (recommended, fast)
     print("Using SEMANTIC mode (hybrid search + semantic ranking, fast)\n")
     search_provider = AzureAISearchContextProvider(
+        source_id="search_provider",
         endpoint=search_endpoint,
         index_name=index_name,
         api_key=search_key,  # Use api_key for API key auth, or credential for managed identity

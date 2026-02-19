@@ -43,6 +43,12 @@ async def test_agent_run(agent: SupportsAgentRun) -> None:
     assert response.messages[0].text == "Response"
 
 
+async def test_agent_run_with_content(agent: SupportsAgentRun) -> None:
+    response = await agent.run(Content.from_text("test"))
+    assert response.messages[0].role == "assistant"
+    assert response.messages[0].text == "Response"
+
+
 async def test_agent_run_streaming(agent: SupportsAgentRun) -> None:
     async def collect_updates(updates: AsyncIterable[AgentResponseUpdate]) -> list[AgentResponseUpdate]:
         return [u async for u in updates]
@@ -101,10 +107,10 @@ async def test_chat_client_agent_create_session(client: SupportsChatGetResponse)
 async def test_chat_client_agent_prepare_session_and_messages(client: SupportsChatGetResponse) -> None:
     from agent_framework._sessions import InMemoryHistoryProvider
 
-    agent = Agent(client=client, context_providers=[InMemoryHistoryProvider("memory")])
+    agent = Agent(client=client, context_providers=[InMemoryHistoryProvider()])
     message = Message(role="user", text="Hello")
     session = AgentSession()
-    session.state["memory"] = {"messages": [message]}
+    session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID] = {"messages": [message]}
 
     session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
         session=session,
@@ -260,7 +266,48 @@ async def test_chat_client_agent_update_session_id_streaming_does_not_use_respon
     assert session.service_session_id is None
 
 
+async def test_chat_client_agent_streaming_session_id_set_without_get_final_response(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Test that session.service_session_id is set during streaming iteration.
+
+    This verifies the eager propagation of conversation_id via transform hook,
+    which is needed for multi-turn flows (e.g. hosted MCP approval) where the
+    user iterates the stream and then makes a follow-up call without calling
+    get_final_response().
+    """
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_text("part 1")],
+                role="assistant",
+                response_id="resp_123",
+                conversation_id="resp_123",
+            ),
+            ChatResponseUpdate(
+                contents=[Content.from_text(" part 2")],
+                role="assistant",
+                response_id="resp_123",
+                conversation_id="resp_123",
+                finish_reason="stop",
+            ),
+        ]
+    ]
+
+    agent = Agent(client=chat_client_base)
+    session = agent.create_session()
+    assert session.service_session_id is None
+
+    # Only iterate — do NOT call get_final_response()
+    async for _ in agent.run("Hello", session=session, stream=True):
+        pass
+
+    assert session.service_session_id == "resp_123"
+
+
 async def test_chat_client_agent_update_session_messages(client: SupportsChatGetResponse) -> None:
+    from agent_framework._sessions import InMemoryHistoryProvider
+
     agent = Agent(client=client)
     session = agent.create_session()
 
@@ -269,7 +316,7 @@ async def test_chat_client_agent_update_session_messages(client: SupportsChatGet
 
     assert session.service_session_id is None
 
-    chat_messages: list[Message] = session.state.get("memory", {}).get("messages", [])
+    chat_messages: list[Message] = session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {}).get("messages", [])
 
     assert chat_messages is not None
     assert len(chat_messages) == 2

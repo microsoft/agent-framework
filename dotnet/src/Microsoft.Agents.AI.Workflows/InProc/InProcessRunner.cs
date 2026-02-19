@@ -54,7 +54,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         this.StartExecutorId = workflow.StartExecutorId;
 
         this.Workflow = Throw.IfNull(workflow);
-        this.RunContext = new InProcessRunnerContext(workflow, this.RunId, withCheckpointing: checkpointManager != null, this.OutgoingEvents, this.StepTracer, existingOwnerSignoff, subworkflow, enableConcurrentRuns);
+        this.RunContext = new InProcessRunnerContext(workflow, this.RunId, checkpointingEnabled: checkpointManager != null, this.OutgoingEvents, this.StepTracer, existingOwnerSignoff, subworkflow, enableConcurrentRuns);
         this.CheckpointManager = checkpointManager;
 
         this._knownValidInputTypes = knownValidInputTypes != null
@@ -161,6 +161,8 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
     bool ISuperStepRunner.HasUnservicedRequests => this.RunContext.HasUnservicedRequests;
     bool ISuperStepRunner.HasUnprocessedMessages => this.RunContext.NextStepHasActions;
 
+    public bool IsCheckpointingEnabled => this.RunContext.IsCheckpointingEnabled;
+
     public IReadOnlyList<CheckpointInfo> Checkpoints => this._checkpoints;
 
     async ValueTask<bool> ISuperStepRunner.RunSuperStepAsync(CancellationToken cancellationToken)
@@ -201,13 +203,42 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         this.StepTracer.TraceActivated(receiverId);
         while (envelopes.TryDequeue(out var envelope))
         {
-            await executor.ExecuteAsync(
-                envelope.Message,
-                envelope.MessageType,
+            (object message, TypeId messageType) = await TranslateMessageAsync(envelope).ConfigureAwait(false);
+
+            await executor.ExecuteCoreAsync(
+                message,
+                messageType,
                 this.RunContext.BindWorkflowContext(receiverId, envelope.TraceContext),
                 this.TelemetryContext,
                 cancellationToken
             ).ConfigureAwait(false);
+        }
+
+        async ValueTask<(object, TypeId)> TranslateMessageAsync(MessageEnvelope envelope)
+        {
+            object? value = envelope.Message;
+            TypeId messageType = envelope.MessageType;
+
+            if (!envelope.IsExternal)
+            {
+                Executor source = await this.RunContext.EnsureExecutorAsync(envelope.SourceId, this.StepTracer, cancellationToken).ConfigureAwait(false);
+                Type? actualType = source.Protocol.SendTypeTranslator.MapTypeId(envelope.MessageType);
+                if (actualType == null)
+                {
+                    // In principle, this should never happen, since we always use the SendTypeTranslator to generate the outgoing TypeId in the first place.
+                    throw new InvalidOperationException($"Cannot translate message type ID '{envelope.MessageType}' from executor '{source.Id}'.");
+                }
+
+                messageType = new(actualType);
+
+                if (value is PortableValue portableValue &&
+                    !portableValue.IsType(actualType, out value))
+                {
+                    throw new InvalidOperationException($"Cannot interpret incoming message of type '{portableValue.TypeId}' as type '{actualType.FullName}'.");
+                }
+            }
+
+            return (value, messageType);
         }
     }
 
@@ -245,6 +276,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
     }
 
     private WorkflowInfo? _workflowInfoCache;
+    private CheckpointInfo? _lastCheckpointInfo;
     private readonly List<CheckpointInfo> _checkpoints = [];
     internal async ValueTask CheckpointAsync(CancellationToken cancellationToken = default)
     {
@@ -270,10 +302,10 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         RunnerStateData runnerData = await this.RunContext.ExportStateAsync().ConfigureAwait(false);
         Dictionary<ScopeKey, PortableValue> stateData = await this.RunContext.StateManager.ExportStateAsync().ConfigureAwait(false);
 
-        Checkpoint checkpoint = new(this.StepTracer.StepNumber, this._workflowInfoCache, runnerData, stateData, edgeData);
-        CheckpointInfo checkpointInfo = await this.CheckpointManager.CommitCheckpointAsync(this.RunId, checkpoint).ConfigureAwait(false);
-        this.StepTracer.TraceCheckpointCreated(checkpointInfo);
-        this._checkpoints.Add(checkpointInfo);
+        Checkpoint checkpoint = new(this.StepTracer.StepNumber, this._workflowInfoCache, runnerData, stateData, edgeData, this._lastCheckpointInfo);
+        this._lastCheckpointInfo = await this.CheckpointManager.CommitCheckpointAsync(this.RunId, checkpoint).ConfigureAwait(false);
+        this.StepTracer.TraceCheckpointCreated(this._lastCheckpointInfo);
+        this._checkpoints.Add(this._lastCheckpointInfo);
     }
 
     public async ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellationToken = default)
@@ -295,6 +327,8 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
             throw new InvalidDataException("The specified checkpoint is not compatible with the workflow associated with this runner.");
         }
 
+        ValueTask restoreCheckpointIndexTask = UpdateCheckpointIndexAsync();
+
         await this.RunContext.StateManager.ImportStateAsync(checkpoint).ConfigureAwait(false);
         await this.RunContext.ImportStateAsync(checkpoint).ConfigureAwait(false);
 
@@ -302,9 +336,18 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         ValueTask republishRequestsTask = this.RunContext.RepublishUnservicedRequestsAsync(cancellationToken);
 
         await this.EdgeMap.ImportStateAsync(checkpoint).ConfigureAwait(false);
-        await Task.WhenAll(executorNotifyTask, republishRequestsTask.AsTask()).ConfigureAwait(false);
+        await Task.WhenAll(executorNotifyTask,
+                           republishRequestsTask.AsTask(),
+                           restoreCheckpointIndexTask.AsTask()).ConfigureAwait(false);
 
+        this._lastCheckpointInfo = checkpointInfo;
         this.StepTracer.Reload(this.StepTracer.StepNumber);
+
+        async ValueTask UpdateCheckpointIndexAsync()
+        {
+            this._checkpoints.Clear();
+            this._checkpoints.AddRange(await this.CheckpointManager!.RetrieveIndexAsync(this.RunId).ConfigureAwait(false));
+        }
     }
 
     private bool CheckWorkflowMatch(Checkpoint checkpoint) =>

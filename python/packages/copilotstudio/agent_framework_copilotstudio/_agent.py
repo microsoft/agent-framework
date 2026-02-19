@@ -18,6 +18,7 @@ from agent_framework import (
     normalize_messages,
 )
 from agent_framework._settings import load_settings
+from agent_framework._types import AgentRunInputs
 from agent_framework.exceptions import ServiceException, ServiceInitializationError
 from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
 
@@ -27,9 +28,9 @@ from ._acquire_token import acquire_token
 class CopilotStudioSettings(TypedDict, total=False):
     """Copilot Studio model settings.
 
-    The settings are first loaded from environment variables with the prefix 'COPILOTSTUDIOAGENT__'.
-    If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'COPILOTSTUDIOAGENT__'.
 
     Keys:
         environmentid: Environment ID of environment with the Copilot Studio App.
@@ -187,7 +188,7 @@ class CopilotStudioAgent(BaseAgent):
     @overload
     def run(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = False,
         session: AgentSession | None = None,
@@ -197,7 +198,7 @@ class CopilotStudioAgent(BaseAgent):
     @overload
     def run(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -206,7 +207,7 @@ class CopilotStudioAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -236,7 +237,7 @@ class CopilotStudioAgent(BaseAgent):
 
     async def _run_impl(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
         **kwargs: Any,
@@ -261,7 +262,7 @@ class CopilotStudioAgent(BaseAgent):
 
     def _run_stream_impl(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
         **kwargs: Any,

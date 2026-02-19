@@ -9,16 +9,16 @@ public partial class WorkflowBuilderSmokeTests
 {
     private sealed class NoOpExecutor(string id) : Executor(id)
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder.AddHandler<object>(
-                (msg, ctx) => ctx.SendMessageAsync(msg));
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+            => protocolBuilder.ConfigureRoutes(routeBuilder =>
+                                               routeBuilder.AddHandler<object>((msg, ctx) => ctx.SendMessageAsync(msg)));
     }
 
     private sealed class SomeOtherNoOpExecutor(string id) : Executor(id)
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder.AddHandler<object>(
-                (msg, ctx) => ctx.SendMessageAsync(msg));
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+            => protocolBuilder.ConfigureRoutes(routeBuilder =>
+                                               routeBuilder.AddHandler<object>((msg, ctx) => ctx.SendMessageAsync(msg)));
     }
 
     [Fact]

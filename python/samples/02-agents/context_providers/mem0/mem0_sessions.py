@@ -7,12 +7,19 @@ from agent_framework import tool
 from agent_framework.azure import AzureAIAgentClient
 from agent_framework.mem0 import Mem0ContextProvider
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_user_preferences(user_id: str) -> str:
     """Mock function to get user preferences."""
+
     preferences = {
         "user123": "Prefers concise responses and technical details",
         "user456": "Likes detailed explanations with examples",
@@ -34,11 +41,14 @@ async def example_global_thread_scope() -> None:
             name="GlobalMemoryAssistant",
             instructions="You are an assistant that remembers user preferences across conversations.",
             tools=get_user_preferences,
-            context_providers=[Mem0ContextProvider(
-                user_id=user_id,
-                thread_id=global_thread_id,
-                scope_to_per_operation_thread_id=False,  # Share memories across all sessions
-            )],
+            context_providers=[
+                Mem0ContextProvider(
+                    source_id="mem0",
+                    user_id=user_id,
+                    thread_id=global_thread_id,
+                    scope_to_per_operation_thread_id=False,  # Share memories across all sessions
+                )
+            ],
         ) as global_agent,
     ):
         # Store some preferences in the global scope
@@ -72,10 +82,13 @@ async def example_per_operation_thread_scope() -> None:
             name="ScopedMemoryAssistant",
             instructions="You are an assistant with thread-scoped memory.",
             tools=get_user_preferences,
-            context_providers=[Mem0ContextProvider(
-                user_id=user_id,
-                scope_to_per_operation_thread_id=True,  # Isolate memories per session
-            )],
+            context_providers=[
+                Mem0ContextProvider(
+                    source_id="mem0",
+                    user_id=user_id,
+                    scope_to_per_operation_thread_id=True,  # Isolate memories per session
+                )
+            ],
         ) as scoped_agent,
     ):
         # Create a specific session for this scoped provider
@@ -119,16 +132,22 @@ async def example_multiple_agents() -> None:
         AzureAIAgentClient(credential=credential).as_agent(
             name="PersonalAssistant",
             instructions="You are a personal assistant that helps with personal tasks.",
-            context_providers=[Mem0ContextProvider(
-                agent_id=agent_id_1,
-            )],
+            context_providers=[
+                Mem0ContextProvider(
+                    source_id="mem0",
+                    agent_id=agent_id_1,
+                )
+            ],
         ) as personal_agent,
         AzureAIAgentClient(credential=credential).as_agent(
             name="WorkAssistant",
             instructions="You are a work assistant that helps with professional tasks.",
-            context_providers=[Mem0ContextProvider(
-                agent_id=agent_id_2,
-            )],
+            context_providers=[
+                Mem0ContextProvider(
+                    source_id="mem0",
+                    agent_id=agent_id_2,
+                )
+            ],
         ) as work_agent,
     ):
         # Store personal information

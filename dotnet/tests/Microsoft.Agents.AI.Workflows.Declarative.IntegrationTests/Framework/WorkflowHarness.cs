@@ -45,7 +45,7 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
     public async Task<WorkflowEvents> RunWorkflowAsync<TInput>(TInput input, bool useJson = false) where TInput : notnull
     {
         Console.WriteLine("RUNNING WORKFLOW...");
-        Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, this.GetCheckpointManager(useJson), runId);
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, input, this.GetCheckpointManager(useJson), runId);
         IReadOnlyList<WorkflowEvent> workflowEvents = await MonitorAndDisposeWorkflowRunAsync(run).ToArrayAsync();
         this._lastCheckpoint = workflowEvents.OfType<SuperStepCompletedEvent>().LastOrDefault()?.CompletionInfo?.Checkpoint;
         return new WorkflowEvents(workflowEvents);
@@ -55,8 +55,9 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
     {
         Console.WriteLine("\nRESUMING WORKFLOW...");
         Assert.NotNull(this._lastCheckpoint);
-        Checkpointed<StreamingRun> run = await InProcessExecution.ResumeStreamAsync(workflow, this._lastCheckpoint, this.GetCheckpointManager());
+        StreamingRun run = await InProcessExecution.ResumeStreamAsync(workflow, this._lastCheckpoint, this.GetCheckpointManager());
         IReadOnlyList<WorkflowEvent> workflowEvents = await MonitorAndDisposeWorkflowRunAsync(run, response).ToArrayAsync();
+        this._lastCheckpoint = workflowEvents.OfType<SuperStepCompletedEvent>().LastOrDefault()?.CompletionInfo?.Checkpoint;
         return new WorkflowEvents(workflowEvents);
     }
 
@@ -96,19 +97,19 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         return this._checkpointManager;
     }
 
-    private static async IAsyncEnumerable<WorkflowEvent> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, ExternalResponse? response = null)
+    private static async IAsyncEnumerable<WorkflowEvent> MonitorAndDisposeWorkflowRunAsync(StreamingRun run, ExternalResponse? response = null)
     {
         await using IAsyncDisposable disposeRun = run;
 
         if (response is not null)
         {
-            await run.Run.SendResponseAsync(response).ConfigureAwait(false);
+            await run.SendResponseAsync(response).ConfigureAwait(false);
         }
 
         bool exitLoop = false;
         bool hasRequest = false;
 
-        await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (workflowEvent)
             {
@@ -120,7 +121,11 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                     break;
                 case RequestInfoEvent requestInfo:
                     Console.WriteLine($"REQUEST #{requestInfo.Request.RequestId}");
-                    hasRequest = true;
+                    // Only count as a new request if it's not the one we're responding to
+                    if (response is null || requestInfo.Request.RequestId != response.RequestId)
+                    {
+                        hasRequest = true;
+                    }
                     break;
 
                 case ConversationUpdateEvent conversationEvent:

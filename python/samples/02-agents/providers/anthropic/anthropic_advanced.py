@@ -3,6 +3,10 @@
 import asyncio
 
 from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Anthropic Chat Agent Example
@@ -44,7 +48,7 @@ async def main() -> None:
     print("Agent: ", end="", flush=True)
     async for chunk in agent.run(query, stream=True):
         for content in chunk.contents:
-            if content.type == "text_reasoning":
+            if content.type == "text_reasoning" and content.text:
                 print(f"\033[32m{content.text}\033[0m", end="", flush=True)
             if content.type == "usage":
                 print(f"\n\033[34m[Usage so far: {content.usage_details}]\033[0m\n", end="", flush=True)

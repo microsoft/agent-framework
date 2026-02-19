@@ -31,13 +31,24 @@ import asyncio
 import os
 
 from agent_framework import Message, tool
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.redis import RedisContextProvider
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 
+# Load environment variables from .env file
+load_dotenv()
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# Default Redis URL for local Redis Stack.
+# Override via the REDIS_URL environment variable for remote or authenticated instances.
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+
+# NOTE: approval_mode="never_require" is for sample brevity.
+# Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def search_flights(origin_airport_code: str, destination_airport_code: str, detailed: bool = False) -> str:
     """Simulated flight-search tool to demonstrate tool memory.
@@ -88,6 +99,15 @@ def search_flights(origin_airport_code: str, destination_airport_code: str, deta
     )
 
 
+def create_chat_client() -> AzureOpenAIResponsesClient:
+    """Create an Azure OpenAI Responses client using a Foundry project endpoint."""
+    return AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
+
+
 async def main() -> None:
     """Walk through provider-only, agent integration, and tool-memory scenarios.
 
@@ -100,8 +120,8 @@ async def main() -> None:
     print("-" * 40)
     # Create a provider with partition scope and OpenAI embeddings
 
-    # Please set the OPENAI_API_KEY and OPENAI_CHAT_MODEL_ID environment variables to use the OpenAI vectorizer
-    # Recommend default for OPENAI_CHAT_MODEL_ID is gpt-4o-mini
+    # Please set OPENAI_API_KEY to use the OpenAI vectorizer.
+    # For chat responses, also set AZURE_AI_PROJECT_ENDPOINT and AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
 
     # We attach an embedding vectorizer so the provider can perform hybrid (text + vector)
     # retrieval. If you prefer text-only retrieval, instantiate RedisContextProvider without the
@@ -109,13 +129,14 @@ async def main() -> None:
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},
-        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
+        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url=REDIS_URL),
     )
     # The provider manages persistence and retrieval. application_id/agent_id/user_id
     # scope data for multi-tenant separation; thread_id (set later) narrows to a
     # specific conversation.
     provider = RedisContextProvider(
-        redis_url="redis://localhost:6379",
+        source_id="redis_context",
+        redis_url=REDIS_URL,
         index_name="redis_basics",
         application_id="matrix_of_kermits",
         agent_id="agent_kermit",
@@ -138,16 +159,14 @@ async def main() -> None:
     from agent_framework import AgentSession, SessionContext
 
     session = AgentSession(session_id="runA")
-    context = SessionContext()
-    context.extend_messages("input", messages)
+    context = SessionContext(input_messages=messages)
     state = session.state
 
     # Store messages via after_run
     await provider.after_run(agent=None, session=session, context=context, state=state)
 
     # Retrieve relevant memories via before_run
-    query_context = SessionContext()
-    query_context.extend_messages("input", [Message("system", ["B: Assistant Message"])])
+    query_context = SessionContext(input_messages=[Message("system", ["B: Assistant Message"])])
     await provider.before_run(agent=None, session=session, context=query_context, state=state)
 
     # Inspect retrieved memories that would be injected into instructions
@@ -166,11 +185,12 @@ async def main() -> None:
     vectorizer = OpenAITextVectorizer(
         model="text-embedding-ada-002",
         api_config={"api_key": os.getenv("OPENAI_API_KEY")},
-        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url="redis://localhost:6379"),
+        cache=EmbeddingsCache(name="openai_embeddings_cache", redis_url=REDIS_URL),
     )
     # Recreate a clean index so the next scenario starts fresh
     provider = RedisContextProvider(
-        redis_url="redis://localhost:6379",
+        source_id="redis_context",
+        redis_url=REDIS_URL,
         index_name="redis_basics_2",
         prefix="context_2",
         application_id="matrix_of_kermits",
@@ -183,7 +203,7 @@ async def main() -> None:
     )
 
     # Create chat client for the agent
-    client = OpenAIChatClient(model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
+    client = create_chat_client()
     # Create agent wired to the Redis context provider. The provider automatically
     # persists conversational details and surfaces relevant context on each turn.
     agent = client.as_agent(
@@ -217,7 +237,8 @@ async def main() -> None:
     print("-" * 40)
     # Text-only provider (full-text search only). Omits vectorizer and related params.
     provider = RedisContextProvider(
-        redis_url="redis://localhost:6379",
+        source_id="redis_context",
+        redis_url=REDIS_URL,
         index_name="redis_basics_3",
         prefix="context_3",
         application_id="matrix_of_kermits",
@@ -227,7 +248,7 @@ async def main() -> None:
 
     # Create agent exposing the flight search tool. Tool outputs are captured by the
     # provider and become retrievable context for later turns.
-    client = OpenAIChatClient(model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
+    client = create_chat_client()
     agent = client.as_agent(
         name="MemoryEnhancedAssistant",
         instructions=(

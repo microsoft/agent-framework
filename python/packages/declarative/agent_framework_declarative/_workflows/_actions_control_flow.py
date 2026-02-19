@@ -11,9 +11,8 @@ This module implements handlers for:
 - ContinueLoop: Skip to the next iteration
 """
 
+import logging
 from collections.abc import AsyncGenerator
-
-from agent_framework import get_logger
 
 from ._handlers import (
     ActionContext,
@@ -22,7 +21,7 @@ from ._handlers import (
     action_handler,
 )
 
-logger = get_logger("agent_framework.declarative.workflows.actions")
+logger = logging.getLogger("agent_framework.declarative")
 
 
 @action_handler("Foreach")

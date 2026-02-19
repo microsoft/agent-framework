@@ -452,7 +452,7 @@ class AgentFactory:
             name=prompt_agent.name,
             description=prompt_agent.description,
             instructions=prompt_agent.instructions,
-            **chat_options,
+            default_options=chat_options,  # type: ignore[arg-type]
         )
 
     async def create_agent_from_yaml_path_async(self, yaml_path: str | Path) -> Agent:
@@ -569,7 +569,7 @@ class AgentFactory:
             name=prompt_agent.name,
             description=prompt_agent.description,
             instructions=prompt_agent.instructions,
-            **chat_options,
+            default_options=chat_options,  # type: ignore[arg-type]
         )
 
     async def _create_agent_with_provider(self, prompt_agent: PromptAgent, mapping: ProviderTypeMapping) -> Agent:

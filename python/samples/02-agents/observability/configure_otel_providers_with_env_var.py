@@ -6,9 +6,10 @@ from contextlib import suppress
 from random import randint
 from typing import TYPE_CHECKING, Annotated, Literal
 
-from agent_framework import tool
+from agent_framework import Message, tool
 from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 from opentelemetry import trace
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
@@ -27,11 +28,16 @@ If no OTLP endpoint or Application Insights connection string is configured, the
 output traces, logs, and metrics to the console.
 """
 
+# Load environment variables from .env file
+load_dotenv()
+
 # Define the scenarios that can be run to show the telemetry data collected by the SDK
 SCENARIOS = ["client", "client_stream", "tool", "all"]
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity.
+# Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -71,12 +77,14 @@ async def run_chat_client(client: "SupportsChatGetResponse", stream: bool = Fals
         print(f"User: {message}")
         if stream:
             print("Assistant: ", end="")
-            async for chunk in client.get_response(message, tools=get_weather, stream=True):
-                if str(chunk):
-                    print(str(chunk), end="")
+            async for chunk in client.get_response(
+                [Message(role="user", text=message)], tools=get_weather, stream=True
+            ):
+                if chunk.text:
+                    print(chunk.text, end="")
             print("")
         else:
-            response = await client.get_response(message, tools=get_weather)
+            response = await client.get_response([Message(role="user", text=message)], tools=get_weather)
             print(f"Assistant: {response}")
 
 
@@ -92,8 +100,7 @@ async def run_tool() -> None:
     """
     with get_tracer().start_as_current_span("Scenario: AI Function", kind=trace.SpanKind.CLIENT):
         print("Running scenario: AI Function")
-        func = tool(get_weather)
-        weather = await func.invoke(location="Amsterdam")
+        weather = await get_weather.invoke(location="Amsterdam")
         print(f"Weather in Amsterdam:\n{weather}")
 
 

@@ -1,0 +1,5 @@
+# Local settings - copy from local.settings.json.sample and fill in your values
+local.settings.json
+__pycache__/
+*.pyc
+.venv/

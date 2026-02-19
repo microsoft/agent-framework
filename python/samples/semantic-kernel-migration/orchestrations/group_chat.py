@@ -20,7 +20,8 @@ from agent_framework import Agent, Message
 from agent_framework.azure import AzureOpenAIChatClient, AzureOpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
-from semantic_kernel.agents import Agent, ChatCompletionAgent, GroupChatOrchestration
+from dotenv import load_dotenv
+from semantic_kernel.agents import ChatCompletionAgent, GroupChatOrchestration
 from semantic_kernel.agents.orchestration.group_chat import (
     BooleanResult,
     GroupChatManager,
@@ -41,6 +42,9 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # pragma: no cover
 
+# Load environment variables from .env file
+load_dotenv()
+
 
 DISCUSSION_TOPIC = "What are the essential steps for launching a community hackathon?"
 
@@ -50,7 +54,7 @@ DISCUSSION_TOPIC = "What are the essential steps for launching a community hacka
 ######################################################################
 
 
-def build_semantic_kernel_agents() -> list[Agent]:
+def build_semantic_kernel_agents() -> list[ChatCompletionAgent]:
     credential = AzureCliCredential()
 
     researcher = ChatCompletionAgent(
@@ -82,25 +86,25 @@ class ChatCompletionGroupChatManager(GroupChatManager):
     topic: str
 
     termination_prompt: str = (
-        "You are coordinating a conversation about '{{topic}}'. "
+        "You are coordinating a conversation about '{{$topic}}'. "
         "Decide if the discussion has produced a solid answer. "
         'Respond using JSON: {"result": true|false, "reason": "..."}.'
     )
 
     selection_prompt: str = (
-        "You are coordinating a conversation about '{{topic}}'. "
+        "You are coordinating a conversation about '{{$topic}}'. "
         "Choose the next participant by returning JSON with keys (result, reason). "
-        "The result must match one of: {{participants}}."
+        "The result must match one of: {{$participants}}."
     )
 
     summary_prompt: str = (
-        "You have just finished a discussion about '{{topic}}'. "
+        "You have just finished a discussion about '{{$topic}}'. "
         "Summarize the plan and highlight key takeaways. Return JSON with keys (result, reason) where "
         "result is the final response text."
     )
 
-    def __init__(self, *, topic: str, service: ChatCompletionClientBase) -> None:
-        super().__init__(topic=topic, service=service)
+    def __init__(self, *, topic: str, service: ChatCompletionClientBase, max_rounds: int | None = None) -> None:
+        super().__init__(topic=topic, service=service, max_rounds=max_rounds)
         self._round_robin_index = 0
 
     async def _render_prompt(self, template: str, **kwargs: Any) -> str:

@@ -7,6 +7,10 @@ from pathlib import Path
 
 from agent_framework import Content, Message
 from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 ASSETS_DIR = Path(__file__).resolve().parents[2] / "shared" / "sample_assets"
 
@@ -19,7 +23,7 @@ def load_sample_pdf() -> bytes:
 
 def create_sample_image() -> str:
     """Create a simple 1x1 pixel PNG image for testing."""
-    # This is a tiny red pixel in PNG format
+    # This is a tiny yellow pixel in PNG format
     png_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
     return f"data:image/png;base64,{png_data}"
 
@@ -53,7 +57,7 @@ async def test_image() -> None:
         ],
     )
 
-    response = await client.get_response(message)
+    response = await client.get_response([message])
     print(f"Image Response: {response}")
 
 
@@ -70,7 +74,7 @@ async def test_audio() -> None:
         ],
     )
 
-    response = await client.get_response(message)
+    response = await client.get_response([message])
     print(f"Audio Response: {response}")
 
 
@@ -89,7 +93,7 @@ async def test_pdf() -> None:
         ],
     )
 
-    response = await client.get_response(message)
+    response = await client.get_response([message])
     print(f"PDF Response: {response}")
 
 

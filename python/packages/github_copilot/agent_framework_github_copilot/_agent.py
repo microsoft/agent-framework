@@ -22,8 +22,8 @@ from agent_framework import (
     normalize_messages,
 )
 from agent_framework._settings import load_settings
-from agent_framework._tools import FunctionTool
-from agent_framework._types import normalize_tools
+from agent_framework._tools import FunctionTool, ToolTypes
+from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import ServiceException
 from copilot import CopilotClient, CopilotSession
 from copilot.generated.session_events import SessionEvent, SessionEventType
@@ -40,8 +40,6 @@ from copilot.types import (
 )
 from copilot.types import Tool as CopilotTool
 
-from ._settings import GitHubCopilotSettings
-
 if sys.version_info >= (3, 13):
     from typing import TypeVar
 else:
@@ -55,6 +53,30 @@ PermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], Permission
 """Type for permission request handlers."""
 
 logger = logging.getLogger("agent_framework.github_copilot")
+
+
+class GitHubCopilotSettings(TypedDict, total=False):
+    """GitHub Copilot model settings.
+
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'GITHUB_COPILOT_'.
+
+    Keys:
+        cli_path: Path to the Copilot CLI executable.
+            Can be set via environment variable GITHUB_COPILOT_CLI_PATH.
+        model: Model to use (e.g., "gpt-5", "claude-sonnet-4").
+            Can be set via environment variable GITHUB_COPILOT_MODEL.
+        timeout: Request timeout in seconds.
+            Can be set via environment variable GITHUB_COPILOT_TIMEOUT.
+        log_level: CLI log level.
+            Can be set via environment variable GITHUB_COPILOT_LOG_LEVEL.
+    """
+
+    cli_path: str | None
+    model: str | None
+    timeout: float | None
+    log_level: str | None
 
 
 class GitHubCopilotOptions(TypedDict, total=False):
@@ -151,11 +173,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         description: str | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsT | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -277,7 +295,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = False,
         session: AgentSession | None = None,
@@ -288,7 +306,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -298,7 +316,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -340,7 +358,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     async def _run_impl(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
@@ -388,7 +406,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     async def _stream_updates(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
@@ -478,7 +496,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     def _prepare_tools(
         self,
-        tools: list[FunctionTool | MutableMapping[str, Any]],
+        tools: Sequence[ToolTypes | CopilotTool],
     ) -> list[CopilotTool]:
         """Convert Agent Framework tools to Copilot SDK tools.
 
@@ -491,10 +509,12 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         copilot_tools: list[CopilotTool] = []
 
         for tool in tools:
-            if isinstance(tool, FunctionTool):
-                copilot_tools.append(self._tool_to_copilot_tool(tool))  # type: ignore
-            elif isinstance(tool, CopilotTool):
+            if isinstance(tool, CopilotTool):
                 copilot_tools.append(tool)
+            elif isinstance(tool, FunctionTool):
+                copilot_tools.append(self._tool_to_copilot_tool(tool))  # type: ignore
+            elif isinstance(tool, MutableMapping):
+                copilot_tools.append(tool)  # type: ignore[arg-type]
             # Note: Other tool types (e.g., dict-based hosted tools) are skipped
 
         return copilot_tools

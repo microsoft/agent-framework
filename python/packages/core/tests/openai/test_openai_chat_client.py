@@ -97,9 +97,7 @@ def test_init_base_url_from_settings_env() -> None:
 @pytest.mark.parametrize("exclude_list", [["OPENAI_CHAT_MODEL_ID"]], indirect=True)
 def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
-        OpenAIChatClient(
-            env_file_path="test.env",
-        )
+        OpenAIChatClient()
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
@@ -109,7 +107,6 @@ def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
         OpenAIChatClient(
             model_id=model_id,
-            env_file_path="test.env",
         )
 
 
@@ -188,6 +185,21 @@ def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None
     dict_tool = {"type": "function", "name": "test"}
     result = client._prepare_tools_for_openai([dict_tool])  # type: ignore
     assert result["tools"] == [dict_tool]
+
+
+def test_prepare_tools_with_single_function_tool(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that a single FunctionTool is accepted for tool preparation."""
+    client = OpenAIChatClient()
+
+    @tool(approval_mode="never_require")
+    def test_function(query: str) -> str:
+        """A test function."""
+        return f"Result for {query}"
+
+    result = client._prepare_tools_for_openai(test_function)
+    assert "tools" in result
+    assert len(result["tools"]) == 1
+    assert result["tools"][0]["type"] == "function"
 
 
 @tool(approval_mode="never_require")
@@ -1083,7 +1095,12 @@ async def test_integration_web_search() -> None:
         # Use static method for web search tool
         web_search_tool = OpenAIChatClient.get_web_search_tool()
         content = {
-            "messages": "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+            "messages": [
+                Message(
+                    role="user",
+                    text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+                )
+            ],
             "options": {
                 "tool_choice": "auto",
                 "tools": [web_search_tool],
@@ -1110,7 +1127,7 @@ async def test_integration_web_search() -> None:
             }
         )
         content = {
-            "messages": "What is the current weather? Do not ask for my current location.",
+            "messages": [Message(role="user", text="What is the current weather? Do not ask for my current location.")],
             "options": {
                 "tool_choice": "auto",
                 "tools": [web_search_tool_with_location],

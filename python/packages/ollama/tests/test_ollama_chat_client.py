@@ -186,7 +186,6 @@ def test_with_invalid_settings(ollama_unit_test_env: dict[str, str]) -> None:
         OllamaChatClient(
             host="http://localhost:12345",
             model_id=None,
-            env_file_path="test.env",
         )
 
 

@@ -1,5 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Observability and OpenTelemetry helpers for Agent Framework.
+
+Commonly used exports:
+- enable_instrumentation
+- configure_otel_providers
+- AgentTelemetryLayer
+- ChatTelemetryLayer
+- get_tracer
+- get_meter
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -20,7 +31,6 @@ from opentelemetry.semconv.attributes import service_attributes
 from opentelemetry.semconv_ai import Meters, SpanAttributes
 
 from . import __version__ as version_info
-from ._logging import get_logger
 from ._settings import load_settings
 
 if sys.version_info >= (3, 13):
@@ -44,6 +54,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from ._types import (
         AgentResponse,
         AgentResponseUpdate,
+        AgentRunInputs,
         ChatOptions,
         ChatResponse,
         ChatResponseUpdate,
@@ -73,7 +84,7 @@ AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 
 
-logger = get_logger()
+logger = logging.getLogger("agent_framework")
 
 
 OTEL_METRICS: Final[str] = "__otel_metrics__"
@@ -429,7 +440,7 @@ def _get_exporters_from_env(
 
     Args:
         env_file_path: Path to a .env file to load environment variables from.
-            Default is None, which loads from '.env' if present.
+            Default is None, which does not load a .env file.
         env_file_encoding: Encoding to use when reading the .env file.
             Default is None, which uses the system default encoding.
 
@@ -440,8 +451,9 @@ def _get_exporters_from_env(
         - https://opentelemetry.io/docs/languages/sdk-configuration/general/
         - https://opentelemetry.io/docs/languages/sdk-configuration/otlp-exporter/
     """
-    # Load environment variables from .env file if present
-    load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
+    # Load environment variables from a .env file only when explicitly provided
+    if env_file_path is not None:
+        load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
 
     # Get base endpoint
     base_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
@@ -502,7 +514,7 @@ def create_resource(
         service_version: Override the service version. If not provided, reads from
             OTEL_SERVICE_VERSION environment variable or defaults to the package version.
         env_file_path: Path to a .env file to load environment variables from.
-            Default is None, which loads from '.env' if present.
+            Default is None, which does not load a .env file.
         env_file_encoding: Encoding to use when reading the .env file.
             Default is None, which uses the system default encoding.
         **attributes: Additional resource attributes to include. These will be merged
@@ -530,8 +542,9 @@ def create_resource(
             # Load from custom .env file
             resource = create_resource(env_file_path="config/.env")
     """
-    # Load environment variables from .env file if present
-    load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
+    # Load environment variables from a .env file only when explicitly provided
+    if env_file_path is not None:
+        load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
 
     # Start with provided attributes
     resource_attributes: dict[str, Any] = dict(attributes)
@@ -747,7 +760,6 @@ class ObservabilitySettings:
             for log_exporter in log_exporters:
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
             # Attach a handler with the provider to the root logger
-            logger = logging.getLogger()
             handler = LoggingHandler(logger_provider=logger_provider)
             logger.addHandler(handler)
             set_logger_provider(logger_provider)
@@ -1084,7 +1096,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -1094,7 +1106,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
@@ -1104,7 +1116,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1113,7 +1125,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1129,11 +1141,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(self.otel_provider_name)
         model_id = kwargs.get("model_id") or opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
-        service_url = str(
-            service_url_func()
-            if (service_url_func := getattr(self, "service_url", None)) and callable(service_url_func)
-            else "unknown"
-        )
+        service_url_func = getattr(self, "service_url", None)
+        service_url = str(service_url_func() if callable(service_url_func) else "unknown")
         attributes = _get_span_attributes(
             operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
             provider_name=provider_name,
@@ -1277,7 +1286,7 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
@@ -1287,7 +1296,7 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
@@ -1296,7 +1305,7 @@ class AgentTelemetryLayer:
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
@@ -1359,7 +1368,7 @@ class AgentTelemetryLayer:
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=_get_instructions_from_options(options),
+                    system_instructions=_get_instructions_from_options(merged_options),
                 )
 
             span_state = {"closed": False}
@@ -1416,7 +1425,7 @@ class AgentTelemetryLayer:
                         span=span,
                         provider_name=provider_name,
                         messages=messages,
-                        system_instructions=_get_instructions_from_options(options),
+                        system_instructions=_get_instructions_from_options(merged_options),
                     )
                 start_time_stamp = perf_counter()
                 try:
@@ -1614,15 +1623,15 @@ def capture_exception(span: trace.Span, exception: Exception, timestamp: int | N
 def _capture_messages(
     span: trace.Span,
     provider_name: str,
-    messages: str | Message | Sequence[str | Message],
+    messages: AgentRunInputs,
     system_instructions: str | list[str] | None = None,
     output: bool = False,
     finish_reason: FinishReason | None = None,
 ) -> None:
     """Log messages with extra information."""
-    from ._types import prepare_messages
+    from ._types import normalize_messages, prepend_instructions_to_messages
 
-    prepped = prepare_messages(messages, system_instructions=system_instructions)
+    prepped = prepend_instructions_to_messages(normalize_messages(messages), system_instructions)
     otel_messages: list[dict[str, Any]] = []
     for index, message in enumerate(prepped):
         # Reuse the otel message representation for logging instead of calling to_dict()

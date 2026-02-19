@@ -7,7 +7,6 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Workflows.Reflection;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -29,6 +28,7 @@ internal static class Step1EntryPoint
 
     public static async ValueTask RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment)
     {
+        // TODO: Potentially normalize terminology viz Agent.RunStreamingAsync
         StreamingRun run = await environment.StreamAsync(WorkflowInstance, input: "Hello, World!").ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
@@ -41,14 +41,19 @@ internal static class Step1EntryPoint
     }
 }
 
-internal sealed class UppercaseExecutor() : ReflectingExecutor<UppercaseExecutor>("UppercaseExecutor", declareCrossRunShareable: true), IMessageHandler<string, string>
+internal sealed class UppercaseExecutor() : Executor<string, string>(nameof(UppercaseExecutor), declareCrossRunShareable: true)
 {
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
+    public override async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
         message.ToUpperInvariant();
 }
 
-internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExecutor>("ReverseTextExecutor", declareCrossRunShareable: true), IMessageHandler<string, string>
+internal sealed class ReverseTextExecutor() : Executor("ReverseTextExecutor", declareCrossRunShareable: true)
 {
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+    {
+        return protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<string, string>(this.HandleAsync));
+    }
+
     public async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         string result = string.Concat(message.Reverse());

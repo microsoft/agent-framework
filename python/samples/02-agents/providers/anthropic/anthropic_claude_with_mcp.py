@@ -19,8 +19,12 @@ servers you trust. Use permission handlers to control what actions are allowed.
 import asyncio
 from typing import Any
 
-from agent_framework_claude import ClaudeAgent
+from agent_framework.anthropic import ClaudeAgent
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def prompt_permission(

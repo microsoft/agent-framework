@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import Callable, MutableMapping, Sequence
 from typing import Any, Generic
@@ -12,11 +13,12 @@ from agent_framework import (
     BaseContextProvider,
     FunctionTool,
     MiddlewareTypes,
-    get_logger,
     normalize_tools,
 )
 from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
+from agent_framework._tools import ToolTypes
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
@@ -28,7 +30,6 @@ from azure.ai.projects.models import (
 from azure.ai.projects.models import (
     FunctionTool as AzureFunctionTool,
 )
-from azure.core.credentials_async import AsyncTokenCredential
 
 from ._client import AzureAIClient, AzureAIProjectAgentOptions
 from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_tools, to_azure_ai_tools
@@ -43,7 +44,7 @@ else:
     from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
-logger = get_logger("agent_framework.azure")
+logger = logging.getLogger("agent_framework.azure")
 
 
 # Type variable for options - allows typed Agent[OptionsT] returns
@@ -102,7 +103,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         *,
         project_endpoint: str | None = None,
         model: str | None = None,
-        credential: AsyncTokenCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -115,7 +116,8 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
                 Ignored when a project_client is passed.
             model: The default model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
-            credential: Azure async credential to use for authentication.
+            credential: Azure credential for authentication. Accepts a TokenCredential,
+                AsyncTokenCredential, or a callable token provider.
                 Required when project_client is not provided.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
@@ -148,7 +150,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
 
             project_client = AIProjectClient(
                 endpoint=resolved_endpoint,
-                credential=credential,
+                credential=credential,  # type: ignore[arg-type]
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             self._should_close_client = True
@@ -161,11 +163,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         model: str | None = None,
         instructions: str | None = None,
         description: str | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
@@ -226,7 +224,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             for tool in normalized_tools:
                 if isinstance(tool, MCPTool):
                     mcp_tools.append(tool)
-                else:
+                elif isinstance(tool, (FunctionTool, MutableMapping)):
                     non_mcp_tools.append(tool)
 
         # Connect MCP tools and discover their functions BEFORE creating the agent
@@ -263,11 +261,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         *,
         name: str | None = None,
         reference: AgentReference | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
@@ -323,11 +317,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
     def as_agent(
         self,
         details: AgentVersionDetails,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
@@ -367,7 +357,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
     def _to_chat_agent_from_details(
         self,
         details: AgentVersionDetails,
-        provided_tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None = None,
+        provided_tools: Sequence[ToolTypes] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
@@ -415,8 +405,8 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
     def _merge_tools(
         self,
         definition_tools: Sequence[Any] | None,
-        provided_tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
-    ) -> list[FunctionTool | dict[str, Any]]:
+        provided_tools: Sequence[ToolTypes] | None,
+    ) -> list[ToolTypes]:
         """Merge hosted tools from definition with user-provided function tools.
 
         Args:
@@ -426,7 +416,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         Returns:
             Combined list of tools for the Agent.
         """
-        merged: list[FunctionTool | dict[str, Any]] = []
+        merged: list[ToolTypes] = []
 
         # Convert hosted tools from definition (MCP, code interpreter, file search, web search)
         # Function tools from the definition are skipped - we use user-provided implementations instead
@@ -450,11 +440,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
     def _validate_function_tools(
         self,
         agent_tools: Sequence[Any] | None,
-        provided_tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None,
+        provided_tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
     ) -> None:
         """Validate that required function tools are provided."""
         # Normalize and validate function tools

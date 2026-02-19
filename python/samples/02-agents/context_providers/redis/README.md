@@ -20,7 +20,8 @@ This folder contains an example demonstrating how to use the Redis context provi
 
 1. A running Redis with RediSearch (Redis Stack or a managed service)
 2. Python environment with Agent Framework Redis extra installed
-3. Optional: OpenAI API key if using vector embeddings
+3. Azure AI Foundry project endpoint and Azure OpenAI Responses deployment
+4. Optional: OpenAI API key if using vector embeddings
 
 ### Install the package
 
@@ -50,6 +51,8 @@ See quickstart: `https://learn.microsoft.com/azure/redis/quickstart-create-manag
 
 ### Environment variables
 
+- `AZURE_AI_PROJECT_ENDPOINT` (required): Azure AI Foundry project endpoint for `AzureOpenAIResponsesClient`
+- `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` (required): Azure OpenAI Responses deployment name
 - `OPENAI_API_KEY` (optional): Required only if you set `vectorizer_choice="openai"` to enable hybrid search.
 
 ### Provider configuration highlights
@@ -70,19 +73,26 @@ The provider supports both full‑text only and hybrid vector search:
 2. Agent integration: teaches the agent a preference and verifies it is remembered across turns.
 3. Agent + tool: calls a sample tool (flight search) and then asks the agent to recall details remembered from the tool output.
 
-It uses OpenAI for both chat (via `OpenAIChatClient`) and, in some steps, optional embeddings for hybrid search.
+It uses `AzureOpenAIResponsesClient` (Foundry project endpoint setup) for chat and, in some steps, optional OpenAI embeddings for hybrid search.
 
 ## How to run
 
 1) Start Redis (see options above). For local default, ensure it's reachable at `redis://localhost:6379`.
 
-2) Set your OpenAI key if using embeddings and for the chat client used in the sample:
+2) Set Azure Foundry/OpenAI responses environment variables:
+
+```bash
+export AZURE_AI_PROJECT_ENDPOINT="https://<resource>.services.ai.azure.com/api/projects/<project>"
+export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="<deployment-name>"
+```
+
+3) (Optional) Set your OpenAI key if using embeddings:
 
 ```bash
 export OPENAI_API_KEY="<your key>"
 ```
 
-3) Run the example:
+4) Run the example:
 
 ```bash
 python redis_basics.py
@@ -109,5 +119,6 @@ You should see the agent responses and, when using embeddings, context retrieved
 ## Troubleshooting
 
 - Ensure at least one of `application_id`, `agent_id`, `user_id`, or `thread_id` is set; the provider requires a scope.
+- Verify `AZURE_AI_PROJECT_ENDPOINT` and `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` are set for the chat client.
 - If using embeddings, verify `OPENAI_API_KEY` is set and reachable.
 - Make sure Redis exposes RediSearch (Redis Stack image or managed service with search enabled).

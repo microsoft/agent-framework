@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import logging
 import os
 from typing import Annotated, Any
 from unittest.mock import MagicMock
@@ -29,6 +30,8 @@ skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
     else "Integration tests are disabled.",
 )
+
+logger = logging.getLogger(__name__)
 
 
 class OutputStruct(BaseModel):
@@ -111,9 +114,7 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]], indirect=True)
 def test_init_with_empty_model_id(azure_openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
-        AzureOpenAIResponsesClient(
-            env_file_path="test.env",
-        )
+        AzureOpenAIResponsesClient()
 
 
 def test_init_with_project_client(azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -334,8 +335,10 @@ async def test_integration_options(
             messages = [Message(role="user", text="What is the weather in Seattle?")]
         elif option_name == "response_format":
             # Use prompt that works well with structured output
-            messages = [Message(role="user", text="The weather in Seattle is sunny")]
-            messages.append(Message(role="user", text="What is the weather in Seattle?"))
+            messages = [
+                Message(role="user", text="The weather in Seattle is sunny"),
+                Message(role="user", text="What is the weather in Seattle?"),
+            ]
         else:
             # Generic prompt for simple options
             messages = [Message(role="user", text="Say 'Hello World' briefly.")]
@@ -396,7 +399,12 @@ async def test_integration_web_search() -> None:
 
     for streaming in [False, True]:
         content = {
-            "messages": "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+            "messages": [
+                Message(
+                    role="user",
+                    text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+                )
+            ],
             "options": {
                 "tool_choice": "auto",
                 "tools": [AzureOpenAIResponsesClient.get_web_search_tool()],
@@ -416,7 +424,7 @@ async def test_integration_web_search() -> None:
 
         # Test that the client will use the web search tool with location
         content = {
-            "messages": "What is the current weather? Do not ask for my current location.",
+            "messages": [Message(role="user", text="What is the current weather? Do not ask for my current location.")],
             "options": {
                 "tool_choice": "auto",
                 "tools": [
@@ -498,7 +506,7 @@ async def test_integration_client_agent_hosted_mcp_tool() -> None:
     """Integration test for MCP tool with Azure Response Agent using Microsoft Learn MCP."""
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
     response = await client.get_response(
-        "How to create an Azure storage account using az cli?",
+        messages=[Message(role="user", text="How to create an Azure storage account using az cli?")],
         options={
             # this needs to be high enough to handle the full MCP tool response.
             "max_tokens": 5000,
@@ -523,7 +531,7 @@ async def test_integration_client_agent_hosted_code_interpreter_tool():
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
     response = await client.get_response(
-        "Calculate the sum of numbers from 1 to 10 using Python code.",
+        messages=[Message(role="user", text="Calculate the sum of numbers from 1 to 10 using Python code.")],
         options={
             "tools": [AzureOpenAIResponsesClient.get_code_interpreter_tool()],
         },

@@ -5,6 +5,11 @@ from typing import Annotated
 
 from agent_framework import Agent, Message, tool
 from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Tool Approvals with Sessions
@@ -16,9 +21,7 @@ the session stores and retrieves them automatically.
 
 
 @tool(approval_mode="always_require")
-def add_to_calendar(
-    event_name: Annotated[str, "Name of the event"], date: Annotated[str, "Date of the event"]
-) -> str:
+def add_to_calendar(event_name: Annotated[str, "Name of the event"], date: Annotated[str, "Date of the event"]) -> str:
     """Add an event to the calendar (requires approval)."""
     print(f">>> EXECUTING: add_to_calendar(event_name='{event_name}', date='{date}')")
     return f"Added '{event_name}' to calendar on {date}"
@@ -29,7 +32,7 @@ async def approval_example() -> None:
     print("=== Tool Approval with Session ===\n")
 
     agent = Agent(
-        client=AzureOpenAIChatClient(),
+        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
         name="CalendarAgent",
         instructions="You are a helpful calendar assistant.",
         tools=[add_to_calendar],
@@ -65,7 +68,7 @@ async def rejection_example() -> None:
     print("=== Tool Rejection with Session ===\n")
 
     agent = Agent(
-        client=AzureOpenAIChatClient(),
+        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
         name="CalendarAgent",
         instructions="You are a helpful calendar assistant.",
         tools=[add_to_calendar],
