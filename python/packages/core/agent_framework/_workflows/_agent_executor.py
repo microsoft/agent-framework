@@ -161,9 +161,6 @@ class AgentExecutor(Executor):
             prior.full_conversation if prior.full_conversation is not None else prior.agent_response.messages
         )
         self._cache = list(source_messages)
-        # Reset service_session_id: the full conversation is being provided explicitly,
-        # so using previous_response_id would duplicate items already in the input.
-        self._session.service_session_id = None
         await self._run_agent_and_emit(ctx)
 
     @handler

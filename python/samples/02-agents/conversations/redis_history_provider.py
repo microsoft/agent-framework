@@ -25,11 +25,6 @@ with Redis as the backend data store.
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 
-# Default Redis URL for local Redis Stack.
-# Override via the REDIS_URL environment variable for remote or authenticated instances.
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-
-
 async def example_manual_memory_store() -> None:
     """Basic example of using Redis history provider."""
     print("=== Basic Redis History Provider Example ===")
