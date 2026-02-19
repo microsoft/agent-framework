@@ -62,11 +62,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
     {
         Throw.IfNull(client);
-        Throw.IfNull(memoryStoreName);
-        if (string.IsNullOrWhiteSpace(memoryStoreName))
-        {
-            throw new ArgumentException("The memory store name must not be empty or whitespace.", nameof(memoryStoreName));
-        }
+        Throw.IfNullOrWhitespace(memoryStoreName);
 
         this._sessionState = new ProviderSessionState<State>(
             ValidateStateInitializer(Throw.IfNull(stateInitializer)),

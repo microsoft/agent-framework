@@ -22,12 +22,7 @@ public sealed class FoundryMemoryProviderScope
     /// <exception cref="ArgumentException">Thrown when <paramref name="scope"/> is null or whitespace.</exception>
     public FoundryMemoryProviderScope(string scope)
     {
-        Throw.IfNull(scope);
-        if (string.IsNullOrWhiteSpace(scope))
-        {
-            throw new ArgumentException("Scope must not be empty or whitespace.", nameof(scope));
-        }
-
+        Throw.IfNullOrWhitespace(scope);
         this.Scope = scope;
     }
 
