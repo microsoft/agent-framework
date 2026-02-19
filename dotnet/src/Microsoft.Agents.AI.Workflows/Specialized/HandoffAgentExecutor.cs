@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,7 +15,7 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 /// <summary>Executor used to represent an agent in a handoffs workflow, responding to <see cref="HandoffState"/> events.</summary>
 internal sealed class HandoffAgentExecutor(
     AIAgent agent,
-    string? handoffInstructions) : Executor(agent.GetDescriptiveId(), declareCrossRunShareable: true), IResettableExecutor
+    string? handoffInstructions) : Executor<HandoffState, HandoffState>(agent.GetDescriptiveId(), declareCrossRunShareable: true), IResettableExecutor
 {
     private static readonly JsonElement s_handoffSchema = AIFunctionFactory.Create(
         ([Description("The reason for the handoff")] string? reasonForHandoff) => { }).JsonSchema;
@@ -60,59 +61,56 @@ internal sealed class HandoffAgentExecutor(
             sb.WithDefault(end);
         });
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-        routeBuilder.AddHandler<HandoffState>(async (handoffState, context, cancellationToken) =>
+    public override async ValueTask<HandoffState> HandleAsync(HandoffState message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        string? requestedHandoff = null;
+        List<AgentResponseUpdate> updates = [];
+        List<ChatMessage> allMessages = message.Messages;
+
+        List<ChatMessage>? roleChanges = allMessages.ChangeAssistantToUserForOtherParticipants(this._agent.Name ?? this._agent.Id);
+
+        await foreach (var update in this._agent.RunStreamingAsync(allMessages,
+                                                                   options: this._agentOptions,
+                                                                   cancellationToken: cancellationToken)
+                                                 .ConfigureAwait(false))
         {
-            string? requestedHandoff = null;
-            List<AgentResponseUpdate> updates = [];
-            List<ChatMessage> allMessages = handoffState.Messages;
+            await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
 
-            List<ChatMessage>? roleChanges = allMessages.ChangeAssistantToUserForOtherParticipants(this._agent.Name ?? this._agent.Id);
-
-            await foreach (var update in this._agent.RunStreamingAsync(allMessages,
-                                                                       options: this._agentOptions,
-                                                                       cancellationToken: cancellationToken)
-                                                     .ConfigureAwait(false))
+            foreach (var fcc in update.Contents.OfType<FunctionCallContent>()
+                                               .Where(fcc => this._handoffFunctionNames.Contains(fcc.Name)))
             {
-                await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
-
-                foreach (var c in update.Contents)
-                {
-                    if (c is FunctionCallContent fcc && this._handoffFunctionNames.Contains(fcc.Name))
-                    {
-                        requestedHandoff = fcc.Name;
-                        await AddUpdateAsync(
-                                new AgentResponseUpdate
-                                {
-                                    AgentId = this._agent.Id,
-                                    AuthorName = this._agent.Name ?? this._agent.Id,
-                                    Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
-                                    CreatedAt = DateTimeOffset.UtcNow,
-                                    MessageId = Guid.NewGuid().ToString("N"),
-                                    Role = ChatRole.Tool,
-                                },
-                                cancellationToken
-                             )
-                            .ConfigureAwait(false);
-                    }
-                }
+                requestedHandoff = fcc.Name;
+                await AddUpdateAsync(
+                        new AgentResponseUpdate
+                        {
+                            AgentId = this._agent.Id,
+                            AuthorName = this._agent.Name ?? this._agent.Id,
+                            Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
+                            CreatedAt = DateTimeOffset.UtcNow,
+                            MessageId = Guid.NewGuid().ToString("N"),
+                            Role = ChatRole.Tool,
+                        },
+                        cancellationToken
+                     )
+                    .ConfigureAwait(false);
             }
+        }
 
-            allMessages.AddRange(updates.ToAgentResponse().Messages);
+        allMessages.AddRange(updates.ToAgentResponse().Messages);
 
-            roleChanges.ResetUserToAssistantForChangedRoles();
+        roleChanges.ResetUserToAssistantForChangedRoles();
 
-            await context.SendMessageAsync(new HandoffState(handoffState.TurnToken, requestedHandoff, allMessages), cancellationToken: cancellationToken).ConfigureAwait(false);
+        return new(message.TurnToken, requestedHandoff, allMessages);
 
-            async Task AddUpdateAsync(AgentResponseUpdate update, CancellationToken cancellationToken)
+        async Task AddUpdateAsync(AgentResponseUpdate update, CancellationToken cancellationToken)
+        {
+            updates.Add(update);
+            if (message.TurnToken.EmitEvents is true)
             {
-                updates.Add(update);
-                if (handoffState.TurnToken.EmitEvents is true)
-                {
-                    await context.YieldOutputAsync(update, cancellationToken).ConfigureAwait(false);
-                }
+                await context.YieldOutputAsync(update, cancellationToken).ConfigureAwait(false);
             }
-        });
+        }
+    }
 
     public ValueTask ResetAsync() => default;
 }
