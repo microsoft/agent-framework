@@ -3,6 +3,9 @@ import asyncio
 from pathlib import Path
 
 from agent_framework.declarative import AgentFactory
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 async def main():
@@ -16,7 +19,7 @@ async def main():
         yaml_str = f.read()
 
     # create the agent from the yaml
-    agent = AgentFactory().create_agent_from_yaml(yaml_str)
+    agent = AgentFactory(safe_mode=False).create_agent_from_yaml(yaml_str)
     # use the agent
     response = await agent.run("Why is the sky blue, answer in Dutch?")
     # Use response.value with try/except for safe parsing

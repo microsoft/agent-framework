@@ -42,7 +42,7 @@ async def run_autogen() -> None:
 
     print("\n[AutoGen] Streaming response:")
     # Stream response with Console for token streaming
-    await Console(agent.run(task="Count from 1 to 5", stream=True))
+    await Console(agent.run_stream(task="Count from 1 to 5"))
 
 
 async def run_agent_framework() -> None:

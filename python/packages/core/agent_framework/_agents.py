@@ -921,6 +921,20 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 **ctx["filtered_kwargs"],
             )
 
+        def _propagate_conversation_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
+            """Eagerly propagate conversation_id to session as updates arrive.
+
+            This ensures session.service_session_id is set even when the user
+            only iterates the stream without calling get_final_response().
+            """
+            if session is None:
+                return update
+            raw = update.raw_representation
+            conv_id = getattr(raw, "conversation_id", None) if raw else None
+            if isinstance(conv_id, str) and conv_id and session.service_session_id != conv_id:
+                session.service_session_id = conv_id
+            return update
+
         return (
             ResponseStream
             .from_awaitable(_get_stream())
@@ -933,6 +947,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     self._finalize_response_updates, response_format=options.get("response_format") if options else None
                 ),
             )
+            .with_transform_hook(_propagate_conversation_id)
             .with_result_hook(_post_hook)
         )
 

@@ -3,6 +3,9 @@ import asyncio
 
 from agent_framework.declarative import AgentFactory
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+load_dotenv()
 
 """
 This sample shows how to create an agent using an inline YAML string rather than a file.
@@ -34,7 +37,7 @@ model:
     # create the agent from the yaml
     async with (
         AzureCliCredential() as credential,
-        AgentFactory(client_kwargs={"credential": credential}).create_agent_from_yaml(yaml_definition) as agent,
+        AgentFactory(client_kwargs={"credential": credential}, safe_mode=False).create_agent_from_yaml(yaml_definition) as agent,
     ):
         response = await agent.run("What can you do for me?")
         print("Agent response:", response.text)

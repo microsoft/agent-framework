@@ -7,6 +7,9 @@ from typing import Literal
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.declarative import AgentFactory
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def get_weather(location: str, unit: Literal["celsius", "fahrenheit"] = "celsius") -> str:

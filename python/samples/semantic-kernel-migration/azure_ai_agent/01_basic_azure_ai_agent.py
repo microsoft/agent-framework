@@ -25,7 +25,7 @@ async def run_semantic_kernel() -> None:
     async with AzureCliCredential() as credential, AzureAIAgent.create_client(credential=credential) as client:
         settings = AzureAIAgentSettings()  # Reads env vars for region/deployment.
         # SK builds the remote agent definition then wraps it with AzureAIAgent.
-        definition = await client.agents.as_agent(
+        definition = await client.agents.create_agent(
             model=settings.model_deployment_name,
             name="Support",
             instructions="Answer customer questions in one paragraph.",

@@ -255,7 +255,7 @@ class TestAfterRun:
             {"role": "assistant", "content": "answer"},
         ]
         assert call_kwargs["user_id"] == "u1"
-        assert call_kwargs["run_id"] == "s1"
+        assert "run_id" not in call_kwargs
 
     async def test_only_stores_user_assistant_system(self, mock_mem0_client: AsyncMock) -> None:
         """Only stores user/assistant/system messages with text."""
@@ -298,8 +298,8 @@ class TestAfterRun:
 
         mock_mem0_client.add.assert_not_awaited()
 
-    async def test_uses_session_id_as_run_id(self, mock_mem0_client: AsyncMock) -> None:
-        """Uses session_id as run_id."""
+    async def test_no_run_id_in_storage(self, mock_mem0_client: AsyncMock) -> None:
+        """run_id is not passed to mem0 add, so memories are not scoped to sessions."""
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(input_messages=[Message(role="user", text="hi")], session_id="my-session")
@@ -309,7 +309,7 @@ class TestAfterRun:
             agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
         )  # type: ignore[arg-type]
 
-        assert mock_mem0_client.add.call_args.kwargs["run_id"] == "my-session"
+        assert "run_id" not in mock_mem0_client.add.call_args.kwargs
 
     async def test_validates_filters(self, mock_mem0_client: AsyncMock) -> None:
         """Raises ServiceInitializationError when no filters."""
@@ -381,10 +381,9 @@ class TestBuildFilters:
             agent_id="a1",
             application_id="app1",
         )
-        assert provider._build_filters(session_id="sess1") == {
+        assert provider._build_filters() == {
             "user_id": "u1",
             "agent_id": "a1",
-            "run_id": "sess1",
             "app_id": "app1",
         }
 
@@ -395,10 +394,11 @@ class TestBuildFilters:
         assert "run_id" not in filters
         assert "app_id" not in filters
 
-    def test_session_id_mapped_to_run_id(self, mock_mem0_client: AsyncMock) -> None:
+    def test_no_run_id_in_search_filters(self, mock_mem0_client: AsyncMock) -> None:
+        """run_id is excluded from search filters so memories work across sessions."""
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
-        filters = provider._build_filters(session_id="s99")
-        assert filters["run_id"] == "s99"
+        filters = provider._build_filters()
+        assert "run_id" not in filters
 
     def test_empty_when_no_params(self, mock_mem0_client: AsyncMock) -> None:
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
