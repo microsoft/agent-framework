@@ -16,7 +16,79 @@
     <Project Path="samples/01-get-started/06_host_your_agent/06_host_your_agent.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/" />
-  <Folder Name="/Samples/03-workflows/" />
+  <Folder Name="/Samples/03-workflows/">
+    <File Path="samples/03-workflows/README.md" />
+  </Folder>
+  <Folder Name="/Samples/03-workflows/Concurrent/">
+    <Project Path="samples/03-workflows/Concurrent/Concurrent/Concurrent.csproj" />
+    <Project Path="samples/03-workflows/Concurrent/MapReduce/MapReduce.csproj" />
+  </Folder>
+  <Folder Name="/Samples/03-workflows/ConditionalEdges/">
+    <Project Path="samples/03-workflows/ConditionalEdges/01_EdgeCondition/01_EdgeCondition.csproj" />
+    <Project Path="samples/03-workflows/ConditionalEdges/02_SwitchCase/02_SwitchCase.csproj" />
+    <Project Path="samples/03-workflows/ConditionalEdges/03_MultiSelection/03_MultiSelection.csproj" />
+  </Folder>
+  <Folder Name="/Samples/03-workflows/Declarative/">
+    <File Path="samples/03-workflows/Declarative/README.md" />
+    <Project Path="samples/03-workflows/Declarative/ConfirmInput/ConfirmInput.csproj" />
+    <Project Path="samples/03-workflows/Declarative/CustomerSupport/CustomerSupport.csproj" />
+    <Project Path="samples/03-workflows/Declarative/DeepResearch/DeepResearch.csproj" />
+    <Project Path="samples/03-workflows/Declarative/ExecuteCode/ExecuteCode.csproj" />
+    <Project Path="samples/03-workflows/Declarative/ExecuteWorkflow/ExecuteWorkflow.csproj" />
+    <Project Path="samples/03-workflows/Declarative/FunctionTools/FunctionTools.csproj" />
+    <Project Path="samples/03-workflows/Declarative/GenerateCode/GenerateCode.csproj" />
+    <Project Path="samples/03-workflows/Declarative/HostedWorkflow/HostedWorkflow.csproj" />
+    <Project Path="samples/03-workflows/Declarative/InputArguments/InputArguments.csproj" />
+    <Project Path="samples/03-workflows/Declarative/InvokeFunctionTool/InvokeFunctionTool.csproj" />
+    <Project Path="samples/03-workflows/Declarative/Marketing/Marketing.csproj" />
+    <Project Path="samples/03-workflows/Declarative/StudentTeacher/StudentTeacher.csproj" />
+    <Project Path="samples/03-workflows/Declarative/ToolApproval/ToolApproval.csproj" />
+  </Folder>
+  <Folder Name="/Samples/03-workflows/Declarative/Examples/">
+    <File Path="../workflow-samples/CustomerSupport.yaml" />
+    <File Path="../workflow-samples/DeepResearch.yaml" />
+    <File Path="../workflow-samples/Marketing.yaml" />
+    <File Path="../workflow-samples/MathChat.yaml" />
+    <File Path="../workflow-samples/README.md" />
+    <File Path="../workflow-samples/wttr.json" />
+  </Folder>
+  <Folder Name="/Samples/03-workflows/SharedStates/">
+    <Project Path="samples/03-workflows/SharedStates/SharedStates.csproj" />
+  </Folder>
+  <Folder Name="/Samples/03-workflows/Loop/">
+    <Project Path="samples/03-workflows/Loop/Loop.csproj" />
+  </Folder>
+  <Folder Name="/Samples/03-workflows/Agents/">
+    <Project Path="samples/03-workflows/Agents/CustomAgentExecutors/CustomAgentExecutors.csproj" />
+    <Project Path="samples/03-workflows/Agents/FoundryAgent/FoundryAgent.csproj" />
+    <Project Path="samples/03-workflows/Agents/GroupChatToolApproval/GroupChatToolApproval.csproj" />
+    <Project Path="samples/03-workflows/Agents/WorkflowAsAnAgent/WorkflowAsAnAgent.csproj" />
+  </Folder>
+  <Folder Name="/Samples/03-workflows/Checkpoint/">
+    <Project Path="samples/03-workflows/Checkpoint/CheckpointAndRehydrate/CheckpointAndRehydrate.csproj" />
+    <Project Path="samples/03-workflows/Checkpoint/CheckpointAndResume/CheckpointAndResume.csproj" />
+    <Project Path="samples/03-workflows/Checkpoint/CheckpointWithHumanInTheLoop/CheckpointWithHumanInTheLoop.csproj" />
+  </Folder>
+  <Folder Name="/Samples/03-workflows/HumanInTheLoop/">
+    <Project Path="samples/03-workflows/HumanInTheLoop/HumanInTheLoopBasic/HumanInTheLoopBasic.csproj" />
+  </Folder>
+  <Folder Name="/Samples/03-workflows/Observability/">
+    <Project Path="samples/03-workflows/Observability/ApplicationInsights/ApplicationInsights.csproj" />
+    <Project Path="samples/03-workflows/Observability/AspireDashboard/AspireDashboard.csproj" />
+    <Project Path="samples/03-workflows/Observability/WorkflowAsAnAgent/WorkflowAsAnAgentObservability.csproj" />
+  </Folder>
+  <Folder Name="/Samples/03-workflows/Visualization/">
+    <Project Path="samples/03-workflows/Visualization/Visualization.csproj" />
+  </Folder>
+  <Folder Name="/Samples/03-workflows/_StartHere/">
+    <Project Path="samples/03-workflows/_StartHere/01_Streaming/01_Streaming.csproj" />
+    <Project Path="samples/03-workflows/_StartHere/02_AgentsInWorkflows/02_AgentsInWorkflows.csproj" />
+    <Project Path="samples/03-workflows/_StartHere/03_AgentWorkflowPatterns/03_AgentWorkflowPatterns.csproj" />
+    <Project Path="samples/03-workflows/_StartHere/04_MultiModelService/04MultiModelService.csproj" />
+    <Project Path="samples/03-workflows/_StartHere/05_SubWorkflows/05_SubWorkflows.csproj" />
+    <Project Path="samples/03-workflows/_StartHere/06_MixedWorkflowAgentsAndExecutors/06_MixedWorkflowAgentsAndExecutors.csproj" />
+    <Project Path="samples/03-workflows/_StartHere/07_WriterCriticWorkflow/07_WriterCriticWorkflow.csproj" />
+  </Folder>
   <Folder Name="/Samples/04-hosting/" />
   <Folder Name="/Samples/04-hosting/DurableAgents/" />
   <Folder Name="/Samples/04-hosting/DurableAgents/AzureFunctions/">
@@ -202,80 +274,7 @@
   <Folder Name="/Samples/GettingStarted/Observability/">
     <Project Path="samples/GettingStarted/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
   </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/">
-    <File Path="samples/GettingStarted/Workflows/README.md" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/Concurrent/">
-    <Project Path="samples/GettingStarted/Workflows/Concurrent/Concurrent/Concurrent.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Concurrent/MapReduce/MapReduce.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/ConditionalEdges/">
-    <Project Path="samples/GettingStarted/Workflows/ConditionalEdges/01_EdgeCondition/01_EdgeCondition.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/ConditionalEdges/02_SwitchCase/02_SwitchCase.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/ConditionalEdges/03_MultiSelection/03_MultiSelection.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/Declarative/">
-    <File Path="samples/GettingStarted/Workflows/Declarative/README.md" />
-    <Project Path="samples/GettingStarted/Workflows/Declarative/ConfirmInput/ConfirmInput.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Declarative/CustomerSupport/CustomerSupport.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Declarative/DeepResearch/DeepResearch.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Declarative/ExecuteCode/ExecuteCode.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Declarative/ExecuteWorkflow/ExecuteWorkflow.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Declarative/FunctionTools/FunctionTools.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Declarative/GenerateCode/GenerateCode.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Declarative/HostedWorkflow/HostedWorkflow.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Declarative/InputArguments/InputArguments.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Declarative/InvokeFunctionTool/InvokeFunctionTool.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Declarative/Marketing/Marketing.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Declarative/StudentTeacher/StudentTeacher.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Declarative/ToolApproval/ToolApproval.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/Declarative/Examples/">
-    <File Path="../workflow-samples/CustomerSupport.yaml" />
-    <File Path="../workflow-samples/DeepResearch.yaml" />
-    <File Path="../workflow-samples/Marketing.yaml" />
-    <File Path="../workflow-samples/MathChat.yaml" />
-    <File Path="../workflow-samples/README.md" />
-    <File Path="../workflow-samples/wttr.json" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/SharedStates/">
-    <Project Path="samples/GettingStarted/Workflows/SharedStates/SharedStates.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/Loop/">
-    <Project Path="samples/GettingStarted/Workflows/Loop/Loop.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/Agents/">
-    <Project Path="samples/GettingStarted/Workflows/Agents/CustomAgentExecutors/CustomAgentExecutors.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Agents/FoundryAgent/FoundryAgent.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Agents/GroupChatToolApproval/GroupChatToolApproval.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Agents/WorkflowAsAnAgent/WorkflowAsAnAgent.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/Checkpoint/">
-    <Project Path="samples/GettingStarted/Workflows/Checkpoint/CheckpointAndRehydrate/CheckpointAndRehydrate.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Checkpoint/CheckpointAndResume/CheckpointAndResume.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Checkpoint/CheckpointWithHumanInTheLoop/CheckpointWithHumanInTheLoop.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/HumanInTheLoop/">
-    <Project Path="samples/GettingStarted/Workflows/HumanInTheLoop/HumanInTheLoopBasic/HumanInTheLoopBasic.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/Observability/">
-    <Project Path="samples/GettingStarted/Workflows/Observability/ApplicationInsights/ApplicationInsights.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Observability/AspireDashboard/AspireDashboard.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/Observability/WorkflowAsAnAgent/WorkflowAsAnAgentObservability.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/Visualization/">
-    <Project Path="samples/GettingStarted/Workflows/Visualization/Visualization.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/Workflows/_Foundational/">
-    <Project Path="samples/GettingStarted/Workflows/_Foundational/02_Streaming/02_Streaming.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/_Foundational/03_AgentsInWorkflows/03_AgentsInWorkflows.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/_Foundational/04_AgentWorkflowPatterns/04_AgentWorkflowPatterns.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/_Foundational/05_MultiModelService/05_MultiModelService.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/_Foundational/06_SubWorkflows/06_SubWorkflows.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/_Foundational/07_MixedWorkflowAgentsAndExecutors/07_MixedWorkflowAgentsAndExecutors.csproj" />
-    <Project Path="samples/GettingStarted/Workflows/_Foundational/08_WriterCriticWorkflow/08_WriterCriticWorkflow.csproj" />
-  </Folder>
-  <Folder Name="/Solution Items/">
+ <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
     <File Path=".gitignore" />
     <File Path="Directory.Build.props" />
