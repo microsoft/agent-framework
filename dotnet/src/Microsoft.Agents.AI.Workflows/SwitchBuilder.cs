@@ -84,9 +84,9 @@ public sealed class SwitchBuilder
         List<(Func<object?, bool> Predicate, HashSet<int> OutgoingIndicies)> caseMap = this._caseMap;
         HashSet<int> defaultIndicies = this._defaultIndicies;
 
-        return builder.AddFanOutEdge<object>(source, this._executors, CasePartitioner);
+        return builder.AddFanOutEdge<object>(source, this._executors, EdgeSelector);
 
-        IEnumerable<int> CasePartitioner(object? input, int targetCount)
+        IEnumerable<int> EdgeSelector(object? input, int targetCount)
         {
             Debug.Assert(targetCount == this._executors.Count);
 
