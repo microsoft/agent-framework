@@ -50,12 +50,12 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Sample docstring explaining what the sample does.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 ```
 
 Users can create a `.env` file in the `python/` directory based on `.env.example` to set their environment variables without having to export them in their shell.
