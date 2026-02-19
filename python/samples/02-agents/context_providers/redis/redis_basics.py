@@ -37,7 +37,7 @@ from azure.identity import AzureCliCredential
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 
-# Default Redis URL for local Redis Stack (docker run -d -p 6379:6379 redis/redis-stack:latest).
+# Default Redis URL for local Redis Stack.
 # Override via the REDIS_URL environment variable for remote or authenticated instances.
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
