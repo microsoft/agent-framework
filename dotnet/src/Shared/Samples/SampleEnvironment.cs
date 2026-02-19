@@ -3,65 +3,68 @@
 #pragma warning disable IDE0005 // Using directive is unnecessary. - need to suppress this, since this file is used in both projects with implicit usings and without.
 
 using System;
-using System.Collections;
+using System.Collections.Generic;
+using IDictionary = System.Collections.IDictionary;
 using SystemEnvironment = System.Environment;
 
 namespace SampleHelpers;
 
 internal static class SampleEnvironment
 {
+    private static readonly HashSet<string> s_affirmativeValues = new(StringComparer.OrdinalIgnoreCase) { "TRUE", "Y", "YES" };
+
     public static string? GetEnvironmentVariable(string key)
         => GetEnvironmentVariable(key, EnvironmentVariableTarget.Process);
 
     public static string? GetEnvironmentVariable(string key, EnvironmentVariableTarget target)
     {
         // Allows for opting into showing all setting values in the console output, so that it is easy to troubleshoot sample setup issues.
-        var showAllSampleValues = SystemEnvironment.GetEnvironmentVariable("AF_SHOW_ALL_DEMO_SETTING_VALUES", target);
-        var shouldShowValue = showAllSampleValues?.ToUpperInvariant() == "Y";
+        string? showAllSampleValues = SystemEnvironment.GetEnvironmentVariable("AF_SHOW_ALL_DEMO_SETTING_VALUES", target);
+        bool shouldShowValue = s_affirmativeValues.Contains(showAllSampleValues ?? string.Empty);
 
-        var value = SystemEnvironment.GetEnvironmentVariable(key, target);
-        if (string.IsNullOrWhiteSpace(value))
+        string? value = SystemEnvironment.GetEnvironmentVariable(key, target);
+        ConsoleColor color = Console.ForegroundColor;
+        try
         {
-            var color = Console.ForegroundColor;
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.Write("Setting '");
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.Write(key);
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("' is not set in environment variables.");
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.Write("Setting '");
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.Write(key);
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine("' is not defined as an environment variable.");
 
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.Write("Please provide the setting for '");
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.Write(key);
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.Write("'. Just press enter to accept the default. > ");
-            Console.ForegroundColor = color;
-            value = Console.ReadLine();
-            value = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.Write("Please provide the desired value for '");
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.Write(key);
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.Write("' or press enter to accept the default: ");
+                Console.ForegroundColor = ConsoleColor.Yellow;
+
+                value = Console.ReadLine();
+                value = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            }
+            else if (shouldShowValue)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.Write("Using setting '");
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.Write(key);
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.Write("' with value='");
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.Write(value);
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine("'");
+            }
 
             Console.WriteLine();
         }
-        else if (shouldShowValue)
+        finally
         {
-            var color = Console.ForegroundColor;
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.Write("Using setting: Source=");
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.Write("EnvironmentVariables");
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.Write(", Key='");
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.Write(key);
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.Write("', Value='");
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.Write(value);
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("'");
             Console.ForegroundColor = color;
-
-            Console.WriteLine();
         }
 
         return value;

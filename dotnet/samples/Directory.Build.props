@@ -2,11 +2,15 @@
 
   <Import Project="../Directory.Build.props" />
 
+  <!-- 
+    Override repo build settings for sample projects.  When copying a sample outside of this repo
+    these overrides are not required.
+    -->
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <IsAotCompatible>false</IsAotCompatible>
-    <TargetFrameworks>net10.0;net472</TargetFrameworks>
-    <UserSecretsId>5ee045b0-aea3-4f08-8d31-32d1a6f8fed0</UserSecretsId>
+    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net10.0</TargetFrameworks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="$(MSBuildThisFileDirectory)\..\src\Shared\Demos\*.cs" LinkBase="" Visible="false" />
+    <Compile Include="$(MSBuildThisFileDirectory)\..\src\Shared\Samples\SampleEnvironment.cs" LinkBase="" Visible="false" />
   </ItemGroup>
 
 </Project>

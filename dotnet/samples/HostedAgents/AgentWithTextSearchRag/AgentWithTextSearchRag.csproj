@@ -1,19 +1,20 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFrameworks>net10.0</TargetFrameworks>
-
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
 
+  <PropertyGroup>
     <!-- 
       Disable central package management for this project.
       This project requires explicit package references with versions specified inline rather than 
       inheriting them from Directory.Packages.props. This is necessary because a Docker image will 
       be created from this project, and the Docker build process only has access to this folder 
       and cannot access parent folders where Directory.Packages.props resides.
-    -->
+      -->
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
   </PropertyGroup>
 

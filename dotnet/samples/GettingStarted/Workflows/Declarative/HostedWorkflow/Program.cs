@@ -15,7 +15,7 @@ using Shared.Workflows;
 namespace Demo.DeclarativeWorkflow;
 
 /// <summary>
-/// %%% COMMENT
+/// Demonstrate how to create a hosted workflow and invoke it as an agent in a console application.
 /// </summary>
 /// <remarks>
 /// <b>Configuration</b>
