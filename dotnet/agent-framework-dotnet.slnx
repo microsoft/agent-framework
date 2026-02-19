@@ -15,8 +15,138 @@
     <Project Path="samples/01-get-started/05_first_workflow/05_first_workflow.csproj" />
     <Project Path="samples/01-get-started/06_host_your_agent/06_host_your_agent.csproj" />
   </Folder>
-  <Folder Name="/Samples/02-agents/" />
-  <Folder Name="/Samples/03-workflows/">
+  <Folder Name="/Samples/02-agents/">
+    <File Path="samples/02-agents/README.md" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/AgentProviders/">
+    <File Path="samples/02-agents/AgentProviders/README.md" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_A2A/Agent_With_A2A.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_Anthropic/Agent_With_Anthropic.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_AzureAIAgentsPersistent/Agent_With_AzureAIAgentsPersistent.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_AzureAIProject/Agent_With_AzureAIProject.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_AzureFoundryModel/Agent_With_AzureFoundryModel.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_AzureOpenAIChatCompletion/Agent_With_AzureOpenAIChatCompletion.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_AzureOpenAIResponses/Agent_With_AzureOpenAIResponses.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_CustomImplementation/Agent_With_CustomImplementation.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_GitHubCopilot/Agent_With_GitHubCopilot.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_GoogleGemini/Agent_With_GoogleGemini.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_Ollama/Agent_With_Ollama.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_ONNX/Agent_With_ONNX.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_OpenAIAssistants/Agent_With_OpenAIAssistants.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_OpenAIChatCompletion/Agent_With_OpenAIChatCompletion.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/Agent_With_OpenAIResponses/Agent_With_OpenAIResponses.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/Agents/">
+    <File Path="samples/02-agents/Agents/README.md" />
+    <Project Path="samples/02-agents/Agents/Agent_Step04_UsingFunctionToolsWithApprovals/Agent_Step04_UsingFunctionToolsWithApprovals.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step05_StructuredOutput/Agent_Step05_StructuredOutput.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step06_PersistedConversations/Agent_Step06_PersistedConversations.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step07_3rdPartyChatHistoryStorage/Agent_Step07_3rdPartyChatHistoryStorage.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step08_Observability/Agent_Step08_Observability.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step09_DependencyInjection/Agent_Step09_DependencyInjection.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step10_AsMcpTool/Agent_Step10_AsMcpTool.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step11_UsingImages/Agent_Step11_UsingImages.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step12_AsFunctionTool/Agent_Step12_AsFunctionTool.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step13_BackgroundResponsesWithToolsAndPersistence/Agent_Step13_BackgroundResponsesWithToolsAndPersistence.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step14_Middleware/Agent_Step14_Middleware.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step15_Plugins/Agent_Step15_Plugins.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step16_ChatReduction/Agent_Step16_ChatReduction.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step17_BackgroundResponses/Agent_Step17_BackgroundResponses.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step18_DeepResearch/Agent_Step18_DeepResearch.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step19_Declarative/Agent_Step19_Declarative.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step20_AdditionalAIContext/Agent_Step20_AdditionalAIContext.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/DeclarativeAgents/">
+    <Project Path="samples/02-agents/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/AGUI/">
+    <File Path="samples/02-agents/AGUI/README.md" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/AGUI/Step01_GettingStarted/">
+    <Project Path="samples/02-agents/AGUI/Step01_GettingStarted/Client/Client.csproj" />
+    <Project Path="samples/02-agents/AGUI/Step01_GettingStarted/Server/Server.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/AGUI/Step02_BackendTools/">
+    <Project Path="samples/02-agents/AGUI/Step02_BackendTools/Client/Client.csproj" />
+    <Project Path="samples/02-agents/AGUI/Step02_BackendTools/Server/Server.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/AGUI/Step03_FrontendTools/">
+    <Project Path="samples/02-agents/AGUI/Step03_FrontendTools/Client/Client.csproj" />
+    <Project Path="samples/02-agents/AGUI/Step03_FrontendTools/Server/Server.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/AGUI/Step04_HumanInLoop/">
+    <Project Path="samples/02-agents/AGUI/Step04_HumanInLoop/Client/Client.csproj" />
+    <Project Path="samples/02-agents/AGUI/Step04_HumanInLoop/Server/Server.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/AGUI/Step05_StateManagement/">
+    <Project Path="samples/02-agents/AGUI/Step05_StateManagement/Client/Client.csproj" />
+    <Project Path="samples/02-agents/AGUI/Step05_StateManagement/Server/Server.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/DevUI/">
+    <File Path="samples/02-agents/DevUI/README.md" />
+    <Project Path="samples/02-agents/DevUI/DevUI_Step01_BasicUsage/DevUI_Step01_BasicUsage.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/AgentWithAnthropic/">
+    <File Path="samples/02-agents/AgentWithAnthropic/README.md" />
+    <Project Path="samples/02-agents/AgentWithAnthropic/Agent_Anthropic_Step01_Running/Agent_Anthropic_Step01_Running.csproj" />
+    <Project Path="samples/02-agents/AgentWithAnthropic/Agent_Anthropic_Step02_Reasoning/Agent_Anthropic_Step02_Reasoning.csproj" />
+    <Project Path="samples/02-agents/AgentWithAnthropic/Agent_Anthropic_Step03_UsingFunctionTools/Agent_Anthropic_Step03_UsingFunctionTools.csproj" />
+    <Project Path="samples/02-agents/AgentWithAnthropic/Agent_Anthropic_Step04_UsingSkills/Agent_Anthropic_Step04_UsingSkills.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/AgentWithMemory/">
+    <File Path="samples/02-agents/AgentWithMemory/README.md" />
+    <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step01_ChatHistoryMemory/AgentWithMemory_Step01_ChatHistoryMemory.csproj" />
+    <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step02_MemoryUsingMem0/AgentWithMemory_Step02_MemoryUsingMem0.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/AgentWithOpenAI/">
+    <File Path="samples/02-agents/AgentWithOpenAI/README.md" />
+    <Project Path="samples/02-agents/AgentWithOpenAI/Agent_OpenAI_Step01_Running/Agent_OpenAI_Step01_Running.csproj" />
+    <Project Path="samples/02-agents/AgentWithOpenAI/Agent_OpenAI_Step02_Reasoning/Agent_OpenAI_Step02_Reasoning.csproj" />
+    <Project Path="samples/02-agents/AgentWithOpenAI/Agent_OpenAI_Step03_CreateFromChatClient/Agent_OpenAI_Step03_CreateFromChatClient.csproj" />
+    <Project Path="samples/02-agents/AgentWithOpenAI/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient.csproj" />
+    <Project Path="samples/02-agents/AgentWithOpenAI/Agent_OpenAI_Step05_Conversation/Agent_OpenAI_Step05_Conversation.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/AgentWithRAG/">
+    <File Path="samples/02-agents/AgentWithRAG/README.md" />
+    <Project Path="samples/02-agents/AgentWithRAG/AgentWithRAG_Step01_BasicTextRAG/AgentWithRAG_Step01_BasicTextRAG.csproj" />
+    <Project Path="samples/02-agents/AgentWithRAG/AgentWithRAG_Step02_CustomVectorStoreRAG/AgentWithRAG_Step02_CustomVectorStoreRAG.csproj" />
+    <Project Path="samples/02-agents/AgentWithRAG/AgentWithRAG_Step03_CustomRAGDataSource/AgentWithRAG_Step03_CustomRAGDataSource.csproj" />
+    <Project Path="samples/02-agents/AgentWithRAG/AgentWithRAG_Step04_FoundryServiceRAG/AgentWithRAG_Step04_FoundryServiceRAG.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/FoundryAgents/">
+    <File Path="samples/02-agents/FoundryAgents/README.md" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Evaluations_Step01_RedTeaming/FoundryAgents_Evaluations_Step01_RedTeaming.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Evaluations_Step02_SelfReflection/FoundryAgents_Evaluations_Step02_SelfReflection.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step01.1_Basics/FoundryAgents_Step01.1_Basics.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step01.2_Running/FoundryAgents_Step01.2_Running.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step02_MultiturnConversation/FoundryAgents_Step02_MultiturnConversation.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step03_UsingFunctionTools/FoundryAgents_Step03_UsingFunctionTools.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step04_UsingFunctionToolsWithApprovals/FoundryAgents_Step04_UsingFunctionToolsWithApprovals.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step05_StructuredOutput/FoundryAgents_Step05_StructuredOutput.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step06_PersistedConversations/FoundryAgents_Step06_PersistedConversations.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step07_Observability/FoundryAgents_Step07_Observability.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step08_DependencyInjection/FoundryAgents_Step08_DependencyInjection.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step09_UsingMcpClientAsTools/FoundryAgents_Step09_UsingMcpClientAsTools.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step10_UsingImages/FoundryAgents_Step10_UsingImages.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step11_AsFunctionTool/FoundryAgents_Step11_AsFunctionTool.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step12_Middleware/FoundryAgents_Step12_Middleware.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step13_Plugins/FoundryAgents_Step13_Plugins.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step14_CodeInterpreter/FoundryAgents_Step14_CodeInterpreter.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step15_ComputerUse/FoundryAgents_Step15_ComputerUse.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step18_FileSearch/FoundryAgents_Step18_FileSearch.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step19_OpenAPITools/FoundryAgents_Step19_OpenAPITools.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/ModelContextProtocol/">
+    <File Path="samples/02-agents/ModelContextProtocol/README.md" />
+    <Project Path="samples/02-agents/ModelContextProtocol/Agent_MCP_Server/Agent_MCP_Server.csproj" />
+    <Project Path="samples/02-agents/ModelContextProtocol/Agent_MCP_Server_Auth/Agent_MCP_Server_Auth.csproj" />
+    <Project Path="samples/02-agents/ModelContextProtocol/FoundryAgent_Hosted_MCP/FoundryAgent_Hosted_MCP.csproj" />
+    <Project Path="samples/02-agents/ModelContextProtocol/ResponseAgent_Hosted_MCP/ResponseAgent_Hosted_MCP.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/Observability/">
+    <Project Path="samples/02-agents/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
+  </Folder>
+   <Folder Name="/Samples/03-workflows/">
     <File Path="samples/03-workflows/README.md" />
   </Folder>
   <Folder Name="/Samples/03-workflows/Concurrent/">
@@ -143,138 +273,7 @@
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithHostedMCP/AgentWithHostedMCP.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
   </Folder>
-  <Folder Name="/Samples/GettingStarted/">
-    <File Path="samples/GettingStarted/README.md" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AgentProviders/">
-    <File Path="samples/GettingStarted/AgentProviders/README.md" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_A2A/Agent_With_A2A.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_Anthropic/Agent_With_Anthropic.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgentsPersistent/Agent_With_AzureAIAgentsPersistent.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIProject/Agent_With_AzureAIProject.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureFoundryModel/Agent_With_AzureFoundryModel.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureOpenAIChatCompletion/Agent_With_AzureOpenAIChatCompletion.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureOpenAIResponses/Agent_With_AzureOpenAIResponses.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_CustomImplementation/Agent_With_CustomImplementation.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_GitHubCopilot/Agent_With_GitHubCopilot.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_GoogleGemini/Agent_With_GoogleGemini.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_Ollama/Agent_With_Ollama.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_ONNX/Agent_With_ONNX.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIAssistants/Agent_With_OpenAIAssistants.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIChatCompletion/Agent_With_OpenAIChatCompletion.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIResponses/Agent_With_OpenAIResponses.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/Agents/">
-    <File Path="samples/GettingStarted/Agents/README.md" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step04_UsingFunctionToolsWithApprovals/Agent_Step04_UsingFunctionToolsWithApprovals.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step05_StructuredOutput/Agent_Step05_StructuredOutput.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step06_PersistedConversations/Agent_Step06_PersistedConversations.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step07_3rdPartyChatHistoryStorage/Agent_Step07_3rdPartyChatHistoryStorage.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step08_Observability/Agent_Step08_Observability.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step09_DependencyInjection/Agent_Step09_DependencyInjection.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step10_AsMcpTool/Agent_Step10_AsMcpTool.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step11_UsingImages/Agent_Step11_UsingImages.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step12_AsFunctionTool/Agent_Step12_AsFunctionTool.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step13_BackgroundResponsesWithToolsAndPersistence/Agent_Step13_BackgroundResponsesWithToolsAndPersistence.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step14_Middleware/Agent_Step14_Middleware.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step15_Plugins/Agent_Step15_Plugins.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step16_ChatReduction/Agent_Step16_ChatReduction.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step17_BackgroundResponses/Agent_Step17_BackgroundResponses.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step18_DeepResearch/Agent_Step18_DeepResearch.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step19_Declarative/Agent_Step19_Declarative.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step20_AdditionalAIContext/Agent_Step20_AdditionalAIContext.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
-    <Project Path="samples/GettingStarted/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AGUI/">
-    <File Path="samples/GettingStarted/AGUI/README.md" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AGUI/Step01_GettingStarted/">
-    <Project Path="samples/GettingStarted/AGUI/Step01_GettingStarted/Client/Client.csproj" />
-    <Project Path="samples/GettingStarted/AGUI/Step01_GettingStarted/Server/Server.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AGUI/Step02_BackendTools/">
-    <Project Path="samples/GettingStarted/AGUI/Step02_BackendTools/Client/Client.csproj" />
-    <Project Path="samples/GettingStarted/AGUI/Step02_BackendTools/Server/Server.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AGUI/Step03_FrontendTools/">
-    <Project Path="samples/GettingStarted/AGUI/Step03_FrontendTools/Client/Client.csproj" />
-    <Project Path="samples/GettingStarted/AGUI/Step03_FrontendTools/Server/Server.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AGUI/Step04_HumanInLoop/">
-    <Project Path="samples/GettingStarted/AGUI/Step04_HumanInLoop/Client/Client.csproj" />
-    <Project Path="samples/GettingStarted/AGUI/Step04_HumanInLoop/Server/Server.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AGUI/Step05_StateManagement/">
-    <Project Path="samples/GettingStarted/AGUI/Step05_StateManagement/Client/Client.csproj" />
-    <Project Path="samples/GettingStarted/AGUI/Step05_StateManagement/Server/Server.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/DevUI/">
-    <File Path="samples/GettingStarted/DevUI/README.md" />
-    <Project Path="samples/GettingStarted/DevUI/DevUI_Step01_BasicUsage/DevUI_Step01_BasicUsage.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AgentWithAnthropic/">
-    <File Path="samples/GettingStarted/AgentWithAnthropic/README.md" />
-    <Project Path="samples/GettingStarted/AgentWithAnthropic/Agent_Anthropic_Step01_Running/Agent_Anthropic_Step01_Running.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithAnthropic/Agent_Anthropic_Step02_Reasoning/Agent_Anthropic_Step02_Reasoning.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithAnthropic/Agent_Anthropic_Step03_UsingFunctionTools/Agent_Anthropic_Step03_UsingFunctionTools.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithAnthropic/Agent_Anthropic_Step04_UsingSkills/Agent_Anthropic_Step04_UsingSkills.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AgentWithMemory/">
-    <File Path="samples/GettingStarted/AgentWithMemory/README.md" />
-    <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step01_ChatHistoryMemory/AgentWithMemory_Step01_ChatHistoryMemory.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step02_MemoryUsingMem0/AgentWithMemory_Step02_MemoryUsingMem0.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
-    <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
-    <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step01_Running/Agent_OpenAI_Step01_Running.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step02_Reasoning/Agent_OpenAI_Step02_Reasoning.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step03_CreateFromChatClient/Agent_OpenAI_Step03_CreateFromChatClient.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step05_Conversation/Agent_OpenAI_Step05_Conversation.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AgentWithRAG/">
-    <File Path="samples/GettingStarted/AgentWithRAG/README.md" />
-    <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step01_BasicTextRAG/AgentWithRAG_Step01_BasicTextRAG.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step02_CustomVectorStoreRAG/AgentWithRAG_Step02_CustomVectorStoreRAG.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step03_CustomRAGDataSource/AgentWithRAG_Step03_CustomRAGDataSource.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step04_FoundryServiceRAG/AgentWithRAG_Step04_FoundryServiceRAG.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/FoundryAgents/">
-    <File Path="samples/GettingStarted/FoundryAgents/README.md" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Evaluations_Step01_RedTeaming/FoundryAgents_Evaluations_Step01_RedTeaming.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Evaluations_Step02_SelfReflection/FoundryAgents_Evaluations_Step02_SelfReflection.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step01.1_Basics/FoundryAgents_Step01.1_Basics.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step01.2_Running/FoundryAgents_Step01.2_Running.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step02_MultiturnConversation/FoundryAgents_Step02_MultiturnConversation.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step03_UsingFunctionTools/FoundryAgents_Step03_UsingFunctionTools.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step04_UsingFunctionToolsWithApprovals/FoundryAgents_Step04_UsingFunctionToolsWithApprovals.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step05_StructuredOutput/FoundryAgents_Step05_StructuredOutput.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step06_PersistedConversations/FoundryAgents_Step06_PersistedConversations.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step07_Observability/FoundryAgents_Step07_Observability.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step08_DependencyInjection/FoundryAgents_Step08_DependencyInjection.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step09_UsingMcpClientAsTools/FoundryAgents_Step09_UsingMcpClientAsTools.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step10_UsingImages/FoundryAgents_Step10_UsingImages.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step11_AsFunctionTool/FoundryAgents_Step11_AsFunctionTool.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step12_Middleware/FoundryAgents_Step12_Middleware.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step13_Plugins/FoundryAgents_Step13_Plugins.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step14_CodeInterpreter/FoundryAgents_Step14_CodeInterpreter.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step15_ComputerUse/FoundryAgents_Step15_ComputerUse.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step18_FileSearch/FoundryAgents_Step18_FileSearch.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step19_OpenAPITools/FoundryAgents_Step19_OpenAPITools.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/ModelContextProtocol/">
-    <File Path="samples/GettingStarted/ModelContextProtocol/README.md" />
-    <Project Path="samples/GettingStarted/ModelContextProtocol/Agent_MCP_Server/Agent_MCP_Server.csproj" />
-    <Project Path="samples/GettingStarted/ModelContextProtocol/Agent_MCP_Server_Auth/Agent_MCP_Server_Auth.csproj" />
-    <Project Path="samples/GettingStarted/ModelContextProtocol/FoundryAgent_Hosted_MCP/FoundryAgent_Hosted_MCP.csproj" />
-    <Project Path="samples/GettingStarted/ModelContextProtocol/ResponseAgent_Hosted_MCP/ResponseAgent_Hosted_MCP.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/Observability/">
-    <Project Path="samples/GettingStarted/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
-  </Folder>
- <Folder Name="/Solution Items/">
+  <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
     <File Path=".gitignore" />
     <File Path="Directory.Build.props" />
