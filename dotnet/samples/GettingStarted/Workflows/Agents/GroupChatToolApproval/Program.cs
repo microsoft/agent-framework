@@ -101,7 +101,7 @@ public static class Program
             {
                 case RequestInfoEvent e:
                 {
-                    if (e.Request.DataIs(out FunctionApprovalRequestContent? approvalRequestContent))
+                    if (e.Request.TryGetDataAs(out FunctionApprovalRequestContent? approvalRequestContent))
                     {
                         Console.WriteLine();
                         Console.WriteLine($"[APPROVAL REQUIRED] From agent: {e.Request.PortInfo.PortId}");

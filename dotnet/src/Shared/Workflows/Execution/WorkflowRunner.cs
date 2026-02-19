@@ -272,9 +272,10 @@ internal sealed class WorkflowRunner
     /// </summary>
     private async ValueTask<ExternalInputResponse> HandleExternalRequestAsync(ExternalRequest request)
     {
-        ExternalInputRequest inputRequest =
-            request.DataAs<ExternalInputRequest>() ??
-            throw new InvalidOperationException($"Expected external request type: {request.GetType().Name}.");
+        if (!request.TryGetDataAs<ExternalInputRequest>(out var inputRequest))
+        {
+            throw new InvalidOperationException($"Expected external request type: {request.PortInfo.RequestType}.");
+        }
 
         List<ChatMessage> responseMessages = [];
 

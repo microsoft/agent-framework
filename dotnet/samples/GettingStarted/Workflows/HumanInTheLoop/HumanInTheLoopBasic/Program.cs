@@ -48,9 +48,9 @@ public static class Program
 
     private static ExternalResponse HandleExternalRequest(ExternalRequest request)
     {
-        if (request.DataIs<NumberSignal>())
+        if (request.TryGetDataAs<NumberSignal>(out var signal))
         {
-            switch (request.DataAs<NumberSignal>())
+            switch (signal)
             {
                 case NumberSignal.Init:
                     int initialGuess = ReadIntegerFromConsole("Please provide your initial guess: ");
