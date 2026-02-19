@@ -49,7 +49,17 @@ ALL_ACTION_EXECUTORS = {
 
 # Action kinds that terminate control flow (no fall-through to successor)
 # These actions transfer control elsewhere and should not have sequential edges to the next action
-TERMINATOR_ACTIONS = frozenset({"Goto", "GotoAction", "BreakLoop", "ContinueLoop", "EndWorkflow", "EndDialog"})
+TERMINATOR_ACTIONS = frozenset({
+    "Goto",
+    "GotoAction",
+    "BreakLoop",
+    "ContinueLoop",
+    "EndWorkflow",
+    "EndDialog",
+    "EndConversation",
+    "CancelDialog",
+    "CancelAllDialogs",
+})
 
 # Required fields for specific action kinds (schema validation)
 # Each action needs at least one of the listed fields (checked with alternates)
