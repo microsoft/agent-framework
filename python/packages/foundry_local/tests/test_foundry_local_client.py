@@ -44,9 +44,7 @@ def test_foundry_local_settings_missing_model_id(foundry_local_unit_test_env: di
 
 def test_foundry_local_settings_explicit_overrides_env(foundry_local_unit_test_env: dict[str, str]) -> None:
     """Test that explicit values override environment variables."""
-    settings = load_settings(
-        FoundryLocalSettings, env_prefix="FOUNDRY_LOCAL_", model_id="override-model-id"
-    )
+    settings = load_settings(FoundryLocalSettings, env_prefix="FOUNDRY_LOCAL_", model_id="override-model-id")
 
     assert settings["model_id"] == "override-model-id"
     assert settings["model_id"] != foundry_local_unit_test_env["FOUNDRY_LOCAL_MODEL_ID"]

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 
 """
 OpenAI Responses Client with Hosted MCP Example
@@ -12,7 +13,7 @@ OpenAI Responses Client with Hosted MCP Example
 This sample demonstrates integrating hosted Model Context Protocol (MCP) tools with
 OpenAI Responses Client, including user approval workflows for function call security.
 """
-
+load_dotenv()  # Load environment variables from .env file if present
 if TYPE_CHECKING:
     from agent_framework import AgentSession, SupportsAgentRun
 
@@ -69,13 +70,14 @@ async def handle_approvals_with_session_streaming(query: str, agent: "SupportsAg
     """Here we let the session deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import Message
 
-    new_input: list[Message] = []
+    new_input: list[Message | str] = [query]
     new_input_added = True
     while new_input_added:
         new_input_added = False
-        new_input.append(Message(role="user", text=query))
         async for update in agent.run(new_input, session=session, stream=True, options={"store": True}):
             if update.user_input_requests:
+                # Reset input to only contain new approval responses for the next iteration
+                new_input = []
                 for user_input_needed in update.user_input_requests:
                     print(
                         f"User Input Request for function from {agent.name}: {user_input_needed.function_call.name}"

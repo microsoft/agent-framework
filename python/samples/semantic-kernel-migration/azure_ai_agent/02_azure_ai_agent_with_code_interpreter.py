@@ -25,7 +25,7 @@ async def run_semantic_kernel() -> None:
     async with AzureCliCredential() as credential, AzureAIAgent.create_client(credential=credential) as client:
         settings = AzureAIAgentSettings()
         # Register the hosted code interpreter tool with the remote agent.
-        definition = await client.agents.as_agent(
+        definition = await client.agents.create_agent(
             model=settings.model_deployment_name,
             name="Analyst",
             instructions="Use the code interpreter for numeric work.",
@@ -46,9 +46,7 @@ async def run_agent_framework() -> None:
         AzureCliCredential() as credential,
         AzureAIAgentsProvider(credential=credential) as provider,
     ):
-        # Create a client to access hosted tool factory methods
-        client = AzureAIAgentClient(agents_client=provider._agents_client)
-        code_interpreter_tool = client.get_code_interpreter_tool()
+        code_interpreter_tool = AzureAIAgentClient.get_code_interpreter_tool()
 
         agent = await provider.create_agent(
             name="Analyst",

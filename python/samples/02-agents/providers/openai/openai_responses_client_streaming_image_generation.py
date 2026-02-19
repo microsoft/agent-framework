@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 import anyio
+from agent_framework import Content
 from agent_framework.openai import OpenAIResponsesClient
 
 """OpenAI Responses Client Streaming Image Generation Example
@@ -72,23 +73,24 @@ async def main():
             # Handle partial images
             # The final partial image IS the complete, full-quality image. Each partial
             # represents a progressive refinement, with the last one being the finished result.
-            if (
-                content.type == "uri"
-                and content.additional_properties
-                and content.additional_properties.get("is_partial_image")
-            ):
-                print(f"     Image {image_count} received")
+            if content.type == "image_generation_tool_result" and isinstance(content.outputs, Content):
+                image_output: Content = content.outputs
+                if (
+                    image_output.type == "data"
+                    and image_output.additional_properties.get("is_partial_image")
+                ):
+                    print(f"     Image {image_count} received")
 
-                # Extract file extension from media_type (e.g., "image/png" -> "png")
-                extension = "png"  # Default fallback
-                if content.media_type and "/" in content.media_type:
-                    extension = content.media_type.split("/")[-1]
+                    # Extract file extension from media_type (e.g., "image/png" -> "png")
+                    extension = "png"  # Default fallback
+                    if image_output.media_type and "/" in image_output.media_type:
+                        extension = image_output.media_type.split("/")[-1]
 
-                # Save images with correct extension
-                filename = output_dir / f"image{image_count}.{extension}"
-                await save_image_from_data_uri(content.uri, str(filename))
+                    # Save images with correct extension
+                    filename = output_dir / f"image{image_count}.{extension}"
+                    await save_image_from_data_uri(image_output.uri, str(filename))
 
-                image_count += 1
+                    image_count += 1
 
     # Summary
     print("\n Summary:")

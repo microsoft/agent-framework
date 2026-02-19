@@ -50,12 +50,7 @@ async def step3(text: str, ctx: WorkflowContext[Never, str]) -> None:
 
 def build_workflow():
     """Build a simple 3-step sequential workflow (~6 seconds total)."""
-    return (
-        WorkflowBuilder(start_executor=step1)
-        .add_edge(step1, step2)
-        .add_edge(step2, step3)
-        .build()
-    )
+    return WorkflowBuilder(start_executor=step1).add_edge(step1, step2).add_edge(step2, step3).build()
 
 
 async def run_with_cancellation() -> None:
@@ -64,7 +59,7 @@ async def run_with_cancellation() -> None:
     workflow = build_workflow()
 
     # Wrap workflow.run() in a task to enable cancellation
-    task = asyncio.create_task(workflow.run("hello world"))
+    task = asyncio.ensure_future(workflow.run("hello world"))
 
     # Wait 3 seconds (Step1 completes, Step2 is mid-execution), then cancel
     await asyncio.sleep(3)

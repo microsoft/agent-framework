@@ -41,6 +41,18 @@ internal sealed class TestWorkflowContext : IWorkflowContext
     public ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default)
     {
         this.YieldedOutputs.Enqueue(output);
+
+        // Special-case AgentResponse and AgentResponseUpdate to create their specific event types
+        // (consistent with InProcessRunnerContext.YieldOutputAsync)
+        if (output is AgentResponseUpdate update)
+        {
+            return this.AddEventAsync(new AgentResponseUpdateEvent(this._executorId, update), cancellationToken);
+        }
+        else if (output is AgentResponse response)
+        {
+            return this.AddEventAsync(new AgentResponseEvent(this._executorId, response), cancellationToken);
+        }
+
         return this.AddEventAsync(new WorkflowOutputEvent(output, this._executorId), cancellationToken);
     }
 

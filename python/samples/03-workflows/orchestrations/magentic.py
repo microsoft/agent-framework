@@ -17,6 +17,7 @@ from agent_framework.orchestrations import GroupChatRequestSentEvent, MagenticBu
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
+
 """
 Sample: Magentic Orchestration (multi-agent)
 
