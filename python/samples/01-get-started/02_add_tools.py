@@ -8,8 +8,8 @@ from typing import Annotated
 from agent_framework import tool
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
-from pydantic import Field
 from dotenv import load_dotenv
+from pydantic import Field
 
 """
 Add Tools — Give your agent a function tool
@@ -36,8 +36,6 @@ def get_weather(
     """Get the weather for a given location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
-
-
 # </define_tool>
 
 

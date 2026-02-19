@@ -34,10 +34,15 @@ from agent_framework.declarative import (
     WorkflowFactory,
 )
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from ticketing_plugin import TicketingPlugin
 
 logging.basicConfig(level=logging.ERROR)
+
+# Load environment variables from .env file
+load_dotenv()
+
 
 # ANSI color codes for output formatting
 CYAN = "\033[36m"
@@ -56,9 +61,6 @@ Use your knowledge to work with the user to provide the best possible troublesho
 """.strip()
 
 TICKETING_INSTRUCTIONS = """Always create a ticket in Azure DevOps using the available tools.
-
-# Load environment variables from .env file
-load_dotenv()
 
 Include the following information in the TicketSummary.
 
@@ -121,8 +123,6 @@ Assure the user that their issue will be resolved and provide them with a ticket
 
 
 # Pydantic models for structured outputs
-
-
 class SelfServiceResponse(BaseModel):
     """Response from self-service agent evaluation."""
 

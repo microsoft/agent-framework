@@ -68,9 +68,6 @@ tools:
 # No secrets in YAML - references a pre-configured Foundry connection by name
 # The connection stores credentials securely in Azure AI Foundry
 YAML_AZURE_AI_WITH_FOUNDRY_CONNECTION = """
-
-# Load environment variables from .env file
-load_dotenv()
 kind: Prompt
 name: GitHubAgent
 displayName: GitHub Assistant

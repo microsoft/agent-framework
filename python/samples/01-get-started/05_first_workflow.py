@@ -45,8 +45,6 @@ def create_workflow():
     """Build the workflow: UpperCase → reverse_text."""
     upper = UpperCase(id="upper_case")
     return WorkflowBuilder(start_executor=upper).add_edge(upper, reverse_text).build()
-
-
 # </create_workflow>
 
 
