@@ -743,7 +743,7 @@ public sealed class TextSearchProviderTests
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             RecentMessageMemoryLimit = 4
         });
-        await newProvider.InvokingAsync(new(s_mockAgent, restoredSession, new AIContext()), CancellationToken.None); // Trigger search to read memory.
+        await newProvider.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, restoredSession, new AIContext()), CancellationToken.None); // Trigger search to read memory.
 
         // Assert
         Assert.NotNull(capturedInput);
@@ -769,11 +769,106 @@ public sealed class TextSearchProviderTests
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             RecentMessageMemoryLimit = 3
         });
-        await provider.InvokingAsync(new(s_mockAgent, session, new AIContext()), CancellationToken.None);
+        await provider.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, session, new AIContext()), CancellationToken.None);
 
         // Assert
         Assert.NotNull(capturedInput);
         Assert.Equal(string.Empty, capturedInput); // No recent messages in StateBag => empty input.
+    }
+
+    #endregion
+
+    #region MessageAIContextProvider.InvokingAsync Tests
+
+    [Fact]
+    public async Task MessageInvokingAsync_BeforeAIInvoke_SearchesAndReturnsMergedMessagesAsync()
+    {
+        // Arrange
+        List<TextSearchProvider.TextSearchResult> results =
+        [
+            new() { SourceName = "Doc1", Text = "Content of Doc1" }
+        ];
+
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
+            => Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>(results);
+
+        var provider = new TextSearchProvider(SearchDelegateAsync, new TextSearchProviderOptions
+        {
+            SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke
+        });
+
+        var inputMsg = new ChatMessage(ChatRole.User, "Question?");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [inputMsg]);
+
+        // Act
+        var messages = (await provider.InvokingAsync(context)).ToList();
+
+        // Assert - input message + search result message, with stamping
+        Assert.Equal(2, messages.Count);
+        Assert.Equal("Question?", messages[0].Text);
+        Assert.Contains("Content of Doc1", messages[1].Text);
+        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, messages[1].GetAgentRequestMessageSourceType());
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_OnDemand_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var provider = new TextSearchProvider(this.NoResultSearchAsync, new TextSearchProviderOptions
+        {
+            SearchTime = TextSearchProviderOptions.TextSearchBehavior.OnDemandFunctionCalling,
+        });
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [new ChatMessage(ChatRole.User, "Q?")]);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.InvokingAsync(context).AsTask());
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_BeforeAIInvoke_NoResults_ReturnsOnlyInputMessagesAsync()
+    {
+        // Arrange
+        var provider = new TextSearchProvider(this.NoResultSearchAsync, new TextSearchProviderOptions
+        {
+            SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke
+        });
+        var inputMsg = new ChatMessage(ChatRole.User, "Hello");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [inputMsg]);
+
+        // Act
+        var messages = (await provider.InvokingAsync(context)).ToList();
+
+        // Assert
+        Assert.Single(messages);
+        Assert.Equal("Hello", messages[0].Text);
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_BeforeAIInvoke_DefaultFilter_ExcludesNonExternalMessagesAsync()
+    {
+        // Arrange
+        string? capturedInput = null;
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
+        {
+            capturedInput = input;
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]);
+        }
+
+        var provider = new TextSearchProvider(SearchDelegateAsync, new TextSearchProviderOptions
+        {
+            SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke
+        });
+
+        var externalMsg = new ChatMessage(ChatRole.User, "External message");
+        var historyMsg = new ChatMessage(ChatRole.System, "From history")
+            .WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, "src");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [externalMsg, historyMsg]);
+
+        // Act
+        await provider.InvokingAsync(context);
+
+        // Assert - Only External message used for search query
+        Assert.Equal("External message", capturedInput);
     }
 
     #endregion

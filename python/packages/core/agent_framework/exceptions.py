@@ -1,6 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Exception hierarchy used across Agent Framework core and connectors."""
+"""Exception hierarchy used across Agent Framework core and connectors.
+
+See python/CODING_STANDARD.md § Exception Hierarchy for design rationale
+and guidance on choosing the correct exception class.
+"""
 
 import logging
 from typing import Any, Literal
@@ -9,7 +13,7 @@ logger = logging.getLogger("agent_framework")
 
 
 class AgentFrameworkException(Exception):
-    """Base exceptions for the Agent Framework.
+    """Base exception for the Agent Framework.
 
     Automatically logs the message as debug.
     """
@@ -33,115 +37,118 @@ class AgentFrameworkException(Exception):
         super().__init__(message, *args)  # type: ignore
 
 
+# region Agent Exceptions
+
+
 class AgentException(AgentFrameworkException):
     """Base class for all agent exceptions."""
 
     pass
 
 
-class AgentExecutionException(AgentException):
-    """An error occurred while executing the agent."""
+class AgentInvalidAuthException(AgentException):
+    """An authentication error occurred in an agent."""
 
     pass
 
 
-class AgentInitializationError(AgentException):
-    """An error occurred while initializing the agent."""
+class AgentInvalidRequestException(AgentException):
+    """An invalid request was made to an agent."""
 
     pass
 
 
-class AgentSessionException(AgentException):
-    """An error occurred while managing the agent session."""
+class AgentInvalidResponseException(AgentException):
+    """An invalid or unexpected response was received from an agent."""
 
     pass
+
+
+class AgentContentFilterException(AgentException):
+    """A content filter was triggered by an agent."""
+
+    pass
+
+
+# endregion
+
+# region Chat Client Exceptions
 
 
 class ChatClientException(AgentFrameworkException):
-    """An error occurred while dealing with a chat client."""
+    """Base class for all chat client exceptions."""
 
     pass
 
 
-class ChatClientInitializationError(ChatClientException):
-    """An error occurred while initializing the chat client."""
+class ChatClientInvalidAuthException(ChatClientException):
+    """An authentication error occurred in a chat client."""
 
     pass
 
 
-# region Service Exceptions
-
-
-class ServiceException(AgentFrameworkException):
-    """Base class for all service exceptions."""
+class ChatClientInvalidRequestException(ChatClientException):
+    """An invalid request was made to a chat client."""
 
     pass
 
 
-class ServiceInitializationError(ServiceException):
-    """An error occurred while initializing the service."""
+class ChatClientInvalidResponseException(ChatClientException):
+    """An invalid or unexpected response was received from a chat client."""
 
     pass
 
 
-class ServiceResponseException(ServiceException):
-    """Base class for all service response exceptions."""
+class ChatClientContentFilterException(ChatClientException):
+    """A content filter was triggered by a chat client."""
 
     pass
 
 
-class ServiceContentFilterException(ServiceResponseException):
-    """An error was raised by the content filter of the service."""
+# endregion
+
+# region Integration Exceptions
+
+
+class IntegrationException(AgentFrameworkException):
+    """Base class for all external service/dependency integration exceptions."""
 
     pass
 
 
-class ServiceInvalidAuthError(ServiceException):
-    """An error occurred while authenticating the service."""
+class IntegrationInitializationError(IntegrationException):
+    """A wrapped dependency/service lifecycle failure occurred during setup."""
 
     pass
 
 
-class ServiceInvalidExecutionSettingsError(ServiceResponseException):
-    """An error occurred while validating the execution settings of the service."""
+class IntegrationInvalidAuthException(IntegrationException):
+    """An authentication error occurred in an external integration."""
 
     pass
 
 
-class ServiceInvalidRequestError(ServiceResponseException):
-    """An error occurred while validating the request to the service."""
+class IntegrationInvalidRequestException(IntegrationException):
+    """An invalid request was made to an external integration."""
 
     pass
 
 
-class ServiceInvalidResponseError(ServiceResponseException):
-    """An error occurred while validating the response from the service."""
+class IntegrationInvalidResponseException(IntegrationException):
+    """An invalid or unexpected response was received from an external integration."""
 
     pass
 
 
-class ToolException(AgentFrameworkException):
-    """An error occurred while executing a tool."""
+class IntegrationContentFilterException(IntegrationException):
+    """A content filter was triggered by an external integration."""
 
     pass
 
 
-class ToolExecutionException(ToolException):
-    """An error occurred while executing a tool."""
+# endregion
 
-    pass
-
-
-class AdditionItemMismatch(AgentFrameworkException):
-    """An error occurred while adding two types."""
-
-    pass
-
-
-class MiddlewareException(AgentFrameworkException):
-    """An error occurred during middleware execution."""
-
-    pass
+# region Content Exceptions
 
 
 class ContentError(AgentFrameworkException):
@@ -150,7 +157,78 @@ class ContentError(AgentFrameworkException):
     pass
 
 
+class AdditionItemMismatch(ContentError):
+    """A type mismatch occurred while merging content items."""
+
+    pass
+
+
+# endregion
+
+# region Tool Exceptions
+
+
+class ToolException(AgentFrameworkException):
+    """Base class for all tool-related exceptions."""
+
+    pass
+
+
+class ToolExecutionException(ToolException):
+    """A tool or prompt call failed at runtime."""
+
+    pass
+
+
+# endregion
+
+# region Middleware Exceptions
+
+
+class MiddlewareException(AgentFrameworkException):
+    """An error occurred during middleware execution."""
+
+    pass
+
+
+# endregion
+
+# region Settings Exceptions
+
+
 class SettingNotFoundError(AgentFrameworkException):
     """A required setting could not be resolved from any source."""
 
     pass
+
+
+# endregion
+
+# region Workflow Exceptions
+
+
+class WorkflowException(AgentFrameworkException):
+    """Base exception for workflow errors."""
+
+    pass
+
+
+class WorkflowRunnerException(WorkflowException):
+    """Base exception for workflow runner errors."""
+
+    pass
+
+
+class WorkflowConvergenceException(WorkflowRunnerException):
+    """Exception raised when a workflow runner fails to converge within the maximum iterations."""
+
+    pass
+
+
+class WorkflowCheckpointException(WorkflowRunnerException):
+    """Exception raised for errors related to workflow checkpoints."""
+
+    pass
+
+
+# endregion

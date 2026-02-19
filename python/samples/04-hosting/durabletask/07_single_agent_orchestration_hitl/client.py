@@ -31,9 +31,7 @@ HUMAN_APPROVAL_EVENT = "HumanApproval"
 
 
 def get_client(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerClient:
     """Create a configured DurableTaskSchedulerClient.
 
@@ -58,7 +56,7 @@ def get_client(
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
 
@@ -90,11 +88,7 @@ def _log_completion_result(
         logger.error("Orchestration did not complete within the timeout period")
 
 
-def _wait_and_log_completion(
-    client: DurableTaskSchedulerClient,
-    instance_id: str,
-    timeout: int = 60
-) -> None:
+def _wait_and_log_completion(client: DurableTaskSchedulerClient, instance_id: str, timeout: int = 60) -> None:
     """Wait for orchestration completion and log the result.
 
     Args:
@@ -103,20 +97,12 @@ def _wait_and_log_completion(
         timeout: Maximum time to wait for completion in seconds
     """
     logger.debug("Waiting for orchestration to complete...")
-    metadata = client.wait_for_orchestration_completion(
-        instance_id=instance_id,
-        timeout=timeout
-    )
+    metadata = client.wait_for_orchestration_completion(instance_id=instance_id, timeout=timeout)
 
     _log_completion_result(metadata)
 
 
-def send_approval(
-    client: DurableTaskSchedulerClient,
-    instance_id: str,
-    approved: bool,
-    feedback: str = ""
-) -> None:
+def send_approval(client: DurableTaskSchedulerClient, instance_id: str, approved: bool, feedback: str = "") -> None:
     """Send approval or rejection event to the orchestration.
 
     Args:
@@ -125,30 +111,19 @@ def send_approval(
         approved: Whether to approve or reject
         feedback: Optional feedback message (used when rejected)
     """
-    approval_data = {
-        "approved": approved,
-        "feedback": feedback
-    }
+    approval_data = {"approved": approved, "feedback": feedback}
 
     logger.debug(f"Sending {'APPROVAL' if approved else 'REJECTION'} to instance {instance_id}")
     if feedback:
         logger.debug(f"Feedback: {feedback}")
 
     # Raise the external event
-    client.raise_orchestration_event(
-        instance_id=instance_id,
-        event_name=HUMAN_APPROVAL_EVENT,
-        data=approval_data
-    )
+    client.raise_orchestration_event(instance_id=instance_id, event_name=HUMAN_APPROVAL_EVENT, data=approval_data)
 
     logger.debug("Event sent successfully")
 
 
-def wait_for_notification(
-    client: DurableTaskSchedulerClient,
-    instance_id: str,
-    timeout_seconds: int = 10
-) -> bool:
+def wait_for_notification(client: DurableTaskSchedulerClient, instance_id: str, timeout_seconds: int = 10) -> bool:
     """Wait for the orchestration to reach a notification point.
 
     Polls the orchestration status until it appears to be waiting for approval.
@@ -226,14 +201,14 @@ def run_interactive_client(client: DurableTaskSchedulerClient) -> None:
     payload = {
         "topic": topic,
         "max_review_attempts": max_review_attempts,
-        "approval_timeout_seconds": approval_timeout_seconds
+        "approval_timeout_seconds": approval_timeout_seconds,
     }
 
     logger.debug(f"Configuration: Topic={topic}, Max attempts={max_review_attempts}, Timeout={timeout_hours}h")
 
     # Start the orchestration
     logger.debug("Starting content generation orchestration...")
-    instance_id = client.schedule_new_orchestration(    # type: ignore
+    instance_id = client.schedule_new_orchestration(  # type: ignore
         orchestrator="content_generation_hitl_orchestration",
         input=payload,
     )

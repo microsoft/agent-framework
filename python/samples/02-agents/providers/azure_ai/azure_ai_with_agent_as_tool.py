@@ -6,6 +6,10 @@ from collections.abc import Awaitable, Callable
 from agent_framework import FunctionInvocationContext
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Azure AI Agent-as-Tool Example

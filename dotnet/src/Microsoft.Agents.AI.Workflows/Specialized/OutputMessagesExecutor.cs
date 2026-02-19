@@ -15,6 +15,10 @@ internal sealed class OutputMessagesExecutor(ChatProtocolExecutorOptions? option
 {
     public const string ExecutorId = "OutputMessages";
 
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+        base.ConfigureProtocol(protocolBuilder)
+            .YieldsOutput<List<ChatMessage>>();
+
     protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
         => context.YieldOutputAsync(messages, cancellationToken);
 

@@ -18,7 +18,11 @@ import os
 from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
@@ -38,9 +42,7 @@ def create_joker_agent() -> Agent:
 
 
 def get_worker(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
 
@@ -65,7 +67,7 @@ def get_worker(
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
 

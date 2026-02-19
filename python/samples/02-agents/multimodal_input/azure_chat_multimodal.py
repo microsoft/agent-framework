@@ -5,6 +5,10 @@ import asyncio
 from agent_framework import Content, Message
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def create_sample_image() -> str:

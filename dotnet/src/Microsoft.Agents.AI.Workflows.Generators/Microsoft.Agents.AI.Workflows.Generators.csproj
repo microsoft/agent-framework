@@ -29,7 +29,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <VersionSuffix>preview</VersionSuffix>
+    <IsReleaseCandidate>true</IsReleaseCandidate>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

@@ -13,6 +13,8 @@ import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 
+from agent_framework.exceptions import WorkflowException
+
 from ._handlers import (
     ActionContext,
     WorkflowEvent,
@@ -22,7 +24,7 @@ from ._handlers import (
 logger = logging.getLogger("agent_framework.declarative")
 
 
-class WorkflowActionError(Exception):
+class WorkflowActionError(WorkflowException):
     """Exception raised by ThrowException action."""
 
     def __init__(self, message: str, code: str | None = None):

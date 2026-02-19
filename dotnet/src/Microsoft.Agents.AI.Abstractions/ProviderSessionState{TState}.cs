@@ -2,6 +2,7 @@
 
 using System;
 using System.Text.Json;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
@@ -39,8 +40,8 @@ public class ProviderSessionState<TState>
         string stateKey,
         JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        this._stateInitializer = stateInitializer;
-        this.StateKey = stateKey;
+        this._stateInitializer = Throw.IfNull(stateInitializer);
+        this.StateKey = Throw.IfNullOrWhitespace(stateKey);
         this._jsonSerializerOptions = jsonSerializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions;
     }
 

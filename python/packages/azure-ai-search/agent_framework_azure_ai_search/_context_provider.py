@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework._settings import SecretString, load_settings
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
@@ -111,8 +111,9 @@ _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT = 10
 class AzureAISearchSettings(TypedDict, total=False):
     """Settings for Azure AI Search Context Provider with auto-loading from environment.
 
-    The settings are first loaded from environment variables with the prefix 'AZURE_SEARCH_'.
-    If the environment variables are not found, the settings can be loaded from a .env file.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'AZURE_SEARCH_'.
 
     Keys:
         endpoint: Azure AI Search endpoint URL.
@@ -147,7 +148,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
         endpoint: str | None = None,
         index_name: str | None = None,
         api_key: str | AzureKeyCredential | None = None,
-        credential: AsyncTokenCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
         *,
         mode: Literal["semantic", "agentic"] = "semantic",
         top_k: int = 5,
@@ -174,7 +175,8 @@ class AzureAISearchContextProvider(BaseContextProvider):
             endpoint: Azure AI Search endpoint URL.
             index_name: Name of the search index to query.
             api_key: API key for authentication.
-            credential: AsyncTokenCredential for managed identity authentication.
+            credential: Azure credential for managed identity authentication.
+                Accepts a TokenCredential, AsyncTokenCredential, or a callable token provider.
             mode: Search mode - "semantic" or "agentic". Default: "semantic".
             top_k: Maximum number of documents to retrieve. Default: 5.
             semantic_configuration_name: Name of semantic configuration in the index.
@@ -216,19 +218,19 @@ class AzureAISearchContextProvider(BaseContextProvider):
         )
 
         if mode == "agentic" and settings.get("index_name") and not model_deployment_name:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "model_deployment_name is required for agentic mode when creating Knowledge Base from index."
             )
 
         resolved_credential: AzureKeyCredential | AsyncTokenCredential
         if credential:
-            resolved_credential = credential
+            resolved_credential = credential  # type: ignore[assignment]
         elif isinstance(api_key, AzureKeyCredential):
             resolved_credential = api_key
         elif settings.get("api_key"):
             resolved_credential = AzureKeyCredential(settings["api_key"].get_secret_value())  # type: ignore[union-attr]
         else:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Azure credential is required. Provide 'api_key' or 'credential' parameter "
                 "or set 'AZURE_SEARCH_API_KEY' environment variable."
             )

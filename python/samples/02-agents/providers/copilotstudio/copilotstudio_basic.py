@@ -3,6 +3,7 @@
 import asyncio
 
 from agent_framework.microsoft import CopilotStudioAgent
+from dotenv import load_dotenv
 
 """
 Copilot Studio Agent Basic Example
@@ -11,11 +12,15 @@ This sample demonstrates basic usage of CopilotStudioAgent with automatic config
 from environment variables, showing both streaming and non-streaming responses.
 """
 
+
 # Environment variables needed:
 # COPILOTSTUDIOAGENT__ENVIRONMENTID - Environment ID where your copilot is deployed
 # COPILOTSTUDIOAGENT__SCHEMANAME - Agent identifier/schema name of your copilot
 # COPILOTSTUDIOAGENT__AGENTAPPID - Client ID for authentication
 # COPILOTSTUDIOAGENT__TENANTID - Tenant ID for authentication
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def non_streaming_example() -> None:

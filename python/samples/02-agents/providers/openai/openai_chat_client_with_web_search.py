@@ -4,6 +4,10 @@ import asyncio
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 OpenAI Chat Client with Web Search Example
@@ -18,7 +22,12 @@ async def main() -> None:
 
     # Create web search tool with location context
     web_search_tool = client.get_web_search_tool(
-        user_location={"city": "Seattle", "country": "US"},
+        web_search_options={
+            "user_location": {
+                "type": "approximate",
+                "approximate": {"city": "Seattle", "country": "US"},
+            },
+        },
     )
 
     agent = Agent(

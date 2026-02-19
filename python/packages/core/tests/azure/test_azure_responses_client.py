@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import logging
 import os
 from typing import Annotated, Any
 from unittest.mock import MagicMock
@@ -20,7 +21,6 @@ from agent_framework import (
     tool,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
-from agent_framework.exceptions import ServiceInitializationError
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -29,6 +29,8 @@ skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
     else "Integration tests are disabled.",
 )
+
+logger = logging.getLogger(__name__)
 
 
 class OutputStruct(BaseModel):
@@ -78,7 +80,7 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
 
 def test_init_validation_fail() -> None:
     # Test successful initialization
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         AzureOpenAIResponsesClient(api_key="34523", deployment_name={"test": "dict"})  # type: ignore
 
 
@@ -110,10 +112,8 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]], indirect=True)
 def test_init_with_empty_model_id(azure_openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
-        AzureOpenAIResponsesClient(
-            env_file_path="test.env",
-        )
+    with pytest.raises(ValueError):
+        AzureOpenAIResponsesClient()
 
 
 def test_init_with_project_client(azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -211,7 +211,7 @@ def test_create_client_from_project_with_endpoint() -> None:
 
 def test_create_client_from_project_missing_endpoint() -> None:
     """Test _create_client_from_project raises error when endpoint is missing."""
-    with pytest.raises(ServiceInitializationError, match="project endpoint is required"):
+    with pytest.raises(ValueError, match="project endpoint is required"):
         AzureOpenAIResponsesClient._create_client_from_project(
             project_client=None,
             project_endpoint=None,
@@ -221,7 +221,7 @@ def test_create_client_from_project_missing_endpoint() -> None:
 
 def test_create_client_from_project_missing_credential() -> None:
     """Test _create_client_from_project raises error when credential is missing."""
-    with pytest.raises(ServiceInitializationError, match="credential is required"):
+    with pytest.raises(ValueError, match="credential is required"):
         AzureOpenAIResponsesClient._create_client_from_project(
             project_client=None,
             project_endpoint="https://test-project.services.ai.azure.com",

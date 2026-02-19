@@ -4,6 +4,10 @@ import asyncio
 
 from agent_framework import Content, Message
 from agent_framework.ollama import OllamaChatClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Ollama Agent Multimodal Example
@@ -40,7 +44,7 @@ async def test_image() -> None:
         ],
     )
 
-    response = await client.get_response(message)
+    response = await client.get_response([message])
     print(f"Image Response: {response}")
 
 
