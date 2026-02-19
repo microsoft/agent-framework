@@ -607,5 +607,245 @@ public class OpenTelemetryAgentTests
         }
     }
 
+    /// <summary>
+    /// Verifies that Activity.Current is preserved throughout streaming responses that
+    /// include tool calls, ensuring all spans remain within the same trace.
+    /// </summary>
+    [Fact]
+    public async Task StreamingWithToolCalls_PreservesActivityCurrentAsync()
+    {
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddSource("Microsoft.Extensions.AI")
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        Activity? activityDuringFirstCall = null;
+        Activity? activityDuringSecondCall = null;
+        bool toolWasCalled = false;
+        int callCount = 0;
+
+        var getWeatherTool = AIFunctionFactory.Create(
+            (string location) =>
+            {
+                toolWasCalled = true;
+                return $"Sunny and 72°F in {location}";
+            },
+            "GetCurrentWeather",
+            "Gets the current weather for a location.");
+
+        var mockInnerClient = new CallbackChatClient
+        {
+            GetStreamingResponseAsyncCallback = (messages, options, ct) =>
+            {
+                int currentCall = Interlocked.Increment(ref callCount);
+                if (currentCall == 1)
+                {
+                    activityDuringFirstCall = Activity.Current;
+                    return FirstCallStreamingAsync(ct);
+                }
+
+                activityDuringSecondCall = Activity.Current;
+                return SecondCallStreamingAsync(ct);
+            },
+        };
+
+        IChatClient chatClient = new ChatClientBuilder(mockInnerClient)
+            .UseOpenTelemetry(sourceName: sourceName)
+            .Build();
+
+        var agentOptions = new ChatClientAgentOptions
+        {
+            ChatOptions = new ChatOptions
+            {
+                Tools = [getWeatherTool],
+            },
+        };
+        var innerAgent = new ChatClientAgent(chatClient, agentOptions);
+
+        using var otelAgent = new OpenTelemetryAgent(innerAgent, sourceName);
+
+        using var parentSource = new ActivitySource(sourceName);
+        using var parentActivity = parentSource.StartActivity("HTTP POST /api/messages", ActivityKind.Server);
+        Assert.NotNull(parentActivity);
+
+        var parentTraceId = parentActivity.TraceId;
+
+        List<ChatMessage> messages = [new(ChatRole.User, "What's the weather in Seattle?")];
+        var updates = new List<AgentResponseUpdate>();
+
+        await foreach (var update in otelAgent.RunStreamingAsync(messages))
+        {
+            updates.Add(update);
+        }
+
+        Assert.Equal(2, callCount);
+        Assert.True(toolWasCalled);
+
+        // Activity.Current should still be the parent activity after streaming completes.
+        Assert.NotNull(Activity.Current);
+        Assert.Same(parentActivity, Activity.Current);
+
+        // All activities should share the same TraceId.
+        foreach (var activity in activities)
+        {
+            Assert.Equal(parentTraceId, activity.TraceId);
+        }
+
+        // Both LLM calls should have an active Activity within the same trace.
+        Assert.NotNull(activityDuringFirstCall);
+        Assert.NotNull(activityDuringSecondCall);
+        Assert.Equal(parentTraceId, activityDuringFirstCall!.TraceId);
+        Assert.Equal(parentTraceId, activityDuringSecondCall!.TraceId);
+
+        static async IAsyncEnumerable<ChatResponseUpdate> FirstCallStreamingAsync(
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.Yield();
+            yield return new ChatResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                Contents = [new FunctionCallContent("call_001", "GetCurrentWeather",
+                    new Dictionary<string, object?> { ["location"] = "Seattle" })],
+                ResponseId = "resp_1",
+            };
+        }
+
+        static async IAsyncEnumerable<ChatResponseUpdate> SecondCallStreamingAsync(
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.Yield();
+            yield return new ChatResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                Contents = [new TextContent("It's sunny and 72°F in Seattle!")],
+                ResponseId = "resp_2",
+            };
+        }
+    }
+
+    /// <summary>
+    /// Verifies Activity.Current preservation at the IChatClient pipeline level
+    /// (FunctionInvokingChatClient + OpenTelemetryChatClient) independent of the agent layer.
+    /// </summary>
+    [Fact]
+    public async Task StreamingWithToolCalls_ChatClientPipeline_PreservesActivityCurrentAsync()
+    {
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new List<Activity>();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddSource("Microsoft.Extensions.AI")
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        Activity? activityDuringSecondCall = null;
+        bool toolWasCalled = false;
+        int callCount = 0;
+
+        var getWeatherTool = AIFunctionFactory.Create(
+            (string location) =>
+            {
+                toolWasCalled = true;
+                return $"Sunny and 72°F in {location}";
+            },
+            "GetCurrentWeather",
+            "Gets the current weather for a location.");
+
+        var mockInnerClient = new CallbackChatClient
+        {
+            GetStreamingResponseAsyncCallback = (messages, options, ct) =>
+            {
+                int currentCall = Interlocked.Increment(ref callCount);
+                if (currentCall == 1)
+                {
+                    return FirstCallStreamingAsync(ct);
+                }
+
+                activityDuringSecondCall = Activity.Current;
+                return SecondCallStreamingAsync(ct);
+            },
+        };
+
+        IChatClient pipeline = new ChatClientBuilder(mockInnerClient)
+            .UseFunctionInvocation()
+            .UseOpenTelemetry(sourceName: sourceName)
+            .Build();
+
+        using var parentSource = new ActivitySource(sourceName);
+        using var parentActivity = parentSource.StartActivity("parent-operation", ActivityKind.Server);
+        Assert.NotNull(parentActivity);
+        var parentTraceId = parentActivity.TraceId;
+
+        var chatOptions = new ChatOptions { Tools = [getWeatherTool] };
+        var updates = new List<ChatResponseUpdate>();
+        await foreach (var update in pipeline.GetStreamingResponseAsync(
+            [new ChatMessage(ChatRole.User, "What's the weather?")], chatOptions))
+        {
+            updates.Add(update);
+        }
+
+        Assert.Equal(2, callCount);
+        Assert.True(toolWasCalled);
+
+        Assert.NotNull(Activity.Current);
+        Assert.Same(parentActivity, Activity.Current);
+
+        Assert.NotNull(activityDuringSecondCall);
+        Assert.Equal(parentTraceId, activityDuringSecondCall!.TraceId);
+
+        foreach (var activity in activities)
+        {
+            Assert.Equal(parentTraceId, activity.TraceId);
+        }
+
+        static async IAsyncEnumerable<ChatResponseUpdate> FirstCallStreamingAsync(
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.Yield();
+            yield return new ChatResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                Contents = [new FunctionCallContent("call_001", "GetCurrentWeather",
+                    new Dictionary<string, object?> { ["location"] = "Seattle" })],
+                ResponseId = "resp_1",
+            };
+        }
+
+        static async IAsyncEnumerable<ChatResponseUpdate> SecondCallStreamingAsync(
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.Yield();
+            yield return new ChatResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                Contents = [new TextContent("Sunny in Seattle!")],
+                ResponseId = "resp_2",
+            };
+        }
+    }
+
+    /// <summary>Simple callback-based IChatClient for testing.</summary>
+    private sealed class CallbackChatClient : IChatClient
+    {
+        public Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, IAsyncEnumerable<ChatResponseUpdate>>? GetStreamingResponseAsyncCallback { get; set; }
+        public Func<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken, Task<ChatResponse>>? GetResponseAsyncCallback { get; set; }
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+            => this.GetStreamingResponseAsyncCallback?.Invoke(messages, options, cancellationToken)
+                ?? throw new NotSupportedException();
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+            => this.GetResponseAsyncCallback?.Invoke(messages, options, cancellationToken)
+                ?? throw new NotSupportedException();
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
+    }
+
     private static string ReplaceWhitespace(string? input) => Regex.Replace(input ?? "", @"\s+", "").Trim();
 }

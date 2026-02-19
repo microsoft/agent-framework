@@ -181,14 +181,25 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         {
             ForwardedOptions? fo = options as ForwardedOptions;
 
-            // Update the current activity to reflect the agent invocation.
-            parentAgent.UpdateCurrentActivity(fo?.CurrentActivity);
+            // Capture the current activity so we can restore it after each yield (workaround for
+            // dotnet/runtime#47802) and defer UpdateCurrentActivity until streaming completes to
+            // avoid interfering with FunctionInvokingChatClient's activity management.
+            Activity? activity = Activity.Current;
 
-            // Invoke the inner agent.
-            await foreach (var update in parentAgent.InnerAgent.RunStreamingAsync(messages, fo?.Session, fo?.Options, cancellationToken).ConfigureAwait(false))
+            try
             {
-                // Wrap the response updates in ChatResponseUpdates so we can pass them back through OpenTelemetryChatClient.
-                yield return update.AsChatResponseUpdate();
+                await foreach (var update in parentAgent.InnerAgent.RunStreamingAsync(messages, fo?.Session, fo?.Options, cancellationToken).ConfigureAwait(false))
+                {
+                    yield return update.AsChatResponseUpdate();
+
+                    // Restore Activity.Current after yielding (see LockstepRunEventStream).
+                    Activity.Current = activity;
+                }
+            }
+            finally
+            {
+                Activity.Current = activity;
+                parentAgent.UpdateCurrentActivity(fo?.CurrentActivity);
             }
         }
 
