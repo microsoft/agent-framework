@@ -1,6 +1,6 @@
 ---
 # These are optional elements. Feel free to remove any of them.
-status: {proposed | rejected | accepted | deprecated | … | superseded by [SPEC-0001](0001-spec.md)}
+status: {proposed | rejected | accepted | deprecated | … | superseded by [SPEC-0001](001-foundry-sdk-alignment.md)}
 contact: {person proposing the ADR}
 date: {YYYY-MM-DD when the decision was last updated}
 deciders: {list everyone involved in the decision}
