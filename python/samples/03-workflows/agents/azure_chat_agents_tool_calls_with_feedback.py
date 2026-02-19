@@ -155,7 +155,6 @@ class Coordinator(Executor):
                 AgentExecutorRequest(
                     messages=original_request.conversation + [Message("user", text="The draft is approved as-is.")],
                     should_respond=True,
-                    reset_service_session=True,
                 ),
                 target_id=self.final_editor_id,
             )
@@ -171,7 +170,7 @@ class Coordinator(Executor):
         )
         conversation.append(Message("user", text=instruction))
         await ctx.send_message(
-            AgentExecutorRequest(messages=conversation, should_respond=True, reset_service_session=True),
+            AgentExecutorRequest(messages=conversation, should_respond=True),
             target_id=self.writer_id,
         )
 

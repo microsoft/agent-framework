@@ -145,7 +145,7 @@ async def run_agent_framework_with_cycle() -> None:
             await context.yield_output("Content approved.")
         else:
             await context.send_message(
-                AgentExecutorRequest(messages=response.full_conversation, should_respond=True, reset_service_session=True)
+                AgentExecutorRequest(messages=response.full_conversation, should_respond=True)
             )
 
     workflow = (

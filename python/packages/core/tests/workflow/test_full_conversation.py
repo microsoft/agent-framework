@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterable, Awaitable, Sequence
 from typing import Any
 
+import pytest
 from pydantic import PrivateAttr
 from typing_extensions import Never
 
@@ -348,11 +349,15 @@ class _FullHistoryReplayCoordinator(Executor):
         # Simulate a prior run: the target executor has a stored previous_response_id.
         self._target_exec._session.service_session_id = "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
         await ctx.send_message(
-            AgentExecutorRequest(messages=full_conv, should_respond=True, reset_service_session=True),
+            AgentExecutorRequest(messages=full_conv, should_respond=True),
             target_id=self._target_exec.id,
         )
 
 
+@pytest.mark.xfail(
+    reason="reset_service_session support not yet implemented — see #4047",
+    strict=True,
+)
 async def test_run_request_with_full_history_clears_service_session_id() -> None:
     """Replaying a full conversation (including function calls) via AgentExecutorRequest must
     clear service_session_id so the API does not receive both previous_response_id and the

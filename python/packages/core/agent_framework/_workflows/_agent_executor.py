@@ -37,17 +37,10 @@ class AgentExecutorRequest:
         messages: A list of chat messages to be processed by the agent.
         should_respond: A flag indicating whether the agent should respond to the messages.
             If False, the messages will be saved to the executor's cache but not sent to the agent.
-        reset_service_session: When True, the executor will clear its stored ``service_session_id``
-            before running the agent. Set this to ``True`` whenever the ``messages`` list represents
-            the **full conversation history** (a replay from scratch), so the service does not also
-            replay items it already stored under the previous response ID — which would cause a
-            "Duplicate item" API error. Leave as ``False`` (the default) when appending only new
-            messages to an ongoing conversation.
     """
 
     messages: list[Message]
     should_respond: bool = True
-    reset_service_session: bool = False
 
 
 @dataclass
@@ -137,12 +130,6 @@ class AgentExecutor(Executor):
         """
         self._cache.extend(request.messages)
         if request.should_respond:
-            if request.reset_service_session:
-                # The caller is replaying full conversation history, so any stored
-                # previous_response_id from an earlier run would cause the API to see the
-                # same items twice (once via previous_response_id and once in input).
-                # Reset it so the agent starts a fresh context with the provided messages.
-                self._session.service_session_id = None
             await self._run_agent_and_emit(ctx)
 
     @handler

@@ -13,13 +13,17 @@ from pytest import param
 
 from agent_framework import (
     Agent,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
     AgentResponse,
     ChatResponse,
     Content,
     Message,
     SupportsChatGetResponse,
     WorkflowBuilder,
+    WorkflowContext,
     WorkflowEvent,
+    executor,
     tool,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
@@ -265,6 +269,12 @@ WORKFLOW_NON_REASONING_DEPLOYMENT_NAME = os.getenv(
 
 
 async def _run_minimal_handoff_workflow(client: AzureOpenAIResponsesClient) -> list[WorkflowEvent]:
+    """Run a minimal workflow that hands off from a tool-calling agent to a second agent.
+
+    Uses AgentExecutorRequest to replay full conversation history to the second agent,
+    which triggers the duplicate-item error on reasoning models when service_session_id
+    is not cleared.
+    """
     first_agent = client.as_agent(
         id="minimal-handoff-first",
         name="minimal-handoff-first",
@@ -272,51 +282,39 @@ async def _run_minimal_handoff_workflow(client: AzureOpenAIResponsesClient) -> l
         tools=[get_weather],
         default_options={"tool_choice": {"mode": "required", "required_function_name": "get_weather"}},
     )
-    second_agent = client.as_agent(
+
+    second_client = AzureOpenAIResponsesClient(credential=AzureCliCredential(), deployment_name=client.deployment_name)
+    second_agent = second_client.as_agent(
         id="minimal-handoff-second",
         name="minimal-handoff-second",
         instructions="Summarize the prior weather result in one sentence.",
     )
 
-    workflow = WorkflowBuilder(start_executor=first_agent).add_edge(first_agent, second_agent).build()
+    @executor(id="coordinator")
+    async def forward_via_request(
+        response: AgentExecutorResponse,
+        ctx: WorkflowContext[AgentExecutorRequest, Any],
+    ) -> None:
+        """Forward full conversation from first agent to second via AgentExecutorRequest."""
+        messages = list(response.full_conversation or response.agent_response.messages)
+        messages.append(Message("user", text="Now summarize the weather."))
+        await ctx.send_message(
+            AgentExecutorRequest(messages=messages, should_respond=True),
+            target_id=second_agent.id,
+        )
+
+    workflow = (
+        WorkflowBuilder(start_executor=first_agent, output_executors=[second_agent])
+        .add_edge(first_agent, forward_via_request)
+        .add_edge(forward_via_request, second_agent)
+        .build()
+    )
 
     events: list[WorkflowEvent] = []
     async for event in workflow.run("Check weather for Seattle and pass result onward.", stream=True):
         events.append(event)
 
     return events
-
-
-@pytest.mark.timeout(600)
-@pytest.mark.flaky
-@skip_if_azure_integration_tests_disabled
-@pytest.mark.parametrize(
-    "deployment_name",
-    [
-        param(WORKFLOW_REASONING_DEPLOYMENT_NAME, id="reasoning_gpt_5_mini"),
-        param(WORKFLOW_NON_REASONING_DEPLOYMENT_NAME, id="non_reasoning_gpt_4_1_nano"),
-    ],
-)
-async def test_integration_minimal_workflow_handoff_reasoning_vs_non_reasoning(deployment_name: str) -> None:
-    """Smallest workflow handoff repro should pass across model classes."""
-    client = AzureOpenAIResponsesClient(credential=AzureCliCredential(), deployment_name=deployment_name)
-    client.function_invocation_configuration["max_iterations"] = 3
-
-    try:
-        events = await _run_minimal_handoff_workflow(client)
-    except ServiceResponseException as ex:
-        error_text = str(ex).lower()
-        if (
-            "deploymentnotfound" in error_text
-            or "deployment for this resource does not exist" in error_text
-            or ("deployment" in error_text and "not found" in error_text)
-        ):
-            pytest.skip(f"Deployment '{deployment_name}' is unavailable in this environment: {ex}")
-        raise AssertionError(
-            f"Minimal workflow handoff failed unexpectedly for deployment '{deployment_name}': {ex}"
-        ) from ex
-
-    assert any(event.type == "output" for event in events), "Expected workflow output event for workflow run"
 
 
 @pytest.mark.flaky
