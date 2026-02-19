@@ -25,7 +25,7 @@ public interface IWorkflowExecutionEnvironment
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the streaming operation.</param>
     /// <returns>A ValueTask that represents the asynchronous operation. The result contains a StreamingRun object for accessing
     /// the streamed workflow output.</returns>
-    ValueTask<StreamingRun> OpenStreamAsync(Workflow workflow, string? runId = null, CancellationToken cancellationToken = default);
+    ValueTask<StreamingRun> OpenStreamingAsync(Workflow workflow, string? runId = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Initiates an asynchronous streaming execution using the specified input.
@@ -40,7 +40,7 @@ public interface IWorkflowExecutionEnvironment
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask{StreamingRun}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="StreamingRun"/> for managing and interacting with the streaming run.</returns>
-    ValueTask<StreamingRun> StreamAsync<TInput>(Workflow workflow, TInput input, string? runId = null, CancellationToken cancellationToken = default) where TInput : notnull;
+    ValueTask<StreamingRun> RunStreamingAsync<TInput>(Workflow workflow, TInput input, string? runId = null, CancellationToken cancellationToken = default) where TInput : notnull;
 
     /// <summary>
     /// Resumes an asynchronous streaming execution for the specified input from a checkpoint.
@@ -51,7 +51,7 @@ public interface IWorkflowExecutionEnvironment
     /// <param name="fromCheckpoint">The <see cref="CheckpointInfo"/> corresponding to the checkpoint from which to resume.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="StreamingRun"/> that provides access to the results of the streaming run.</returns>
-    ValueTask<StreamingRun> ResumeStreamAsync(Workflow workflow, CheckpointInfo fromCheckpoint, CancellationToken cancellationToken = default);
+    ValueTask<StreamingRun> ResumeStreamingAsync(Workflow workflow, CheckpointInfo fromCheckpoint, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Initiates a non-streaming execution of the workflow with the specified input.

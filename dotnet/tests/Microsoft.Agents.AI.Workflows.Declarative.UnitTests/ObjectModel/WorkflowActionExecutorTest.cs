@@ -51,7 +51,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
             prevExecutor = executor;
         }
 
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build(), this.State);
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflowBuilder.Build(), this.State);
         WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
 
         if (isDiscrete)

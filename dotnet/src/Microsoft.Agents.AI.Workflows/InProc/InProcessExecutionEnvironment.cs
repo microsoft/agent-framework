@@ -57,7 +57,7 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
     }
 
     /// <inheritdoc/>
-    public async ValueTask<StreamingRun> OpenStreamAsync(
+    public async ValueTask<StreamingRun> OpenStreamingAsync(
         Workflow workflow,
         string? runId = null,
         CancellationToken cancellationToken = default)
@@ -69,7 +69,7 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
     }
 
     /// <inheritdoc/>
-    public async ValueTask<StreamingRun> StreamAsync<TInput>(
+    public async ValueTask<StreamingRun> RunStreamingAsync<TInput>(
         Workflow workflow,
         TInput input,
         string? runId = null,
@@ -91,7 +91,7 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
     }
 
     /// <inheritdoc/>
-    public async ValueTask<StreamingRun> ResumeStreamAsync(
+    public async ValueTask<StreamingRun> ResumeStreamingAsync(
         Workflow workflow,
         CheckpointInfo fromCheckpoint,
         CancellationToken cancellationToken = default)

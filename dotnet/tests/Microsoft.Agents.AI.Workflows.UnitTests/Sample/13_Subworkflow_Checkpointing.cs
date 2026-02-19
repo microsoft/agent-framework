@@ -83,10 +83,10 @@ internal static class Step13EntryPoint
         {
             if (resumeFrom == null)
             {
-                return await environment.StreamAsync(WorkflowInstance, input);
+                return await environment.RunStreamingAsync(WorkflowInstance, input);
             }
 
-            StreamingRun run = await environment.ResumeStreamAsync(WorkflowInstance, resumeFrom);
+            StreamingRun run = await environment.ResumeStreamingAsync(WorkflowInstance, resumeFrom);
             await run.TrySendMessageAsync(input);
             return run;
         }

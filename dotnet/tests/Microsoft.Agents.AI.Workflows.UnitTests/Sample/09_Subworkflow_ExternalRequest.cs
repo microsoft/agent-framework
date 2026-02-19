@@ -569,7 +569,7 @@ internal sealed class Coordinator() : Executor(nameof(Coordinator), declareCross
 
     internal async ValueTask RunWorkflowHandleEventsAsync<TInput>(Workflow workflow, TInput input) where TInput : notnull
     {
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
+        StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input);
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             switch (evt)

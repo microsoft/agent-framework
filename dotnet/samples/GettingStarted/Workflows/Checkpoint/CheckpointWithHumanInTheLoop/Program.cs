@@ -35,7 +35,7 @@ public static class Program
 
         // Execute the workflow and save checkpoints
         await using StreamingRun checkpointedRun = await InProcessExecution
-            .StreamAsync(workflow, new SignalWithNumber(NumberSignal.Init), checkpointManager)
+            .RunStreamingAsync(workflow, new SignalWithNumber(NumberSignal.Init), checkpointManager)
             ;
         await foreach (WorkflowEvent evt in checkpointedRun.WatchStreamAsync())
         {

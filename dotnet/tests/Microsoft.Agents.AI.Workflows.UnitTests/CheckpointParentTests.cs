@@ -33,7 +33,7 @@ public class CheckpointParentTests
 
         // Act
         StreamingRun run =
-            await env.WithCheckpointing(checkpointManager).StreamAsync(workflow, "Hello");
+            await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
 
         List<CheckpointInfo> checkpoints = [];
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
@@ -72,7 +72,7 @@ public class CheckpointParentTests
         InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // Act
-        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).StreamAsync(workflow, "Hello");
+        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
 
         List<CheckpointInfo> checkpoints = [];
         using CancellationTokenSource cts = new();
@@ -126,7 +126,7 @@ public class CheckpointParentTests
         InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // First run: collect a checkpoint to resume from
-        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).StreamAsync(workflow, "Hello");
+        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
 
         List<CheckpointInfo> firstRunCheckpoints = [];
         using CancellationTokenSource cts = new();
@@ -149,7 +149,7 @@ public class CheckpointParentTests
         await run.DisposeAsync();
 
         // Act: Resume from the first checkpoint
-        StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamAsync(workflow, resumePoint);
+        StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamingAsync(workflow, resumePoint);
 
         List<CheckpointInfo> resumedCheckpoints = [];
         using CancellationTokenSource cts2 = new();

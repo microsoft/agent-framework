@@ -25,7 +25,7 @@ internal static class Step5EntryPoint
 
         StreamingRun handle =
             await environment.WithCheckpointing(checkpointManager)
-                             .StreamAsync(workflow, NumberSignal.Init)
+                             .RunStreamingAsync(workflow, NumberSignal.Init)
                              .ConfigureAwait(false);
 
         List<CheckpointInfo> checkpoints = [];
@@ -44,7 +44,7 @@ internal static class Step5EntryPoint
             await handle.DisposeAsync().ConfigureAwait(false);
 
             handle = await environment.WithCheckpointing(checkpointManager)
-                                      .ResumeStreamAsync(workflow, targetCheckpoint, CancellationToken.None)
+                                      .ResumeStreamingAsync(workflow, targetCheckpoint, CancellationToken.None)
                                       .ConfigureAwait(false);
         }
         else

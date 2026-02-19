@@ -149,7 +149,7 @@ internal sealed class WorkflowSession : AgentSession
         {
             StreamingRun run =
                 await this._executionEnvironment
-                            .ResumeStreamAsync(this._workflow,
+                            .ResumeStreamingAsync(this._workflow,
                                                this.LastCheckpoint,
                                                cancellationToken)
                             .ConfigureAwait(false);
@@ -159,7 +159,7 @@ internal sealed class WorkflowSession : AgentSession
         }
 
         return await this._executionEnvironment
-                            .StreamAsync(this._workflow,
+                            .RunStreamingAsync(this._workflow,
                                          messages,
                                          this.RunId,
                                          cancellationToken)

@@ -27,7 +27,7 @@ public static class Program
         var workflow = WorkflowFactory.BuildWorkflow();
 
         // Execute the workflow
-        await using StreamingRun handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init);
+        await using StreamingRun handle = await InProcessExecution.RunStreamingAsync(workflow, NumberSignal.Init);
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync())
         {
             switch (evt)
