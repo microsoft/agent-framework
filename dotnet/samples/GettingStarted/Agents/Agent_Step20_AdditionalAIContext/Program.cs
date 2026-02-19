@@ -146,11 +146,11 @@ namespace SampleApp
     }
 
     /// <summary>
-    /// An <see cref="AIContextProvider"/> which searches for upcoming calendar events and adds them to the AI context.
+    /// A <see cref="MessageAIContextProvider"/> which searches for upcoming calendar events and adds them to the AI context.
     /// </summary>
-    internal sealed class CalendarSearchAIContextProvider(Func<Task<string[]>> loadNextThreeCalendarEvents) : AIContextProvider
+    internal sealed class CalendarSearchAIContextProvider(Func<Task<string[]>> loadNextThreeCalendarEvents) : MessageAIContextProvider
     {
-        protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override async ValueTask<IEnumerable<MEAI.ChatMessage>> ProvideMessagesAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             var events = await loadNextThreeCalendarEvents();
 
@@ -161,10 +161,7 @@ namespace SampleApp
                 outputMessageBuilder.AppendLine($" - {calendarEvent}");
             }
 
-            return new AIContext
-            {
-                Messages = [new MEAI.ChatMessage(ChatRole.User, outputMessageBuilder.ToString())]
-            };
+            return [new MEAI.ChatMessage(ChatRole.User, outputMessageBuilder.ToString())];
         }
     }
 }

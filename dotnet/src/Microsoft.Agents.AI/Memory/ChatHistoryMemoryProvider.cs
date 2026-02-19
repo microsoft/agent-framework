@@ -34,7 +34,7 @@ namespace Microsoft.Agents.AI;
 /// injecting them automatically on each invocation.
 /// </para>
 /// </remarks>
-public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
+public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDisposable
 {
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
     private const int DefaultMaxResults = 3;
@@ -119,7 +119,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
     public override string StateKey => this._sessionState.StateKey;
 
     /// <inheritdoc />
-    protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<AIContext> ProvideAIContextAsync(AIContextProvider.InvokingContext context, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(context);
 
@@ -147,17 +147,46 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
             };
         }
 
+        return new AIContext
+        {
+            Messages = await this.ProvideMessagesAsync(
+                new InvokingContext(context.Agent, context.Session, context.AIContext.Messages ?? []),
+                cancellationToken).ConfigureAwait(false)
+        };
+    }
+
+    /// <inheritdoc />
+    protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
+        // This code path is invoked using InvokingAsync on MessageAIContextProvider, which does not support tools and instructions,
+        // and OnDemandFunctionCalling requires tools.
+        if (this._searchTime != ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke)
+        {
+            throw new InvalidOperationException($"Using the {nameof(ChatHistoryMemoryProvider)} as a {nameof(MessageAIContextProvider)} is not supported when {nameof(ChatHistoryMemoryProviderOptions.SearchTime)} is set to {ChatHistoryMemoryProviderOptions.SearchBehavior.OnDemandFunctionCalling}.");
+        }
+
+        return base.InvokingCoreAsync(context, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    protected override async ValueTask<IEnumerable<ChatMessage>> ProvideMessagesAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(context);
+
+        var state = this._sessionState.GetOrInitializeState(context.Session);
+        var searchScope = state.SearchScope;
+
         try
         {
             // Get the text from the current request messages
             var requestText = string.Join("\n",
-                (context.AIContext.Messages ?? [])
+                (context.RequestMessages ?? [])
                 .Where(m => m != null && !string.IsNullOrWhiteSpace(m.Text))
                 .Select(m => m.Text));
 
             if (string.IsNullOrWhiteSpace(requestText))
             {
-                return new AIContext();
+                return [];
             }
 
             // Search for relevant chat history
@@ -165,13 +194,10 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
 
             if (string.IsNullOrWhiteSpace(contextText))
             {
-                return new AIContext();
+                return [];
             }
 
-            return new AIContext
-            {
-                Messages = [new ChatMessage(ChatRole.User, contextText)]
-            };
+            return [new ChatMessage(ChatRole.User, contextText)];
         }
         catch (Exception ex)
         {
@@ -186,7 +212,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                     this.SanitizeLogData(searchScope.UserId));
             }
 
-            return new AIContext();
+            return [];
         }
     }
 
