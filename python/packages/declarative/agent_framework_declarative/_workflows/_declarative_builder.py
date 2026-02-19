@@ -944,6 +944,11 @@ class DeclarativeWorkflowBuilder:
 
         last_executor = chain[-1]
 
+        # Skip terminators — they handle their own control flow
+        action_def = getattr(last_executor, "_action_def", {})
+        if isinstance(action_def, dict) and action_def.get("kind", "") in TERMINATOR_ACTIONS:
+            return None
+
         # Check if last executor is a structure with branch_exits
         # In that case, we return the structure so its exits can be collected
         if hasattr(last_executor, "branch_exits"):
