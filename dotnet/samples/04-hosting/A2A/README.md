@@ -3,7 +3,7 @@
 These samples demonstrate how to work with Agent-to-Agent (A2A) specific features in the Agent Framework.
 
 For other samples that demonstrate how to use AIAgent instances,
-see the [Getting Started With Agents](../../GettingStarted/Agents/README.md) samples.
+see the [Getting Started With Agents](../../02-agents/Agents/README.md) samples.
 
 ## Prerequisites
 
