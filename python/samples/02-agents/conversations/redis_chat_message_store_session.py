@@ -8,10 +8,6 @@ from agent_framework import AgentSession
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.redis import RedisHistoryProvider
 
-# Default Redis URL for local Redis Stack.
-# Override via the REDIS_URL environment variable for remote or authenticated instances.
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-
 """
 Redis History Provider Session Example
 
@@ -19,6 +15,10 @@ This sample demonstrates how to use Redis as a history provider for session
 management, enabling persistent conversation history storage across sessions
 with Redis as the backend data store.
 """
+
+# Default Redis URL for local Redis Stack.
+# Override via the REDIS_URL environment variable for remote or authenticated instances.
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 
 async def example_manual_memory_store() -> None:
