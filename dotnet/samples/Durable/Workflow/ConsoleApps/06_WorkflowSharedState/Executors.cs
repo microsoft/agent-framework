@@ -89,13 +89,11 @@ internal sealed class EnrichOrder() : Executor<OrderDetails, OrderDetails>("Enri
             cancellationToken: cancellationToken);
         Console.WriteLine($"    Read from shared state: shippingTier = {shippingTier}");
 
-        // Write shipping details under a custom "shipping" scope.
-        // This keeps these keys separate from keys written without a scope,
+        // Write carrier under a custom "shipping" scope.
+        // This keeps the key separate from keys written without a scope,
         // so "carrier" here won't collide with a "carrier" key written elsewhere.
         await context.QueueStateUpdateAsync("carrier", "Contoso Express", scopeName: "shipping", cancellationToken: cancellationToken);
-        await context.QueueStateUpdateAsync("estimatedDays", 2, scopeName: "shipping", cancellationToken: cancellationToken);
         Console.WriteLine("    Wrote to shared state: carrier = Contoso Express (scope: shipping)");
-        Console.WriteLine("    Wrote to shared state: estimatedDays = 2 (scope: shipping)");
 
         // Verify we can read the audit entry from the previous step
         AuditEntry? previousAudit = await context.ReadStateAsync<AuditEntry>("auditValidate", cancellationToken: cancellationToken);
@@ -166,8 +164,11 @@ internal sealed class GenerateInvoice() : Executor<string, string>("GenerateInvo
         int auditCount = new[] { validateAudit, enrichAudit, paymentAudit }.Count(a => a is not null);
         Console.WriteLine($"    Read from shared state: {auditCount} audit entries");
 
+        // Read carrier from the "shipping" scope (written by EnrichOrder)
+        string? carrier = await context.ReadStateAsync<string>("carrier", scopeName: "shipping", cancellationToken: cancellationToken);
+        Console.WriteLine($"    Read from shared state: carrier = {carrier} (scope: shipping)");
+
         // Clear the "shipping" scope — no longer needed after invoice generation.
-        // This removes all keys under that scope (carrier, estimatedDays).
         await context.QueueClearScopeAsync("shipping", cancellationToken);
         Console.WriteLine("    Cleared shared state scope: shipping");
 

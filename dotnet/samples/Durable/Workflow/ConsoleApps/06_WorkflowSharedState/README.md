@@ -22,12 +22,12 @@ Return values carry primary business data through the pipeline (`OrderDetails` �
 | Executor | Returns (message flow) | Reads from State | Writes to State |
 |----------|----------------------|-----------------|-----------------|
 | **ValidateOrder** | `OrderDetails` | — | `taxRate`, `auditValidate` |
-| **EnrichOrder** | `OrderDetails` (pass-through) | `auditValidate` | `shippingTier`, `auditEnrich`, `carrier` (scope: shipping), `estimatedDays` (scope: shipping) |
+| **EnrichOrder** | `OrderDetails` (pass-through) | `auditValidate` | `shippingTier`, `auditEnrich`, `carrier` (scope: shipping) |
 | **ProcessPayment** | payment ref string | `taxRate` | `auditPayment` |
-| **GenerateInvoice** | invoice string | `auditValidate`, `auditEnrich`, `auditPayment` | clears `shipping` scope |
+| **GenerateInvoice** | invoice string | `auditValidate`, `auditEnrich`, `auditPayment`, `carrier` (scope: shipping) | clears `shipping` scope |
 
 > [!NOTE]
-> `EnrichOrder` writes `carrier` and `estimatedDays` under the `"shipping"` scope using `scopeName: "shipping"`. This keeps these keys separate from keys written without a scope, so a key like `"carrier"` in the `"shipping"` scope won't collide with a `"carrier"` key written elsewhere.
+> `EnrichOrder` writes `carrier` under the `"shipping"` scope using `scopeName: "shipping"`. This keeps the key separate from keys written without a scope, so `"carrier"` in the `"shipping"` scope won't collide with a `"carrier"` key written elsewhere.
 
 ## Environment Setup
 
@@ -49,7 +49,6 @@ Started run: abc123
   [Output] ValidateOrder: Order 'ORD-001' validated. Customer: Jerry, Amount: $249.99
     Read from shared state: shippingTier = Express
     Wrote to shared state: carrier = Contoso Express (scope: shipping)
-    Wrote to shared state: estimatedDays = 2 (scope: shipping)
     Read from shared state: auditValidate (previous step: ValidateOrder)
     Wrote to shared state: auditEnrich
   [Output] EnrichOrder: Order enriched. Shipping: Express (previous step: ValidateOrder)
@@ -57,6 +56,7 @@ Started run: abc123
     Wrote to shared state: auditPayment
   [Output] ProcessPayment: Payment processed. Total: $271.24 (tax: $21.25). Ref: PAY-abc123def456
     Read from shared state: 3 audit entries
+    Read from shared state: carrier = Contoso Express (scope: shipping)
     Cleared shared state scope: shipping
   [Output] GenerateInvoice: Invoice complete. Payment: "PAY-abc123def456". Audit trail: [ValidateOrder → EnrichOrder → ProcessPayment]
   Completed: Invoice complete. Payment: "PAY-abc123def456". Audit trail: [ValidateOrder → EnrichOrder → ProcessPayment]
