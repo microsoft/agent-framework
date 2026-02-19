@@ -7,6 +7,10 @@
   <Folder Name="/Samples/">
     <File Path="samples/README.md" />
   </Folder>
+  <Folder Name="/Samples/05-end-to-end/">
+    <Project Path="samples/05-end-to-end/AgentWithPurview/AgentWithPurview.csproj" />
+    <Project Path="samples/05-end-to-end/M365Agent/M365Agent.csproj" />
+  </Folder>
   <Folder Name="/Samples/05-end-to-end/A2AClientServer/">
     <File Path="samples/05-end-to-end/A2AClientServer/README.md" />
     <Project Path="samples/05-end-to-end/A2AClientServer/A2AClient/A2AClient.csproj" />
@@ -22,6 +26,11 @@
     <Project Path="samples/05-end-to-end/AGUIClientServer/AGUIClient/AGUIClient.csproj" />
     <Project Path="samples/05-end-to-end/AGUIClientServer/AGUIDojoServer/AGUIDojoServer.csproj" />
     <Project Path="samples/05-end-to-end/AGUIClientServer/AGUIServer/AGUIServer.csproj" />
+  </Folder>
+  <Folder Name="/Samples/05-end-to-end/HostedAgents/">
+    <Project Path="samples/05-end-to-end/HostedAgents/AgentsInWorkflows/AgentsInWorkflows.csproj" />
+    <Project Path="samples/05-end-to-end/HostedAgents/AgentWithHostedMCP/AgentWithHostedMCP.csproj" />
+    <Project Path="samples/05-end-to-end/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
   </Folder>
   <Folder Name="/Samples/Durable/" />
   <Folder Name="/Samples/Durable/Agents/" />
@@ -147,10 +156,6 @@
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient.csproj" />
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step05_Conversation/Agent_OpenAI_Step05_Conversation.csproj" />
   </Folder>
-  <Folder Name="/Samples/Purview/" />
-  <Folder Name="/Samples/Purview/AgentWithPurview/">
-    <Project Path="samples/Purview/AgentWithPurview/AgentWithPurview.csproj" />
-  </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithRAG/">
     <File Path="samples/GettingStarted/AgentWithRAG/README.md" />
     <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step01_BasicTextRAG/AgentWithRAG_Step01_BasicTextRAG.csproj" />
@@ -264,14 +269,6 @@
     <Project Path="samples/GettingStarted/Workflows/_Foundational/06_SubWorkflows/06_SubWorkflows.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/07_MixedWorkflowAgentsAndExecutors/07_MixedWorkflowAgentsAndExecutors.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/08_WriterCriticWorkflow/08_WriterCriticWorkflow.csproj" />
-  </Folder>
-  <Folder Name="/Samples/HostedAgents/">
-    <Project Path="samples/HostedAgents/AgentsInWorkflows/AgentsInWorkflows.csproj" />
-    <Project Path="samples/HostedAgents/AgentWithHostedMCP/AgentWithHostedMCP.csproj" />
-    <Project Path="samples/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
-  </Folder>
-  <Folder Name="/Samples/M365Agent/">
-    <Project Path="samples/M365Agent/M365Agent.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
