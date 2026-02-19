@@ -10,7 +10,7 @@ This sample demonstrates how to use the Durable Agent Framework (DAFx) to create
 
 ## Environment Setup
 
-See the [README.md](../../Durable/Agents/AzureFunctions/README.md) file in the parent directory for more information on how to configure the environment, including how to install and run common sample dependencies.
+See the [README.md](../../04-hosting/DurableAgents/AzureFunctions/README.md) file in the parent directory for more information on how to configure the environment, including how to install and run common sample dependencies.
 
 ## Running the Sample
 
