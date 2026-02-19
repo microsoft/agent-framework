@@ -192,7 +192,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
                 {
                     yield return update.AsChatResponseUpdate();
 
-                    // Restore Activity.Current after yielding (see LockstepRunEventStream).
+                    // Restore Activity.Current after yielding.
                     Activity.Current = activity;
                 }
             }
