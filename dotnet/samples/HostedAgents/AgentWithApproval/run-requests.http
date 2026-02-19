@@ -1,0 +1,30 @@
+@host = http://localhost:8088
+@endpoint = {{host}}/responses
+
+### Health Check
+GET {{host}}/readiness
+
+### Ask a question - This will trigger an MCP tool call that requires approval
+POST {{endpoint}}
+Content-Type: application/json
+{
+    "input": "Please summarize the Azure AI Agent documentation related to MCP Tool calling?"
+}
+
+### Explicit input - Ask about Agent Framework (also triggers approval)
+POST {{endpoint}}
+Content-Type: application/json
+{
+    "input": [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "What is the Microsoft Agent Framework?"
+                }
+            ]
+        }
+    ]
+}

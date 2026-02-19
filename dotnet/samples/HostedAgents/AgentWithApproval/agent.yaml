@@ -1,0 +1,32 @@
+name: AgentWithApproval
+displayName: "Microsoft Learn Response Agent with MCP Approval"
+description: >
+  An AI agent that uses Azure OpenAI Responses with a Hosted Model Context Protocol (MCP) server,
+  requiring explicit human approval before each tool invocation. The agent answers questions by
+  searching Microsoft Learn documentation using MCP tools, but every tool call must be approved
+  by the caller first — demonstrating a human-in-the-loop pattern.
+metadata:
+  authors:
+    - Microsoft Agent Framework Team
+  tags:
+    - Azure AI AgentServer
+    - Microsoft Agent Framework
+    - Model Context Protocol
+    - MCP
+    - Human-in-the-Loop
+    - Tool Call Approval
+template:
+  kind: hosted
+  name: AgentWithApproval
+  protocols:
+    - protocol: responses
+      version: v1
+  environment_variables:
+    - name: AZURE_OPENAI_ENDPOINT
+      value: ${AZURE_OPENAI_ENDPOINT}
+    - name: AZURE_OPENAI_DEPLOYMENT_NAME
+      value: gpt-4o-mini
+resources:
+  - name: "gpt-4o-mini"
+    kind: model
+    id: gpt-4o-mini
