@@ -16,11 +16,11 @@ import sys
 from collections.abc import Sequence
 from typing import Any, cast
 
-from agent_framework import ChatAgent, ChatMessage
+from agent_framework import Agent, Message
 from agent_framework.azure import AzureOpenAIChatClient, AzureOpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
-from semantic_kernel.agents import Agent, ChatCompletionAgent, GroupChatOrchestration
+from semantic_kernel.agents import ChatCompletionAgent, GroupChatOrchestration
 from semantic_kernel.agents.orchestration.group_chat import (
     BooleanResult,
     GroupChatManager,
@@ -50,7 +50,7 @@ DISCUSSION_TOPIC = "What are the essential steps for launching a community hacka
 ######################################################################
 
 
-def build_semantic_kernel_agents() -> list[Agent]:
+def build_semantic_kernel_agents() -> list[ChatCompletionAgent]:
     credential = AzureCliCredential()
 
     researcher = ChatCompletionAgent(
@@ -82,25 +82,25 @@ class ChatCompletionGroupChatManager(GroupChatManager):
     topic: str
 
     termination_prompt: str = (
-        "You are coordinating a conversation about '{{topic}}'. "
+        "You are coordinating a conversation about '{{$topic}}'. "
         "Decide if the discussion has produced a solid answer. "
         'Respond using JSON: {"result": true|false, "reason": "..."}.'
     )
 
     selection_prompt: str = (
-        "You are coordinating a conversation about '{{topic}}'. "
+        "You are coordinating a conversation about '{{$topic}}'. "
         "Choose the next participant by returning JSON with keys (result, reason). "
-        "The result must match one of: {{participants}}."
+        "The result must match one of: {{$participants}}."
     )
 
     summary_prompt: str = (
-        "You have just finished a discussion about '{{topic}}'. "
+        "You have just finished a discussion about '{{$topic}}'. "
         "Summarize the plan and highlight key takeaways. Return JSON with keys (result, reason) where "
         "result is the final response text."
     )
 
-    def __init__(self, *, topic: str, service: ChatCompletionClientBase) -> None:
-        super().__init__(topic=topic, service=service)
+    def __init__(self, *, topic: str, service: ChatCompletionClientBase, max_rounds: int | None = None) -> None:
+        super().__init__(topic=topic, service=service, max_rounds=max_rounds)
         self._round_robin_index = 0
 
     async def _render_prompt(self, template: str, **kwargs: Any) -> str:
@@ -224,21 +224,21 @@ async def run_semantic_kernel_example(task: str) -> str:
 async def run_agent_framework_example(task: str) -> str:
     credential = AzureCliCredential()
 
-    researcher = ChatAgent(
+    researcher = Agent(
         name="Researcher",
         description="Collects background information and potential resources.",
         instructions=(
             "Gather concise facts or considerations that help plan a community hackathon. "
             "Keep your responses factual and scannable."
         ),
-        chat_client=AzureOpenAIChatClient(credential=credential),
+        client=AzureOpenAIChatClient(credential=credential),
     )
 
-    planner = ChatAgent(
+    planner = Agent(
         name="Planner",
         description="Turns the collected notes into a concrete action plan.",
         instructions=("Propose a structured action plan that accounts for logistics, roles, and timeline."),
-        chat_client=AzureOpenAIResponsesClient(credential=credential),
+        client=AzureOpenAIResponsesClient(credential=credential),
     )
 
     workflow = GroupChatBuilder(
@@ -253,7 +253,7 @@ async def run_agent_framework_example(task: str) -> str:
             if isinstance(data, list) and len(data) > 0:
                 # Get the final message from the conversation
                 final_message = data[-1]
-                final_response = final_message.text or "" if isinstance(final_message, ChatMessage) else str(data)
+                final_response = final_message.text or "" if isinstance(final_message, Message) else str(data)
             else:
                 final_response = str(data)
     return final_response

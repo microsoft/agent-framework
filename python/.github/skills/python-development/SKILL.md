@@ -69,7 +69,7 @@ def equal(arg1: str, arg2: str) -> bool:
 
 ```python
 # Core
-from agent_framework import ChatAgent, ChatMessage, tool
+from agent_framework import ChatAgent, Message, tool
 
 # Components
 from agent_framework.observability import enable_instrumentation
@@ -81,13 +81,18 @@ from agent_framework.azure import AzureOpenAIChatClient
 
 ## Public API and Exports
 
-Define `__all__` in each module. Avoid `from module import *` in `__init__.py` files:
+In `__init__.py` files that define package-level public APIs, use direct re-export imports plus an explicit
+`__all__`. Avoid identity aliases like `from ._agents import ChatAgent as ChatAgent`, and avoid
+`from module import *`.
+
+Do not define `__all__` in internal non-`__init__.py` modules. Exception: modules intentionally exposed as a
+public import surface (for example, `agent_framework.observability`) should define `__all__`.
 
 ```python
-__all__ = ["ChatAgent", "ChatMessage", "ChatResponse"]
+__all__ = ["ChatAgent", "Message", "ChatResponse"]
 
 from ._agents import ChatAgent
-from ._types import ChatMessage, ChatResponse
+from ._types import Message, ChatResponse
 ```
 
 ## Performance Guidelines

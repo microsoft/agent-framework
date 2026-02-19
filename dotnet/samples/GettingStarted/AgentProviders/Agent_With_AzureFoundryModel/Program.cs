@@ -19,8 +19,11 @@ var model = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_MODEL_DEPLOYMENT")
 var clientOptions = new OpenAIClientOptions() { Endpoint = new Uri(endpoint) };
 
 // Create the OpenAI client with either an API key or Azure CLI credential.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 OpenAIClient client = string.IsNullOrWhiteSpace(apiKey)
-    ? new OpenAIClient(new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"), clientOptions)
+    ? new OpenAIClient(new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"), clientOptions)
     : new OpenAIClient(new ApiKeyCredential(apiKey), clientOptions);
 
 AIAgent agent = client

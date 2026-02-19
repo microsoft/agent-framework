@@ -34,8 +34,11 @@ internal sealed class Program
         IConfiguration configuration = Application.InitializeConfig();
         Uri foundryEndpoint = new(configuration.GetValue(Application.Settings.FoundryEndpoint));
 
+        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
         // Create the agent service client
-        AIProjectClient aiProjectClient = new(foundryEndpoint, new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(foundryEndpoint, new DefaultAzureCredential());
 
         // Ensure sample agents exist in Foundry.
         await CreateAgentsAsync(aiProjectClient, configuration);

@@ -2,11 +2,13 @@
 
 """Tests for _run.py helper functions and FlowState."""
 
+import pytest
 from ag_ui.core import (
     TextMessageEndEvent,
     TextMessageStartEvent,
 )
-from agent_framework import ChatMessage, Content
+from agent_framework import AgentResponseUpdate, Content, Message, ResponseStream
+from agent_framework.exceptions import AgentExecutionException
 
 from agent_framework_ag_ui._run import (
     FlowState,
@@ -16,6 +18,7 @@ from agent_framework_ag_ui._run import (
     _emit_tool_result,
     _has_only_tool_calls,
     _inject_state_context,
+    _normalize_response_stream,
     _should_suppress_intermediate_snapshot,
 )
 
@@ -179,6 +182,54 @@ class TestFlowState:
         assert result[0]["id"] == "call_2"
 
 
+class TestNormalizeResponseStream:
+    """Tests for _normalize_response_stream helper."""
+
+    async def test_accepts_response_stream(self):
+        """Accept standard ResponseStream values."""
+
+        async def _stream():
+            yield AgentResponseUpdate(contents=[Content.from_text("hello")], role="assistant")
+
+        stream = await _normalize_response_stream(ResponseStream(_stream()))
+        updates = [update async for update in stream]
+
+        assert len(updates) == 1
+        assert updates[0].contents[0].text == "hello"
+
+    async def test_accepts_async_iterable(self):
+        """Accept workflow-style async generator streams."""
+
+        async def _stream():
+            yield AgentResponseUpdate(contents=[Content.from_text("hello")], role="assistant")
+
+        stream = await _normalize_response_stream(_stream())
+        updates = [update async for update in stream]
+
+        assert len(updates) == 1
+        assert updates[0].contents[0].text == "hello"
+
+    async def test_accepts_awaitable_resolving_to_async_iterable(self):
+        """Accept awaitables that resolve to async iterable streams."""
+
+        async def _stream():
+            yield AgentResponseUpdate(contents=[Content.from_text("hello")], role="assistant")
+
+        async def _resolve():
+            return _stream()
+
+        stream = await _normalize_response_stream(_resolve())
+        updates = [update async for update in stream]
+
+        assert len(updates) == 1
+        assert updates[0].contents[0].text == "hello"
+
+    async def test_rejects_non_stream_values(self):
+        """Reject unsupported stream return values."""
+        with pytest.raises(AgentExecutionException):
+            await _normalize_response_stream("not-a-stream")
+
+
 class TestCreateStateContextMessage:
     """Tests for _create_state_context_message function."""
 
@@ -212,7 +263,7 @@ class TestInjectStateContext:
 
     def test_no_state_message(self):
         """Returns original messages when no state context needed."""
-        messages = [ChatMessage(role="user", contents=[Content.from_text("Hello")])]
+        messages = [Message(role="user", contents=[Content.from_text("Hello")])]
         result = _inject_state_context(messages, {}, {})
         assert result == messages
 
@@ -224,8 +275,8 @@ class TestInjectStateContext:
     def test_last_message_not_user(self):
         """Returns original messages when last message is not from user."""
         messages = [
-            ChatMessage(role="user", contents=[Content.from_text("Hello")]),
-            ChatMessage(role="assistant", contents=[Content.from_text("Hi")]),
+            Message(role="user", contents=[Content.from_text("Hello")]),
+            Message(role="assistant", contents=[Content.from_text("Hi")]),
         ]
         state = {"key": "value"}
         schema = {"properties": {"key": {"type": "string"}}}
@@ -237,8 +288,8 @@ class TestInjectStateContext:
         """Injects state context before last user message."""
 
         messages = [
-            ChatMessage(role="system", contents=[Content.from_text("You are helpful")]),
-            ChatMessage(role="user", contents=[Content.from_text("Hello")]),
+            Message(role="system", contents=[Content.from_text("You are helpful")]),
+            Message(role="user", contents=[Content.from_text("Hello")]),
         ]
         state = {"document": "content"}
         schema = {"properties": {"document": {"type": "string"}}}
@@ -405,7 +456,7 @@ def test_extract_approved_state_updates_no_handler():
     """Test _extract_approved_state_updates returns empty with no handler."""
     from agent_framework_ag_ui._run import _extract_approved_state_updates
 
-    messages = [ChatMessage(role="user", contents=[Content.from_text("Hello")])]
+    messages = [Message(role="user", contents=[Content.from_text("Hello")])]
     result = _extract_approved_state_updates(messages, None)
     assert result == {}
 
@@ -416,7 +467,7 @@ def test_extract_approved_state_updates_no_approval():
     from agent_framework_ag_ui._run import _extract_approved_state_updates
 
     handler = PredictiveStateHandler(predict_state_config={"doc": {"tool": "write", "tool_argument": "content"}})
-    messages = [ChatMessage(role="user", contents=[Content.from_text("Hello")])]
+    messages = [Message(role="user", contents=[Content.from_text("Hello")])]
     result = _extract_approved_state_updates(messages, handler)
     assert result == {}
 

@@ -1,13 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to inject additional AI context into a ChatClientAgent using a custom AIContextProvider component that is attached to the agent.
-// The sample also shows how to combine the results from multiple providers into a single class, in order to attach multiple of these to an agent.
+// This sample shows how to inject additional AI context into a ChatClientAgent using custom AIContextProvider components that are attached to the agent.
+// Multiple providers can be attached to an agent, and they will be called in sequence, each receiving the accumulated context from the previous one.
 // This mechanism can be used for various purposes, such as injecting RAG search results or memories into the agent's context.
 // Also note that Agent Framework already provides built-in AIContextProviders for many of these scenarios.
 
 #pragma warning disable CA1869 // Cache and reuse 'JsonSerializerOptions' instances
 
-using System.ComponentModel;
 using System.Text;
 using System.Text.Json;
 using Azure.AI.OpenAI;
@@ -34,9 +33,12 @@ Func<Task<string[]>> loadNextThreeCalendarEvents = async () =>
 };
 
 // Create an agent with an AI context provider attached that aggregates two other providers:
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions()
     {
@@ -45,16 +47,20 @@ AIAgent agent = new AzureOpenAIClient(
         You manage a TODO list for the user. When the user has completed one of the tasks it can be removed from the TODO list. Only provide the list of TODO items if asked.
         You remind users of upcoming calendar events when the user interacts with you.
         """ },
-        ChatHistoryProviderFactory = (ctx, ct) => new ValueTask<ChatHistoryProvider>(new InMemoryChatHistoryProvider()
-            // Use WithAIContextProviderMessageRemoval, so that we don't store the messages from the AI context provider in the chat history.
+        ChatHistoryProvider = new InMemoryChatHistoryProvider(new InMemoryChatHistoryProviderOptions
+        {
+            // Use StorageInputMessageFilter to provide a custom filter for messages stored in chat history.
+            // By default the chat history provider will store all messages, except for those that came from chat history in the first place.
+            // In this case, we want to also exclude messages that came from AI context providers.
             // You may want to store these messages, depending on their content and your requirements.
-            .WithAIContextProviderMessageRemoval()),
-        // Add an AI context provider that maintains a todo list for the agent and one that provides upcoming calendar entries.
-        // Wrap these in an AI context provider that aggregates the other two.
-        AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(new AggregatingAIContextProvider([
-            AggregatingAIContextProvider.CreateFactory((jsonElement, jsonSerializerOptions) => new TodoListAIContextProvider(jsonElement, jsonSerializerOptions)),
-            AggregatingAIContextProvider.CreateFactory((_, _) => new CalendarSearchAIContextProvider(loadNextThreeCalendarEvents))
-        ], ctx.SerializedState, ctx.JsonSerializerOptions)),
+            StorageInputMessageFilter = messages => messages.Where(m => m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.AIContextProvider && m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory)
+        }),
+        // Add multiple AI context providers: one that maintains a todo list and one that provides upcoming calendar entries.
+        // The agent will call each provider in sequence, accumulating context from each.
+        AIContextProviders = [
+            new TodoListAIContextProvider(),
+            new CalendarSearchAIContextProvider(loadNextThreeCalendarEvents)
+        ],
     });
 
 // Invoke the agent and output the text result.
@@ -65,7 +71,7 @@ Console.WriteLine(await agent.RunAsync("I need to make a dentist appointment for
 Console.WriteLine(await agent.RunAsync("I've taken Sally to soccer practice.", session) + "\n");
 
 // We can serialize the session, and it will contain both the chat history and the data that each AI context provider serialized.
-JsonElement serializedSession = agent.SerializeSession(session);
+JsonElement serializedSession = await agent.SerializeSessionAsync(session);
 // Let's print it to console to show the contents.
 Console.WriteLine(JsonSerializer.Serialize(serializedSession, options: new JsonSerializerOptions() { WriteIndented = true, IndentSize = 2 }) + "\n");
 // The serialized session can be stored long term in a persistent store, but in this case we will just deserialize again and continue the conversation.
@@ -80,51 +86,67 @@ namespace SampleApp
     /// </summary>
     internal sealed class TodoListAIContextProvider : AIContextProvider
     {
-        private readonly List<string> _todoItems = new();
+        private static List<string> GetTodoItems(AgentSession? session)
+            => session?.StateBag.GetValue<List<string>>(nameof(TodoListAIContextProvider)) ?? new List<string>();
 
-        public TodoListAIContextProvider(JsonElement jsonElement, JsonSerializerOptions? jsonSerializerOptions = null)
-        {
-            // Only try and restore the state if we got an array, since any other json would be invalid or undefined/null meaning
-            // it's the first time we are running.
-            if (jsonElement.ValueKind == JsonValueKind.Array)
-            {
-                this._todoItems = JsonSerializer.Deserialize<List<string>>(jsonElement.GetRawText(), jsonSerializerOptions) ?? new List<string>();
-            }
-        }
+        private static void SetTodoItems(AgentSession? session, List<string> items)
+            => session?.StateBag.SetValue(nameof(TodoListAIContextProvider), items);
 
         protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
+            var inputContext = context.AIContext;
+            var todoItems = GetTodoItems(context.Session);
+
             StringBuilder outputMessageBuilder = new();
             outputMessageBuilder.AppendLine("Your todo list contains the following items:");
 
-            if (this._todoItems.Count == 0)
+            if (todoItems.Count == 0)
             {
                 outputMessageBuilder.AppendLine("  (no items)");
             }
             else
             {
-                for (int i = 0; i < this._todoItems.Count; i++)
+                for (int i = 0; i < todoItems.Count; i++)
                 {
-                    outputMessageBuilder.AppendLine($"{i}. {this._todoItems[i]}");
+                    outputMessageBuilder.AppendLine($"{i}. {todoItems[i]}");
                 }
             }
 
             return new ValueTask<AIContext>(new AIContext
             {
-                Tools = [AIFunctionFactory.Create(this.AddTodoItem), AIFunctionFactory.Create(this.RemoveTodoItem)],
-                Messages = [new MEAI.ChatMessage(ChatRole.User, outputMessageBuilder.ToString())]
+                Instructions = inputContext.Instructions,
+                Tools = (inputContext.Tools ?? []).Concat(new AITool[]
+                {
+                    AIFunctionFactory.Create((string item) => AddTodoItem(context.Session, item), "AddTodoItem", "Adds an item to the todo list."),
+                    AIFunctionFactory.Create((int index) => RemoveTodoItem(context.Session, index), "RemoveTodoItem", "Removes an item from the todo list. Index is zero based.")
+                }),
+                Messages =
+                    (inputContext.Messages ?? [])
+                    .Concat(
+                    [
+                        new MEAI.ChatMessage(ChatRole.User, outputMessageBuilder.ToString()).WithAgentRequestMessageSource(AgentRequestMessageSourceType.AIContextProvider, this.GetType().FullName!)
+                    ])
             });
         }
 
-        [Description("Adds an item to the todo list. Index is zero based.")]
-        private void RemoveTodoItem(int index) =>
-            this._todoItems.RemoveAt(index);
+        private static void RemoveTodoItem(AgentSession? session, int index)
+        {
+            var items = GetTodoItems(session);
+            items.RemoveAt(index);
+            SetTodoItems(session, items);
+        }
 
-        private void AddTodoItem(string item) =>
-            this._todoItems.Add(string.IsNullOrWhiteSpace(item) ? throw new ArgumentException("Item must have a value") : item);
+        private static void AddTodoItem(AgentSession? session, string item)
+        {
+            if (string.IsNullOrWhiteSpace(item))
+            {
+                throw new ArgumentException("Item must have a value");
+            }
 
-        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null) =>
-            JsonSerializer.SerializeToElement(this._todoItems, jsonSerializerOptions);
+            var items = GetTodoItems(session);
+            items.Add(item);
+            SetTodoItems(session, items);
+        }
     }
 
     /// <summary>
@@ -134,6 +156,7 @@ namespace SampleApp
     {
         protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
+            var inputContext = context.AIContext;
             var events = await loadNextThreeCalendarEvents();
 
             StringBuilder outputMessageBuilder = new();
@@ -145,84 +168,16 @@ namespace SampleApp
 
             return new()
             {
+                Instructions = inputContext.Instructions,
                 Messages =
-                [
-                    new MEAI.ChatMessage(ChatRole.User, outputMessageBuilder.ToString()),
-                ]
+                    (inputContext.Messages ?? [])
+                    .Concat(
+                    [
+                        new MEAI.ChatMessage(ChatRole.User, outputMessageBuilder.ToString()).WithAgentRequestMessageSource(AgentRequestMessageSourceType.AIContextProvider, this.GetType().FullName!)
+                    ])
+                    .ToList(),
+                Tools = inputContext.Tools
             };
-        }
-    }
-
-    /// <summary>
-    /// An <see cref="AIContextProvider"/> which aggregates multiple AI context providers into one.
-    /// Serialized state for the different providers are stored under their type name.
-    /// Tools and messages from all providers are combined, and instructions are concatenated.
-    /// </summary>
-    internal sealed class AggregatingAIContextProvider : AIContextProvider
-    {
-        private readonly List<AIContextProvider> _providers = new();
-
-        public AggregatingAIContextProvider(ProviderFactory[] providerFactories, JsonElement jsonElement, JsonSerializerOptions? jsonSerializerOptions)
-        {
-            // We received a json object, so let's check if it has some previously serialized state that we can use.
-            if (jsonElement.ValueKind == JsonValueKind.Object)
-            {
-                this._providers = providerFactories
-                    .Select(factory => factory.FactoryMethod(jsonElement.TryGetProperty(factory.ProviderType.Name, out var prop) ? prop : default, jsonSerializerOptions))
-                    .ToList();
-                return;
-            }
-
-            // We didn't receive any valid json, so we can just construct fresh providers.
-            this._providers = providerFactories
-                .Select(factory => factory.FactoryMethod(default, jsonSerializerOptions))
-                .ToList();
-        }
-
-        protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
-        {
-            // Invoke all the sub providers.
-            var tasks = this._providers.Select(provider => provider.InvokingAsync(context, cancellationToken).AsTask());
-            var results = await Task.WhenAll(tasks);
-
-            // Combine the results from each sub provider.
-            return new AIContext
-            {
-                Tools = results.SelectMany(r => r.Tools ?? []).ToList(),
-                Messages = results.SelectMany(r => r.Messages ?? []).ToList(),
-                Instructions = string.Join("\n", results.Select(r => r.Instructions).Where(s => !string.IsNullOrEmpty(s)))
-            };
-        }
-
-        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
-        {
-            Dictionary<string, JsonElement> elements = new();
-            foreach (var provider in this._providers)
-            {
-                JsonElement element = provider.Serialize(jsonSerializerOptions);
-
-                // Don't try to store state for any providers that aren't producing any.
-                if (element.ValueKind != JsonValueKind.Undefined && element.ValueKind != JsonValueKind.Null)
-                {
-                    elements[provider.GetType().Name] = element;
-                }
-            }
-
-            return JsonSerializer.SerializeToElement(elements, jsonSerializerOptions);
-        }
-
-        public static ProviderFactory CreateFactory<TProviderType>(Func<JsonElement, JsonSerializerOptions?, TProviderType> factoryMethod)
-            where TProviderType : AIContextProvider => new()
-            {
-                FactoryMethod = (jsonElement, jsonSerializerOptions) => factoryMethod(jsonElement, jsonSerializerOptions),
-                ProviderType = typeof(TProviderType)
-            };
-
-        public readonly struct ProviderFactory
-        {
-            public Func<JsonElement, JsonSerializerOptions?, AIContextProvider> FactoryMethod { get; init; }
-
-            public Type ProviderType { get; init; }
         }
     }
 }

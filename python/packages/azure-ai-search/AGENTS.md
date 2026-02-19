@@ -16,7 +16,7 @@ provider = AzureAISearchContextProvider(
     endpoint="https://your-search.search.windows.net",
     index_name="your-index",
 )
-agent = ChatAgent(..., context_provider=provider)
+agent = Agent(..., context_provider=provider)
 ```
 
 ## Import Path

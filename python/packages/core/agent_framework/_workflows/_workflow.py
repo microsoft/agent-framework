@@ -175,9 +175,9 @@ class Workflow(DictConvertible):
         executors: dict[str, Executor],
         start_executor: Executor,
         runner_context: RunnerContext,
-        max_iterations: int = DEFAULT_MAX_ITERATIONS,
-        name: str | None = None,
+        name: str,
         description: str | None = None,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
         output_executors: list[str] | None = None,
         **kwargs: Any,
     ):
@@ -189,8 +189,12 @@ class Workflow(DictConvertible):
             start_executor: The starting executor for the workflow.
             runner_context: The RunnerContext instance to be used during workflow execution.
             max_iterations: The maximum number of iterations the workflow will run for convergence.
-            name: Optional human-readable name for the workflow.
-            description: Optional description of what the workflow does.
+            name: A human-readable name for the workflow. This can be used to identify the workflow in
+                checkpoints, and telemetry. If the workflow is built using WorkflowBuilder, this will be the
+                name of the builder. This name should be unique across different workflow definitions for
+                better observability and management.
+            description: Optional description of what the workflow does. If the workflow is built using
+                WorkflowBuilder, this will be the description of the builder.
             output_executors: Optional list of executor IDs whose outputs will be considered workflow outputs.
                               If None or empty, all executor outputs are treated as workflow outputs.
             kwargs: Additional keyword arguments. Unused in this implementation.
@@ -199,9 +203,15 @@ class Workflow(DictConvertible):
         self.executors = dict(executors)
         self.start_executor_id = start_executor.id
         self.max_iterations = max_iterations
-        self.id = str(uuid.uuid4())
         self.name = name
         self.description = description
+        # Generate a unique ID for the workflow instance for monitoring purposes. This is not intended to be a
+        # stable identifier across instances created from the same builder, for that, use the name field.
+        self.id = str(uuid.uuid4())
+        # Capture a canonical fingerprint of the workflow graph so checkpoints can assert they are resumed with
+        # an equivalent topology.
+        self.graph_signature = self._compute_graph_signature()
+        self.graph_signature_hash = self._hash_graph_signature(self.graph_signature)
 
         # Output events (WorkflowEvent with type='output') from these executors are treated as workflow outputs.
         # If None or empty, all executor outputs are considered workflow outputs.
@@ -215,18 +225,13 @@ class Workflow(DictConvertible):
             self.executors,
             self._state,
             runner_context,
+            self.name,
+            self.graph_signature_hash,
             max_iterations=max_iterations,
-            workflow_id=self.id,
         )
 
         # Flag to prevent concurrent workflow executions
         self._is_running = False
-
-        # Capture a canonical fingerprint of the workflow graph so checkpoints
-        # can assert they are resumed with an equivalent topology.
-        self._graph_signature = self._compute_graph_signature()
-        self._graph_signature_hash = self._hash_graph_signature(self._graph_signature)
-        self._runner.graph_signature_hash = self._graph_signature_hash
 
     def _ensure_not_running(self) -> None:
         """Ensure the workflow is not already running."""
@@ -241,6 +246,7 @@ class Workflow(DictConvertible):
     def to_dict(self) -> dict[str, Any]:
         """Serialize the workflow definition into a JSON-ready dictionary."""
         data: dict[str, Any] = {
+            "name": self.name,
             "id": self.id,
             "start_executor_id": self.start_executor_id,
             "max_iterations": self.max_iterations,
@@ -249,9 +255,6 @@ class Workflow(DictConvertible):
             "output_executors": self._output_executors,
         }
 
-        # Add optional name and description if provided
-        if self.name is not None:
-            data["name"] = self.name
         if self.description is not None:
             data["description"] = self.description
 
@@ -565,6 +568,15 @@ class Workflow(DictConvertible):
         ):
             if event.type == "output" and not self._should_yield_output_event(event):
                 continue
+            if event.type == "request_info" and event.request_id in (responses or {}):
+                # Don't yield request_info events for which we have responses to send -
+                # these are considered "handled". This prevents the caller from seeing
+                # events for requests they are already responding to.
+                # This usually happens when responses are provided with a checkpoint
+                # (restore then send), because the request_info events are stored in the
+                # checkpoint and would be emitted on restoration by the runner regardless
+                # of if a response is provided or not.
+                continue
             yield event
 
     async def _run_cleanup(self, checkpoint_storage: CheckpointStorage | None) -> None:
@@ -753,7 +765,7 @@ class Workflow(DictConvertible):
             if isinstance(executor, WorkflowExecutor):
                 executor_sig = {
                     "type": executor_sig,
-                    "sub_workflow": executor.workflow._graph_signature,
+                    "sub_workflow": executor.workflow.graph_signature,
                 }
 
             executors_signature[executor_id] = executor_sig
@@ -796,17 +808,12 @@ class Workflow(DictConvertible):
             "start_executor": self.start_executor_id,
             "executors": executors_signature,
             "edge_groups": edge_groups_signature,
-            "max_iterations": self.max_iterations,
         }
 
     @staticmethod
     def _hash_graph_signature(signature: dict[str, Any]) -> str:
         canonical = json.dumps(signature, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-    @property
-    def graph_signature_hash(self) -> str:
-        return self._graph_signature_hash
 
     @property
     def input_types(self) -> list[type[Any] | types.UnionType]:
@@ -841,14 +848,14 @@ class Workflow(DictConvertible):
     def as_agent(self, name: str | None = None) -> WorkflowAgent:
         """Create a WorkflowAgent that wraps this workflow.
 
-        The returned agent converts standard agent inputs (strings, ChatMessage, or lists of these)
-        into a list[ChatMessage] that is passed to the workflow's start executor. This conversion
+        The returned agent converts standard agent inputs (strings, Message, or lists of these)
+        into a list[Message] that is passed to the workflow's start executor. This conversion
         happens in WorkflowAgent._normalize_messages() which transforms:
-        - str -> [ChatMessage(USER, [str])]
-        - ChatMessage -> [ChatMessage]
-        - list[str | ChatMessage] -> list[ChatMessage] (with string elements converted)
+        - str -> [Message(USER, [str])]
+        - Message -> [Message]
+        - list[str | Message] -> list[Message] (with string elements converted)
 
-        The workflow's start executor must accept list[ChatMessage] as an input type, otherwise
+        The workflow's start executor must accept list[Message] as an input type, otherwise
         initialization will fail with a ValueError.
 
         Args:
@@ -858,7 +865,7 @@ class Workflow(DictConvertible):
             A WorkflowAgent instance that wraps this workflow.
 
         Raises:
-            ValueError: If the workflow's start executor cannot handle list[ChatMessage] input.
+            ValueError: If the workflow's start executor cannot handle list[Message] input.
         """
         # Import here to avoid circular imports
         from ._agent import WorkflowAgent

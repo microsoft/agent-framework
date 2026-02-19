@@ -10,6 +10,21 @@ We use [ruff](https://github.com/astral-sh/ruff) for both linting and formatting
 - **Target Python version**: 3.10+
 - **Google-style docstrings**: All public functions, classes, and modules should have docstrings following Google conventions
 
+### Module Docstrings
+
+Public modules must include a module-level docstring, including `__init__.py` files.
+
+- Namespace-style `__init__.py` modules (for example under `agent_framework/<provider>/`) should use a structured
+  docstring that includes:
+  - A one-line summary of the namespace
+  - A short "This module lazily re-exports objects from:" section that lists only pip install package names
+    (for example `agent-framework-a2a`)
+  - A short "Supported classes:" (or "Supported classes and functions:") section
+- The main `agent_framework/__init__.py` should include a concise background-oriented docstring rather than a long
+  per-symbol list.
+- Core modules with broad surface area, including `agent_framework/exceptions.py` and
+  `agent_framework/observability.py`, should always have explicit module docstrings.
+
 ## Type Annotations
 
 ### Future Annotations
@@ -118,10 +133,10 @@ Prefer attributes over inheritance when parameters are mostly the same:
 
 ```python
 # ✅ Preferred - using attributes
-from agent_framework import ChatMessage
+from agent_framework import Message
 
-user_msg = ChatMessage("user", ["Hello, world!"])
-asst_msg = ChatMessage("assistant", ["Hello, world!"])
+user_msg = Message("user", ["Hello, world!"])
+asst_msg = Message("assistant", ["Hello, world!"])
 
 # ❌ Not preferred - unnecessary inheritance
 from agent_framework import UserMessage, AssistantMessage
@@ -130,34 +145,13 @@ user_msg = UserMessage(content="Hello, world!")
 asst_msg = AssistantMessage(content="Hello, world!")
 ```
 
-### Logging
-
-Use the centralized logging system:
-
-```python
-from agent_framework import get_logger
-
-# For main package
-logger = get_logger()
-
-# For subpackages
-logger = get_logger('agent_framework.azure')
-```
-
-**Do not use** direct logging module imports:
-```python
-# ❌ Avoid this
-import logging
-logger = logging.getLogger(__name__)
-```
-
 ### Import Structure
 
 The package follows a flat import structure:
 
 - **Core**: Import directly from `agent_framework`
   ```python
-  from agent_framework import ChatAgent, tool
+  from agent_framework import Agent, tool
   ```
 
 - **Components**: Import from `agent_framework.<component>`
@@ -189,8 +183,6 @@ python/
 │   │       ├── _clients.py     # Chat client protocols and base classes
 │   │       ├── _tools.py       # Tool definitions
 │   │       ├── _types.py       # Type definitions
-│   │       ├── _logging.py     # Logging utilities
-│   │       │
 │   │       │   # Provider folders - lazy load from connector packages
 │   │       ├── openai/         # OpenAI clients (built into core)
 │   │       ├── azure/          # Lazy loads from azure-ai, azure-ai-search, azurefunctions
@@ -381,12 +373,12 @@ def create_client(
 Use Google-style docstrings for all public APIs:
 
 ```python
-def create_agent(name: str, chat_client: ChatClientProtocol) -> Agent:
+def create_agent(name: str, client: SupportsChatGetResponse) -> Agent:
     """Create a new agent with the specified configuration.
 
     Args:
         name: The name of the agent.
-        chat_client: The chat client to use for communication.
+        client: The chat client to use for communication.
 
     Returns:
         True if the strings are the same, False otherwise.
@@ -403,21 +395,50 @@ If in doubt, use the link above to read much more considerations of what to do a
 
 ### Explicit Exports
 
-> **Note:** This convention is being adopted. See [#3605](https://github.com/microsoft/agent-framework/issues/3605) for progress.
+**All wildcard imports (`from ... import *`) are prohibited** in production code, including both `.py` and `.pyi` files. Always use explicit import lists to maintain clarity and avoid namespace pollution.
 
-Define `__all__` in each module to explicitly declare the public API. Avoid using `from module import *` in `__init__.py` files as it can impact performance and makes the public API unclear:
+Do not use ``__all__`` in internal modules. Define it in the ``__init__`` file of the level you want to expose.
+If a non-``__init__`` module is intentionally part of the public API surface (for example, ``observability.py``),
+it should define ``__all__`` as well.
+
+Also avoid identity alias imports in ``__init__`` files. Use ``from ._module import Symbol`` instead of
+``from ._module import Symbol as Symbol``.
 
 ```python
-# ✅ Preferred - explicit __all__ and imports
-__all__ = ["ChatAgent", "ChatMessage", "ChatResponse"]
+# ✅ Preferred - explicit __all__ and named imports
+from ._agents import Agent
+from ._types import Message, ChatResponse
 
-from ._agents import ChatAgent
-from ._types import ChatMessage, ChatResponse
+# ✅ For many exports, use parenthesized multi-line imports
+from ._types import (
+    AgentResponse,
+    ChatResponse,
+    Message,
+    ResponseStream,
+)
 
-# ❌ Avoid - star imports
-from ._agents import *
-from ._types import *
+__all__ = [
+    "Agent",
+    "AgentResponse",
+    "ChatResponse",
+    "Message",
+    "ResponseStream",
+]
+
+# ❌ Prohibited pattern: wildcard/star imports (do not use)
+# from ._agents import *
+# from ._types import *
+
+# ❌ Prohibited pattern: identity alias imports (do not use)
+# from ._agents import Agent as Agent
 ```
+
+**Rationale:**
+- **Clarity**: Explicit imports make it clear exactly what is being exported and used
+- **IDE Support**: Enables better autocomplete, go-to-definition, and refactoring
+- **Type Checking**: Improves static analysis and type checker accuracy
+- **Maintenance**: Makes it easier to track symbol usage and detect breaking changes
+- **Performance**: Avoids unnecessary symbol resolution during module import
 
 ## Performance considerations
 

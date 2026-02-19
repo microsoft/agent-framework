@@ -11,10 +11,9 @@ This module provides state management for declarative workflows, handling:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any, cast
-
-from agent_framework import get_logger
 
 try:
     from powerfx import Engine
@@ -25,7 +24,7 @@ except (ImportError, RuntimeError):
     # RuntimeError: .NET runtime not available or misconfigured
     _powerfx_engine = None
 
-logger = get_logger("agent_framework.declarative.workflows")
+logger = logging.getLogger("agent_framework.declarative")
 
 
 class WorkflowState:
@@ -314,7 +313,7 @@ class WorkflowState:
         """Add a message to the conversation history.
 
         Args:
-            message: The message to add (typically a ChatMessage or similar)
+            message: The message to add (typically a Message or similar)
         """
         self._conversation["messages"].append(message)
         self._conversation["history"].append(message)

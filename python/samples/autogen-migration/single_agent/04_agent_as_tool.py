@@ -53,7 +53,7 @@ async def run_autogen() -> None:
 
     # Run coordinator with streaming - it will delegate to writer
     print("[AutoGen]")
-    await Console(coordinator.run(task="Create a tagline for a coffee shop", stream=True))
+    await Console(coordinator.run_stream(task="Create a tagline for a coffee shop"))
 
 
 async def run_agent_framework() -> None:

@@ -13,9 +13,8 @@ from agent_framework import (
     AgentExecutor,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
-    ChatMessage,
     Content,
     Executor,
     FileCheckpointStorage,
@@ -26,6 +25,7 @@ from agent_framework import (
     WorkflowContext,
     WorkflowConvergenceException,
     WorkflowEvent,
+    WorkflowMessage,
     WorkflowRunState,
     handler,
     response_handler,
@@ -275,7 +275,7 @@ async def test_workflow_with_checkpointing_enabled(simple_executor: Executor):
         )
 
         # Verify workflow was created and can run
-        test_message = Message(data="test message", source_id="test", target_id=None)
+        test_message = WorkflowMessage(data="test message", source_id="test", target_id=None)
         result = await workflow.run(test_message)
         assert result is not None
 
@@ -335,12 +335,9 @@ async def test_workflow_run_stream_from_checkpoint_invalid_checkpoint(
         )
 
         # Attempt to run from non-existent checkpoint should fail
-        try:
+        with pytest.raises(WorkflowCheckpointException, match="No checkpoint found with ID nonexistent_checkpoint_id"):
             async for _ in workflow.run(checkpoint_id="nonexistent_checkpoint_id", stream=True):
                 pass
-            raise AssertionError("Expected WorkflowCheckpointException to be raised")
-        except WorkflowCheckpointException as e:
-            assert str(e) == "Checkpoint nonexistent_checkpoint_id not found"
 
 
 async def test_workflow_run_stream_from_checkpoint_with_external_storage(
@@ -354,12 +351,14 @@ async def test_workflow_run_stream_from_checkpoint_with_external_storage(
         from agent_framework import WorkflowCheckpoint
 
         test_checkpoint = WorkflowCheckpoint(
-            workflow_id="test-workflow",
+            workflow_name="test-workflow",
+            graph_signature_hash="test-graph-signature",
+            previous_checkpoint_id=None,
             messages={},
             state={},
             iteration_count=0,
         )
-        checkpoint_id = await storage.save_checkpoint(test_checkpoint)
+        checkpoint_id = await storage.save(test_checkpoint)
 
         # Create a workflow WITHOUT checkpointing
         workflow_without_checkpointing = (
@@ -385,23 +384,25 @@ async def test_workflow_run_from_checkpoint_non_streaming(simple_executor: Execu
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
-        # Create a test checkpoint manually in storage
-        from agent_framework import WorkflowCheckpoint
-
-        test_checkpoint = WorkflowCheckpoint(
-            workflow_id="test-workflow",
-            messages={},
-            state={},
-            iteration_count=0,
-        )
-        checkpoint_id = await storage.save_checkpoint(test_checkpoint)
-
         # Build workflow with checkpointing
         workflow = (
             WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
             .add_edge(simple_executor, simple_executor)
             .build()
         )
+
+        # Create a test checkpoint manually in storage
+        from agent_framework import WorkflowCheckpoint
+
+        test_checkpoint = WorkflowCheckpoint(
+            workflow_name=workflow.name,
+            graph_signature_hash=workflow.graph_signature_hash,
+            previous_checkpoint_id=None,
+            messages={},
+            state={},
+            iteration_count=0,
+        )
+        checkpoint_id = await storage.save(test_checkpoint)
 
         # Test non-streaming run method with checkpoint_id
         result = await workflow.run(checkpoint_id=checkpoint_id)
@@ -416,11 +417,19 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
 
+        # Build workflow with checkpointing
+        workflow = (
+            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
+            .add_edge(simple_executor, simple_executor)
+            .build()
+        )
+
         # Create a test checkpoint manually in storage
         from agent_framework import WorkflowCheckpoint
 
         test_checkpoint = WorkflowCheckpoint(
-            workflow_id="test-workflow",
+            workflow_name=workflow.name,
+            graph_signature_hash=workflow.graph_signature_hash,
             messages={},
             state={},
             pending_request_info_events={
@@ -429,18 +438,11 @@ async def test_workflow_run_stream_from_checkpoint_with_responses(
                     source_executor_id=simple_executor.id,
                     request_data="Mock",
                     response_type=str,
-                ).to_dict(),
+                ),
             },
             iteration_count=0,
         )
-        checkpoint_id = await storage.save_checkpoint(test_checkpoint)
-
-        # Build workflow with checkpointing
-        workflow = (
-            WorkflowBuilder(start_executor=simple_executor, checkpoint_storage=storage)
-            .add_edge(simple_executor, simple_executor)
-            .build()
-        )
+        checkpoint_id = await storage.save(test_checkpoint)
 
         # Resume from checkpoint - pending request events should be emitted
         events: list[WorkflowEvent] = []
@@ -536,13 +538,13 @@ async def test_workflow_checkpoint_runtime_only_configuration(
         workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
 
         # Run with runtime checkpoint storage - should create checkpoints
-        test_message = Message(data="runtime checkpoint test", source_id="test", target_id=None)
+        test_message = WorkflowMessage(data="runtime checkpoint test", source_id="test", target_id=None)
         result = await workflow.run(test_message, checkpoint_storage=storage)
         assert result is not None
         assert result.get_final_state() == WorkflowRunState.IDLE
 
         # Verify checkpoints were created
-        checkpoints = await storage.list_checkpoints()
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
         assert len(checkpoints) > 0
 
         # Find a superstep checkpoint to resume from
@@ -587,13 +589,13 @@ async def test_workflow_checkpoint_runtime_overrides_buildtime(
         )
 
         # Run with runtime checkpoint storage override
-        test_message = Message(data="override test", source_id="test", target_id=None)
+        test_message = WorkflowMessage(data="override test", source_id="test", target_id=None)
         result = await workflow.run(test_message, checkpoint_storage=runtime_storage)
         assert result is not None
 
         # Verify checkpoints were created in runtime storage, not build-time storage
-        buildtime_checkpoints = await buildtime_storage.list_checkpoints()
-        runtime_checkpoints = await runtime_storage.list_checkpoints()
+        buildtime_checkpoints = await buildtime_storage.list_checkpoints(workflow_name=workflow.name)
+        runtime_checkpoints = await runtime_storage.list_checkpoints(workflow_name=workflow.name)
 
         assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
@@ -833,10 +835,10 @@ class _StreamingTestAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         if stream:
@@ -849,7 +851,7 @@ class _StreamingTestAgent(BaseAgent):
             return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
 
         async def _run() -> AgentResponse:
-            return AgentResponse(messages=[ChatMessage("assistant", [self._reply_text])])
+            return AgentResponse(messages=[Message("assistant", [self._reply_text])])
 
         return _run()
 
@@ -911,7 +913,7 @@ async def test_workflow_run_parameter_validation(simple_executor: Executor) -> N
     """Test that stream properly validate parameter combinations."""
     workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
 
-    test_message = Message(data="test", source_id="test", target_id=None)
+    test_message = WorkflowMessage(data="test", source_id="test", target_id=None)
 
     # Valid: message only (new run)
     result = await workflow.run(test_message)
@@ -942,7 +944,7 @@ async def test_workflow_run_stream_parameter_validation(
     """Test stream=True specific parameter validation scenarios."""
     workflow = WorkflowBuilder(start_executor=simple_executor).add_edge(simple_executor, simple_executor).build()
 
-    test_message = Message(data="test", source_id="test", target_id=None)
+    test_message = WorkflowMessage(data="test", source_id="test", target_id=None)
 
     # Valid: message only (new run)
     events: list[WorkflowEvent] = []

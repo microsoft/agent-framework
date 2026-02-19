@@ -4,6 +4,7 @@
 
 from collections.abc import AsyncGenerator
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -29,6 +30,7 @@ def create_action_context(
     inputs: dict[str, Any] | None = None,
     agents: dict[str, Any] | None = None,
     bindings: dict[str, Any] | None = None,
+    run_kwargs: dict[str, Any] | None = None,
 ) -> ActionContext:
     """Helper to create an ActionContext for testing."""
     state = WorkflowState(inputs=inputs or {})
@@ -47,6 +49,7 @@ def create_action_context(
                     execute_actions=execute_actions,
                     agents=agents or {},
                     bindings=bindings or {},
+                    run_kwargs=run_kwargs or {},
                 )
                 async for event in handler(ctx):
                     yield event
@@ -57,6 +60,7 @@ def create_action_context(
         execute_actions=execute_actions,
         agents=agents or {},
         bindings=bindings or {},
+        run_kwargs=run_kwargs or {},
     )
 
 
@@ -422,3 +426,128 @@ class TestTryCatchHandler:
 
         assert ctx.state.get("Local.try") == "ran"
         assert ctx.state.get("Local.finally") == "ran"
+
+
+class TestActionContextKwargs:
+    """ActionContext should carry and forward run_kwargs to agent invocations."""
+
+    @pytest.mark.asyncio
+    async def test_action_context_carries_run_kwargs(self):
+        """ActionContext should store and expose run_kwargs."""
+        ctx = create_action_context(
+            {"kind": "SetValue", "path": "Local.x", "value": "1"},
+            run_kwargs={"user_token": "test123"},
+        )
+        assert ctx.run_kwargs == {"user_token": "test123"}
+
+    @pytest.mark.asyncio
+    async def test_action_context_defaults_to_empty_kwargs(self):
+        """ActionContext.run_kwargs should default to empty dict."""
+        ctx = create_action_context(
+            {"kind": "SetValue", "path": "Local.x", "value": "1"},
+        )
+        assert ctx.run_kwargs == {}
+
+    @pytest.mark.asyncio
+    async def test_invoke_agent_handler_forwards_kwargs(self):
+        """handle_invoke_azure_agent should forward ctx.run_kwargs to agent.run()."""
+        import agent_framework_declarative._workflows._actions_agents  # noqa: F401
+
+        mock_response = MagicMock()
+        mock_response.text = "response"
+        mock_response.messages = []
+        mock_response.tool_calls = []
+
+        async def non_streaming_run(*args, **kwargs):
+            if kwargs.get("stream"):
+                raise TypeError("no streaming")
+            return mock_response
+
+        mock_agent = AsyncMock()
+        mock_agent.run = AsyncMock(side_effect=non_streaming_run)
+
+        test_kwargs = {"user_token": "secret", "api_key": "key123"}
+
+        state = WorkflowState()
+        state.add_conversation_message(MagicMock(role="user", text="hello"))
+
+        ctx = create_action_context(
+            action={
+                "kind": "InvokeAzureAgent",
+                "agent": "my_agent",
+            },
+            agents={"my_agent": mock_agent},
+            run_kwargs=test_kwargs,
+        )
+
+        handler = get_action_handler("InvokeAzureAgent")
+        _ = [e async for e in handler(ctx)]
+
+        assert mock_agent.run.call_count >= 1
+
+        # Find the non-streaming fallback call
+        for call in mock_agent.run.call_args_list:
+            call_kw = call.kwargs
+            if not call_kw.get("stream"):
+                assert call_kw.get("user_token") == "secret"
+                assert call_kw.get("api_key") == "key123"
+                assert call_kw.get("options") == {"additional_function_arguments": test_kwargs}
+                break
+        else:
+            # All calls were streaming — check the streaming call
+            call_kw = mock_agent.run.call_args_list[0].kwargs
+            assert call_kw.get("user_token") == "secret"
+            assert call_kw.get("api_key") == "key123"
+
+    @pytest.mark.asyncio
+    async def test_invoke_agent_handler_merges_caller_options(self):
+        """Caller-provided options in run_kwargs should be merged, not cause TypeError."""
+        import agent_framework_declarative._workflows._actions_agents  # noqa: F401
+
+        mock_response = MagicMock()
+        mock_response.text = "response"
+        mock_response.messages = []
+        mock_response.tool_calls = []
+
+        async def non_streaming_run(*args, **kwargs):
+            if kwargs.get("stream"):
+                raise TypeError("no streaming")
+            return mock_response
+
+        mock_agent = AsyncMock()
+        mock_agent.run = AsyncMock(side_effect=non_streaming_run)
+
+        # Include 'options' in run_kwargs to test merge behavior
+        test_kwargs = {"user_token": "secret", "options": {"temperature": 0.7}}
+
+        state = WorkflowState()
+        state.add_conversation_message(MagicMock(role="user", text="hello"))
+
+        ctx = create_action_context(
+            action={
+                "kind": "InvokeAzureAgent",
+                "agent": "my_agent",
+            },
+            agents={"my_agent": mock_agent},
+            run_kwargs=test_kwargs,
+        )
+
+        handler = get_action_handler("InvokeAzureAgent")
+        _ = [e async for e in handler(ctx)]
+
+        assert mock_agent.run.call_count >= 1
+
+        # Find the non-streaming fallback call
+        for call in mock_agent.run.call_args_list:
+            call_kw = call.kwargs
+            if not call_kw.get("stream"):
+                # Caller options should be merged with additional_function_arguments
+                assert call_kw["options"]["temperature"] == 0.7
+                assert "additional_function_arguments" in call_kw["options"]
+                # Direct kwargs should not include 'options' (no duplicate keyword)
+                assert call_kw.get("user_token") == "secret"
+                break
+        else:
+            call_kw = mock_agent.run.call_args_list[0].kwargs
+            assert call_kw["options"]["temperature"] == 0.7
+            assert "additional_function_arguments" in call_kw["options"]

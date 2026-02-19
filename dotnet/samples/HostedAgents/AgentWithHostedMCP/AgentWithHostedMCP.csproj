@@ -15,7 +15,6 @@
         and cannot access parent folders where Directory.Packages.props resides.
     -->
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
-    <NoWarn>$(NoWarn);MEAI001;OPENAI001</NoWarn>
   </PropertyGroup>
 
   <!-- 

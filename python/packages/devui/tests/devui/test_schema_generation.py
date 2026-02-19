@@ -67,16 +67,16 @@ def test_dataclass_schema_generation():
 
 
 def test_chat_message_schema_generation():
-    """Test schema generation for ChatMessage (SerializationMixin)."""
+    """Test schema generation for Message (SerializationMixin)."""
     try:
-        from agent_framework import ChatMessage
+        from agent_framework import Message
 
-        schema = generate_input_schema(ChatMessage)
+        schema = generate_input_schema(Message)
         assert schema is not None
         assert isinstance(schema, dict)
 
     except ImportError:
-        pytest.skip("ChatMessage not available - agent_framework not installed")
+        pytest.skip("Message not available - agent_framework not installed")
 
 
 def test_pydantic_model_schema_generation():

@@ -222,8 +222,8 @@ class DevServer:
                 # Step 2: Close chat clients and their credentials (EXISTING)
                 entity_obj = self.executor.entity_discovery.get_entity_object(entity_id)
 
-                if entity_obj and hasattr(entity_obj, "chat_client"):
-                    client = entity_obj.chat_client
+                if entity_obj and hasattr(entity_obj, "client"):
+                    client = entity_obj.client
 
                     # Close the chat client itself
                     if hasattr(client, "close") and callable(client.close):
@@ -1059,7 +1059,7 @@ class DevServer:
                     # Extract checkpoint_id from item_id (format: "checkpoint_{checkpoint_id}")
                     checkpoint_id = item_id[len("checkpoint_") :]
                     storage = executor.checkpoint_manager.get_checkpoint_storage(conversation_id)
-                    deleted = await storage.delete_checkpoint(checkpoint_id)
+                    deleted = await storage.delete(checkpoint_id)
 
                     if not deleted:
                         raise HTTPException(status_code=404, detail="Checkpoint not found")

@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 from pytest import MonkeyPatch, mark, param
-
 from samples.getting_started.threads.custom_chat_message_store_thread import main as threads_custom_store
 from samples.getting_started.threads.suspend_resume_thread import main as threads_suspend_resume
 

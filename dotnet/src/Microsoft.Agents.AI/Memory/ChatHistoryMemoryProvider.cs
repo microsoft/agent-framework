@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -25,8 +24,8 @@ namespace Microsoft.Agents.AI;
 /// abstractions to work with any compatible vector store implementation.
 /// </para>
 /// <para>
-/// Messages are stored during the <see cref="InvokedCoreAsync"/> method and retrieved during the
-/// <see cref="InvokingCoreAsync"/> method using semantic similarity search.
+/// Messages are stored during the <see cref="StoreAIContextAsync"/> method and retrieved during the
+/// <see cref="ProvideAIContextAsync"/> method using semantic similarity search.
 /// </para>
 /// <para>
 /// Behavior is configurable through <see cref="ChatHistoryMemoryProviderOptions"/>. When
@@ -42,17 +41,19 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
     private const string DefaultFunctionToolName = "Search";
     private const string DefaultFunctionToolDescription = "Allows searching for related previous chat history to help answer the user question.";
 
+    private readonly ProviderSessionState<State> _sessionState;
+
+#pragma warning disable CA2213 // VectorStore is not owned by this class - caller is responsible for disposal
     private readonly VectorStore _vectorStore;
+#pragma warning restore CA2213
     private readonly VectorStoreCollection<object, Dictionary<string, object?>> _collection;
     private readonly int _maxResults;
     private readonly string _contextPrompt;
     private readonly bool _enableSensitiveTelemetryData;
     private readonly ChatHistoryMemoryProviderOptions.SearchBehavior _searchTime;
-    private readonly AITool[] _tools;
+    private readonly string _toolName;
+    private readonly string _toolDescription;
     private readonly ILogger<ChatHistoryMemoryProvider>? _logger;
-
-    private readonly ChatHistoryMemoryProviderScope _storageScope;
-    private readonly ChatHistoryMemoryProviderScope _searchScope;
 
     private bool _collectionInitialized;
     private readonly SemaphoreSlim _initializationLock = new(1, 1);
@@ -64,93 +65,33 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
     /// <param name="vectorStore">The vector store to use for storing and retrieving chat history.</param>
     /// <param name="collectionName">The name of the collection for storing chat history in the vector store.</param>
     /// <param name="vectorDimensions">The number of dimensions to use for the chat history vector store embeddings.</param>
-    /// <param name="storageScope">Optional values to scope the chat history storage with.</param>
-    /// <param name="searchScope">Optional values to scope the chat history search with. Where values are null, no filtering is done using those values. Defaults to <paramref name="storageScope"/> if not provided.</param>
+    /// <param name="stateInitializer">A delegate that initializes the provider state on the first invocation, providing the storage and search scopes.</param>
     /// <param name="options">Optional configuration options.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="vectorStore"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="vectorStore"/> or <paramref name="stateInitializer"/> is <see langword="null"/>.</exception>
     public ChatHistoryMemoryProvider(
         VectorStore vectorStore,
         string collectionName,
         int vectorDimensions,
-        ChatHistoryMemoryProviderScope storageScope,
-        ChatHistoryMemoryProviderScope? searchScope = null,
+        Func<AgentSession?, State> stateInitializer,
         ChatHistoryMemoryProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : this(
-            vectorStore,
-            collectionName,
-            vectorDimensions,
-            new ChatHistoryMemoryProviderState
-            {
-                StorageScope = new(Throw.IfNull(storageScope)),
-                SearchScope = searchScope ?? new(storageScope),
-            },
-            options,
-            loggerFactory)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
     {
-    }
+        this._sessionState = new ProviderSessionState<State>(
+            Throw.IfNull(stateInitializer),
+            options?.StateKey ?? this.GetType().Name,
+            AgentJsonUtilities.DefaultOptions);
+        this._vectorStore = Throw.IfNull(vectorStore);
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ChatHistoryMemoryProvider"/> class from previously serialized state.
-    /// </summary>
-    /// <param name="vectorStore">The vector store to use for storing and retrieving chat history.</param>
-    /// <param name="collectionName">The name of the collection for storing chat history in the vector store.</param>
-    /// <param name="vectorDimensions">The number of dimensions to use for the chat history vector store embeddings.</param>
-    /// <param name="serializedState">A <see cref="JsonElement"/> representing the serialized state of the provider.</param>
-    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <param name="options">Optional configuration options.</param>
-    /// <param name="loggerFactory">Optional logger factory.</param>
-    public ChatHistoryMemoryProvider(
-        VectorStore vectorStore,
-        string collectionName,
-        int vectorDimensions,
-        JsonElement serializedState,
-        JsonSerializerOptions? jsonSerializerOptions = null,
-        ChatHistoryMemoryProviderOptions? options = null,
-        ILoggerFactory? loggerFactory = null)
-        : this(
-            vectorStore,
-            collectionName,
-            vectorDimensions,
-            DeserializeState(serializedState, jsonSerializerOptions),
-            options,
-            loggerFactory)
-    {
-    }
-
-    private ChatHistoryMemoryProvider(
-        VectorStore vectorStore,
-        string collectionName,
-        int vectorDimensions,
-        ChatHistoryMemoryProviderState? state = null,
-        ChatHistoryMemoryProviderOptions? options = null,
-        ILoggerFactory? loggerFactory = null)
-    {
-        this._vectorStore = vectorStore ?? throw new ArgumentNullException(nameof(vectorStore));
         options ??= new ChatHistoryMemoryProviderOptions();
         this._maxResults = options.MaxResults.HasValue ? Throw.IfLessThanOrEqual(options.MaxResults.Value, 0) : DefaultMaxResults;
         this._contextPrompt = options.ContextPrompt ?? DefaultContextPrompt;
         this._enableSensitiveTelemetryData = options.EnableSensitiveTelemetryData;
         this._searchTime = options.SearchTime;
         this._logger = loggerFactory?.CreateLogger<ChatHistoryMemoryProvider>();
-
-        if (state == null || state.StorageScope == null || state.SearchScope == null)
-        {
-            throw new InvalidOperationException($"The {nameof(ChatHistoryMemoryProvider)} state did not contain the required scope properties.");
-        }
-
-        this._storageScope = state.StorageScope;
-        this._searchScope = state.SearchScope;
-
-        // Create on-demand search tool (only used when behavior is OnDemandFunctionCalling)
-        this._tools =
-        [
-            AIFunctionFactory.Create(
-                (Func<string, CancellationToken, Task<string>>)this.SearchTextAsync,
-                name: options.FunctionToolName ?? DefaultFunctionToolName,
-                description: options.FunctionToolDescription ?? DefaultFunctionToolDescription)
-        ];
+        this._toolName = options.FunctionToolName ?? DefaultFunctionToolName;
+        this._toolDescription = options.FunctionToolDescription ?? DefaultFunctionToolDescription;
 
         // Create a definition so that we can use the dimensions provided at runtime.
         var definition = new VectorStoreCollectionDefinition
@@ -175,21 +116,42 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
     }
 
     /// <inheritdoc />
-    protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    public override string StateKey => this._sessionState.StateKey;
+
+    /// <inheritdoc />
+    protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(context);
 
+        var state = this._sessionState.GetOrInitializeState(context.Session);
+        var searchScope = state.SearchScope;
+
         if (this._searchTime == ChatHistoryMemoryProviderOptions.SearchBehavior.OnDemandFunctionCalling)
         {
+            Task<string> InlineSearchAsync(string userQuestion, CancellationToken ct)
+                => this.SearchTextAsync(userQuestion, searchScope, ct);
+
+            // Create on-demand search tool (only used when behavior is OnDemandFunctionCalling)
+            AITool[] tools =
+            [
+                AIFunctionFactory.Create(
+                    InlineSearchAsync,
+                    name: this._toolName,
+                    description: this._toolDescription)
+            ];
+
             // Expose search tool for on-demand invocation by the model
-            return new AIContext { Tools = this._tools };
+            return new AIContext
+            {
+                Tools = tools
+            };
         }
 
         try
         {
             // Get the text from the current request messages
-            var requestText = string.Join("\n", context.RequestMessages
-                .Where(m => m.GetAgentRequestMessageSource() == AgentRequestMessageSourceType.External)
+            var requestText = string.Join("\n",
+                (context.AIContext.Messages ?? [])
                 .Where(m => m != null && !string.IsNullOrWhiteSpace(m.Text))
                 .Select(m => m.Text));
 
@@ -199,7 +161,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
             }
 
             // Search for relevant chat history
-            var contextText = await this.SearchTextAsync(requestText, cancellationToken).ConfigureAwait(false);
+            var contextText = await this.SearchTextAsync(requestText, searchScope, cancellationToken).ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(contextText))
             {
@@ -218,10 +180,10 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                 this._logger.LogError(
                     ex,
                     "ChatHistoryMemoryProvider: Failed to search for chat history due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', SessionId: '{SessionId}', UserId: '{UserId}'.",
-                    this._searchScope.ApplicationId,
-                    this._searchScope.AgentId,
-                    this._searchScope.SessionId,
-                    this.SanitizeLogData(this._searchScope.UserId));
+                    searchScope.ApplicationId,
+                    searchScope.AgentId,
+                    searchScope.SessionId,
+                    this.SanitizeLogData(searchScope.UserId));
             }
 
             return new AIContext();
@@ -229,15 +191,12 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
     }
 
     /// <inheritdoc />
-    protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(context);
 
-        // Only store if invocation was successful
-        if (context.InvokeException != null)
-        {
-            return;
-        }
+        var state = this._sessionState.GetOrInitializeState(context.Session);
+        var storageScope = state.StorageScope;
 
         try
         {
@@ -245,7 +204,6 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
             var collection = await this.EnsureCollectionExistsAsync(cancellationToken).ConfigureAwait(false);
 
             List<Dictionary<string, object?>> itemsToStore = context.RequestMessages
-                .Where(m => m.GetAgentRequestMessageSource() == AgentRequestMessageSourceType.External)
                 .Concat(context.ResponseMessages ?? [])
                 .Select(message => new Dictionary<string, object?>
                 {
@@ -253,10 +211,10 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                     ["Role"] = message.Role.ToString(),
                     ["MessageId"] = message.MessageId,
                     ["AuthorName"] = message.AuthorName,
-                    ["ApplicationId"] = this._storageScope?.ApplicationId,
-                    ["AgentId"] = this._storageScope?.AgentId,
-                    ["UserId"] = this._storageScope?.UserId,
-                    ["SessionId"] = this._storageScope?.SessionId,
+                    ["ApplicationId"] = storageScope.ApplicationId,
+                    ["AgentId"] = storageScope.AgentId,
+                    ["UserId"] = storageScope.UserId,
+                    ["SessionId"] = storageScope.SessionId,
                     ["Content"] = message.Text,
                     ["CreatedAt"] = message.CreatedAt?.ToString("O") ?? DateTimeOffset.UtcNow.ToString("O"),
                     ["ContentEmbedding"] = message.Text,
@@ -275,10 +233,10 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                 this._logger.LogError(
                     ex,
                     "ChatHistoryMemoryProvider: Failed to add messages to chat history vector store due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', SessionId: '{SessionId}', UserId: '{UserId}'.",
-                    this._searchScope.ApplicationId,
-                    this._searchScope.AgentId,
-                    this._searchScope.SessionId,
-                    this.SanitizeLogData(this._searchScope.UserId));
+                    storageScope.ApplicationId,
+                    storageScope.AgentId,
+                    storageScope.SessionId,
+                    this.SanitizeLogData(storageScope.UserId));
             }
         }
     }
@@ -287,16 +245,17 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
     /// Function callable by the AI model (when enabled) to perform an ad-hoc chat history search.
     /// </summary>
     /// <param name="userQuestion">The query text.</param>
+    /// <param name="searchScope">The scope to filter search results with.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Formatted search results (may be empty).</returns>
-    internal async Task<string> SearchTextAsync(string userQuestion, CancellationToken cancellationToken = default)
+    private async Task<string> SearchTextAsync(string userQuestion, ChatHistoryMemoryProviderScope searchScope, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(userQuestion))
         {
             return string.Empty;
         }
 
-        var results = await this.SearchChatHistoryAsync(userQuestion, this._maxResults, cancellationToken).ConfigureAwait(false);
+        var results = await this.SearchChatHistoryAsync(userQuestion, searchScope, this._maxResults, cancellationToken).ConfigureAwait(false);
         if (!results.Any())
         {
             return string.Empty;
@@ -317,10 +276,10 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                 "ChatHistoryMemoryProvider: Search Results\nInput:{Input}\nOutput:{MessageText}\n ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', SessionId: '{SessionId}', UserId: '{UserId}'.",
                 this.SanitizeLogData(userQuestion),
                 this.SanitizeLogData(formatted),
-                this._searchScope.ApplicationId,
-                this._searchScope.AgentId,
-                this._searchScope.SessionId,
-                this.SanitizeLogData(this._searchScope.UserId));
+                searchScope.ApplicationId,
+                searchScope.AgentId,
+                searchScope.SessionId,
+                this.SanitizeLogData(searchScope.UserId));
         }
 
         return formatted;
@@ -330,11 +289,13 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
     /// Searches for relevant chat history items based on the provided query text.
     /// </summary>
     /// <param name="queryText">The text to search for.</param>
+    /// <param name="searchScope">The scope to filter search results with.</param>
     /// <param name="top">The maximum number of results to return.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A list of relevant chat history items.</returns>
     private async Task<IEnumerable<Dictionary<string, object?>>> SearchChatHistoryAsync(
         string queryText,
+        ChatHistoryMemoryProviderScope searchScope,
         int top,
         CancellationToken cancellationToken = default)
     {
@@ -345,10 +306,10 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
 
         var collection = await this.EnsureCollectionExistsAsync(cancellationToken).ConfigureAwait(false);
 
-        string? applicationId = this._searchScope.ApplicationId;
-        string? agentId = this._searchScope.AgentId;
-        string? userId = this._searchScope.UserId;
-        string? sessionId = this._searchScope.SessionId;
+        string? applicationId = searchScope.ApplicationId;
+        string? agentId = searchScope.AgentId;
+        string? userId = searchScope.UserId;
+        string? sessionId = searchScope.SessionId;
 
         Expression<Func<Dictionary<string, object?>, bool>>? filter = null;
         if (applicationId != null)
@@ -401,10 +362,10 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
             this._logger.LogInformation(
                 "ChatHistoryMemoryProvider: Retrieved {Count} search results. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', SessionId: '{SessionId}', UserId: '{UserId}'.",
                 results.Count,
-                this._searchScope.ApplicationId,
-                this._searchScope.AgentId,
-                this._searchScope.SessionId,
-                this.SanitizeLogData(this._searchScope.UserId));
+                searchScope.ApplicationId,
+                searchScope.AgentId,
+                searchScope.SessionId,
+                this.SanitizeLogData(searchScope.UserId));
         }
 
         return results;
@@ -465,39 +426,32 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         GC.SuppressFinalize(this);
     }
 
-    /// <summary>
-    /// Serializes the current provider state to a <see cref="JsonElement"/> including storage and search scopes.
-    /// </summary>
-    /// <param name="jsonSerializerOptions">Optional serializer options.</param>
-    /// <returns>Serialized provider state.</returns>
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
-    {
-        var state = new ChatHistoryMemoryProviderState
-        {
-            StorageScope = this._storageScope,
-            SearchScope = this._searchScope,
-        };
-
-        var jso = jsonSerializerOptions ?? AgentJsonUtilities.DefaultOptions;
-        return JsonSerializer.SerializeToElement(state, jso.GetTypeInfo(typeof(ChatHistoryMemoryProviderState)));
-    }
-
-    private static ChatHistoryMemoryProviderState? DeserializeState(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions)
-    {
-        if (serializedState.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-
-        var jso = jsonSerializerOptions ?? AgentJsonUtilities.DefaultOptions;
-        return serializedState.Deserialize(jso.GetTypeInfo(typeof(ChatHistoryMemoryProviderState))) as ChatHistoryMemoryProviderState;
-    }
-
     private string? SanitizeLogData(string? data) => this._enableSensitiveTelemetryData ? data : "<redacted>";
 
-    internal sealed class ChatHistoryMemoryProviderState
+    /// <summary>
+    /// Represents the state of a <see cref="ChatHistoryMemoryProvider"/> stored in the <see cref="AgentSession.StateBag"/>.
+    /// </summary>
+    public sealed class State
     {
-        public ChatHistoryMemoryProviderScope? StorageScope { get; set; }
-        public ChatHistoryMemoryProviderScope? SearchScope { get; set; }
+        /// <summary>
+        /// Initializes a new instance of the <see cref="State"/> class with the specified storage and search scopes.
+        /// </summary>
+        /// <param name="storageScope">The scope to use when storing chat history messages.</param>
+        /// <param name="searchScope">The scope to use when searching for relevant chat history messages. If null, the storage scope will be used for searching as well.</param>
+        public State(ChatHistoryMemoryProviderScope storageScope, ChatHistoryMemoryProviderScope? searchScope = null)
+        {
+            this.StorageScope = Throw.IfNull(storageScope);
+            this.SearchScope = searchScope ?? storageScope;
+        }
+
+        /// <summary>
+        /// Gets or sets the scope used when storing chat history messages.
+        /// </summary>
+        public ChatHistoryMemoryProviderScope StorageScope { get; }
+
+        /// <summary>
+        /// Gets or sets the scope used when searching chat history messages.
+        /// </summary>
+        public ChatHistoryMemoryProviderScope SearchScope { get; }
     }
 }

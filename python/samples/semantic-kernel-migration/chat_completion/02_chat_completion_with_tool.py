@@ -43,7 +43,7 @@ async def run_semantic_kernel() -> None:
 
 
 async def run_agent_framework() -> None:
-    from agent_framework._tools import tool
+    from agent_framework import tool
     from agent_framework.openai import OpenAIChatClient
 
     @tool(name="specials", description="List daily specials")
@@ -56,10 +56,10 @@ async def run_agent_framework() -> None:
         instructions="Answer menu questions accurately.",
         tools=[specials],
     )
-    thread = chat_agent.get_new_thread()
+    session = chat_agent.create_session()
     reply = await chat_agent.run(
         "What soup can I order today?",
-        thread=thread,
+        session=session,
         tool_choice="auto",
     )
     print("[AF]", reply.text)

@@ -34,7 +34,10 @@ var transport = new HttpClientTransport(new()
     Name = "Secure Weather Client",
     OAuth = new()
     {
-        ClientId = "ProtectedMcpClient",
+        DynamicClientRegistration = new()
+        {
+            ClientName = "ProtectedMcpClient",
+        },
         RedirectUri = new Uri("http://localhost:1179/callback"),
         AuthorizationRedirectDelegate = HandleAuthorizationUrlAsync,
     }
@@ -46,9 +49,12 @@ await using var mcpClient = await McpClient.CreateAsync(transport, loggerFactory
 // Retrieve the list of tools available on the GitHub server
 var mcpTools = await mcpClient.ListToolsAsync().ConfigureAwait(false);
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
      .GetChatClient(deploymentName)
      .AsAIAgent(instructions: "You answer questions related to the weather.", tools: [.. mcpTools]);
 

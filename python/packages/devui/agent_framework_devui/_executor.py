@@ -305,23 +305,23 @@ class AgentFrameworkExecutor:
 
             yield AgentStartedEvent()
 
-            # Convert input to proper ChatMessage or string
+            # Convert input to proper Message or string
             user_message = self._convert_input_to_chat_message(request.input)
 
-            # Get thread from conversation parameter (OpenAI standard!)
-            thread = None
+            # Get session from conversation parameter (OpenAI standard!)
+            session = None
             conversation_id = request._get_conversation_id()
             if conversation_id:
-                thread = self.conversation_store.get_thread(conversation_id)
-                if thread:
+                session = self.conversation_store.get_session(conversation_id)
+                if session:
                     logger.debug(f"Using existing conversation: {conversation_id}")
                 else:
-                    logger.warning(f"Conversation {conversation_id} not found, proceeding without thread")
+                    logger.warning(f"Conversation {conversation_id} not found, proceeding without session")
 
             if isinstance(user_message, str):
                 logger.debug(f"Executing agent with text input: {user_message[:100]}...")
             else:
-                logger.debug(f"Executing agent with multimodal ChatMessage: {type(user_message)}")
+                logger.debug(f"Executing agent with multimodal Message: {type(user_message)}")
 
             # Workaround for MCP tool stale connection bug (GitHub issue pending)
             # When HTTP streaming ends, GeneratorExit can close MCP stdio streams
@@ -331,8 +331,8 @@ class AgentFrameworkExecutor:
             # Agent must have run() method - use stream=True for streaming
             if hasattr(agent, "run") and callable(agent.run):
                 # Use Agent Framework's run() with stream=True for streaming
-                if thread:
-                    async for update in agent.run(user_message, stream=True, thread=thread):
+                if session:
+                    async for update in agent.run(user_message, stream=True, session=session):
                         for trace_event in trace_collector.get_pending_events():
                             yield trace_event
 
@@ -430,7 +430,7 @@ class AgentFrameworkExecutor:
             elif hil_responses:
                 # Only auto-resume from latest checkpoint when we have HIL responses
                 # Regular "Run" clicks should start fresh, not resume from checkpoints
-                checkpoints = await checkpoint_storage.list_checkpoints()  # No workflow_id filter needed!
+                checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
                 if checkpoints:
                     latest = max(checkpoints, key=lambda cp: cp.timestamp)
                     checkpoint_id = latest.checkpoint_id
@@ -534,7 +534,7 @@ class AgentFrameworkExecutor:
             yield {"type": "error", "message": f"Workflow execution error: {e!s}"}
 
     def _convert_input_to_chat_message(self, input_data: Any) -> Any:
-        """Convert OpenAI Responses API input to Agent Framework ChatMessage or string.
+        """Convert OpenAI Responses API input to Agent Framework Message or string.
 
         Handles various input formats including text, images, files, and multimodal content.
         Falls back to string extraction for simple cases.
@@ -543,11 +543,11 @@ class AgentFrameworkExecutor:
             input_data: OpenAI ResponseInputParam (List[ResponseInputItemParam])
 
         Returns:
-            ChatMessage for multimodal content, or string for simple text
+            Message for multimodal content, or string for simple text
         """
         # Import Agent Framework types
         try:
-            from agent_framework import ChatMessage, Role
+            from agent_framework import Message, Role
         except ImportError:
             # Fallback to string extraction if Agent Framework not available
             return self._extract_user_message_fallback(input_data)
@@ -558,24 +558,24 @@ class AgentFrameworkExecutor:
 
         # Handle OpenAI ResponseInputParam (List[ResponseInputItemParam])
         if isinstance(input_data, list):
-            return self._convert_openai_input_to_chat_message(input_data, ChatMessage, Role)
+            return self._convert_openai_input_to_chat_message(input_data, Message, Role)
 
         # Fallback for other formats
         return self._extract_user_message_fallback(input_data)
 
-    def _convert_openai_input_to_chat_message(self, input_items: list[Any], ChatMessage: Any, Role: Any) -> Any:
-        """Convert OpenAI ResponseInputParam to Agent Framework ChatMessage.
+    def _convert_openai_input_to_chat_message(self, input_items: list[Any], Message: Any, Role: Any) -> Any:
+        """Convert OpenAI ResponseInputParam to Agent Framework Message.
 
         Processes text, images, files, and other content types from OpenAI format
-        to Agent Framework ChatMessage with appropriate content objects.
+        to Agent Framework Message with appropriate content objects.
 
         Args:
             input_items: List of OpenAI ResponseInputItemParam objects (dicts or objects)
-            ChatMessage: ChatMessage class for creating chat messages
+            Message: Message class for creating chat messages
             Role: Role enum for message roles
 
         Returns:
-            ChatMessage with converted content
+            Message with converted content
         """
         contents: list[Content] = []
 
@@ -705,9 +705,9 @@ class AgentFrameworkExecutor:
         if not contents:
             contents.append(Content.from_text(text=""))
 
-        chat_message = ChatMessage(role="user", contents=contents)
+        chat_message = Message(role="user", contents=contents)
 
-        logger.info(f"Created ChatMessage with {len(contents)} contents:")
+        logger.info(f"Created Message with {len(contents)} contents:")
         for idx, content in enumerate(contents):
             content_type = content.__class__.__name__
             if hasattr(content, "media_type"):
@@ -772,9 +772,9 @@ class AgentFrameworkExecutor:
                     pass
 
             # Check for OpenAI multimodal format (list with type: "message")
-            # This handles ChatMessage inputs with images, files, etc.
+            # This handles Message inputs with images, files, etc.
             if self._is_openai_multimodal_format(raw_input):
-                logger.debug("Detected OpenAI multimodal format, converting to ChatMessage")
+                logger.debug("Detected OpenAI multimodal format, converting to Message")
                 return self._convert_input_to_chat_message(raw_input)
 
             # Handle structured input (dict)

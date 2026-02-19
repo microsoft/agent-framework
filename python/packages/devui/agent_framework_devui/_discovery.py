@@ -541,7 +541,7 @@ class EntityDiscovery:
         """Check if a Python file has entity exports (agent or workflow) using AST parsing.
 
         This safely checks for module-level assignments like:
-        - agent = ChatAgent(...)
+        - agent = Agent(...)
         - workflow = WorkflowBuilder(start_executor=...)...
 
         Args:

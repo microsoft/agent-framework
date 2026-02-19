@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Mapping, MutableMapping
 from typing import Any, ClassVar, Protocol, TypeVar, runtime_checkable
 
-from ._logging import get_logger
+logger = logging.getLogger("agent_framework")
 
-logger = get_logger()
-
-TClass = TypeVar("TClass", bound="SerializationMixin")
-TProtocol = TypeVar("TProtocol", bound="SerializationProtocol")
+ClassT = TypeVar("ClassT", bound="SerializationMixin")
+ProtocolT = TypeVar("ProtocolT", bound="SerializationProtocol")
 
 # Regex pattern for converting CamelCase to snake_case
 _CAMEL_TO_SNAKE_PATTERN = re.compile(r"(?<!^)(?=[A-Z])")
@@ -31,16 +30,16 @@ class SerializationProtocol(Protocol):
     ensuring consistent behavior across the framework.
 
     Examples:
-        The framework's ``ChatMessage`` class demonstrates the protocol in action:
+        The framework's ``Message`` class demonstrates the protocol in action:
 
         .. code-block:: python
 
-            from agent_framework import ChatMessage
+            from agent_framework import Message
             from agent_framework._serialization import SerializationProtocol
 
 
-            # ChatMessage implements SerializationProtocol via SerializationMixin
-            user_msg = ChatMessage(role="user", text="What's the weather like today?")
+            # Message implements SerializationProtocol via SerializationMixin
+            user_msg = Message(role="user", text="What's the weather like today?")
 
             # Serialize to dictionary - automatic type identification and nested serialization
             msg_dict = user_msg.to_dict()
@@ -52,8 +51,8 @@ class SerializationProtocol(Protocol):
             #     "additional_properties": {}
             # }
 
-            # Deserialize back to ChatMessage instance - automatic type reconstruction
-            restored_msg = ChatMessage.from_dict(msg_dict)
+            # Deserialize back to Message instance - automatic type reconstruction
+            restored_msg = Message.from_dict(msg_dict)
             print(restored_msg.text)  # "What's the weather like today?"
             print(restored_msg.role)  # "user"
 
@@ -95,7 +94,7 @@ class SerializationProtocol(Protocol):
         ...
 
     @classmethod
-    def from_dict(cls: type[TProtocol], value: MutableMapping[str, Any], /, **kwargs: Any) -> TProtocol:
+    def from_dict(cls: type[ProtocolT], value: MutableMapping[str, Any], /, **kwargs: Any) -> ProtocolT:
         """Create an instance from a dictionary.
 
         Args:
@@ -166,45 +165,22 @@ class SerializationMixin:
     during deserialization via the ``dependencies`` parameter.
 
     Examples:
-        **Nested object serialization with agent thread management:**
+        **Nested object serialization:**
 
         .. code-block:: python
 
-            from agent_framework import ChatMessage
-            from agent_framework._threads import AgentThreadState, ChatMessageStoreState
+            from agent_framework import Message
+            from agent_framework._sessions import AgentSession
 
 
-            # ChatMessageStoreState handles nested ChatMessage serialization
-            store_state = ChatMessageStoreState(
-                messages=[
-                    ChatMessage(role="user", text="Hello agent"),
-                    ChatMessage(role="assistant", text="Hi! How can I help?"),
-                ]
-            )
+            # AgentSession uses SerializationMixin for state serialization
+            session = AgentSession(session_id="test")
 
-            # Nested serialization: messages are automatically converted to dicts
-            store_dict = store_state.to_dict()
-            # Result: {
-            #     "type": "chat_message_store_state",
-            #     "messages": [
-            #         {"type": "chat_message", "role": {...}, "contents": [...]},
-            #         {"type": "chat_message", "role": {...}, "contents": [...]}
-            #     ]
-            # }
+            # Serialization produces a clean dict representation
+            session_dict = session.to_dict()
 
-            # AgentThreadState contains nested ChatMessageStoreState
-            thread_state = AgentThreadState(chat_message_store_state=store_state)
-
-            # Deep serialization: nested SerializationMixin objects are handled automatically
-            thread_dict = thread_state.to_dict()
-            # The chat_message_store_state and its nested messages are all serialized
-
-            # Reconstruction from nested dictionaries with automatic type conversion
-            # The __init__ method handles MutableMapping -> object conversion:
-            reconstructed = AgentThreadState.from_dict({
-                "chat_message_store_state": {"messages": [{"role": "user", "text": "Hello again"}]}
-            })
-            # chat_message_store_state becomes ChatMessageStoreState instance automatically
+            # Reconstruction from dictionaries
+            restored = AgentSession.from_dict(session_dict)
 
         **Framework tools with exclusion patterns:**
 
@@ -392,8 +368,8 @@ class SerializationMixin:
 
     @classmethod
     def from_dict(
-        cls: type[TClass], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> TClass:
+        cls: type[ClassT], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
+    ) -> ClassT:
         """Create an instance from a dictionary with optional dependency injection.
 
         This method reconstructs an object from its dictionary representation, automatically
@@ -443,7 +419,7 @@ class SerializationMixin:
                 dependencies = {"open_ai_chat_client": {"client": openai_client}}
 
                 # The chat client is reconstructed with the OpenAI client injected
-                chat_client = OpenAIChatClient.from_dict(client_data, dependencies=dependencies)
+                client = OpenAIChatClient.from_dict(client_data, dependencies=dependencies)
                 # Now ready to make API calls with the injected client
 
             **Function Injection for Tools** - FunctionTool runtime dependency:
@@ -560,7 +536,7 @@ class SerializationMixin:
         return cls(**kwargs)
 
     @classmethod
-    def from_json(cls: type[TClass], value: str, /, *, dependencies: MutableMapping[str, Any] | None = None) -> TClass:
+    def from_json(cls: type[ClassT], value: str, /, *, dependencies: MutableMapping[str, Any] | None = None) -> ClassT:
         """Create an instance from a JSON string.
 
         This is a convenience method that parses the JSON string using ``json.loads()``

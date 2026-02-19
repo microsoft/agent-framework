@@ -8,10 +8,10 @@ import pytest
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
-    ChatMessage,
     Content,
+    Message,
     ResponseStream,
     WorkflowRunState,
     tool,
@@ -52,10 +52,10 @@ class _KwargsCapturingAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | ChatMessage | Sequence[str | ChatMessage] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         self.captured_kwargs.append(dict(kwargs))
@@ -67,7 +67,42 @@ class _KwargsCapturingAgent(BaseAgent):
             return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
 
         async def _run() -> AgentResponse:
-            return AgentResponse(messages=[ChatMessage("assistant", [f"{self.name} response"])])
+            return AgentResponse(messages=[Message("assistant", [f"{self.name} response"])])
+
+        return _run()
+
+
+class _OptionsAwareAgent(BaseAgent):
+    """Test agent that captures explicit `options` and kwargs passed to run()."""
+
+    captured_options: list[dict[str, Any] | None]
+    captured_kwargs: list[dict[str, Any]]
+
+    def __init__(self, name: str = "options_agent") -> None:
+        super().__init__(name=name, description="Test agent for options capture")
+        self.captured_options = []
+        self.captured_kwargs = []
+
+    def run(
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        self.captured_options.append(dict(options) if options is not None else None)
+        self.captured_kwargs.append(dict(kwargs))
+        if stream:
+
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(text=f"{self.name} response")])
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[Message("assistant", [f"{self.name} response"])])
 
         return _run()
 
@@ -129,6 +164,106 @@ async def test_sequential_run_kwargs_flow() -> None:
 
     assert len(agent.captured_kwargs) >= 1
     assert agent.captured_kwargs[0].get("custom_data") == {"test": True}
+
+
+async def test_sequential_run_options_does_not_conflict_with_agent_options() -> None:
+    """Test workflow.run(options=...) does not conflict with Agent.run(options=...)."""
+    agent = _OptionsAwareAgent(name="options_agent")
+    workflow = SequentialBuilder(participants=[agent]).build()
+
+    custom_data = {"session_id": "abc123"}
+    user_token = {"user_name": "alice"}
+    provided_options = {
+        "store": False,
+        "additional_function_arguments": {"source": "workflow-options"},
+    }
+
+    async for event in workflow.run(
+        "test message",
+        stream=True,
+        options=provided_options,
+        custom_data=custom_data,
+        user_token=user_token,
+    ):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert len(agent.captured_options) >= 1
+    captured_options = agent.captured_options[0]
+    assert captured_options is not None
+    assert captured_options.get("store") is False
+
+    additional_args = captured_options.get("additional_function_arguments")
+    assert isinstance(additional_args, dict)
+    assert additional_args.get("source") == "workflow-options"
+    assert additional_args.get("custom_data") == custom_data
+    assert additional_args.get("user_token") == user_token
+
+    # "options" should be passed once via the dedicated options parameter,
+    # not duplicated in **kwargs.
+    assert len(agent.captured_kwargs) >= 1
+    captured_kwargs = agent.captured_kwargs[0]
+    assert "options" not in captured_kwargs
+    assert captured_kwargs.get("custom_data") == custom_data
+    assert captured_kwargs.get("user_token") == user_token
+
+
+async def test_sequential_run_additional_function_arguments_flattened() -> None:
+    """Test workflow.run(additional_function_arguments=...) maps directly to tool kwargs."""
+    agent = _OptionsAwareAgent(name="options_agent")
+    workflow = SequentialBuilder(participants=[agent]).build()
+
+    custom_data = {"session_id": "abc123"}
+    user_token = {"user_name": "alice"}
+
+    async for event in workflow.run(
+        "test message",
+        stream=True,
+        additional_function_arguments={"custom_data": custom_data, "user_token": user_token},
+    ):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert len(agent.captured_options) >= 1
+    captured_options = agent.captured_options[0]
+    assert captured_options is not None
+
+    additional_args = captured_options.get("additional_function_arguments")
+    assert isinstance(additional_args, dict)
+    assert additional_args.get("custom_data") == custom_data
+    assert additional_args.get("user_token") == user_token
+    assert "additional_function_arguments" not in additional_args
+
+    assert len(agent.captured_kwargs) >= 1
+    captured_kwargs = agent.captured_kwargs[0]
+    assert "additional_function_arguments" not in captured_kwargs
+
+
+async def test_sequential_run_additional_function_arguments_merges_with_options() -> None:
+    """Test workflow additional_function_arguments merges with workflow options."""
+    agent = _OptionsAwareAgent(name="options_agent")
+    workflow = SequentialBuilder(participants=[agent]).build()
+
+    async for event in workflow.run(
+        "test message",
+        stream=True,
+        options={"additional_function_arguments": {"source": "workflow-options"}},
+        additional_function_arguments={"custom_data": {"session_id": "abc123"}},
+        user_token={"user_name": "alice"},
+    ):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert len(agent.captured_options) >= 1
+    captured_options = agent.captured_options[0]
+    assert captured_options is not None
+
+    additional_args = captured_options.get("additional_function_arguments")
+    assert isinstance(additional_args, dict)
+    assert additional_args.get("source") == "workflow-options"
+    assert additional_args.get("custom_data") == {"session_id": "abc123"}
+    assert additional_args.get("user_token") == {"user_name": "alice"}
+    assert "additional_function_arguments" not in additional_args
 
 
 # endregion
@@ -222,7 +357,7 @@ async def test_kwargs_stored_in_state() -> None:
 
     class _StateInspector(Executor):
         @handler
-        async def inspect(self, msgs: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+        async def inspect(self, msgs: list[Message], ctx: WorkflowContext[list[Message]]) -> None:
             nonlocal stored_kwargs
             stored_kwargs = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY)
             await ctx.send_message(msgs)
@@ -247,7 +382,7 @@ async def test_empty_kwargs_stored_as_empty_dict() -> None:
 
     class _StateChecker(Executor):
         @handler
-        async def check(self, msgs: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+        async def check(self, msgs: list[Message], ctx: WorkflowContext[list[Message]]) -> None:
             nonlocal stored_kwargs
             stored_kwargs = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY)
             await ctx.send_message(msgs)
@@ -388,11 +523,11 @@ async def test_magentic_kwargs_flow_to_agents() -> None:
             super().__init__(max_stall_count=3, max_reset_count=None, max_round_count=2)
             self.task_ledger = None
 
-        async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage(role="assistant", text="Plan: Test task", author_name="manager")
+        async def plan(self, magentic_context: MagenticContext) -> Message:
+            return Message(role="assistant", text="Plan: Test task", author_name="manager")
 
-        async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage(role="assistant", text="Replan: Test task", author_name="manager")
+        async def replan(self, magentic_context: MagenticContext) -> Message:
+            return Message(role="assistant", text="Replan: Test task", author_name="manager")
 
         async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
             # Return completed on first call
@@ -404,8 +539,8 @@ async def test_magentic_kwargs_flow_to_agents() -> None:
                 next_speaker=MagenticProgressLedgerItem(answer="agent1", reason="First"),
             )
 
-        async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage(role="assistant", text="Final answer", author_name="manager")
+        async def prepare_final_answer(self, magentic_context: MagenticContext) -> Message:
+            return Message(role="assistant", text="Final answer", author_name="manager")
 
     agent = _KwargsCapturingAgent(name="agent1")
     manager = _MockManager()
@@ -439,11 +574,11 @@ async def test_magentic_kwargs_stored_in_state() -> None:
             super().__init__(max_stall_count=3, max_reset_count=None, max_round_count=1)
             self.task_ledger = None
 
-        async def plan(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage(role="assistant", text="Plan", author_name="manager")
+        async def plan(self, magentic_context: MagenticContext) -> Message:
+            return Message(role="assistant", text="Plan", author_name="manager")
 
-        async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage(role="assistant", text="Replan", author_name="manager")
+        async def replan(self, magentic_context: MagenticContext) -> Message:
+            return Message(role="assistant", text="Replan", author_name="manager")
 
         async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
             return MagenticProgressLedger(
@@ -454,8 +589,8 @@ async def test_magentic_kwargs_stored_in_state() -> None:
                 next_speaker=MagenticProgressLedgerItem(answer="agent1", reason="First"),
             )
 
-        async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
-            return ChatMessage(role="assistant", text="Final", author_name="manager")
+        async def prepare_final_answer(self, magentic_context: MagenticContext) -> Message:
+            return Message(role="assistant", text="Final", author_name="manager")
 
     agent = _KwargsCapturingAgent(name="agent1")
     manager = _MockManager()
@@ -660,7 +795,7 @@ async def test_subworkflow_kwargs_accessible_via_state() -> None:
         """Executor that reads kwargs from State for verification."""
 
         @handler
-        async def read_kwargs(self, msgs: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+        async def read_kwargs(self, msgs: list[Message], ctx: WorkflowContext[list[Message]]) -> None:
             kwargs_from_state = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY)
             captured_kwargs_from_state.append(kwargs_from_state or {})
             await ctx.send_message(msgs)

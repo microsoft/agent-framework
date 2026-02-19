@@ -1,12 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
-using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Moq;
 
 #pragma warning disable CA1861 // Avoid constant arrays as arguments
 
@@ -24,7 +21,6 @@ public class ChatClientAgentSessionTests
 
         // Assert
         Assert.Null(session.ConversationId);
-        Assert.Null(session.ChatHistoryProvider);
     }
 
     [Fact]
@@ -39,53 +35,6 @@ public class ChatClientAgentSessionTests
 
         // Assert
         Assert.Equal(ConversationId, session.ConversationId);
-        Assert.Null(session.ChatHistoryProvider);
-    }
-
-    [Fact]
-    public void SetChatHistoryProviderRoundtrips()
-    {
-        // Arrange
-        var session = new ChatClientAgentSession();
-        var chatHistoryProvider = new InMemoryChatHistoryProvider();
-
-        // Act
-        session.ChatHistoryProvider = chatHistoryProvider;
-
-        // Assert
-        Assert.Same(chatHistoryProvider, session.ChatHistoryProvider);
-        Assert.Null(session.ConversationId);
-    }
-
-    [Fact]
-    public void SetConversationIdThrowsWhenChatHistoryProviderIsSet()
-    {
-        // Arrange
-        var session = new ChatClientAgentSession
-        {
-            ChatHistoryProvider = new InMemoryChatHistoryProvider()
-        };
-
-        // Act & Assert
-        var exception = Assert.Throws<InvalidOperationException>(() => session.ConversationId = "new-session-id");
-        Assert.Equal("Only the ConversationId or ChatHistoryProvider may be set, but not both and switching from one to another is not supported.", exception.Message);
-        Assert.NotNull(session.ChatHistoryProvider);
-    }
-
-    [Fact]
-    public void SetChatHistoryProviderThrowsWhenConversationIdIsSet()
-    {
-        // Arrange
-        var session = new ChatClientAgentSession
-        {
-            ConversationId = "existing-session-id"
-        };
-        var provider = new InMemoryChatHistoryProvider();
-
-        // Act & Assert
-        var exception = Assert.Throws<InvalidOperationException>(() => session.ChatHistoryProvider = provider);
-        Assert.Equal("Only the ConversationId or ChatHistoryProvider may be set, but not both and switching from one to another is not supported.", exception.Message);
-        Assert.NotNull(session.ConversationId);
     }
 
     #endregion Constructor and Property Tests
@@ -93,29 +42,33 @@ public class ChatClientAgentSessionTests
     #region Deserialize Tests
 
     [Fact]
-    public async Task VerifyDeserializeWithMessagesAsync()
+    public void VerifyDeserializeWithMessages()
     {
         // Arrange
         var json = JsonSerializer.Deserialize("""
             {
-                "chatHistoryProviderState": { "messages": [{"authorName": "testAuthor"}] }
+                "stateBag": {
+                    "InMemoryChatHistoryProvider": {
+                        "messages": [{"authorName": "testAuthor"}]
+                    }
+                }
             }
             """, TestJsonSerializerContext.Default.JsonElement);
 
         // Act.
-        var session = await ChatClientAgentSession.DeserializeAsync(json);
+        var session = ChatClientAgentSession.Deserialize(json, TestJsonSerializerContext.Default.Options);
 
         // Assert
         Assert.Null(session.ConversationId);
 
-        var chatHistoryProvider = session.ChatHistoryProvider as InMemoryChatHistoryProvider;
-        Assert.NotNull(chatHistoryProvider);
-        Assert.Single(chatHistoryProvider);
-        Assert.Equal("testAuthor", chatHistoryProvider[0].AuthorName);
+        var chatHistoryProvider = new InMemoryChatHistoryProvider();
+        var messages = chatHistoryProvider.GetMessages(session);
+        Assert.Single(messages);
+        Assert.Equal("testAuthor", messages[0].AuthorName);
     }
 
     [Fact]
-    public async Task VerifyDeserializeWithIdAsync()
+    public void VerifyDeserializeWithId()
     {
         // Arrange
         var json = JsonSerializer.Deserialize("""
@@ -125,42 +78,43 @@ public class ChatClientAgentSessionTests
             """, TestJsonSerializerContext.Default.JsonElement);
 
         // Act
-        var session = await ChatClientAgentSession.DeserializeAsync(json);
+        var session = ChatClientAgentSession.Deserialize(json);
 
         // Assert
         Assert.Equal("TestConvId", session.ConversationId);
-        Assert.Null(session.ChatHistoryProvider);
     }
 
     [Fact]
-    public async Task VerifyDeserializeWithAIContextProviderAsync()
+    public void VerifyDeserializeWithStateBag()
     {
         // Arrange
         var json = JsonSerializer.Deserialize("""
             {
                 "conversationId": "TestConvId",
-                "aiContextProviderState": ["CP1"]
+                "stateBag": {
+                    "dog": {
+                        "name": "Fido"
+                    }
+                }
             }
             """, TestJsonSerializerContext.Default.JsonElement);
-        Mock<AIContextProvider> mockProvider = new();
-
         // Act
-        var session = await ChatClientAgentSession.DeserializeAsync(json, aiContextProviderFactory: (_, _, _) => new(mockProvider.Object));
+        var session = ChatClientAgentSession.Deserialize(json);
 
         // Assert
-        Assert.Null(session.ChatHistoryProvider);
-        Assert.Same(session.AIContextProvider, mockProvider.Object);
+        var dog = session.StateBag.GetValue<Animal>("dog", TestJsonSerializerContext.Default.Options);
+        Assert.NotNull(dog);
+        Assert.Equal("Fido", dog.Name);
     }
 
     [Fact]
-    public async Task DeserializeWithInvalidJsonThrowsAsync()
+    public void DeserializeWithInvalidJsonThrows()
     {
         // Arrange
         var invalidJson = JsonSerializer.Deserialize("[42]", TestJsonSerializerContext.Default.JsonElement);
-        var session = new ChatClientAgentSession();
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => ChatClientAgentSession.DeserializeAsync(invalidJson));
+        Assert.Throws<ArgumentException>(() => ChatClientAgentSession.Deserialize(invalidJson));
     }
 
     #endregion Deserialize Tests
@@ -195,8 +149,9 @@ public class ChatClientAgentSessionTests
     public void VerifySessionSerializationWithMessages()
     {
         // Arrange
-        InMemoryChatHistoryProvider provider = [new(ChatRole.User, "TestContent") { AuthorName = "TestAuthor" }];
-        var session = new ChatClientAgentSession { ChatHistoryProvider = provider };
+        var provider = new InMemoryChatHistoryProvider();
+        var session = new ChatClientAgentSession();
+        provider.SetMessages(session, [new(ChatRole.User, "TestContent") { AuthorName = "TestAuthor" }]);
 
         // Act
         var json = session.Serialize();
@@ -206,10 +161,12 @@ public class ChatClientAgentSessionTests
 
         Assert.False(json.TryGetProperty("conversationId", out _));
 
-        Assert.True(json.TryGetProperty("chatHistoryProviderState", out var chatHistoryProviderStateProperty));
-        Assert.Equal(JsonValueKind.Object, chatHistoryProviderStateProperty.ValueKind);
-
-        Assert.True(chatHistoryProviderStateProperty.TryGetProperty("messages", out var messagesProperty));
+        // Messages should be stored in the stateBag
+        Assert.True(json.TryGetProperty("stateBag", out var stateBagProperty));
+        Assert.Equal(JsonValueKind.Object, stateBagProperty.ValueKind);
+        Assert.True(stateBagProperty.TryGetProperty("InMemoryChatHistoryProvider", out var providerStateProperty));
+        Assert.Equal(JsonValueKind.Object, providerStateProperty.ValueKind);
+        Assert.True(providerStateProperty.TryGetProperty("messages", out var messagesProperty));
         Assert.Equal(JsonValueKind.Array, messagesProperty.ValueKind);
         Assert.Single(messagesProperty.EnumerateArray());
 
@@ -224,29 +181,23 @@ public class ChatClientAgentSessionTests
     }
 
     [Fact]
-    public void VerifySessionSerializationWithWithAIContextProvider()
+    public void VerifySessionSerializationWithWithStateBag()
     {
         // Arrange
-        Mock<AIContextProvider> mockProvider = new();
-        mockProvider
-            .Setup(m => m.Serialize(It.IsAny<JsonSerializerOptions?>()))
-            .Returns(JsonSerializer.SerializeToElement(["CP1"], TestJsonSerializerContext.Default.StringArray));
-
-        var session = new ChatClientAgentSession
-        {
-            AIContextProvider = mockProvider.Object
-        };
+        var session = new ChatClientAgentSession();
+        session.StateBag.SetValue("dog", new Animal { Name = "Fido" }, TestJsonSerializerContext.Default.Options);
 
         // Act
         var json = session.Serialize();
 
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
-        Assert.True(json.TryGetProperty("aiContextProviderState", out var providerStateProperty));
-        Assert.Equal(JsonValueKind.Array, providerStateProperty.ValueKind);
-        Assert.Single(providerStateProperty.EnumerateArray());
-        Assert.Equal("CP1", providerStateProperty.EnumerateArray().First().GetString());
-        mockProvider.Verify(m => m.Serialize(It.IsAny<JsonSerializerOptions?>()), Times.Once);
+        Assert.True(json.TryGetProperty("stateBag", out var stateBagProperty));
+        Assert.Equal(JsonValueKind.Object, stateBagProperty.ValueKind);
+        Assert.True(stateBagProperty.TryGetProperty("dog", out var dogProperty));
+        Assert.Equal(JsonValueKind.Object, dogProperty.ValueKind);
+        Assert.True(dogProperty.TryGetProperty("name", out var nameProperty));
+        Assert.Equal("Fido", nameProperty.GetString());
     }
 
     /// <summary>
@@ -258,17 +209,7 @@ public class ChatClientAgentSessionTests
         // Arrange
         var session = new ChatClientAgentSession();
         JsonSerializerOptions options = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
-        options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
-
-        var chatHistoryProviderStateElement = JsonSerializer.SerializeToElement(
-            new Dictionary<string, object> { ["Key"] = "TestValue" },
-            TestJsonSerializerContext.Default.DictionaryStringObject);
-
-        var chatHistoryProviderMock = new Mock<ChatHistoryProvider>();
-        chatHistoryProviderMock
-            .Setup(m => m.Serialize(options))
-            .Returns(chatHistoryProviderStateElement);
-        session.ChatHistoryProvider = chatHistoryProviderMock.Object;
+        options.TypeInfoResolverChain.Add(AgentJsonUtilities.DefaultOptions.TypeInfoResolver!);
 
         // Act
         var json = session.Serialize(options);
@@ -276,54 +217,29 @@ public class ChatClientAgentSessionTests
         // Assert
         Assert.Equal(JsonValueKind.Object, json.ValueKind);
 
-        Assert.False(json.TryGetProperty("conversationId", out var idProperty));
-
-        Assert.True(json.TryGetProperty("chatHistoryProviderState", out var chatHistoryProviderStateProperty));
-        Assert.Equal(JsonValueKind.Object, chatHistoryProviderStateProperty.ValueKind);
-
-        Assert.True(chatHistoryProviderStateProperty.TryGetProperty("Key", out var keyProperty));
-        Assert.Equal("TestValue", keyProperty.GetString());
-
-        chatHistoryProviderMock.Verify(m => m.Serialize(options), Times.Once);
+        // [JsonPropertyName] takes precedence over naming policy
+        Assert.True(json.TryGetProperty("conversationId", out var _));
     }
 
     #endregion Serialize Tests
 
-    #region GetService Tests
+    #region StateBag Roundtrip Tests
 
     [Fact]
-    public void GetService_RequestingAIContextProvider_ReturnsAIContextProvider()
+    public void VerifyStateBagRoundtrips()
     {
         // Arrange
         var session = new ChatClientAgentSession();
-        var mockProvider = new Mock<AIContextProvider>();
-        mockProvider
-            .Setup(m => m.GetService(It.Is<Type>(x => x == typeof(AIContextProvider)), null))
-            .Returns(mockProvider.Object);
-        session.AIContextProvider = mockProvider.Object;
+        session.StateBag.SetValue("dog", new Animal { Name = "Fido" }, TestJsonSerializerContext.Default.Options);
 
         // Act
-        var result = session.GetService(typeof(AIContextProvider));
+        var serializedSession = session.Serialize();
+        var deserializedSession = ChatClientAgentSession.Deserialize(serializedSession);
 
         // Assert
-        Assert.NotNull(result);
-        Assert.Same(mockProvider.Object, result);
-    }
-
-    [Fact]
-    public void GetService_RequestingChatHistoryProvider_ReturnsChatHistoryProvider()
-    {
-        // Arrange
-        var session = new ChatClientAgentSession();
-        var chatHistoryProvider = new InMemoryChatHistoryProvider();
-        session.ChatHistoryProvider = chatHistoryProvider;
-
-        // Act
-        var result = session.GetService(typeof(ChatHistoryProvider));
-
-        // Assert
-        Assert.NotNull(result);
-        Assert.Same(chatHistoryProvider, result);
+        var dog = deserializedSession.StateBag.GetValue<Animal>("dog", TestJsonSerializerContext.Default.Options);
+        Assert.NotNull(dog);
+        Assert.Equal("Fido", dog.Name);
     }
 
     #endregion

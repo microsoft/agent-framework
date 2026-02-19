@@ -11,11 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_framework._types import ChatMessage
+from agent_framework._types import Message
 
 
-def _new_chat_message_list() -> list[ChatMessage]:
-    """Factory function for typed empty ChatMessage list.
+def _new_chat_message_list() -> list[Message]:
+    """Factory function for typed empty Message list.
 
     Satisfies the type checker.
     """
@@ -47,11 +47,11 @@ class OrchestrationState:
         task: Optional primary task/question being orchestrated
     """
 
-    conversation: list[ChatMessage] = field(default_factory=_new_chat_message_list)
+    conversation: list[Message] = field(default_factory=_new_chat_message_list)
     round_index: int = 0
     orchestrator_name: str = ""
     metadata: dict[str, Any] = field(default_factory=_new_metadata_dict)
-    task: ChatMessage | None = None
+    task: Message | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for checkpointing.
@@ -59,15 +59,14 @@ class OrchestrationState:
         Returns:
             Dict with encoded conversation and metadata for persistence
         """
-        from agent_framework._workflows._conversation_state import encode_chat_messages
-
         result: dict[str, Any] = {
-            "conversation": encode_chat_messages(self.conversation),
+            "conversation": self.conversation,
             "round_index": self.round_index,
+            "orchestrator_name": self.orchestrator_name,
             "metadata": dict(self.metadata),
         }
         if self.task is not None:
-            result["task"] = encode_chat_messages([self.task])[0]
+            result["task"] = self.task
         return result
 
     @classmethod
@@ -80,16 +79,15 @@ class OrchestrationState:
         Returns:
             Restored OrchestrationState instance
         """
-        from agent_framework._workflows._conversation_state import decode_chat_messages
-
         task = None
         if "task" in data:
-            decoded_tasks = decode_chat_messages([data["task"]])
+            decoded_tasks = [data["task"]]
             task = decoded_tasks[0] if decoded_tasks else None
 
         return cls(
-            conversation=decode_chat_messages(data.get("conversation", [])),
+            conversation=data.get("conversation", []),
             round_index=data.get("round_index", 0),
+            orchestrator_name=data.get("orchestrator_name", ""),
             metadata=dict(data.get("metadata", {})),
             task=task,
         )

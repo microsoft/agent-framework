@@ -21,16 +21,11 @@ namespace Microsoft.Agents.AI;
 [RequiresDynamicCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with NativeAOT.")]
 public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
 {
+    private readonly ProviderSessionState<State> _sessionState;
     private readonly CosmosClient _cosmosClient;
     private readonly Container _container;
     private readonly bool _ownsClient;
     private bool _disposed;
-
-    // Hierarchical partition key support
-    private readonly string? _tenantId;
-    private readonly string? _userId;
-    private readonly PartitionKey _partitionKey;
-    private readonly bool _useHierarchicalPartitioning;
 
     /// <summary>
     /// Cached JSON serializer options for .NET 9.0 compatibility.
@@ -73,11 +68,6 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     public int? MessageTtlSeconds { get; set; } = 86400;
 
     /// <summary>
-    /// Gets the conversation ID associated with this provider.
-    /// </summary>
-    public string ConversationId { get; init; }
-
-    /// <summary>
     /// Gets the database ID associated with this provider.
     /// </summary>
     public string DatabaseId { get; init; }
@@ -88,37 +78,41 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     public string ContainerId { get; init; }
 
     /// <summary>
-    /// Internal primary constructor used by all public constructors.
+    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class.
     /// </summary>
     /// <param name="cosmosClient">The <see cref="CosmosClient"/> instance to use for Cosmos DB operations.</param>
     /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
-    /// <param name="conversationId">The unique identifier for this conversation thread.</param>
+    /// <param name="stateInitializer">A delegate that initializes the provider state on the first invocation, providing the conversation routing info (conversationId, tenantId, userId).</param>
     /// <param name="ownsClient">Whether this instance owns the CosmosClient and should dispose it.</param>
-    /// <param name="tenantId">Optional tenant identifier for hierarchical partitioning.</param>
-    /// <param name="userId">Optional user identifier for hierarchical partitioning.</param>
-    internal CosmosChatHistoryProvider(CosmosClient cosmosClient, string databaseId, string containerId, string conversationId, bool ownsClient, string? tenantId = null, string? userId = null)
+    /// <param name="stateKey">An optional key to use for storing the state in the <see cref="AgentSession.StateBag"/>.</param>
+    /// <param name="provideOutputMessageFilter">An optional filter function to apply to messages when retrieving them from the chat history.</param>
+    /// <param name="storeInputMessageFilter">An optional filter function to apply to messages before storing them in the chat history. If not set, defaults to excluding messages with source type <see cref="AgentRequestMessageSourceType.ChatHistory"/>.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> or <paramref name="stateInitializer"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
+    public CosmosChatHistoryProvider(
+        CosmosClient cosmosClient,
+        string databaseId,
+        string containerId,
+        Func<AgentSession?, State> stateInitializer,
+        bool ownsClient = false,
+        string? stateKey = null,
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputMessageFilter = null)
+        : base(provideOutputMessageFilter, storeInputMessageFilter)
     {
+        this._sessionState = new ProviderSessionState<State>(
+            Throw.IfNull(stateInitializer),
+            stateKey ?? this.GetType().Name);
         this._cosmosClient = Throw.IfNull(cosmosClient);
-        this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
-        this.ConversationId = Throw.IfNullOrWhitespace(conversationId);
-        this.DatabaseId = databaseId;
-        this.ContainerId = containerId;
+        this.DatabaseId = Throw.IfNullOrWhitespace(databaseId);
+        this.ContainerId = Throw.IfNullOrWhitespace(containerId);
+        this._container = this._cosmosClient.GetContainer(databaseId, containerId);
         this._ownsClient = ownsClient;
-
-        // Initialize partitioning mode
-        this._tenantId = tenantId;
-        this._userId = userId;
-        this._useHierarchicalPartitioning = tenantId != null && userId != null;
-
-        this._partitionKey = this._useHierarchicalPartitioning
-            ? new PartitionKeyBuilder()
-                .Add(tenantId!)
-                .Add(userId!)
-                .Add(conversationId)
-                .Build()
-            : new PartitionKey(conversationId);
     }
+
+    /// <inheritdoc />
+    public override string StateKey => this._sessionState.StateKey;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using a connection string.
@@ -126,24 +120,21 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     /// <param name="connectionString">The Cosmos DB connection string.</param>
     /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
+    /// <param name="stateInitializer">A delegate that initializes the provider state on the first invocation.</param>
+    /// <param name="stateKey">An optional key to use for storing the state in the <see cref="AgentSession.StateBag"/>.</param>
+    /// <param name="provideOutputMessageFilter">An optional filter function to apply to messages when retrieving them from the chat history.</param>
+    /// <param name="storeInputMessageFilter">An optional filter function to apply to messages before storing them in the chat history. If not set, defaults to excluding messages with source type <see cref="AgentRequestMessageSourceType.ChatHistory"/>.</param>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatHistoryProvider(string connectionString, string databaseId, string containerId)
-        : this(connectionString, databaseId, containerId, Guid.NewGuid().ToString("N"))
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using a connection string.
-    /// </summary>
-    /// <param name="connectionString">The Cosmos DB connection string.</param>
-    /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
-    /// <param name="containerId">The identifier of the Cosmos DB container.</param>
-    /// <param name="conversationId">The unique identifier for this conversation thread.</param>
-    /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
-    /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatHistoryProvider(string connectionString, string databaseId, string containerId, string conversationId)
-        : this(new CosmosClient(Throw.IfNullOrWhitespace(connectionString)), databaseId, containerId, conversationId, ownsClient: true)
+    public CosmosChatHistoryProvider(
+        string connectionString,
+        string databaseId,
+        string containerId,
+        Func<AgentSession?, State> stateInitializer,
+        string? stateKey = null,
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputMessageFilter = null)
+        : this(new CosmosClient(Throw.IfNullOrWhitespace(connectionString)), databaseId, containerId, stateInitializer, ownsClient: true, stateKey, provideOutputMessageFilter, storeInputMessageFilter)
     {
     }
 
@@ -154,140 +145,50 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     /// <param name="tokenCredential">The TokenCredential to use for authentication (e.g., DefaultAzureCredential, ManagedIdentityCredential).</param>
     /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
+    /// <param name="stateInitializer">A delegate that initializes the provider state on the first invocation.</param>
+    /// <param name="stateKey">An optional key to use for storing the state in the <see cref="AgentSession.StateBag"/>.</param>
+    /// <param name="provideOutputMessageFilter">An optional filter function to apply to messages when retrieving them from the chat history.</param>
+    /// <param name="storeInputMessageFilter">An optional filter function to apply to messages before storing them in the chat history. If not set, defaults to excluding messages with source type <see cref="AgentRequestMessageSourceType.ChatHistory"/>.</param>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatHistoryProvider(string accountEndpoint, TokenCredential tokenCredential, string databaseId, string containerId)
-        : this(accountEndpoint, tokenCredential, databaseId, containerId, Guid.NewGuid().ToString("N"))
+    public CosmosChatHistoryProvider(
+        string accountEndpoint,
+        TokenCredential tokenCredential,
+        string databaseId,
+        string containerId,
+        Func<AgentSession?, State> stateInitializer,
+        string? stateKey = null,
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputMessageFilter = null)
+        : this(new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), Throw.IfNull(tokenCredential)), databaseId, containerId, stateInitializer, ownsClient: true, stateKey, provideOutputMessageFilter, storeInputMessageFilter)
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using a TokenCredential for authentication.
+    /// Determines whether hierarchical partitioning should be used based on the state.
     /// </summary>
-    /// <param name="accountEndpoint">The Cosmos DB account endpoint URI.</param>
-    /// <param name="tokenCredential">The TokenCredential to use for authentication (e.g., DefaultAzureCredential, ManagedIdentityCredential).</param>
-    /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
-    /// <param name="containerId">The identifier of the Cosmos DB container.</param>
-    /// <param name="conversationId">The unique identifier for this conversation thread.</param>
-    /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
-    /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatHistoryProvider(string accountEndpoint, TokenCredential tokenCredential, string databaseId, string containerId, string conversationId)
-        : this(new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), Throw.IfNull(tokenCredential)), databaseId, containerId, conversationId, ownsClient: true)
-    {
-    }
+    private static bool UseHierarchicalPartitioning(State state) =>
+        state.TenantId is not null && state.UserId is not null;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using an existing <see cref="CosmosClient"/>.
+    /// Builds the partition key from the state.
     /// </summary>
-    /// <param name="cosmosClient">The <see cref="CosmosClient"/> instance to use for Cosmos DB operations.</param>
-    /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
-    /// <param name="containerId">The identifier of the Cosmos DB container.</param>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> is null.</exception>
-    /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatHistoryProvider(CosmosClient cosmosClient, string databaseId, string containerId)
-        : this(cosmosClient, databaseId, containerId, Guid.NewGuid().ToString("N"))
+    private static PartitionKey BuildPartitionKey(State state)
     {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using an existing <see cref="CosmosClient"/>.
-    /// </summary>
-    /// <param name="cosmosClient">The <see cref="CosmosClient"/> instance to use for Cosmos DB operations.</param>
-    /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
-    /// <param name="containerId">The identifier of the Cosmos DB container.</param>
-    /// <param name="conversationId">The unique identifier for this conversation thread.</param>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> is null.</exception>
-    /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatHistoryProvider(CosmosClient cosmosClient, string databaseId, string containerId, string conversationId)
-        : this(cosmosClient, databaseId, containerId, conversationId, ownsClient: false)
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using a connection string with hierarchical partition keys.
-    /// </summary>
-    /// <param name="connectionString">The Cosmos DB connection string.</param>
-    /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
-    /// <param name="containerId">The identifier of the Cosmos DB container.</param>
-    /// <param name="tenantId">The tenant identifier for hierarchical partitioning.</param>
-    /// <param name="userId">The user identifier for hierarchical partitioning.</param>
-    /// <param name="sessionId">The session identifier for hierarchical partitioning.</param>
-    /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
-    /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatHistoryProvider(string connectionString, string databaseId, string containerId, string tenantId, string userId, string sessionId)
-        : this(new CosmosClient(Throw.IfNullOrWhitespace(connectionString)), databaseId, containerId, Throw.IfNullOrWhitespace(sessionId), ownsClient: true, Throw.IfNullOrWhitespace(tenantId), Throw.IfNullOrWhitespace(userId))
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using a TokenCredential for authentication with hierarchical partition keys.
-    /// </summary>
-    /// <param name="accountEndpoint">The Cosmos DB account endpoint URI.</param>
-    /// <param name="tokenCredential">The TokenCredential to use for authentication (e.g., DefaultAzureCredential, ManagedIdentityCredential).</param>
-    /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
-    /// <param name="containerId">The identifier of the Cosmos DB container.</param>
-    /// <param name="tenantId">The tenant identifier for hierarchical partitioning.</param>
-    /// <param name="userId">The user identifier for hierarchical partitioning.</param>
-    /// <param name="sessionId">The session identifier for hierarchical partitioning.</param>
-    /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
-    /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatHistoryProvider(string accountEndpoint, TokenCredential tokenCredential, string databaseId, string containerId, string tenantId, string userId, string sessionId)
-        : this(new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), Throw.IfNull(tokenCredential)), databaseId, containerId, Throw.IfNullOrWhitespace(sessionId), ownsClient: true, Throw.IfNullOrWhitespace(tenantId), Throw.IfNullOrWhitespace(userId))
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatHistoryProvider"/> class using an existing <see cref="CosmosClient"/> with hierarchical partition keys.
-    /// </summary>
-    /// <param name="cosmosClient">The <see cref="CosmosClient"/> instance to use for Cosmos DB operations.</param>
-    /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
-    /// <param name="containerId">The identifier of the Cosmos DB container.</param>
-    /// <param name="tenantId">The tenant identifier for hierarchical partitioning.</param>
-    /// <param name="userId">The user identifier for hierarchical partitioning.</param>
-    /// <param name="sessionId">The session identifier for hierarchical partitioning.</param>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> is null.</exception>
-    /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosChatHistoryProvider(CosmosClient cosmosClient, string databaseId, string containerId, string tenantId, string userId, string sessionId)
-        : this(cosmosClient, databaseId, containerId, Throw.IfNullOrWhitespace(sessionId), ownsClient: false, Throw.IfNullOrWhitespace(tenantId), Throw.IfNullOrWhitespace(userId))
-    {
-    }
-
-    /// <summary>
-    /// Creates a new instance of the <see cref="CosmosChatHistoryProvider"/> class from previously serialized state.
-    /// </summary>
-    /// <param name="cosmosClient">The <see cref="CosmosClient"/> instance to use for Cosmos DB operations.</param>
-    /// <param name="serializedState">A <see cref="JsonElement"/> representing the serialized state of the provider.</param>
-    /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
-    /// <param name="containerId">The identifier of the Cosmos DB container.</param>
-    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <returns>A new instance of <see cref="CosmosChatHistoryProvider"/> initialized from the serialized state.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> is null.</exception>
-    /// <exception cref="ArgumentException">Thrown when the serialized state cannot be deserialized.</exception>
-    public static CosmosChatHistoryProvider CreateFromSerializedState(CosmosClient cosmosClient, JsonElement serializedState, string databaseId, string containerId, JsonSerializerOptions? jsonSerializerOptions = null)
-    {
-        Throw.IfNull(cosmosClient);
-        Throw.IfNullOrWhitespace(databaseId);
-        Throw.IfNullOrWhitespace(containerId);
-
-        if (serializedState.ValueKind is not JsonValueKind.Object)
+        if (UseHierarchicalPartitioning(state))
         {
-            throw new ArgumentException("Invalid serialized state", nameof(serializedState));
+            return new PartitionKeyBuilder()
+                .Add(state.TenantId)
+                .Add(state.UserId)
+                .Add(state.ConversationId)
+                .Build();
         }
 
-        var state = serializedState.Deserialize<State>(jsonSerializerOptions);
-        if (state?.ConversationIdentifier is not { } conversationId)
-        {
-            throw new ArgumentException("Invalid serialized state", nameof(serializedState));
-        }
-
-        // Use the internal constructor with all parameters to ensure partition key logic is centralized
-        return state.UseHierarchicalPartitioning && state.TenantId != null && state.UserId != null
-            ? new CosmosChatHistoryProvider(cosmosClient, databaseId, containerId, conversationId, ownsClient: false, state.TenantId, state.UserId)
-            : new CosmosChatHistoryProvider(cosmosClient, databaseId, containerId, conversationId, ownsClient: false);
+        return new PartitionKey(state.ConversationId);
     }
 
     /// <inheritdoc />
-    protected override async ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
         if (this._disposed)
@@ -296,15 +197,18 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
 #pragma warning restore CA1513
 
+        var state = this._sessionState.GetOrInitializeState(context.Session);
+        var partitionKey = BuildPartitionKey(state);
+
         // Fetch most recent messages in descending order when limit is set, then reverse to ascending
         var orderDirection = this.MaxMessagesToRetrieve.HasValue ? "DESC" : "ASC";
         var query = new QueryDefinition($"SELECT * FROM c WHERE c.conversationId = @conversationId AND c.type = @type ORDER BY c.timestamp {orderDirection}")
-            .WithParameter("@conversationId", this.ConversationId)
+            .WithParameter("@conversationId", state.ConversationId)
             .WithParameter("@type", "ChatMessage");
 
         var iterator = this._container.GetItemQueryIterator<CosmosMessageDocument>(query, requestOptions: new QueryRequestOptions
         {
-            PartitionKey = this._partitionKey,
+            PartitionKey = partitionKey,
             MaxItemCount = this.MaxItemCount // Configurable query performance
         });
 
@@ -347,16 +251,8 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     }
 
     /// <inheritdoc />
-    protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        Throw.IfNull(context);
-
-        if (context.InvokeException is not null)
-        {
-            // Do not store messages if there was an exception during invocation
-            return;
-        }
-
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
         if (this._disposed)
         {
@@ -364,27 +260,30 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
 #pragma warning restore CA1513
 
+        var state = this._sessionState.GetOrInitializeState(context.Session);
         var messageList = context.RequestMessages.Concat(context.ResponseMessages ?? []).ToList();
         if (messageList.Count == 0)
         {
             return;
         }
 
+        var partitionKey = BuildPartitionKey(state);
+
         // Use transactional batch for atomic operations
         if (messageList.Count > 1)
         {
-            await this.AddMessagesInBatchAsync(messageList, cancellationToken).ConfigureAwait(false);
+            await this.AddMessagesInBatchAsync(partitionKey, state, messageList, cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            await this.AddSingleMessageAsync(messageList.First(), cancellationToken).ConfigureAwait(false);
+            await this.AddSingleMessageAsync(partitionKey, state, messageList.First(), cancellationToken).ConfigureAwait(false);
         }
     }
 
     /// <summary>
     /// Adds multiple messages using transactional batch operations for atomicity.
     /// </summary>
-    private async Task AddMessagesInBatchAsync(List<ChatMessage> messages, CancellationToken cancellationToken)
+    private async Task AddMessagesInBatchAsync(PartitionKey partitionKey, State state, List<ChatMessage> messages, CancellationToken cancellationToken)
     {
         var currentTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
@@ -392,7 +291,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         for (int i = 0; i < messages.Count; i += this.MaxBatchSize)
         {
             var batchMessages = messages.Skip(i).Take(this.MaxBatchSize).ToList();
-            await this.ExecuteBatchOperationAsync(batchMessages, currentTimestamp, cancellationToken).ConfigureAwait(false);
+            await this.ExecuteBatchOperationAsync(partitionKey, state, batchMessages, currentTimestamp, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -400,13 +299,13 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     /// Executes a single batch operation with enhanced error handling.
     /// Cosmos SDK handles throttling (429) retries automatically.
     /// </summary>
-    private async Task ExecuteBatchOperationAsync(List<ChatMessage> messages, long timestamp, CancellationToken cancellationToken)
+    private async Task ExecuteBatchOperationAsync(PartitionKey partitionKey, State state, List<ChatMessage> messages, long timestamp, CancellationToken cancellationToken)
     {
         // Create all documents upfront for validation and batch operation
         var documents = new List<CosmosMessageDocument>(messages.Count);
         foreach (var message in messages)
         {
-            documents.Add(this.CreateMessageDocument(message, timestamp));
+            documents.Add(this.CreateMessageDocument(state, message, timestamp));
         }
 
         // Defensive check: Verify all messages share the same partition key values
@@ -414,7 +313,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         // In simple partitioning, this means same conversationId
         if (documents.Count > 0)
         {
-            if (this._useHierarchicalPartitioning)
+            if (UseHierarchicalPartitioning(state))
             {
                 // Verify all documents have matching hierarchical partition key components
                 var firstDoc = documents[0];
@@ -436,7 +335,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
 
         // All messages in this store share the same partition key by design
         // Transactional batches require all items to share the same partition key
-        var batch = this._container.CreateTransactionalBatch(this._partitionKey);
+        var batch = this._container.CreateTransactionalBatch(partitionKey);
 
         foreach (var document in documents)
         {
@@ -457,7 +356,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
             if (messages.Count == 1)
             {
                 // Can't split further, use single operation
-                await this.AddSingleMessageAsync(messages[0], cancellationToken).ConfigureAwait(false);
+                await this.AddSingleMessageAsync(partitionKey, state, messages[0], cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -466,21 +365,21 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
             var firstHalf = messages.Take(midpoint).ToList();
             var secondHalf = messages.Skip(midpoint).ToList();
 
-            await this.ExecuteBatchOperationAsync(firstHalf, timestamp, cancellationToken).ConfigureAwait(false);
-            await this.ExecuteBatchOperationAsync(secondHalf, timestamp, cancellationToken).ConfigureAwait(false);
+            await this.ExecuteBatchOperationAsync(partitionKey, state, firstHalf, timestamp, cancellationToken).ConfigureAwait(false);
+            await this.ExecuteBatchOperationAsync(partitionKey, state, secondHalf, timestamp, cancellationToken).ConfigureAwait(false);
         }
     }
 
     /// <summary>
     /// Adds a single message to the store.
     /// </summary>
-    private async Task AddSingleMessageAsync(ChatMessage message, CancellationToken cancellationToken)
+    private async Task AddSingleMessageAsync(PartitionKey partitionKey, State state, ChatMessage message, CancellationToken cancellationToken)
     {
-        var document = this.CreateMessageDocument(message, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        var document = this.CreateMessageDocument(state, message, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
 
         try
         {
-            await this._container.CreateItemAsync(document, this._partitionKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await this._container.CreateItemAsync(document, partitionKey, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.RequestEntityTooLarge)
         {
@@ -495,12 +394,14 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     /// <summary>
     /// Creates a message document with enhanced metadata.
     /// </summary>
-    private CosmosMessageDocument CreateMessageDocument(ChatMessage message, long timestamp)
+    private CosmosMessageDocument CreateMessageDocument(State state, ChatMessage message, long timestamp)
     {
+        var useHierarchical = UseHierarchicalPartitioning(state);
+
         return new CosmosMessageDocument
         {
             Id = Guid.NewGuid().ToString(),
-            ConversationId = this.ConversationId,
+            ConversationId = state.ConversationId,
             Timestamp = timestamp,
             MessageId = message.MessageId,
             Role = message.Role.Value,
@@ -508,41 +409,20 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
             Type = "ChatMessage", // Type discriminator
             Ttl = this.MessageTtlSeconds, // Configurable TTL
             // Include hierarchical metadata when using hierarchical partitioning
-            TenantId = this._useHierarchicalPartitioning ? this._tenantId : null,
-            UserId = this._useHierarchicalPartitioning ? this._userId : null,
-            SessionId = this._useHierarchicalPartitioning ? this.ConversationId : null
+            TenantId = useHierarchical ? state.TenantId : null,
+            UserId = useHierarchical ? state.UserId : null,
+            SessionId = useHierarchical ? state.ConversationId : null
         };
-    }
-
-    /// <inheritdoc />
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
-    {
-#pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
-        if (this._disposed)
-        {
-            throw new ObjectDisposedException(this.GetType().FullName);
-        }
-#pragma warning restore CA1513
-
-        var state = new State
-        {
-            ConversationIdentifier = this.ConversationId,
-            TenantId = this._tenantId,
-            UserId = this._userId,
-            UseHierarchicalPartitioning = this._useHierarchicalPartitioning
-        };
-
-        var options = jsonSerializerOptions ?? s_defaultJsonOptions;
-        return JsonSerializer.SerializeToElement(state, options);
     }
 
     /// <summary>
     /// Gets the count of messages in this conversation.
     /// This is an additional utility method beyond the base contract.
     /// </summary>
+    /// <param name="session">The agent session to get state from.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The number of messages in the conversation.</returns>
-    public async Task<int> GetMessageCountAsync(CancellationToken cancellationToken = default)
+    public async Task<int> GetMessageCountAsync(AgentSession? session, CancellationToken cancellationToken = default)
     {
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
         if (this._disposed)
@@ -551,14 +431,17 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
 #pragma warning restore CA1513
 
+        var state = this._sessionState.GetOrInitializeState(session);
+        var partitionKey = BuildPartitionKey(state);
+
         // Efficient count query
         var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.conversationId = @conversationId AND c.Type = @type")
-            .WithParameter("@conversationId", this.ConversationId)
+            .WithParameter("@conversationId", state.ConversationId)
             .WithParameter("@type", "ChatMessage");
 
         var iterator = this._container.GetItemQueryIterator<int>(query, requestOptions: new QueryRequestOptions
         {
-            PartitionKey = this._partitionKey
+            PartitionKey = partitionKey
         });
 
         // COUNT queries always return a result
@@ -570,9 +453,10 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     /// Deletes all messages in this conversation.
     /// This is an additional utility method beyond the base contract.
     /// </summary>
+    /// <param name="session">The agent session to get state from.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The number of messages deleted.</returns>
-    public async Task<int> ClearMessagesAsync(CancellationToken cancellationToken = default)
+    public async Task<int> ClearMessagesAsync(AgentSession? session, CancellationToken cancellationToken = default)
     {
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
         if (this._disposed)
@@ -581,14 +465,17 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
 #pragma warning restore CA1513
 
+        var state = this._sessionState.GetOrInitializeState(session);
+        var partitionKey = BuildPartitionKey(state);
+
         // Batch delete for efficiency
         var query = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c.conversationId = @conversationId AND c.Type = @type")
-            .WithParameter("@conversationId", this.ConversationId)
+            .WithParameter("@conversationId", state.ConversationId)
             .WithParameter("@type", "ChatMessage");
 
         var iterator = this._container.GetItemQueryIterator<string>(query, requestOptions: new QueryRequestOptions
         {
-            PartitionKey = this._partitionKey,
+            PartitionKey = partitionKey,
             MaxItemCount = this.MaxItemCount
         });
 
@@ -597,7 +484,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         while (iterator.HasMoreResults)
         {
             var response = await iterator.ReadNextAsync(cancellationToken).ConfigureAwait(false);
-            var batch = this._container.CreateTransactionalBatch(this._partitionKey);
+            var batch = this._container.CreateTransactionalBatch(partitionKey);
             var batchItemCount = 0;
 
             foreach (var itemId in response)
@@ -632,12 +519,38 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
     }
 
-    private sealed class State
+    /// <summary>
+    /// Represents the per-session state of a <see cref="CosmosChatHistoryProvider"/> stored in the <see cref="AgentSession.StateBag"/>.
+    /// </summary>
+    public sealed class State
     {
-        public string ConversationIdentifier { get; set; } = string.Empty;
-        public string? TenantId { get; set; }
-        public string? UserId { get; set; }
-        public bool UseHierarchicalPartitioning { get; set; }
+        /// <summary>
+        /// Initializes a new instance of the <see cref="State"/> class.
+        /// </summary>
+        /// <param name="conversationId">The unique identifier for this conversation thread.</param>
+        /// <param name="tenantId">Optional tenant identifier for hierarchical partitioning.</param>
+        /// <param name="userId">Optional user identifier for hierarchical partitioning.</param>
+        public State(string conversationId, string? tenantId = null, string? userId = null)
+        {
+            this.ConversationId = Throw.IfNullOrWhitespace(conversationId);
+            this.TenantId = tenantId;
+            this.UserId = userId;
+        }
+
+        /// <summary>
+        /// Gets the conversation ID associated with this state.
+        /// </summary>
+        public string ConversationId { get; }
+
+        /// <summary>
+        /// Gets the tenant identifier for hierarchical partitioning, if any.
+        /// </summary>
+        public string? TenantId { get; }
+
+        /// <summary>
+        /// Gets the user identifier for hierarchical partitioning, if any.
+        /// </summary>
+        public string? UserId { get; }
     }
 
     /// <summary>

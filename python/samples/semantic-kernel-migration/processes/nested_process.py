@@ -26,7 +26,6 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
-
     handler,
 )
 from pydantic import BaseModel, Field
@@ -145,7 +144,7 @@ async def run_semantic_kernel_nested_process() -> None:
         initial_event=ProcessEvents.START_PROCESS.value,
         data="Test",
     )
-    process_info = await process_handle.get_executor_state()
+    process_info = await process_handle.get_state()
 
     inner_process: KernelProcess | None = next(
         (s for s in process_info.steps if s.state.name == "Inner"),

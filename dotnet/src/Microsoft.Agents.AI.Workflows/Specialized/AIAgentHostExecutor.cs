@@ -101,7 +101,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
     protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        JsonElement? sessionState = this._session is not null ? this._agent.SerializeSession(this._session) : null;
+        JsonElement? sessionState = this._session is not null ? await this._agent.SerializeSessionAsync(this._session, cancellationToken: cancellationToken).ConfigureAwait(false) : null;
         AIAgentHostState state = new(sessionState, this._currentTurnEmitEvents);
         Task coreStateTask = context.QueueStateUpdateAsync(AIAgentHostStateKey, state, cancellationToken: cancellationToken).AsTask();
         Task userInputRequestsTask = this._userInputHandler?.OnCheckpointingAsync(UserInputRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
@@ -181,7 +181,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
             List<AgentResponseUpdate> updates = [];
             await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
             {
-                await context.AddEventAsync(new AgentResponseUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
+                await context.YieldOutputAsync(update, cancellationToken).ConfigureAwait(false);
                 ExtractUnservicedRequests(update.Contents);
                 updates.Add(update);
             }
@@ -201,7 +201,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
         if (this._options.EmitAgentResponseEvents == true)
         {
-            await context.AddEventAsync(new AgentResponseEvent(this.Id, response), cancellationToken).ConfigureAwait(false);
+            await context.YieldOutputAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
         if (userInputRequests.Count > 0 || functionCalls.Count > 0)
