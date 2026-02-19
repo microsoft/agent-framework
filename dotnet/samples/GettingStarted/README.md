@@ -15,5 +15,5 @@ of the agent framework.
 |[Agent Open Telemetry](./AgentOpenTelemetry/README.md)|Getting started with OpenTelemetry for agents|
 |[Agent With OpenAI exchange types](./AgentWithOpenAI/README.md)|Using OpenAI exchange types with agents|
 |[Agent With Anthropic](./AgentWithAnthropic/README.md)|Getting started with agents using Anthropic Claude|
-|[Workflow](./Workflows/README.md)|Getting started with Workflow|
+|[Workflow](../03-workflows/README.md)|Getting started with Workflow|
 |[Model Context Protocol](./ModelContextProtocol/README.md)|Getting started with Model Context Protocol|
