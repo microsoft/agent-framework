@@ -3,6 +3,10 @@
 import asyncio
 
 from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Anthropic Chat Agent Example

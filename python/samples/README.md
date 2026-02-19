@@ -29,12 +29,45 @@ Start with `01-get-started/` and work through the numbered files:
 pip install agent-framework --pre
 ```
 
-Set the following environment variables for the getting-started samples:
+### Environment Variables
 
+Samples call `load_dotenv()` to automatically load environment variables from a `.env` file in the `python/` directory. This is a convenience for local development and testing.
+
+**For local development**, set up your environment using any of these methods:
+
+**Option 1: Using a `.env` file** (recommended for local development):
+1. Copy `.env.example` to `.env` in the `python/` directory:
+   ```bash
+   cp .env.example .env
+   ```
+2. Edit `.env` and set your values (API keys, endpoints, etc.)
+
+**Option 2: Export environment variables directly**:
 ```bash
 export AZURE_AI_PROJECT_ENDPOINT="your-foundry-project-endpoint"
 export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"
 ```
+
+**Option 3: Using `env_file_path` parameter** (for per-client configuration):
+
+All client classes (e.g., `OpenAIChatClient`, `AzureOpenAIResponsesClient`) support an `env_file_path` parameter to load environment variables from a specific file:
+
+```python
+from agent_framework.openai import OpenAIChatClient
+
+# Load from a custom .env file
+client = OpenAIChatClient(env_file_path="path/to/custom.env")
+```
+
+This allows different clients to use different configuration files if needed.
+
+For the getting-started samples, you'll need at minimum:
+```bash
+AZURE_AI_PROJECT_ENDPOINT="your-foundry-project-endpoint"
+AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"
+```
+
+**Note for production**: In production environments, set environment variables through your deployment platform (e.g., Azure App Settings, Kubernetes ConfigMaps/Secrets) rather than using `.env` files. The `load_dotenv()` call in samples will have no effect when a `.env` file is not present, allowing environment variables to be loaded from the system.
 
 For Azure authentication, run `az login` before running samples.
 

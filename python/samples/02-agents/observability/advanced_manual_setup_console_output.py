@@ -8,6 +8,7 @@ from typing import Annotated
 from agent_framework import Message, tool
 from agent_framework.observability import enable_instrumentation
 from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.metrics import set_meter_provider
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
@@ -20,6 +21,9 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 from opentelemetry.semconv._incubating.attributes.service_attributes import SERVICE_NAME
 from opentelemetry.trace import set_tracer_provider
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 This sample shows how to manually configure to send traces, logs, and metrics to the console,

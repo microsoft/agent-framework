@@ -19,6 +19,10 @@ from pathlib import Path
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.declarative import WorkflowFactory
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 ANALYST_INSTRUCTIONS = """You are a product analyst. Analyze the given product and identify:
 1. Key features and benefits

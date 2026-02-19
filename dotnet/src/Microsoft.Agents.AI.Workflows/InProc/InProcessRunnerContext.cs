@@ -95,7 +95,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
             }
 
             Executor executor = await registration.CreateInstanceAsync(this._runId).ConfigureAwait(false);
-            executor.Configure(this.BindExternalRequestContext(executorId));
+            executor.AttachRequestContext(this.BindExternalRequestContext(executorId));
 
             await executor.InitializeAsync(this.BindWorkflowContext(executorId), cancellationToken: cancellationToken)
                           .ConfigureAwait(false);
@@ -182,7 +182,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
         while (this._queuedExternalDeliveries.TryDequeue(out var deliveryPrep))
         {
-            // It's important we do not try to run these in parallel, because they make be modifying
+            // It's important we do not try to run these in parallel, because they may be modifying
             // inner edge state, etc.
             await deliveryPrep().ConfigureAwait(false);
         }
@@ -212,14 +212,23 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
 
         this.CheckEnded();
-        MessageEnvelope envelope = new(message, sourceId, targetId: targetId, traceContext: traceContext);
+
+        Debug.Assert(this._executors.ContainsKey(sourceId));
+        Executor source = await this.EnsureExecutorAsync(sourceId, tracer: null, cancellationToken).ConfigureAwait(false);
+        TypeId? declaredType = source.Protocol.SendTypeTranslator.GetDeclaredType(message.GetType());
+        if (declaredType is null)
+        {
+            throw new InvalidOperationException($"Executor '{sourceId}' cannot send messages of type '{message.GetType().FullName}'.");
+        }
+
+        MessageEnvelope envelope = new(message, sourceId, declaredType, targetId: targetId, traceContext: traceContext);
 
         if (this._workflow.Edges.TryGetValue(sourceId, out HashSet<Edge>? edges))
         {
             foreach (Edge edge in edges)
             {
                 DeliveryMapping? maybeMapping =
-                    await this._edgeMap.PrepareDeliveryForEdgeAsync(edge, envelope)
+                    await this._edgeMap.PrepareDeliveryForEdgeAsync(edge, envelope, cancellationToken)
                                        .ConfigureAwait(false);
 
                 maybeMapping?.MapInto(this._nextStep);
@@ -310,12 +319,12 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
         public ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default)
         {
-            return RunnerContext.SendMessageAsync(ExecutorId, message, targetId, cancellationToken);
+            return RunnerContext.SendMessageAsync(ExecutorId, Throw.IfNull(message), targetId, cancellationToken);
         }
 
         public ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default)
         {
-            return RunnerContext.YieldOutputAsync(ExecutorId, output, cancellationToken);
+            return RunnerContext.YieldOutputAsync(ExecutorId, Throw.IfNull(output), cancellationToken);
         }
 
         public ValueTask RequestHaltAsync() => this.AddEventAsync(new RequestHaltEvent());

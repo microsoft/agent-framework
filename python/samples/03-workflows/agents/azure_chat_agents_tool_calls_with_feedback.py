@@ -24,8 +24,12 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
 from typing_extensions import Never
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Tool-enabled agents with human feedback
@@ -174,6 +178,8 @@ def create_writer_agent() -> Agent:
     """Creates a writer agent with tools."""
     return AzureOpenAIResponsesClient(
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        # This sample has been tested only on `gpt-5.1` and may not work as intended on other models
+        # This sample is known to fail on `gpt-5-mini` reasoning input (GH issue #4059)
         deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(

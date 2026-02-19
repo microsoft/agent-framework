@@ -17,6 +17,10 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import MagenticBuilder, MagenticPlanReviewRequest
 from azure.identity._credentials import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Magentic Orchestration + Checkpointing

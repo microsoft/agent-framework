@@ -27,9 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_client(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerClient:
     """Create a configured DurableTaskSchedulerClient.
 
@@ -54,7 +52,7 @@ def get_client(
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
 
@@ -67,7 +65,7 @@ def run_client(client: DurableTaskSchedulerClient) -> None:
     logger.debug("Starting single agent chaining orchestration...")
 
     # Start the orchestration
-    instance_id = client.schedule_new_orchestration(    # type: ignore
+    instance_id = client.schedule_new_orchestration(  # type: ignore
         orchestrator="single_agent_chaining_orchestration",
         input="",
     )
@@ -76,10 +74,7 @@ def run_client(client: DurableTaskSchedulerClient) -> None:
     logger.debug("Waiting for orchestration to complete...")
 
     # Retrieve the final state
-    metadata = client.wait_for_orchestration_completion(
-        instance_id=instance_id,
-        timeout=300
-    )
+    metadata = client.wait_for_orchestration_completion(instance_id=instance_id, timeout=300)
 
     if metadata and metadata.runtime_status.name == "COMPLETED":
         result = metadata.serialized_output

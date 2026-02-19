@@ -5,6 +5,10 @@ from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 For tools you can specify if there is a maximum number of invocations allowed.

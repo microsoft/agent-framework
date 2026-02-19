@@ -28,6 +28,7 @@ from agent_framework import (
     WorkflowExecutor,
     handler,
 )
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 ######################################################################
@@ -48,8 +49,10 @@ from typing_extensions import Never
 ######################################################################
 # endregion
 ######################################################################
-
 logging.basicConfig(level=logging.WARNING)
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class ProcessEvents(Enum):

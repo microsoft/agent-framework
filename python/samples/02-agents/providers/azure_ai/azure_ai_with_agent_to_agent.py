@@ -4,6 +4,10 @@ import os
 
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Azure AI Agent with Agent-to-Agent (A2A) Example

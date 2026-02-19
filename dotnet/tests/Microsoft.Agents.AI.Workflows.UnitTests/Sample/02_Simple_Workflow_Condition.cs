@@ -46,6 +46,9 @@ internal static class Step2EntryPoint
                 case ExecutorCompletedEvent executorCompletedEvt:
                     writer.WriteLine($"'{executorCompletedEvt.ExecutorId}: {executorCompletedEvt.Data}");
                     break;
+                case WorkflowErrorEvent errorEvent:
+                    Assert.Fail($"Workflow failed with error: {errorEvent.Exception}");
+                    break;
             }
         }
 
@@ -60,10 +63,11 @@ internal sealed class DetectSpamExecutor(string id, params string[] spamKeywords
         spamKeywords.Any(keyword => message.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0);
 }
 
-internal sealed class RespondToMessageExecutor(string id) : ReflectingExecutor<RespondToMessageExecutor>(id, declareCrossRunShareable: true), IMessageHandler<bool>
+internal sealed partial class RespondToMessageExecutor(string id) : Executor(id, declareCrossRunShareable: true), IMessageHandler<bool>
 {
     public const string ActionResult = "Message processed successfully.";
 
+    [MessageHandler(Yield = [typeof(string)])]
     public async ValueTask HandleAsync(bool message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (message)
@@ -79,10 +83,11 @@ internal sealed class RespondToMessageExecutor(string id) : ReflectingExecutor<R
     }
 }
 
-internal sealed class RemoveSpamExecutor(string id) : ReflectingExecutor<RemoveSpamExecutor>(id, declareCrossRunShareable: true), IMessageHandler<bool>
+internal sealed partial class RemoveSpamExecutor(string id) : Executor(id, declareCrossRunShareable: true), IMessageHandler<bool>
 {
     public const string ActionResult = "Spam message removed.";
 
+    [MessageHandler(Yield = [typeof(string)])]
     public async ValueTask HandleAsync(bool message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (!message)

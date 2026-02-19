@@ -6,6 +6,10 @@ from typing import Any
 
 from agent_framework import AgentSession, BaseHistoryProvider, Message
 from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Custom History Provider Example

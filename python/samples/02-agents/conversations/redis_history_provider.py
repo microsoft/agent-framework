@@ -7,6 +7,10 @@ from uuid import uuid4
 from agent_framework import AgentSession
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.redis import RedisHistoryProvider
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Redis History Provider Session Example
@@ -17,6 +21,11 @@ with Redis as the backend data store.
 """
 
 
+# Default Redis URL for local Redis Stack.
+# Override via the REDIS_URL environment variable for remote or authenticated instances.
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+
 async def example_manual_memory_store() -> None:
     """Basic example of using Redis history provider."""
     print("=== Basic Redis History Provider Example ===")
@@ -24,7 +33,7 @@ async def example_manual_memory_store() -> None:
     # Create Redis history provider
     redis_provider = RedisHistoryProvider(
         source_id="redis_basic_chat",
-        redis_url="redis://localhost:6379",
+        redis_url=REDIS_URL,
     )
 
     # Create agent with Redis history provider
@@ -62,7 +71,7 @@ async def example_user_session_management() -> None:
     # Create Redis history provider for specific user session
     redis_provider = RedisHistoryProvider(
         source_id=f"redis_{user_id}",
-        redis_url="redis://localhost:6379",
+        redis_url=REDIS_URL,
         max_messages=10,  # Keep only last 10 messages
     )
 
@@ -103,7 +112,7 @@ async def example_conversation_persistence() -> None:
     print("--- Phase 1: Starting conversation ---")
     redis_provider = RedisHistoryProvider(
         source_id="redis_persistent_chat",
-        redis_url="redis://localhost:6379",
+        redis_url=REDIS_URL,
     )
 
     agent = OpenAIChatClient().as_agent(
@@ -152,7 +161,7 @@ async def example_session_serialization() -> None:
 
     redis_provider = RedisHistoryProvider(
         source_id="redis_serialization_chat",
-        redis_url="redis://localhost:6379",
+        redis_url=REDIS_URL,
     )
 
     agent = OpenAIChatClient().as_agent(
@@ -194,7 +203,7 @@ async def example_message_limits() -> None:
     # Create provider with small message limit
     redis_provider = RedisHistoryProvider(
         source_id="redis_limited_chat",
-        redis_url="redis://localhost:6379",
+        redis_url=REDIS_URL,
         max_messages=3,  # Keep only 3 most recent messages
     )
 
@@ -229,7 +238,7 @@ async def main() -> None:
     print("Redis History Provider Examples")
     print("=" * 50)
     print("Prerequisites:")
-    print("- Redis server running on localhost:6379")
+    print("- Redis server running (set REDIS_URL env var or default localhost:6379)")
     print("- OPENAI_API_KEY environment variable set")
     print("=" * 50)
 

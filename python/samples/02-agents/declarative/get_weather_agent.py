@@ -9,11 +9,13 @@ from agent_framework.declarative import AgentFactory
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
 load_dotenv()
 
 
 def get_weather(location: str, unit: Literal["celsius", "fahrenheit"] = "celsius") -> str:
     """A simple function tool to get weather information."""
+
     return f"The weather in {location} is {randint(-10, 30) if unit == 'celsius' else randint(30, 100)} degrees {unit}."
 
 

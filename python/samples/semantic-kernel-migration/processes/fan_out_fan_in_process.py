@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 # region Agent Framework imports
 ######################################################################
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 ######################################################################
@@ -38,6 +39,9 @@ from semantic_kernel.processes.process_builder import ProcessBuilder
 if TYPE_CHECKING:
     from semantic_kernel.processes.kernel_process import KernelProcess
     from semantic_kernel.processes.local_runtime.local_kernel_process import LocalKernelProcessContext
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def _start_local_kernel_process(

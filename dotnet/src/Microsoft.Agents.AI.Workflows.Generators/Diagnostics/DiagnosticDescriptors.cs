@@ -86,10 +86,10 @@ internal static class DiagnosticDescriptors
     /// <summary>
     /// MAFGENWF006: ConfigureRoutes already defined.
     /// </summary>
-    public static readonly DiagnosticDescriptor ConfigureRoutesAlreadyDefined = Register(new(
+    public static readonly DiagnosticDescriptor ConfigureProtocolAlreadyDefined = Register(new(
         id: "MAFGENWF006",
-        title: "ConfigureRoutes already defined",
-        messageFormat: "Class '{0}' already defines ConfigureRoutes; [MessageHandler] methods will be ignored",
+        title: "ConfigureProtocol already defined",
+        messageFormat: "Class '{0}' already defines ConfigureProtocol; [MessageHandler] methods will be ignored",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true));

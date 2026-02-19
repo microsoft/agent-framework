@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Annotated, Literal
 from agent_framework import Message, tool
 from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 from opentelemetry import trace
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
@@ -26,6 +27,9 @@ you should see traces, logs, and metrics in the configured backend.
 If no OTLP endpoint or Application Insights connection string is configured, the sample will
 output traces, logs, and metrics to the console.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Define the scenarios that can be run to show the telemetry data collected by the SDK
 SCENARIOS = ["client", "client_stream", "tool", "all"]
