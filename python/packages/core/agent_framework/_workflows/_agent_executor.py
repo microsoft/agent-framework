@@ -2,9 +2,9 @@
 
 import logging
 import sys
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from typing import Any, cast
 
 from typing_extensions import Never
 
@@ -130,6 +130,11 @@ class AgentExecutor(Executor):
         """
         self._cache.extend(request.messages)
         if request.should_respond:
+            # The caller is supplying explicit conversation history, so any stored
+            # previous_response_id from an earlier run would cause the API to see the
+            # same items twice (once via previous_response_id and once in input).
+            # Reset it so the agent starts a fresh context with the provided messages.
+            self._session.service_session_id = None
             await self._run_agent_and_emit(ctx)
 
     @handler
@@ -144,42 +149,14 @@ class AgentExecutor(Executor):
         immediately run the agent to produce a new response.
         """
         # Replace cache with full conversation if available, else fall back to agent_response messages.
-        # Filter out tool-call internals that are not replay-safe across agent boundaries.
         source_messages = (
             prior.full_conversation if prior.full_conversation is not None else prior.agent_response.messages
         )
-        self._cache = self._prepare_handoff_messages(source_messages)
+        self._cache = list(source_messages)
+        # Reset service_session_id: the full conversation is being provided explicitly,
+        # so using previous_response_id would duplicate items already in the input.
+        self._session.service_session_id = None
         await self._run_agent_and_emit(ctx)
-
-    @classmethod
-    def _prepare_handoff_messages(cls, messages: Sequence[Message]) -> list[Message]:
-        """Prepare cross-executor handoff messages for replay safety.
-
-        Cross-agent workflow handoff should preserve user intent and assistant outcomes,
-        but avoid replaying internal tool-call protocol messages that can be invalid
-        outside their original response loop.
-        """
-        prepared: list[Message] = []
-        for message in messages:
-            filtered_contents = [
-                content for content in message.contents if content.type not in cls._HANDOFF_EXCLUDED_CONTENT_TYPES
-            ]
-            if not filtered_contents:
-                continue
-            if len(filtered_contents) == len(message.contents):
-                prepared.append(message)
-                continue
-            prepared.append(
-                Message(
-                    role=message.role,
-                    contents=filtered_contents,
-                    author_name=message.author_name,
-                    message_id=message.message_id,
-                    additional_properties=dict(message.additional_properties),
-                    raw_representation=message.raw_representation,
-                )
-            )
-        return prepared
 
     @handler
     async def from_str(
@@ -497,10 +474,3 @@ class AgentExecutor(Executor):
             options["additional_function_arguments"] = additional_args
 
         return run_kwargs, options or None
-
-    _HANDOFF_EXCLUDED_CONTENT_TYPES: ClassVar[frozenset[str]] = frozenset({
-        "function_call",
-        "function_approval_request",
-        "function_approval_response",
-        "text_reasoning",
-    })

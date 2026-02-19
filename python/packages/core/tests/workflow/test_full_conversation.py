@@ -115,50 +115,6 @@ class _ToolHistoryAgent(BaseAgent):
         return _run()
 
 
-class _ReasoningHistoryAgent(BaseAgent):
-    """Agent that emits text_reasoning + tool-call internals plus a final assistant summary."""
-
-    def __init__(self, *, summary_text: str, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._summary_text = summary_text
-
-    def _messages(self) -> list[Message]:
-        return [
-            Message(
-                role="assistant",
-                contents=[
-                    Content.from_text_reasoning(
-                        text="I should call get_weather to answer this.",
-                        additional_properties={"reasoning_id": "rs_abc123"},
-                    ),
-                    Content.from_function_call(
-                        call_id="call_weather_2",
-                        name="get_weather",
-                        arguments='{"location":"Boston"}',
-                    ),
-                ],
-            ),
-            Message(
-                role="tool",
-                contents=[Content.from_function_result(call_id="call_weather_2", result="Rainy, 55F")],
-            ),
-            Message(role="assistant", contents=[Content.from_text(text=self._summary_text)]),
-        ]
-
-    def run(
-        self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
-        *,
-        stream: bool = False,
-        session: AgentSession | None = None,
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
-        async def _run() -> AgentResponse:
-            return AgentResponse(messages=self._messages())
-
-        return _run()
-
-
 class _CaptureFullConversation(Executor):
     """Captures AgentExecutorResponse.full_conversation and completes the workflow."""
 
@@ -258,8 +214,8 @@ async def test_sequential_adapter_uses_full_conversation() -> None:
     assert seen[1].role == "assistant" and "A1 reply" in (seen[1].text or "")
 
 
-async def test_sequential_handoff_strips_tool_call_internals_from_prior_history() -> None:
-    # Arrange
+async def test_sequential_handoff_preserves_function_call_for_non_reasoning_model() -> None:
+    # Arrange: non-reasoning agent emits function_call + function_result + summary
     first = _ToolHistoryAgent(
         id="tool_history_agent",
         name="ToolHistory",
@@ -275,49 +231,20 @@ async def test_sequential_handoff_strips_tool_call_internals_from_prior_history(
     outputs = result.get_outputs()
     assert outputs
 
-    # Assert second agent sees replay-safe history (no function_call internals; function_result content is retained)
+    # For non-reasoning models (no text_reasoning), function_call and function_result are
+    # both kept so the receiving agent has the full call/result pair as context.
     seen = second._last_messages  # pyright: ignore[reportPrivateUsage]
-    assert len(seen) == 3  # user, tool(function_result), assistant(summary)
+    assert len(seen) == 4  # user, assistant(function_call), tool(function_result), assistant(summary)
     assert seen[0].role == "user"
     assert "Check weather and continue" in (seen[0].text or "")
-    assert seen[1].role == "tool"
-    assert any(content.type == "function_result" for content in seen[1].contents)
-    assert seen[2].role == "assistant"
-    assert "Seattle is sunny" in (seen[2].text or "")
-    assert all(content.type not in {"function_call"} for msg in seen for content in msg.contents)
-
-
-async def test_sequential_handoff_strips_text_reasoning_from_prior_history() -> None:
-    # Arrange: first agent emits text_reasoning + tool call internals + summary
-    first = _ReasoningHistoryAgent(
-        id="reasoning_agent",
-        name="ReasoningAgent",
-        summary_text="The weather in Boston is rainy and 55F.",
-    )
-    second = _CaptureAgent(id="capture_agent", name="Capture", reply_text="Captured")
-    wf = SequentialBuilder(participants=[first, second]).build()
-
-    # Act
-    result = await wf.run("Check weather with reasoning")
-
-    # Assert workflow completed
-    outputs = result.get_outputs()
-    assert outputs
-
-    # Assert second agent sees replay-safe history (no text_reasoning/function_call; function_result is retained)
-    seen = second._last_messages  # pyright: ignore[reportPrivateUsage]
-    assert len(seen) == 3  # user, tool(function_result), assistant(summary)
-    assert seen[0].role == "user"
-    assert "Check weather with reasoning" in (seen[0].text or "")
-    assert seen[1].role == "tool"
-    assert any(content.type == "function_result" for content in seen[1].contents)
-    assert seen[2].role == "assistant"
-    assert "Boston is rainy" in (seen[2].text or "")
-    assert all(
-        content.type not in {"text_reasoning", "function_call"}
-        for msg in seen
-        for content in msg.contents
-    )
+    assert seen[1].role == "assistant"
+    assert any(content.type == "function_call" for content in seen[1].contents)
+    assert seen[2].role == "tool"
+    assert any(content.type == "function_result" for content in seen[2].contents)
+    assert seen[3].role == "assistant"
+    assert "Seattle is sunny" in (seen[3].text or "")
+    # No text_reasoning should appear (non-reasoning model)
+    assert all(content.type != "text_reasoning" for msg in seen for content in msg.contents)
 
 
 class _RoundTripCoordinator(Executor):
@@ -379,3 +306,105 @@ async def test_agent_executor_full_conversation_round_trip_does_not_duplicate_hi
     assert payload["texts"][1] == "draft reply"
     assert payload["texts"][2] == "apply feedback"
     assert payload["texts"][3] == "draft reply"
+
+
+class _SessionIdCapturingAgent(BaseAgent):
+    """Records service_session_id of the session at run() time."""
+
+    _captured_service_session_id: str | None = PrivateAttr(default="NOT_CAPTURED")
+
+    def run(
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        self._captured_service_session_id = session.service_session_id if session else None
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[Message("assistant", ["done"])])
+
+        return _run()
+
+
+class _FullHistoryReplayCoordinator(Executor):
+    """Coordinator that pre-sets service_session_id on a target executor then replays the full
+    conversation (including function calls) back to it via AgentExecutorRequest."""
+
+    def __init__(self, *, target_exec: AgentExecutor, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._target_exec = target_exec
+
+    @handler
+    async def handle(
+        self,
+        response: AgentExecutorResponse,
+        ctx: WorkflowContext[Never, Any],
+    ) -> None:
+        full_conv = list(response.full_conversation or response.agent_response.messages)
+        full_conv.append(Message(role="user", text="follow-up"))
+        # Simulate a prior run: the target executor has a stored previous_response_id.
+        self._target_exec._session.service_session_id = "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
+        await ctx.send_message(
+            AgentExecutorRequest(messages=full_conv, should_respond=True),
+            target_id=self._target_exec.id,
+        )
+
+
+async def test_run_request_with_full_history_clears_service_session_id() -> None:
+    """Replaying a full conversation (including function calls) via AgentExecutorRequest must
+    clear service_session_id so the API does not receive both previous_response_id and the
+    same function-call items in input — which would cause a 'Duplicate item' API error."""
+    tool_agent = _ToolHistoryAgent(
+        id="tool_agent", name="ToolAgent", summary_text="Done."
+    )
+    tool_exec = AgentExecutor(tool_agent, id="tool_agent")
+
+    spy_agent = _SessionIdCapturingAgent(id="spy_agent", name="SpyAgent")
+    spy_exec = AgentExecutor(spy_agent, id="spy_agent")
+
+    coordinator = _FullHistoryReplayCoordinator(id="coord", target_exec=spy_exec)
+
+    wf = (
+        WorkflowBuilder(start_executor=tool_exec, output_executors=[coordinator])
+        .add_edge(tool_exec, coordinator)
+        .add_edge(coordinator, spy_exec)
+        .build()
+    )
+
+    result = await wf.run("initial prompt")
+    assert result.get_outputs() is not None
+
+    # The spy agent must have seen service_session_id=None (cleared before run).
+    # Without the fix, it would see "resp_PREVIOUS_RUN" and the API would raise
+    # "Duplicate item found" because the same function-call IDs appear in both
+    # previous_response_id (server-stored) and the explicit input messages.
+    assert spy_agent._captured_service_session_id is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_from_response_clears_service_session_id() -> None:
+    """from_response hands off a prior agent's full conversation to the next executor.
+    The receiving executor's service_session_id must be cleared so the API does not
+    see the same items twice (via previous_response_id and in the explicit input)."""
+    tool_agent = _ToolHistoryAgent(
+        id="tool_agent2", name="ToolAgent", summary_text="Done."
+    )
+    tool_exec = AgentExecutor(tool_agent, id="tool_agent2")
+
+    spy_agent = _SessionIdCapturingAgent(id="spy_agent2", name="SpyAgent")
+    spy_exec = AgentExecutor(spy_agent, id="spy_agent2")
+    # Simulate a prior run on the spy executor.
+    spy_exec._session.service_session_id = "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
+
+    wf = (
+        WorkflowBuilder(start_executor=tool_exec, output_executors=[spy_exec])
+        .add_edge(tool_exec, spy_exec)
+        .build()
+    )
+
+    result = await wf.run("start")
+    assert result.get_outputs() is not None
+
+    assert spy_agent._captured_service_session_id is None  # pyright: ignore[reportPrivateUsage]

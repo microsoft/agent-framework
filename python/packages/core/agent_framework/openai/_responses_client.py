@@ -908,11 +908,16 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             "type": "message",
             "role": message.role,
         }
+        # Reasoning items are only valid in input when they directly preceded a function_call
+        # in the same response.  Including a reasoning item that preceded a text response
+        # (i.e. no function_call in the same message) causes an API error:
+        # "reasoning was provided without its required following item."
+        has_function_call = any(c.type == "function_call" for c in message.contents)
         for content in message.contents:
             match content.type:
                 case "text_reasoning":
-                    # Reasoning items must be sent back as top-level input items
-                    # for reasoning models that require them alongside function_calls
+                    if not has_function_call:
+                        continue  # reasoning not followed by a function_call is invalid in input
                     reasoning = self._prepare_content_for_openai(message.role, content, call_id_to_id)  # type: ignore[arg-type]
                     if reasoning:
                         all_messages.append(reasoning)
@@ -961,13 +966,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     "text": content.text,
                 }
             case "text_reasoning":
-                ret: dict[str, Any] = {
-                    "type": "reasoning",
-                    "summary": {
-                        "type": "summary_text",
-                        "text": content.text,
-                    },
-                }
+                ret: dict[str, Any] = {"type": "reasoning", "summary": []}
                 props: dict[str, Any] | None = getattr(content, "additional_properties", None)
                 if props:
                     if reasoning_id := props.get("reasoning_id"):
@@ -975,12 +974,11 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     if status := props.get("status"):
                         ret["status"] = status
                     if reasoning_text := props.get("reasoning_text"):
-                        ret["content"] = {
-                            "type": "reasoning_text",
-                            "text": reasoning_text,
-                        }
+                        ret["content"] = [{"type": "reasoning_text", "text": reasoning_text}]
                     if encrypted_content := props.get("encrypted_content"):
                         ret["encrypted_content"] = encrypted_content
+                if content.text:
+                    ret["summary"].append({"type": "summary_text", "text": content.text})
                 return ret
             case "data" | "uri":
                 if content.has_top_level_media_type("image"):
@@ -1190,6 +1188,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                 )
                 case "reasoning":  # ResponseOutputReasoning
                     reasoning_id = getattr(item, "id", None)
+                    added_reasoning = False
                     if hasattr(item, "content") and item.content:
                         for index, reasoning_content in enumerate(item.content):
                             additional_properties: dict[str, Any] = {}
@@ -1204,6 +1203,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                     additional_properties=additional_properties or None,
                                 )
                             )
+                            added_reasoning = True
                     if hasattr(item, "summary") and item.summary:
                         for summary in item.summary:
                             contents.append(
@@ -1213,6 +1213,23 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                     additional_properties={"reasoning_id": reasoning_id} if reasoning_id else None,
                                 )
                             )
+                            added_reasoning = True
+                    if not added_reasoning:
+                        # Reasoning item with no visible text (e.g. encrypted reasoning).
+                        # Always emit an empty marker so co-occurrence detection in
+                        # _prepare_handoff_messages can identify reasoning-model responses.
+                        additional_properties_empty: dict[str, Any] = {}
+                        if reasoning_id:
+                            additional_properties_empty["reasoning_id"] = reasoning_id
+                        if encrypted := getattr(item, "encrypted_content", None):
+                            additional_properties_empty["encrypted_content"] = encrypted
+                        contents.append(
+                            Content.from_text_reasoning(
+                                text="",
+                                raw_representation=item,
+                                additional_properties=additional_properties_empty or None,
+                            )
+                        )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                     call_id = getattr(item, "call_id", None) or getattr(item, "id", None)
                     outputs: list[Content] = []
@@ -1630,6 +1647,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         )
                     case "reasoning":  # ResponseOutputReasoning
                         reasoning_id = getattr(event_item, "id", None)
+                        added_reasoning = False
                         if hasattr(event_item, "content") and event_item.content:
                             for index, reasoning_content in enumerate(event_item.content):
                                 additional_properties: dict[str, Any] = {}
@@ -1648,6 +1666,23 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                         additional_properties=additional_properties or None,
                                     )
                                 )
+                                added_reasoning = True
+                        if not added_reasoning:
+                            # Reasoning item with no visible text (e.g. encrypted reasoning).
+                            # Always emit an empty marker so co-occurrence detection in
+                            # _prepare_handoff_messages can identify reasoning-model responses.
+                            additional_properties_empty: dict[str, Any] = {}
+                            if reasoning_id:
+                                additional_properties_empty["reasoning_id"] = reasoning_id
+                            if encrypted := getattr(event_item, "encrypted_content", None):
+                                additional_properties_empty["encrypted_content"] = encrypted
+                            contents.append(
+                                Content.from_text_reasoning(
+                                    text="",
+                                    raw_representation=event_item,
+                                    additional_properties=additional_properties_empty or None,
+                                )
+                            )
                     case _:
                         logger.debug("Unparsed event of type: %s: %s", event.type, event)
             case "response.function_call_arguments.delta":
