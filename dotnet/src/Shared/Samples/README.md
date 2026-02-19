@@ -1,6 +1,6 @@
-# SampleEnvironemnt.cs
+# SampleEnvironment.cs
 
-`SampleEnvironemnt.cs` defines a helper that overrides `System.Environment` class for a project.
+`SampleEnvironment.cs` defines a helper that overrides `System.Environment` class for a project.
 This override version has an enhanced `GetEnvironmentVariable` method that prompts the user
 to enter a value if the environment variable is not set.
 
@@ -9,7 +9,7 @@ for users who are new and just getting started.
 
 This file is already included in all samples via `/dotnet/samples/Directory.Build.props`.
 
-To explicitly use `SampleEnvironemnt.cs` outside of this repo, add the following to your `.csproj` file:
+To explicitly use `SampleEnvironment.cs` outside of this repo, add the following to your `.csproj` file:
 
 ```xml
 <ItemGroup>
