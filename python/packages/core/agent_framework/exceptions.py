@@ -169,13 +169,13 @@ class AdditionItemMismatch(ContentError):
 
 
 class ToolException(AgentFrameworkException):
-    """An error occurred while executing a tool."""
+    """Base class for all tool-related exceptions."""
 
     pass
 
 
 class ToolExecutionException(ToolException):
-    """An error occurred while executing a tool."""
+    """A tool or prompt call failed at runtime."""
 
     pass
 
