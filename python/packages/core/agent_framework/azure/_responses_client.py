@@ -8,9 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic
 from urllib.parse import urljoin, urlparse
 
 from azure.ai.projects.aio import AIProjectClient
-from azure.core.credentials import TokenCredential
 from openai import AsyncOpenAI
-from openai.lib.azure import AsyncAzureADTokenProvider
 
 from .._middleware import ChatMiddlewareLayer
 from .._settings import load_settings
@@ -19,6 +17,7 @@ from .._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from ..exceptions import ServiceInitializationError
 from ..observability import ChatTelemetryLayer
 from ..openai._responses_client import RawOpenAIResponsesClient
+from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
@@ -69,10 +68,8 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         endpoint: str | None = None,
         base_url: str | None = None,
         api_version: str | None = None,
-        ad_token: str | None = None,
-        ad_token_provider: AsyncAzureADTokenProvider | None = None,
         token_endpoint: str | None = None,
-        credential: TokenCredential | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         project_client: Any | None = None,
@@ -109,11 +106,12 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             api_version: The deployment API version. If provided will override the value
                 in the env vars or .env file. Currently, the api_version must be "preview".
                 Can also be set via environment variable AZURE_OPENAI_API_VERSION.
-            ad_token: The Azure Active Directory token.
-            ad_token_provider: The Azure Active Directory token provider.
             token_endpoint: The token endpoint to request an Azure token.
                 Can also be set via environment variable AZURE_OPENAI_TOKEN_ENDPOINT.
-            credential: The Azure credential for authentication.
+            credential: Azure credential or token provider for authentication. Accepts a
+                ``TokenCredential``, ``AsyncTokenCredential``, or a callable that returns a
+                bearer token string (sync or async), for example from
+                ``azure.identity.get_bearer_token_provider()``.
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests.
             async_client: An existing client to use.
@@ -230,8 +228,6 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             base_url=azure_openai_settings["base_url"],
             api_version=azure_openai_settings["api_version"],  # type: ignore
             api_key=azure_openai_settings["api_key"].get_secret_value() if azure_openai_settings["api_key"] else None,
-            ad_token=ad_token,
-            ad_token_provider=ad_token_provider,
             token_endpoint=azure_openai_settings["token_endpoint"],
             credential=credential,
             default_headers=default_headers,
@@ -246,7 +242,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         *,
         project_client: AIProjectClient | None,
         project_endpoint: str | None,
-        credential: TokenCredential | None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None,
     ) -> AsyncOpenAI:
         """Create an AsyncOpenAI client from an Azure AI Foundry project.
 
