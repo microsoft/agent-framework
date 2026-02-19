@@ -2,7 +2,6 @@
 
   <PropertyGroup>
     <IsReleaseCandidate>true</IsReleaseCandidate>
-    <VersionSuffix>preview</VersionSuffix>
     <ImplicitUsings>enable</ImplicitUsings>
     <InjectSharedThrow>true</InjectSharedThrow>
   </PropertyGroup>

@@ -2,7 +2,6 @@
 
   <PropertyGroup>
     <IsReleaseCandidate>true</IsReleaseCandidate>
-    <VersionSuffix>alpha</VersionSuffix>
   </PropertyGroup>
 
   <PropertyGroup>

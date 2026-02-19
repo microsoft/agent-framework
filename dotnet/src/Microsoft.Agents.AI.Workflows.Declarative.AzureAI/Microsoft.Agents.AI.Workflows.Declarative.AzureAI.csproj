@@ -2,7 +2,6 @@
 
   <PropertyGroup>
     <IsReleaseCandidate>true</IsReleaseCandidate>
-    <VersionSuffix>preview</VersionSuffix>
     <NoWarn>$(NoWarn);MEAI001;OPENAI001</NoWarn>
   </PropertyGroup>
 
