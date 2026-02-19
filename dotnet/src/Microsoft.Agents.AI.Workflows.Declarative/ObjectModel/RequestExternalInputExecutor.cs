@@ -26,7 +26,7 @@ internal sealed class RequestExternalInputExecutor(RequestExternalInput model, R
     protected override bool IsDiscreteAction => false;
     protected override bool EmitResultEvent => false;
 
-    protected override async ValueTask<object?> ExecuteActionAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         ExternalInputRequest inputRequest = new(new AgentResponse());
 

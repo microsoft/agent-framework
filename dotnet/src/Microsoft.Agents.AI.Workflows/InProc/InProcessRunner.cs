@@ -203,7 +203,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         {
             (object message, TypeId messageType) = await TranslateMessageAsync(envelope).ConfigureAwait(false);
 
-            await executor.ExecuteAsync(
+            await executor.ExecuteCoreAsync(
                 message,
                 messageType,
                 this.RunContext.BindWorkflowContext(receiverId, envelope.TraceContext),

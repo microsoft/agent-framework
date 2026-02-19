@@ -232,10 +232,10 @@ public abstract class Executor : IIdentified
     /// <returns>A ValueTask representing the asynchronous operation, wrapping the output from the executor.</returns>
     /// <exception cref="NotSupportedException">No handler found for the message type.</exception>
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
-    public ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, CancellationToken cancellationToken = default)
-        => this.ExecuteAsync(message, messageType, context, WorkflowTelemetryContext.Disabled, cancellationToken);
+    public ValueTask<object?> ExecuteCoreAsync(object message, TypeId messageType, IWorkflowContext context, CancellationToken cancellationToken = default)
+        => this.ExecuteCoreAsync(message, messageType, context, WorkflowTelemetryContext.Disabled, cancellationToken);
 
-    internal async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, CancellationToken cancellationToken = default)
+    internal async ValueTask<object?> ExecuteCoreAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, CancellationToken cancellationToken = default)
     {
         using var activity = telemetryContext.StartExecutorProcessActivity(this.Id, this.GetType().FullName, messageType.TypeName, message);
         activity?.CreateSourceLinks(context.TraceContext);

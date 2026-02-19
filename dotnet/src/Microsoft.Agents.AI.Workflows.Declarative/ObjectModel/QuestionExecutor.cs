@@ -41,7 +41,7 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
         return executorMessage.Result is null;
     }
 
-    protected override async ValueTask<object?> ExecuteActionAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         await this._promptCount.WriteAsync(context, 0).ConfigureAwait(false);
 

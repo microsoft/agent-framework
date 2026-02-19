@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
 internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaState state) : DeclarativeActionExecutor<EditTableV2>(model, state)
 {
-    protected override async ValueTask<object?> ExecuteActionAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(this.Model.ItemsVariable, $"{nameof(this.Model)}.{nameof(this.Model.ItemsVariable)}");
 
