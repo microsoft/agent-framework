@@ -5,6 +5,10 @@
 This example demonstrates how to use the Redis context provider to persist
 conversational details. Pass it as a constructor argument to create_agent.
 
+Note: For session history persistence, see RedisHistoryProvider in the
+conversations/redis_history_provider.py sample. RedisContextProvider is for
+AI context (RAG, memories), while RedisHistoryProvider stores message history.
+
 Requirements:
   - A Redis instance with RediSearch enabled (e.g., Redis Stack)
   - agent-framework with the Redis extra installed: pip install "agent-framework-redis"
@@ -17,6 +21,7 @@ Run:
 import asyncio
 import os
 
+from agent_framework import AgentSession
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.redis import RedisContextProvider
 from azure.identity import AzureCliCredential
@@ -77,35 +82,38 @@ async def main() -> None:
         context_providers=[provider],
     )
 
+    # Create a session to manage conversation state
+    session = agent.create_session()
+
     # Teach a user preference; the agent writes this to the provider's memory
     query = "Remember that I enjoy gumbo"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     # Ask the agent to recall the stored preference; it should retrieve from memory
     query = "What do I enjoy?"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "What did I say to you just now?"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "Remember that I have a meeting at 3pm tomorro"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "Tulips are red"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
 
     query = "What was the first thing I said to you this conversation?"
-    result = await agent.run(query)
+    result = await agent.run(query, session=session)
     print("User: ", query)
     print("Agent: ", result)
     # Drop / delete the provider index in Redis

@@ -8,10 +8,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-# NOTE: the Azure client imports above are real dependencies. When running this
-# sample outside of Azure-enabled environments you may wish to swap in the
-# `agent_framework.builtin` chat client or mock the writer executor. We keep the
-# concrete import here so readers can see an end-to-end configuration.
 from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
@@ -33,6 +29,9 @@ if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Checkpoint + human-in-the-loop quickstart.
@@ -60,9 +59,6 @@ Typical pause/resume flow
    Doing so applies the answer immediately on resume, so the system does **not**
    re-emit the same ``.
 """
-
-# Load environment variables from .env file
-load_dotenv()
 
 # Directory used for the sample's temporary checkpoint files. We isolate the
 # demo artefacts so that repeated runs do not collide with other samples and so
