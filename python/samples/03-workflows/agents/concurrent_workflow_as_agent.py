@@ -6,6 +6,10 @@ import os
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Build a concurrent workflow orchestration and wrap it as an agent.
@@ -24,18 +28,6 @@ Prerequisites:
 - Azure OpenAI access configured for AzureOpenAIResponsesClient (use az login + env vars)
 - Familiarity with Workflow events (WorkflowEvent with type "output")
 """
-
-
-def clear_and_redraw(buffers: dict[str, str], agent_order: list[str]) -> None:
-    """Clear terminal and redraw all agent outputs grouped together."""
-    # ANSI escape: clear screen and move cursor to top-left
-    print("\033[2J\033[H", end="")
-    print("===== Concurrent Agent Streaming (Live) =====\n")
-    for name in agent_order:
-        print(f"--- {name} ---")
-        print(buffers.get(name, ""))
-        print()
-    print("", end="", flush=True)
 
 
 async def main() -> None:

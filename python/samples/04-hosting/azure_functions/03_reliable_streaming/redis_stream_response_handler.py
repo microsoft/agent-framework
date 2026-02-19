@@ -25,6 +25,7 @@ class StreamChunk:
         is_done: Whether this is the final chunk in the stream.
         error: Error message if an error occurred, otherwise None.
     """
+
     entry_id: str
     text: str | None = None
     is_done: bool = False
@@ -84,7 +85,7 @@ class RedisStreamResponseHandler:
                 "text": text,
                 "sequence": str(sequence),
                 "timestamp": str(int(time.time() * 1000)),
-            }
+            },
         )
         await self._redis.expire(stream_key, self._stream_ttl)
 
@@ -107,7 +108,7 @@ class RedisStreamResponseHandler:
                 "sequence": str(sequence),
                 "timestamp": str(int(time.time() * 1000)),
                 "done": "true",
-            }
+            },
         )
         await self._redis.expire(stream_key, self._stream_ttl)
 
@@ -152,7 +153,7 @@ class RedisStreamResponseHandler:
                             timeout_seconds = self.MAX_EMPTY_READS * self.POLL_INTERVAL_MS / 1000
                             yield StreamChunk(
                                 entry_id=start_id,
-                                error=f"Stream not found or timed out after {timeout_seconds} seconds"
+                                error=f"Stream not found or timed out after {timeout_seconds} seconds",
                             )
                             return
 

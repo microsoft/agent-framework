@@ -26,6 +26,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from agent_framework.exceptions import AgentInvalidRequestException, AgentInvalidResponseException
 
 from ._declarative_base import (
     ActionComplete,
@@ -241,19 +242,6 @@ AGENT_REGISTRY_KEY = "_agent_registry"
 TOOL_REGISTRY_KEY = "_tool_registry"
 # Key to store external loop state for resumption
 EXTERNAL_LOOP_STATE_KEY = "_external_loop_state"
-
-
-class AgentInvocationError(Exception):
-    """Raised when an agent invocation fails.
-
-    Attributes:
-        agent_name: Name of the agent that failed
-        message: Error description
-    """
-
-    def __init__(self, agent_name: str, message: str) -> None:
-        self.agent_name = agent_name
-        super().__init__(f"Agent '{agent_name}' invocation failed: {message}")
 
 
 @dataclass
@@ -807,7 +795,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             state.set("Agent.error", error_msg)
             if result_property:
                 state.set(result_property, {"error": error_msg})
-            raise AgentInvocationError(agent_name, "not found in registry")
+            raise AgentInvalidRequestException(f"Agent '{agent_name}' invocation failed: not found in registry")
 
         iteration = 0
 
@@ -824,14 +812,14 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 auto_send=auto_send,
                 messages_path=messages_path,
             )
-        except AgentInvocationError:
+        except (AgentInvalidRequestException, AgentInvalidResponseException):
             raise  # Re-raise our own errors
         except Exception as e:
             logger.error(f"InvokeAzureAgent: error invoking agent '{agent_name}': {e}")
             state.set("Agent.error", str(e))
             if result_property:
                 state.set(result_property, {"error": str(e)})
-            raise AgentInvocationError(agent_name, str(e)) from e
+            raise AgentInvalidResponseException(f"Agent '{agent_name}' invocation failed: {e}") from e
 
         # Check external loop condition
         if external_loop_when:
@@ -948,7 +936,9 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
 
         if agent is None:
             logger.error(f"InvokeAzureAgent: agent '{agent_name}' not found during loop resumption")
-            raise AgentInvocationError(agent_name, "not found during loop resumption")
+            raise AgentInvalidRequestException(
+                f"Agent '{agent_name}' invocation failed: not found during loop resumption"
+            )
 
         try:
             accumulated_response, all_messages, tool_calls = await self._invoke_agent_and_store_results(
@@ -963,12 +953,12 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 auto_send=loop_state.auto_send,
                 messages_path=loop_state.messages_path,
             )
-        except AgentInvocationError:
+        except (AgentInvalidRequestException, AgentInvalidResponseException):
             raise  # Re-raise our own errors
         except Exception as e:
             logger.error(f"InvokeAzureAgent: error invoking agent '{agent_name}' during loop: {e}")
             state.set("Agent.error", str(e))
-            raise AgentInvocationError(agent_name, str(e)) from e
+            raise AgentInvalidResponseException(f"Agent '{agent_name}' invocation failed: {e}") from e
 
         # Re-evaluate the condition AFTER the agent responds
         # This is critical: the agent's response may have set NeedsTicket=true or IsResolved=true

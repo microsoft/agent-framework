@@ -6,7 +6,7 @@ using Microsoft.Extensions.AI;
 
 namespace WorkflowAsAnAgentObservabilitySample;
 
-internal static class WorkflowHelper
+internal static partial class WorkflowHelper
 {
     /// <summary>
     /// Creates a workflow that uses two language agents to process input concurrently.
@@ -50,21 +50,16 @@ internal static class WorkflowHelper
     /// <summary>
     /// Executor that starts the concurrent processing by sending messages to the agents.
     /// </summary>
-    private sealed class ConcurrentStartExecutor() : Executor("ConcurrentStartExecutor")
+    private sealed partial class ConcurrentStartExecutor() : Executor("ConcurrentStartExecutor")
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-        {
-            return routeBuilder
-                .AddHandler<List<ChatMessage>>(this.RouteMessages)
-                .AddHandler<TurnToken>(this.RouteTurnTokenAsync);
-        }
-
-        private ValueTask RouteMessages(List<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken)
+        [MessageHandler]
+        internal ValueTask RouteMessages(List<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken)
         {
             return context.SendMessageAsync(messages, cancellationToken: cancellationToken);
         }
 
-        private ValueTask RouteTurnTokenAsync(TurnToken token, IWorkflowContext context, CancellationToken cancellationToken)
+        [MessageHandler]
+        internal ValueTask RouteTurnTokenAsync(TurnToken token, IWorkflowContext context, CancellationToken cancellationToken)
         {
             return context.SendMessageAsync(token, cancellationToken: cancellationToken);
         }
@@ -73,7 +68,8 @@ internal static class WorkflowHelper
     /// <summary>
     /// Executor that aggregates the results from the concurrent agents.
     /// </summary>
-    private sealed class ConcurrentAggregationExecutor() : Executor<List<ChatMessage>>("ConcurrentAggregationExecutor")
+    [YieldsOutput(typeof(List<ChatMessage>))]
+    private sealed partial class ConcurrentAggregationExecutor() : Executor<List<ChatMessage>>("ConcurrentAggregationExecutor")
     {
         private readonly List<ChatMessage> _messages = [];
 

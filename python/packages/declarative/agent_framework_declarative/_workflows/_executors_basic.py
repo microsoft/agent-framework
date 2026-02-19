@@ -8,7 +8,7 @@ Each action becomes a node in the workflow graph.
 
 from typing import Any
 
-from agent_framework._workflows import (
+from agent_framework import (
     WorkflowContext,
     handler,
 )

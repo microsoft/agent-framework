@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated
 from agent_framework import Message, tool
 from agent_framework.observability import get_tracer
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
@@ -39,6 +40,9 @@ opentelemetry-instrument \
 You can also set the environment variables instead of passing them as CLI arguments.
 
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # NOTE: approval_mode="never_require" is for sample brevity.

@@ -9,11 +9,16 @@ from agent_framework import AgentSession, BaseContextProvider, Message, SessionC
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework  # pyright: ignore[reportUnknownVariableType]
 from azure.identity import DefaultAzureCredential
+from dotenv import load_dotenv
 
 if sys.version_info >= (3, 12):
     from typing import override
 else:
     from typing_extensions import override
+
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @dataclass
@@ -94,11 +99,7 @@ class TextSearchContextProvider(BaseContextProvider):
 
         context.extend_messages(
             self.source_id,
-            [
-                Message(
-                    role="user", text="\n\n".join(json.dumps(result.__dict__, indent=2) for result in results)
-                )
-            ],
+            [Message(role="user", text="\n\n".join(json.dumps(result.__dict__, indent=2) for result in results))],
         )
 
 

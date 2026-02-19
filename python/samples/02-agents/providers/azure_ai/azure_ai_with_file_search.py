@@ -8,6 +8,10 @@ from pathlib import Path
 from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 The following sample demonstrates how to create a simple, Azure AI agent that

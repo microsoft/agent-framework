@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, SessionContext
-from agent_framework.exceptions import ServiceInitializationError, SettingNotFoundError
+from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials import AzureKeyCredential
 
 from agent_framework_azure_ai_search._context_provider import AzureAISearchContextProvider
@@ -180,7 +180,7 @@ class TestInitCredentialResolution:
         assert provider.credential is akc
 
     def test_no_credential_raises(self) -> None:
-        with pytest.raises(ServiceInitializationError, match="Azure credential is required"):
+        with pytest.raises(ValueError, match="Azure credential is required"):
             AzureAISearchContextProvider(
                 endpoint="https://test.search.windows.net",
                 index_name="idx",
@@ -216,7 +216,7 @@ class TestInitAgenticValidation:
             )
 
     def test_missing_model_deployment_name_raises(self) -> None:
-        with pytest.raises(ServiceInitializationError, match="model_deployment_name"):
+        with pytest.raises(ValueError, match="model_deployment_name"):
             AzureAISearchContextProvider(
                 source_id="s",
                 endpoint="https://test.search.windows.net",

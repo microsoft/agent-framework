@@ -7,9 +7,13 @@ from typing import Annotated
 from agent_framework import Agent, tool
 from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 This sample shows how you can observe an agent in Agent Framework by using the

@@ -24,6 +24,7 @@ from agent_framework import (
     SupportsAgentRun,
     Workflow,
 )
+from agent_framework.exceptions import WorkflowException
 
 from .._loader import AgentFactory
 from ._declarative_builder import DeclarativeWorkflowBuilder
@@ -31,7 +32,7 @@ from ._declarative_builder import DeclarativeWorkflowBuilder
 logger = logging.getLogger("agent_framework.declarative")
 
 
-class DeclarativeWorkflowError(Exception):
+class DeclarativeWorkflowError(WorkflowException):
     """Exception raised for errors in declarative workflow processing."""
 
     pass

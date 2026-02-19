@@ -27,4 +27,16 @@ internal interface ICheckpointManager
     /// cref="Checkpoint"/> associated with the specified <paramref name="checkpointInfo"/>.</returns>
     /// <exception cref="KeyNotFoundException">Thrown if the checkpoint is not found.</exception>
     ValueTask<Checkpoint> LookupCheckpointAsync(string runId, CheckpointInfo checkpointInfo);
+
+    /// <summary>
+    /// Asynchronously retrieves the collection of checkpoint information for the specified run identifier, optionally
+    /// filtered by a parent checkpoint.
+    /// </summary>
+    /// <param name="runId">The unique identifier of the run for which to retrieve checkpoint information. Cannot be null or empty.</param>
+    /// <param name="withParent">An optional parent checkpoint to filter the results. If specified, only checkpoints with the given parent are
+    /// returned; otherwise, all checkpoints for the run are included.</param>
+    /// <returns>A value task representing the asynchronous operation. The result contains a collection of <see
+    /// cref="CheckpointInfo"/> objects associated with the specified run. The collection is empty if no checkpoints are
+    /// found.</returns>
+    ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string runId, CheckpointInfo? withParent = null);
 }

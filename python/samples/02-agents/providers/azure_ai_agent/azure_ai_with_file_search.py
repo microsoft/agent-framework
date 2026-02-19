@@ -8,6 +8,10 @@ from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import FileInfo, VectorStore
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 The following sample demonstrates how to create a simple, Azure AI agent that
