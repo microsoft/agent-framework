@@ -49,7 +49,7 @@ Update your `local.settings.json` with your Azure OpenAI credentials:
 1. **Start the Function App**:
 
    ```bash
-   cd dotnet/samples/AzureFunctions/07_AgentAsMcpTool
+   cd dotnet/samples/04-hosting/DurableAgents/AzureFunctions/06_AgentAsMcpTool
    func start
    ```
 

@@ -1,10 +1,10 @@
 # Long Running Tools Sample
 
-This sample demonstrates how to use the Durable Agent Framework (DAFx) to create agents with long running tools. This sample builds on the [05_AgentOrchestration_HITL](../05_AgentOrchestration_HITL) sample by adding a publisher agent that can start and manage content generation workflows. A key difference is that the publisher agent knows the IDs of the workflows it starts, so it can check the status of the workflows and approve or reject them without being explicitly given the context (instance IDs, etc).
+This sample demonstrates how to use the Durable Agent Framework (DAFx) to create agents with long running tools. This sample builds on the [04_AgentOrchestration_HITL](../04_AgentOrchestration_HITL) sample by adding a publisher agent that can start and manage content generation workflows. A key difference is that the publisher agent knows the IDs of the workflows it starts, so it can check the status of the workflows and approve or reject them without being explicitly given the context (instance IDs, etc).
 
 ## Key Concepts Demonstrated
 
-The same key concepts as the [05_AgentOrchestration_HITL](../05_AgentOrchestration_HITL) sample are demonstrated, but with the following additional concepts:
+The same key concepts as the [04_AgentOrchestration_HITL](../04_AgentOrchestration_HITL) sample are demonstrated, but with the following additional concepts:
 
 - **Long running tools**: Using `DurableAgentContext.Current` to start orchestrations from tool calls
 - **Multi-agent orchestration**: Agents can start and manage workflows that orchestrate other agents
