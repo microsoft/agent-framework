@@ -7,6 +7,17 @@
   <Folder Name="/Samples/">
     <File Path="samples/README.md" />
   </Folder>
+  <Folder Name="/Samples/01-get-started/">
+    <Project Path="samples/01-get-started/01_hello_agent/01_hello_agent.csproj" />
+    <Project Path="samples/01-get-started/02_add_tools/02_add_tools.csproj" />
+    <Project Path="samples/01-get-started/03_multi_turn/03_multi_turn.csproj" />
+    <Project Path="samples/01-get-started/04_memory/04_memory.csproj" />
+    <Project Path="samples/01-get-started/05_first_workflow/05_first_workflow.csproj" />
+    <Project Path="samples/01-get-started/06_host_your_agent/06_host_your_agent.csproj" />
+  </Folder>
+  <Folder Name="/Samples/02-agents/"/>
+  <Folder Name="/Samples/03-workflows/"/>
+  <Folder Name="/Samples/04-hosting/"/>
   <Folder Name="/Samples/05-end-to-end/">
     <Project Path="samples/05-end-to-end/AgentWithPurview/AgentWithPurview.csproj" />
     <Project Path="samples/05-end-to-end/M365Agent/M365Agent.csproj" />
@@ -37,7 +48,6 @@
   <Folder Name="/Samples/Durable/Agents/AzureFunctions/">
     <File Path="samples/Durable/Agents/AzureFunctions/.editorconfig" />
     <File Path="samples/Durable/Agents/AzureFunctions/README.md" />
-    <Project Path="samples/Durable/Agents/AzureFunctions/01_SingleAgent/01_SingleAgent.csproj" />
     <Project Path="samples/Durable/Agents/AzureFunctions/02_AgentOrchestration_Chaining/02_AgentOrchestration_Chaining.csproj" />
     <Project Path="samples/Durable/Agents/AzureFunctions/03_AgentOrchestration_Concurrency/03_AgentOrchestration_Concurrency.csproj" />
     <Project Path="samples/Durable/Agents/AzureFunctions/04_AgentOrchestration_Conditionals/04_AgentOrchestration_Conditionals.csproj" />
@@ -84,9 +94,6 @@
   </Folder>
   <Folder Name="/Samples/GettingStarted/Agents/">
     <File Path="samples/GettingStarted/Agents/README.md" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step01_Running/Agent_Step01_Running.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step02_MultiturnConversation/Agent_Step02_MultiturnConversation.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step03_UsingFunctionTools/Agent_Step03_UsingFunctionTools.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step04_UsingFunctionToolsWithApprovals/Agent_Step04_UsingFunctionToolsWithApprovals.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step05_StructuredOutput/Agent_Step05_StructuredOutput.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step06_PersistedConversations/Agent_Step06_PersistedConversations.csproj" />
@@ -146,7 +153,6 @@
     <File Path="samples/GettingStarted/AgentWithMemory/README.md" />
     <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step01_ChatHistoryMemory/AgentWithMemory_Step01_ChatHistoryMemory.csproj" />
     <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step02_MemoryUsingMem0/AgentWithMemory_Step02_MemoryUsingMem0.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step03_CustomMemory/AgentWithMemory_Step03_CustomMemory.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
@@ -261,7 +267,6 @@
     <Project Path="samples/GettingStarted/Workflows/Visualization/Visualization.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/_Foundational/">
-    <Project Path="samples/GettingStarted/Workflows/_Foundational/01_ExecutorsAndEdges/01_ExecutorsAndEdges.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/02_Streaming/02_Streaming.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/03_AgentsInWorkflows/03_AgentsInWorkflows.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/04_AgentWorkflowPatterns/04_AgentWorkflowPatterns.csproj" />

@@ -2,7 +2,6 @@
 
 This directory contains samples for Azure Functions.
 
-- **[01_SingleAgent](01_SingleAgent)**: A sample that demonstrates how to host a single conversational agent in an Azure Functions app and invoke it directly over HTTP.
 - **[02_AgentOrchestration_Chaining](02_AgentOrchestration_Chaining)**: A sample that demonstrates how to host a single conversational agent in an Azure Functions app and invoke it using a durable orchestration.
 - **[03_AgentOrchestration_Concurrency](03_AgentOrchestration_Concurrency)**: A sample that demonstrates how to host multiple agents in an Azure Functions app and run them concurrently using a durable orchestration.
 - **[04_AgentOrchestration_Conditionals](04_AgentOrchestration_Conditionals)**: A sample that demonstrates how to host multiple agents in an Azure Functions app and run them sequentially using a durable orchestration with conditionals.
@@ -135,7 +134,7 @@ These environment variables, when set, will override the values in the `local.se
 Navigate to the sample directory and start the Azure Functions app:
 
 ```bash
-cd dotnet/samples/AzureFunctions/01_SingleAgent
+cd dotnet/samples/01-get-started/06_host_your_agent
 func start
 ```
 

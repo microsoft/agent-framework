@@ -146,8 +146,8 @@ I cannot process this request as it appears to contain unsafe content.
 
 ## Related Samples
 
+- **05_first_workflow** - Basic executor and edge concepts
 - **03_AgentsInWorkflows** - Introduction to using agents in workflows
-- **01_ExecutorsAndEdges** - Basic executor and edge concepts
 - **02_Streaming** - Understanding streaming events
 - **Concurrent** - Parallel processing with fan-out/fan-in patterns
 
