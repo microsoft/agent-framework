@@ -25,7 +25,7 @@ internal static class Step5EntryPoint
 
         StreamingRun handle =
             await environment.WithCheckpointing(checkpointManager)
-                             .StreamAsync(workflow, NumberSignal.Init)
+                             .RunStreamingAsync(workflow, NumberSignal.Init)
                              .ConfigureAwait(false);
 
         List<CheckpointInfo> checkpoints = [];
@@ -38,13 +38,13 @@ internal static class Step5EntryPoint
 
         CheckpointInfo targetCheckpoint = checkpoints[2];
 
-        Console.WriteLine($"Restoring to checkpoint {targetCheckpoint} from run {targetCheckpoint.RunId}");
+        Console.WriteLine($"Restoring to checkpoint {targetCheckpoint} from session {targetCheckpoint.SessionId}");
         if (rehydrateToRestore)
         {
             await handle.DisposeAsync().ConfigureAwait(false);
 
             handle = await environment.WithCheckpointing(checkpointManager)
-                                      .ResumeStreamAsync(workflow, targetCheckpoint, CancellationToken.None)
+                                      .ResumeStreamingAsync(workflow, targetCheckpoint, CancellationToken.None)
                                       .ConfigureAwait(false);
         }
         else

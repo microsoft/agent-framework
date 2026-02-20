@@ -33,7 +33,7 @@ internal static class Step2EntryPoint
 
     public static async ValueTask<string> RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment, string input = "This is a spam message.")
     {
-        StreamingRun handle = await environment.StreamAsync(WorkflowInstance, input: input).ConfigureAwait(false);
+        StreamingRun handle = await environment.RunStreamingAsync(WorkflowInstance, input: input).ConfigureAwait(false);
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (evt)

@@ -33,7 +33,7 @@ public class CheckpointParentTests
 
         // Act
         StreamingRun run =
-            await env.WithCheckpointing(checkpointManager).StreamAsync(workflow, "Hello");
+            await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
 
         List<CheckpointInfo> checkpoints = [];
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
@@ -49,7 +49,7 @@ public class CheckpointParentTests
 
         CheckpointInfo firstCheckpoint = checkpoints[0];
         Checkpoint storedFirst = await ((ICheckpointManager)checkpointManager)
-            .LookupCheckpointAsync(firstCheckpoint.RunId, firstCheckpoint);
+            .LookupCheckpointAsync(firstCheckpoint.SessionId, firstCheckpoint);
         storedFirst.Parent.Should().BeNull("the first checkpoint should have no parent");
     }
 
@@ -72,7 +72,7 @@ public class CheckpointParentTests
         InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // Act
-        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).StreamAsync(workflow, "Hello");
+        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
 
         List<CheckpointInfo> checkpoints = [];
         using CancellationTokenSource cts = new();
@@ -94,16 +94,16 @@ public class CheckpointParentTests
 
         // Verify the parent chain
         Checkpoint stored0 = await ((ICheckpointManager)checkpointManager)
-            .LookupCheckpointAsync(checkpoints[0].RunId, checkpoints[0]);
+            .LookupCheckpointAsync(checkpoints[0].SessionId, checkpoints[0]);
         stored0.Parent.Should().BeNull("the first checkpoint should have no parent");
 
         Checkpoint stored1 = await ((ICheckpointManager)checkpointManager)
-            .LookupCheckpointAsync(checkpoints[1].RunId, checkpoints[1]);
+            .LookupCheckpointAsync(checkpoints[1].SessionId, checkpoints[1]);
         stored1.Parent.Should().NotBeNull("the second checkpoint should have a parent");
         stored1.Parent.Should().Be(checkpoints[0], "the second checkpoint's parent should be the first checkpoint");
 
         Checkpoint stored2 = await ((ICheckpointManager)checkpointManager)
-            .LookupCheckpointAsync(checkpoints[2].RunId, checkpoints[2]);
+            .LookupCheckpointAsync(checkpoints[2].SessionId, checkpoints[2]);
         stored2.Parent.Should().NotBeNull("the third checkpoint should have a parent");
         stored2.Parent.Should().Be(checkpoints[1], "the third checkpoint's parent should be the second checkpoint");
     }
@@ -126,7 +126,7 @@ public class CheckpointParentTests
         InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // First run: collect a checkpoint to resume from
-        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).StreamAsync(workflow, "Hello");
+        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
 
         List<CheckpointInfo> firstRunCheckpoints = [];
         using CancellationTokenSource cts = new();
@@ -149,7 +149,7 @@ public class CheckpointParentTests
         await run.DisposeAsync();
 
         // Act: Resume from the first checkpoint
-        StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamAsync(workflow, resumePoint);
+        StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamingAsync(workflow, resumePoint);
 
         List<CheckpointInfo> resumedCheckpoints = [];
         using CancellationTokenSource cts2 = new();
@@ -168,7 +168,7 @@ public class CheckpointParentTests
         // Assert: The first checkpoint after resume should have the resume point as its parent.
         resumedCheckpoints.Should().NotBeEmpty();
         Checkpoint storedResumed = await ((ICheckpointManager)checkpointManager)
-            .LookupCheckpointAsync(resumedCheckpoints[0].RunId, resumedCheckpoints[0]);
+            .LookupCheckpointAsync(resumedCheckpoints[0].SessionId, resumedCheckpoints[0]);
         storedResumed.Parent.Should().NotBeNull("checkpoint created after resume should have a parent");
         storedResumed.Parent.Should().Be(resumePoint, "checkpoint after resume should reference the checkpoint we resumed from");
     }

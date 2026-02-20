@@ -24,7 +24,7 @@ internal static class WorkflowFactory
         // Build the workflow by adding executors and connecting them
         return new WorkflowBuilder(startExecutor)
             .AddFanOutEdge(startExecutor, [frenchAgent, englishAgent])
-            .AddFanInEdge([frenchAgent, englishAgent], aggregationExecutor)
+            .AddFanInBarrierEdge([frenchAgent, englishAgent], aggregationExecutor)
             .WithOutputFrom(aggregationExecutor)
             .Build();
     }

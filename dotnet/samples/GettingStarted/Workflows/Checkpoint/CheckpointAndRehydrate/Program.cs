@@ -33,7 +33,7 @@ public static class Program
 
         // Execute the workflow and save checkpoints
         await using StreamingRun checkpointedRun = await InProcessExecution
-            .StreamAsync(workflow, NumberSignal.Init, checkpointManager);
+            .RunStreamingAsync(workflow, NumberSignal.Init, checkpointManager);
 
         await foreach (WorkflowEvent evt in checkpointedRun.WatchStreamAsync())
         {
@@ -73,7 +73,7 @@ public static class Program
         CheckpointInfo savedCheckpoint = checkpoints[CheckpointIndex];
 
         await using StreamingRun newCheckpointedRun =
-            await InProcessExecution.ResumeStreamAsync(newWorkflow, savedCheckpoint, checkpointManager);
+            await InProcessExecution.ResumeStreamingAsync(newWorkflow, savedCheckpoint, checkpointManager);
 
         await foreach (WorkflowEvent evt in newCheckpointedRun.WatchStreamAsync())
         {

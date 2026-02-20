@@ -44,7 +44,7 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
         }
     }
 
-    public string RunId => this._stepRunner.RunId;
+    public string SessionId => this._stepRunner.SessionId;
 
     public bool IsCheckpointingEnabled => this._checkpointingHandle.IsCheckpointingEnabled;
 
