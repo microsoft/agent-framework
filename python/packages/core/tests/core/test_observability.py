@@ -2633,6 +2633,8 @@ def test_configure_otel_providers_reads_sensitive_data_from_env(monkeypatch):
 
     # 4. Call configure_otel_providers() without explicit enable_sensitive_data param.
     #    Before the fix this left enable_sensitive_data as False.
+    #    Mock _configure to avoid mutating global OTel providers.
+    monkeypatch.setattr(observability.ObservabilitySettings, "_configure", lambda self, **kwargs: None)
     observability.configure_otel_providers()
 
     assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
@@ -2659,6 +2661,8 @@ def test_configure_otel_providers_explicit_param_overrides_env(monkeypatch):
     importlib.reload(observability)
 
     # Env says true, but explicit param says False — param wins.
+    # Mock _configure to avoid mutating global OTel providers.
+    monkeypatch.setattr(observability.ObservabilitySettings, "_configure", lambda self, **kwargs: None)
     monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
     observability.configure_otel_providers(enable_sensitive_data=False)
 

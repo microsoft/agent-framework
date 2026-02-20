@@ -1067,7 +1067,12 @@ def configure_otel_providers(
         else:
             env_port = os.getenv("VS_CODE_EXTENSION_PORT")
             if env_port:
-                OBSERVABILITY_SETTINGS.vs_code_extension_port = int(env_port)
+                env_port_stripped = env_port.strip()
+                if env_port_stripped:
+                    try:
+                        OBSERVABILITY_SETTINGS.vs_code_extension_port = int(env_port_stripped)
+                    except ValueError as exc:
+                        raise ValueError(f"Invalid integer value for VS_CODE_EXTENSION_PORT: {env_port!r}") from exc
 
     OBSERVABILITY_SETTINGS._configure(  # type: ignore[reportPrivateUsage]
         additional_exporters=exporters,
