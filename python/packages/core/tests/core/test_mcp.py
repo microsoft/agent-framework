@@ -1471,13 +1471,14 @@ def test_mcp_streamable_http_tool_get_mcp_client_all_params():
     with patch("agent_framework._mcp.streamable_http_client") as mock_http_client:
         tool.get_mcp_client()
 
-        # Verify streamable_http_client was called with None for http_client
-        # (since we didn't provide one, the API will create its own)
-        mock_http_client.assert_called_once_with(
-            url="http://example.com",
-            http_client=None,
-            terminate_on_close=True,
-        )
+        # An auto-created httpx client with OTel trace injection should be passed
+        mock_http_client.assert_called_once()
+        call_kwargs = mock_http_client.call_args.kwargs
+        assert call_kwargs["url"] == "http://example.com"
+        assert call_kwargs["terminate_on_close"] is True
+        # The http_client should be an auto-created instrumented client, not None
+        assert call_kwargs["http_client"] is not None
+        assert call_kwargs["http_client"] is tool._auto_httpx_client
 
 
 def test_mcp_websocket_tool_get_mcp_client_with_kwargs():
@@ -1678,6 +1679,7 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
 
         # Test 2: Tool with user-provided client
         user_client = Mock()
+        user_client.event_hooks = {"request": [], "response": []}
         tool2 = MCPStreamableHTTPTool(
             name="test",
             url="http://localhost:8081/mcp",
@@ -1695,6 +1697,63 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
         # Get the last call (should be from tool2.connect())
         call_args = mock_client.call_args
         assert call_args.kwargs["http_client"] is user_client, "User's client should be passed through"
+
+
+async def test_mcp_streamable_http_tool_otel_trace_injection():
+    """Test that MCPStreamableHTTPTool injects OpenTelemetry trace context into outgoing requests."""
+    from agent_framework._mcp import _inject_otel_context
+
+    # Test 1: Auto-created client gets the OTel hook
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://localhost:8081/mcp",
+    )
+    with patch("agent_framework._mcp.streamable_http_client") as mock_client:
+        tool.get_mcp_client()
+        call_kwargs = mock_client.call_args.kwargs
+        client = call_kwargs["http_client"]
+        assert _inject_otel_context in client.event_hooks["request"], (
+            "Auto-created client should have OTel trace injection hook"
+        )
+
+    # Test 2: User-provided client gets the OTel hook added
+    import httpx
+
+    user_client = httpx.AsyncClient()
+    tool2 = MCPStreamableHTTPTool(
+        name="test",
+        url="http://localhost:8081/mcp",
+        http_client=user_client,
+    )
+    with patch("agent_framework._mcp.streamable_http_client") as mock_client:
+        tool2.get_mcp_client()
+        assert _inject_otel_context in user_client.event_hooks["request"], (
+            "User-provided client should have OTel trace injection hook"
+        )
+
+    # Test 3: Hook is not duplicated on repeated calls
+    with patch("agent_framework._mcp.streamable_http_client") as mock_client:
+        tool2.get_mcp_client()
+        tool2.get_mcp_client()
+        count = user_client.event_hooks["request"].count(_inject_otel_context)
+        assert count == 1, f"Hook should appear exactly once, found {count}"
+
+    await user_client.aclose()
+
+    # Test 4: Auto-created client is cached and reused
+    tool3 = MCPStreamableHTTPTool(
+        name="test",
+        url="http://localhost:8081/mcp",
+    )
+    with patch("agent_framework._mcp.streamable_http_client") as mock_client:
+        tool3.get_mcp_client()
+        first_client = tool3._auto_httpx_client
+        tool3.get_mcp_client()
+        assert tool3._auto_httpx_client is first_client, "Auto-created client should be reused"
+
+    # Test 5: close() cleans up auto-created client
+    await tool3.close()
+    assert tool3._auto_httpx_client is None, "Auto-created client should be cleaned up after close()"
 
 
 async def test_load_tools_with_pagination():
