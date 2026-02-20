@@ -430,17 +430,27 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         agent_config = self._action_def.get("agent")
 
         if isinstance(agent_config, str):
+            if agent_config.startswith("="):
+                evaluated = state.eval_if_expression(agent_config)
+                return str(evaluated) if evaluated is not None else None
             return agent_config
 
         if isinstance(agent_config, dict):
             agent_dict = cast(dict[str, Any], agent_config)
             name = agent_dict.get("name")
             if name is not None and isinstance(name, str):
-                # Support dynamic agent name from expression (would need async eval)
+                if name.startswith("="):
+                    evaluated = state.eval_if_expression(name)
+                    return str(evaluated) if evaluated is not None else None
                 return str(name)
 
         agent_name = self._action_def.get("agentName")
-        return str(agent_name) if isinstance(agent_name, str) else None
+        if isinstance(agent_name, str):
+            if agent_name.startswith("="):
+                evaluated = state.eval_if_expression(agent_name)
+                return str(evaluated) if evaluated is not None else None
+            return agent_name
+        return None
 
     def _get_input_config(self) -> tuple[dict[str, Any], Any, str | None, int]:
         """Parse input configuration.

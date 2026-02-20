@@ -1,0 +1,76 @@
+# DeepResearch workflow (Magentic orchestration pattern).
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: deep_research_workflow
+  actions:
+
+    # Analyze task and correlate facts
+    - kind: InvokeAzureAgent
+      id: invoke_research
+      conversationId: =System.ConversationId
+      agent:
+        name: ResearchAgent
+
+    # Devise a plan
+    - kind: InvokeAzureAgent
+      id: invoke_planner
+      conversationId: =System.ConversationId
+      agent:
+        name: PlannerAgent
+
+    - kind: SetVariable
+      id: init_counter
+      variable: Local.TurnCount
+      value: =0
+
+    # Manager evaluates and delegates (loop entry)
+    - kind: InvokeAzureAgent
+      id: invoke_manager
+      conversationId: =System.ConversationId
+      agent:
+        name: ManagerAgent
+      output:
+        responseObject: Local.ManagerResult
+
+    # If satisfied, skip to summary
+    - kind: ConditionGroup
+      id: check_satisfied
+      conditions:
+        - id: is_satisfied
+          condition: =Local.ManagerResult.is_request_satisfied.answer
+          actions:
+            - kind: GotoAction
+              id: goto_summary
+              actionId: invoke_summary
+
+    # Invoke the worker the manager selected
+    - kind: InvokeAzureAgent
+      id: invoke_worker
+      conversationId: =System.ConversationId
+      agent:
+        name: =Local.ManagerResult.next_speaker.answer
+
+    # Increment and loop back if under limit
+    - kind: SetVariable
+      id: increment_counter
+      variable: Local.TurnCount
+      value: =Local.TurnCount + 1
+
+    - kind: ConditionGroup
+      id: check_limit
+      conditions:
+        - id: can_continue
+          condition: =Local.TurnCount < 10
+          actions:
+            - kind: GotoAction
+              id: loop_back
+              actionId: invoke_manager
+
+    # Synthesize final response
+    - kind: InvokeAzureAgent
+      id: invoke_summary
+      conversationId: =System.ConversationId
+      agent:
+        name: SummaryAgent

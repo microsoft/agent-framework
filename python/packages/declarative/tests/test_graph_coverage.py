@@ -740,6 +740,90 @@ class TestAgentExecutorsCoverage:
         name = executor._get_agent_name(state)
         assert name == "LegacyAgent"
 
+    async def test_agent_executor_get_agent_name_string_expression(self, mock_context, mock_state):
+        """Test agent name extraction from simple string expression."""
+        from unittest.mock import patch
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            InvokeAzureAgentExecutor,
+        )
+
+        action_def = {
+            "kind": "InvokeAzureAgent",
+            "agent": "=Local.SelectedAgent",
+        }
+        executor = InvokeAzureAgentExecutor(action_def)
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        with patch.object(state, "eval_if_expression", return_value="DynamicAgent"):
+            name = executor._get_agent_name(state)
+        assert name == "DynamicAgent"
+
+    async def test_agent_executor_get_agent_name_dict_expression(self, mock_context, mock_state):
+        """Test agent name extraction from nested dict with expression."""
+        from unittest.mock import patch
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            InvokeAzureAgentExecutor,
+        )
+
+        action_def = {
+            "kind": "InvokeAzureAgent",
+            "agent": {"name": "=Local.ManagerResult.next_speaker.answer"},
+        }
+        executor = InvokeAzureAgentExecutor(action_def)
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        with patch.object(state, "eval_if_expression", return_value="WeatherAgent"):
+            name = executor._get_agent_name(state)
+        assert name == "WeatherAgent"
+
+    async def test_agent_executor_get_agent_name_legacy_expression(self, mock_context, mock_state):
+        """Test agent name extraction from legacy agentName with expression."""
+        from unittest.mock import patch
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            InvokeAzureAgentExecutor,
+        )
+
+        action_def = {
+            "kind": "InvokeAzureAgent",
+            "agentName": "=Local.NextAgent",
+        }
+        executor = InvokeAzureAgentExecutor(action_def)
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        with patch.object(state, "eval_if_expression", return_value="ResolvedAgent"):
+            name = executor._get_agent_name(state)
+        assert name == "ResolvedAgent"
+
+    async def test_agent_executor_get_agent_name_expression_returns_none(self, mock_context, mock_state):
+        """Test agent name returns None when expression evaluates to None."""
+        from unittest.mock import patch
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            InvokeAzureAgentExecutor,
+        )
+
+        action_def = {
+            "kind": "InvokeAzureAgent",
+            "agent": {"name": "=Local.UndefinedVar"},
+        }
+        executor = InvokeAzureAgentExecutor(action_def)
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        with patch.object(state, "eval_if_expression", return_value=None):
+            name = executor._get_agent_name(state)
+        assert name is None
+
     async def test_agent_executor_get_input_config_simple(self, mock_context, mock_state):
         """Test input config parsing with simple non-dict input."""
         from agent_framework_declarative._workflows._executors_agents import (
@@ -2336,6 +2420,89 @@ class TestBuilderEdgeWiring:
 
         exit_exec = graph_builder._get_branch_exit(None)
         assert exit_exec is None
+
+    def test_get_branch_exit_returns_none_for_goto_terminator(self):
+        """Test that _get_branch_exit returns None when branch ends with GotoAction.
+
+        GotoAction is a terminator that handles its own control flow (jumping to
+        the target action). It should NOT be returned as a branch exit, because
+        that would cause the parent ConditionGroup to wire it to the next
+        sequential action, creating a dual-edge where both the goto target and
+        the next action receive messages.
+        """
+        from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        yaml_def = {"name": "test_workflow", "actions": []}
+        graph_builder = DeclarativeWorkflowBuilder(yaml_def)
+
+        # GotoAction executor is a JoinExecutor with a GotoAction action_def
+        goto_executor = JoinExecutor(
+            {"kind": "GotoAction", "id": "goto_summary", "actionId": "invoke_summary"},
+            id="goto_summary",
+        )
+
+        # Simulate a single-action branch chain
+        goto_executor._chain_executors = [goto_executor]  # type: ignore[attr-defined]
+
+        exit_exec = graph_builder._get_branch_exit(goto_executor)
+        assert exit_exec is None
+
+    def test_get_branch_exit_returns_none_for_end_workflow_terminator(self):
+        """Test that _get_branch_exit returns None when branch ends with EndWorkflow."""
+        from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        yaml_def = {"name": "test_workflow", "actions": []}
+        graph_builder = DeclarativeWorkflowBuilder(yaml_def)
+
+        end_executor = JoinExecutor(
+            {"kind": "EndWorkflow", "id": "end"},
+            id="end",
+        )
+        end_executor._chain_executors = [end_executor]  # type: ignore[attr-defined]
+
+        exit_exec = graph_builder._get_branch_exit(end_executor)
+        assert exit_exec is None
+
+    def test_get_branch_exit_returns_none_for_goto_in_chain(self):
+        """Test that _get_branch_exit returns None when chain ends with GotoAction.
+
+        Even when a branch has multiple actions before the GotoAction,
+        the branch exit should be None because the last action is a terminator.
+        """
+        from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
+        from agent_framework_declarative._workflows._executors_basic import SendActivityExecutor
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        yaml_def = {"name": "test_workflow", "actions": []}
+        graph_builder = DeclarativeWorkflowBuilder(yaml_def)
+
+        # A branch with: SendActivity -> GotoAction
+        activity = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "msg"}}, id="msg")
+        goto = JoinExecutor(
+            {"kind": "GotoAction", "id": "goto_target", "actionId": "some_target"},
+            id="goto_target",
+        )
+        activity._chain_executors = [activity, goto]  # type: ignore[attr-defined]
+
+        exit_exec = graph_builder._get_branch_exit(activity)
+        assert exit_exec is None
+
+    def test_get_branch_exit_returns_executor_for_non_terminator(self):
+        """Test that _get_branch_exit still returns the exit for non-terminator branches."""
+        from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
+        from agent_framework_declarative._workflows._executors_basic import SendActivityExecutor
+
+        yaml_def = {"name": "test_workflow", "actions": []}
+        graph_builder = DeclarativeWorkflowBuilder(yaml_def)
+
+        exec1 = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "1"}}, id="e1")
+        exec2 = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "2"}}, id="e2")
+        exec1._chain_executors = [exec1, exec2]  # type: ignore[attr-defined]
+
+        exit_exec = graph_builder._get_branch_exit(exec1)
+        assert exit_exec == exec2
 
 
 # ---------------------------------------------------------------------------

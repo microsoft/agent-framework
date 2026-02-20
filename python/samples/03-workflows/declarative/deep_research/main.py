@@ -181,11 +181,7 @@ async def main() -> None:
     )
 
     # Load workflow from YAML
-    samples_root = Path(__file__).parent.parent.parent.parent.parent.parent
-    workflow_path = samples_root / "workflow-samples" / "DeepResearch.yaml"
-    if not workflow_path.exists():
-        # Fall back to local copy if workflow-samples doesn't exist
-        workflow_path = Path(__file__).parent / "workflow.yaml"
+    workflow_path = Path(__file__).parent / "workflow.yaml"
 
     workflow = factory.create_workflow_from_yaml_path(workflow_path)
 
