@@ -122,6 +122,7 @@ jobs:
     uses: ./.github/workflows/dotnet-build-and-test.yml
     with:
       checkout-ref: ${{ needs.resolve-ref.outputs.checkout-ref }}
+      integration-only: true
     secrets: inherit
 
   python-integration-tests:
@@ -131,4 +132,5 @@ jobs:
     uses: ./.github/workflows/python-merge-tests.yml
     with:
       checkout-ref: ${{ needs.resolve-ref.outputs.checkout-ref }}
+      integration-only: true
     secrets: inherit

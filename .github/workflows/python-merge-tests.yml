@@ -9,6 +9,11 @@ on:
         required: false
         type: string
         default: ""
+      integration-only:
+        description: "Run only integration tests (skip sample tests)"
+        required: false
+        type: boolean
+        default: false
   pull_request:
     branches: ["main"]
   merge_group:
@@ -111,7 +116,7 @@ jobs:
         working-directory: ./python
       - name: Test core samples
         timeout-minutes: 10
-        if: env.RUN_SAMPLES_TESTS == 'true'
+        if: inputs.integration-only != true && env.RUN_SAMPLES_TESTS == 'true'
         run: uv run pytest tests/samples/ -m "openai" -m "azure"
         working-directory: ./python
       - name: Surface failing tests
@@ -170,7 +175,7 @@ jobs:
         working-directory: ./python
       - name: Test Azure AI samples
         timeout-minutes: 10
-        if: env.RUN_SAMPLES_TESTS == 'true'
+        if: inputs.integration-only != true && env.RUN_SAMPLES_TESTS == 'true'
         run: uv run pytest tests/samples/ -m "azure-ai"
         working-directory: ./python
       - name: Surface failing tests
