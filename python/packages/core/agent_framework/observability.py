@@ -884,6 +884,14 @@ global OBSERVABILITY_SETTINGS
 OBSERVABILITY_SETTINGS: ObservabilitySettings = ObservabilitySettings()
 
 
+def _env_bool(name: str) -> bool:
+    """Read a boolean from the current environment.
+
+    Accepts the same truthy strings as ``_coerce_value`` in ``_settings.py``.
+    """
+    return os.getenv(name, "").lower() in ("true", "1", "yes", "on")
+
+
 def enable_instrumentation(
     *,
     enable_sensitive_data: bool | None = None,
@@ -900,11 +908,14 @@ def enable_instrumentation(
     Keyword Args:
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
             the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
+            When not provided, falls back to the ENABLE_SENSITIVE_DATA environment variable.
     """
     global OBSERVABILITY_SETTINGS
     OBSERVABILITY_SETTINGS.enable_instrumentation = True
     if enable_sensitive_data is not None:
         OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
+    elif _env_bool("ENABLE_SENSITIVE_DATA"):
+        OBSERVABILITY_SETTINGS.enable_sensitive_data = True
 
 
 def configure_otel_providers(
@@ -1041,12 +1052,22 @@ def configure_otel_providers(
 
         OBSERVABILITY_SETTINGS = ObservabilitySettings(**settings_kwargs)
     else:
-        # Update the observability settings with the provided values
+        # Update the observability settings with the provided values.
+        # When parameters are not explicitly passed, re-read from the environment
+        # because load_dotenv() may have populated os.environ *after* the module-level
+        # ``OBSERVABILITY_SETTINGS = ObservabilitySettings()`` was constructed at import time,
+        # leaving the cached values stale.
         OBSERVABILITY_SETTINGS.enable_instrumentation = True
         if enable_sensitive_data is not None:
             OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
+        elif _env_bool("ENABLE_SENSITIVE_DATA"):
+            OBSERVABILITY_SETTINGS.enable_sensitive_data = True
         if vs_code_extension_port is not None:
             OBSERVABILITY_SETTINGS.vs_code_extension_port = vs_code_extension_port
+        else:
+            env_port = os.getenv("VS_CODE_EXTENSION_PORT")
+            if env_port:
+                OBSERVABILITY_SETTINGS.vs_code_extension_port = int(env_port)
 
     OBSERVABILITY_SETTINGS._configure(  # type: ignore[reportPrivateUsage]
         additional_exporters=exporters,
