@@ -643,6 +643,11 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 output = getattr(item, "output", None)
                 if isinstance(item, dict):
                     output = item.get("output")
+                if isinstance(output, str):
+                    try:
+                        output = json.loads(output)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
                 if output is not None:
                     urls = getattr(output, "get_urls", None)
                     if isinstance(output, dict):
@@ -684,10 +689,9 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         if not get_urls:
             return
         for content in contents:
-            annotations = getattr(content, "annotations", None)
-            if not annotations:
+            if not content.annotations:
                 continue
-            for annotation in annotations:
+            for annotation in content.annotations:
                 if not isinstance(annotation, dict):
                     continue
                 if annotation.get("type") != "citation":
@@ -695,13 +699,9 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 title = annotation.get("title")
                 doc_url = self._get_search_doc_url(title, get_urls)
                 if doc_url:
-                    props = annotation.get("additional_properties") or {}
-                    props["get_url"] = doc_url
-                    annotation["additional_properties"] = props
+                    annotation.setdefault("additional_properties", {})["get_url"] = doc_url
 
-    def _build_url_citation_content(
-        self, annotation_data: Any, get_urls: list[str], raw_event: Any
-    ) -> Content:
+    def _build_url_citation_content(self, annotation_data: Any, get_urls: list[str], raw_event: Any) -> Content:
         """Build a Content with a citation Annotation from a url_citation streaming event.
 
         The base class does not handle ``url_citation`` annotations in streaming, so this
@@ -745,9 +745,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 TextSpanRegion(type="text_span", start_index=ann_start, end_index=ann_end)
             ]
 
-        text_content = Content.from_text(text="", raw_representation=raw_event)
-        text_content.annotations = [annotation_obj]
-        return text_content
+        return Content.from_text(text="", annotations=[annotation_obj], raw_representation=raw_event)
 
     @override
     def _inner_get_response(
@@ -831,7 +829,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
 
             return update
 
-        stream_result._transform_hooks.append(_enrich_update)
+        stream_result.with_transform_hook(_enrich_update)
         return stream_result
 
     # endregion

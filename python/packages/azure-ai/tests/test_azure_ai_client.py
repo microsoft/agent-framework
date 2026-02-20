@@ -1830,6 +1830,24 @@ def test_extract_azure_search_urls_no_search_items(mock_project_client: MagicMoc
     assert urls == []
 
 
+def test_extract_azure_search_urls_with_json_string_output(mock_project_client: MagicMock) -> None:
+    """Test _extract_azure_search_urls with JSON string output (non-streaming pydantic extra field)."""
+    client = create_test_azure_ai_client(mock_project_client)
+    json_output = json.dumps({
+        "documents": [{"id": "1"}],
+        "get_urls": [
+            "https://search.example.com/indexes/idx/docs/1?api-version=2024-07-01",
+        ],
+    })
+    mock_item = MagicMock()
+    mock_item.type = "azure_ai_search_call_output"
+    mock_item.output = json_output
+
+    urls = client._extract_azure_search_urls([mock_item])
+    assert len(urls) == 1
+    assert urls[0] == "https://search.example.com/indexes/idx/docs/1?api-version=2024-07-01"
+
+
 def test_get_search_doc_url_valid(mock_project_client: MagicMock) -> None:
     """Test _get_search_doc_url with valid doc_N title."""
     client = create_test_azure_ai_client(mock_project_client)
@@ -1941,9 +1959,7 @@ async def test_inner_get_response_enriches_non_streaming(mock_project_client: Ma
     async def _fake_awaitable() -> ChatResponse:
         return base_response
 
-    with patch.object(
-        RawOpenAIResponsesClient, "_inner_get_response", return_value=_fake_awaitable()
-    ):
+    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=_fake_awaitable()):
         result_awaitable = client._inner_get_response(messages=[], options={}, stream=False)
         result = await result_awaitable  # type: ignore[misc]
 
@@ -1967,25 +1983,28 @@ async def test_inner_get_response_no_search_output_non_streaming(mock_project_cl
     async def _fake_awaitable() -> ChatResponse:
         return base_response
 
-    with patch.object(
-        RawOpenAIResponsesClient, "_inner_get_response", return_value=_fake_awaitable()
-    ):
+    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=_fake_awaitable()):
         result_awaitable = client._inner_get_response(messages=[], options={}, stream=False)
         result = await result_awaitable  # type: ignore[misc]
 
     assert result.messages[0].contents[0].text == "Hello world"
 
 
+def _create_mock_stream() -> MagicMock:
+    """Create a mock ResponseStream with working with_transform_hook."""
+    mock_stream = MagicMock(spec=ResponseStream)
+    mock_stream._transform_hooks = []
+    mock_stream.with_transform_hook.side_effect = lambda hook: mock_stream._transform_hooks.append(hook) or mock_stream
+    return mock_stream
+
+
 def test_inner_get_response_streaming_registers_hook(mock_project_client: MagicMock) -> None:
     """Test _inner_get_response appends a transform hook to the stream for streaming responses."""
     client = create_test_azure_ai_client(mock_project_client)
 
-    mock_stream = MagicMock(spec=ResponseStream)
-    mock_stream._transform_hooks = []
+    mock_stream = _create_mock_stream()
 
-    with patch.object(
-        RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream
-    ):
+    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream):
         result = client._inner_get_response(messages=[], options={}, stream=True)
 
     assert result is mock_stream
@@ -1996,12 +2015,9 @@ def test_streaming_hook_captures_search_urls(mock_project_client: MagicMock) -> 
     """Test the streaming transform hook captures get_urls from search output events."""
     client = create_test_azure_ai_client(mock_project_client)
 
-    mock_stream = MagicMock(spec=ResponseStream)
-    mock_stream._transform_hooks = []
+    mock_stream = _create_mock_stream()
 
-    with patch.object(
-        RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream
-    ):
+    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream):
         client._inner_get_response(messages=[], options={}, stream=True)
 
     hook = mock_stream._transform_hooks[0]
@@ -2027,12 +2043,9 @@ def test_streaming_hook_enriches_url_citation(mock_project_client: MagicMock) ->
     """Test the streaming transform hook enriches url_citation annotations with get_urls."""
     client = create_test_azure_ai_client(mock_project_client)
 
-    mock_stream = MagicMock(spec=ResponseStream)
-    mock_stream._transform_hooks = []
+    mock_stream = _create_mock_stream()
 
-    with patch.object(
-        RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream
-    ):
+    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream):
         client._inner_get_response(messages=[], options={}, stream=True)
 
     hook = mock_stream._transform_hooks[0]
