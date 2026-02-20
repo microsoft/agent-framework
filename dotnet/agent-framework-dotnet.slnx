@@ -139,6 +139,7 @@
     <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step02_MemoryUsingMem0/AgentWithMemory_Step02_MemoryUsingMem0.csproj" />
     <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step03_CustomMemory/AgentWithMemory_Step03_CustomMemory.csproj" />
     <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step04_MemoryUsingFoundry/AgentWithMemory_Step04_MemoryUsingFoundry.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step05_BoundedChatHistory/AgentWithMemory_Step05_BoundedChatHistory.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
