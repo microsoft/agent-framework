@@ -163,43 +163,33 @@ public static class AIAgentExtensions
 
         try
         {
-            // If this task has a pending continuation token in its metadata, check on
-            // the background operation instead of processing new messages from history.
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-            if (TryExtractContinuationToken(agentTask, continuationTokenJsonOptions, out var continuationToken))
-            {
-                var response = await hostAgent.RunAsync(
-                    session: session,
-                    options: new AgentRunOptions { ContinuationToken = continuationToken },
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
+            // Discard any stale continuation token — the incoming user message supersedes
+            // any previous background operation. AF agents do not support resuming a
+            // background run while injecting new messages; we start a fresh run from the
+            // existing session using the full chat history (which includes the new message).
+            agentTask.Metadata?.Remove(ContinuationTokenMetadataKey);
 
-                await hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
-
-                if (response.ContinuationToken is not null)
-                {
-                    StoreContinuationToken(agentTask, response.ContinuationToken, continuationTokenJsonOptions);
-                    await TransitionToWorkingAsync(agentTask.Id, contextId, response, taskManager, cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    agentTask.Metadata!.Remove(ContinuationTokenMetadataKey);
-                    await CompleteWithArtifactAsync(agentTask.Id, response, taskManager, cancellationToken).ConfigureAwait(false);
-                }
-#pragma warning restore MEAI001
-
-                return;
-            }
-
-            // No pending continuation — process new user messages from task history
             await taskManager.UpdateStatusAsync(agentTask.Id, TaskState.Working, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            var newResponse = await hostAgent.RunAsync(
+            var response = await hostAgent.RunAsync(
                 ExtractChatMessagesFromTaskHistory(agentTask),
                 session: session,
+                options: new AgentRunOptions { AllowBackgroundResponses = true },
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
             await hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
-            await CompleteWithArtifactAsync(agentTask.Id, newResponse, taskManager, cancellationToken).ConfigureAwait(false);
+
+#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+            if (response.ContinuationToken is not null)
+            {
+                StoreContinuationToken(agentTask, response.ContinuationToken, continuationTokenJsonOptions);
+                await TransitionToWorkingAsync(agentTask.Id, contextId, response, taskManager, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await CompleteWithArtifactAsync(agentTask.Id, response, taskManager, cancellationToken).ConfigureAwait(false);
+            }
+#pragma warning restore MEAI001
         }
         catch (OperationCanceledException)
         {
@@ -300,24 +290,6 @@ public static class AIAgentExtensions
         await taskManager.ReturnArtifactAsync(taskId, artifact, cancellationToken).ConfigureAwait(false);
         await taskManager.UpdateStatusAsync(taskId, TaskState.Completed, final: true, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
-
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-    private static bool TryExtractContinuationToken(
-        AgentTask agentTask,
-        JsonSerializerOptions jsonOptions,
-        out ResponseContinuationToken? continuationToken)
-    {
-        if (agentTask.Metadata is not null &&
-            agentTask.Metadata.TryGetValue(ContinuationTokenMetadataKey, out var tokenElement))
-        {
-            continuationToken = (ResponseContinuationToken?)tokenElement.Deserialize(jsonOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
-            return continuationToken is not null;
-        }
-
-        continuationToken = null;
-        return false;
-    }
-#pragma warning restore MEAI001
 
     private static List<ChatMessage> ExtractChatMessagesFromTaskHistory(AgentTask agentTask)
     {
