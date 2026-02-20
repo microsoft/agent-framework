@@ -567,9 +567,9 @@ internal sealed class DurableWorkflowRunner
 
         try
         {
-            DurableActivityOutput? output = JsonSerializer.Deserialize(
+            DurableExecutorOutput? output = JsonSerializer.Deserialize(
                 rawResult,
-                DurableWorkflowJsonContext.Default.DurableActivityOutput);
+                DurableWorkflowJsonContext.Default.DurableExecutorOutput);
 
             if (output is null || !HasMeaningfulContent(output))
             {
@@ -597,7 +597,7 @@ internal sealed class DurableWorkflowRunner
     /// Distinguishes actual activity output from arbitrary JSON that deserialized
     /// successfully but with all default/empty values.
     /// </remarks>
-    private static bool HasMeaningfulContent(DurableActivityOutput output)
+    private static bool HasMeaningfulContent(DurableExecutorOutput output)
     {
         return output.Result is not null
             || output.SentMessages.Count > 0

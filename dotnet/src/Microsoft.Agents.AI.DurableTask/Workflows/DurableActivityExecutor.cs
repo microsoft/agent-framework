@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
@@ -56,7 +56,7 @@ internal static class DurableActivityExecutor
 
     private static string SerializeActivityOutput(object? result, DurableWorkflowContext context)
     {
-        DurableActivityOutput output = new()
+        DurableExecutorOutput output = new()
         {
             Result = SerializeResult(result),
             StateUpdates = context.StateUpdates,
@@ -66,7 +66,7 @@ internal static class DurableActivityExecutor
             HaltRequested = context.HaltRequested
         };
 
-        return JsonSerializer.Serialize(output, DurableWorkflowJsonContext.Default.DurableActivityOutput);
+        return JsonSerializer.Serialize(output, DurableWorkflowJsonContext.Default.DurableExecutorOutput);
     }
 
     /// <summary>

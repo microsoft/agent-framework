@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows;
 /// </para>
 /// <list type="bullet">
 /// <item><description><see cref="DurableActivityInput"/>: Activity input wrapper with state</description></item>
-/// <item><description><see cref="DurableActivityOutput"/>: Activity output wrapper with results, events, and state updates</description></item>
+/// <item><description><see cref="DurableExecutorOutput"/>: Executor output wrapper with results, events, and state updates</description></item>
 /// <item><description><see cref="TypedPayload"/>: Serialized payload wrapper with type info (events and messages)</description></item>
 /// <item><description><see cref="DurableWorkflowCustomStatus"/>: Custom status for streaming consumption</description></item>
 /// </list>
@@ -28,7 +28,7 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows;
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(DurableActivityInput))]
-[JsonSerializable(typeof(DurableActivityOutput))]
+[JsonSerializable(typeof(DurableExecutorOutput))]
 [JsonSerializable(typeof(TypedPayload))]
 [JsonSerializable(typeof(List<TypedPayload>))]
 [JsonSerializable(typeof(DurableWorkflowCustomStatus))]

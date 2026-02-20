@@ -208,14 +208,16 @@ public sealed class DurableStreamingWorkflowRunTests
 
         // Assert
         Assert.Equal(2, events.Count);
-        Assert.IsType<DurableHaltRequestedEvent>(events[0]);
-        Assert.IsType<DurableWorkflowCompletedEvent>(events[1]);
+        DurableHaltRequestedEvent haltResult = Assert.IsType<DurableHaltRequestedEvent>(events[0]);
+        Assert.Equal("executor-1", haltResult.ExecutorId);
+        DurableWorkflowCompletedEvent completedResult = Assert.IsType<DurableWorkflowCompletedEvent>(events[1]);
+        Assert.Equal("result", completedResult.Result);
     }
 
     [Fact]
-    public async Task WatchStreamAsync_CompletedWithoutWrapper_YieldsRawOutputAsync()
+    public async Task WatchStreamAsync_CompletedWithoutWrapper_YieldsFailedEventAsync()
     {
-        // Arrange
+        // Arrange — output not wrapped in DurableWorkflowResult (indicates a bug)
         Mock<DurableTaskClient> mockClient = new("test");
         mockClient.Setup(c => c.GetInstanceAsync(InstanceId, true, It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateMetadata(OrchestrationRuntimeStatus.Completed, serializedOutput: "\"raw output\""));
@@ -229,10 +231,10 @@ public sealed class DurableStreamingWorkflowRunTests
             events.Add(evt);
         }
 
-        // Assert
+        // Assert — yields a failed event with diagnostic message instead of crashing
         Assert.Single(events);
-        DurableWorkflowCompletedEvent completedEvent = Assert.IsType<DurableWorkflowCompletedEvent>(events[0]);
-        Assert.Equal("\"raw output\"", completedEvent.Data);
+        DurableWorkflowFailedEvent failedEvent = Assert.IsType<DurableWorkflowFailedEvent>(events[0]);
+        Assert.Contains("could not be parsed", failedEvent.ErrorMessage);
     }
 
     [Fact]
@@ -240,10 +242,11 @@ public sealed class DurableStreamingWorkflowRunTests
     {
         // Arrange
         Mock<DurableTaskClient> mockClient = new("test");
+        TaskFailureDetails failureDetails = new("ErrorType", "Something went wrong", null, null, null);
         mockClient.Setup(c => c.GetInstanceAsync(InstanceId, true, It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateMetadata(
                 OrchestrationRuntimeStatus.Failed,
-                failureDetails: new TaskFailureDetails("ErrorType", "Something went wrong", null, null, null)));
+                failureDetails: failureDetails));
 
         DurableStreamingWorkflowRun run = new(mockClient.Object, InstanceId, CreateTestWorkflow());
 
@@ -257,7 +260,10 @@ public sealed class DurableStreamingWorkflowRunTests
         // Assert
         Assert.Single(events);
         DurableWorkflowFailedEvent failedEvent = Assert.IsType<DurableWorkflowFailedEvent>(events[0]);
-        Assert.Equal("Something went wrong", failedEvent.Data);
+        Assert.Equal("Something went wrong", failedEvent.ErrorMessage);
+        Assert.NotNull(failedEvent.FailureDetails);
+        Assert.Equal("ErrorType", failedEvent.FailureDetails.ErrorType);
+        Assert.Equal("Something went wrong", failedEvent.FailureDetails.ErrorMessage);
     }
 
     [Fact]
@@ -280,7 +286,8 @@ public sealed class DurableStreamingWorkflowRunTests
         // Assert
         Assert.Single(events);
         DurableWorkflowFailedEvent failedEvent = Assert.IsType<DurableWorkflowFailedEvent>(events[0]);
-        Assert.Equal("Workflow execution failed.", failedEvent.Data);
+        Assert.Equal("Workflow execution failed.", failedEvent.ErrorMessage);
+        Assert.Null(failedEvent.FailureDetails);
     }
 
     [Fact]
@@ -303,7 +310,8 @@ public sealed class DurableStreamingWorkflowRunTests
         // Assert
         Assert.Single(events);
         DurableWorkflowFailedEvent failedEvent = Assert.IsType<DurableWorkflowFailedEvent>(events[0]);
-        Assert.Equal("Workflow was terminated.", failedEvent.Data);
+        Assert.Equal("Workflow was terminated.", failedEvent.ErrorMessage);
+        Assert.Null(failedEvent.FailureDetails);
     }
 
     [Fact]
@@ -340,8 +348,10 @@ public sealed class DurableStreamingWorkflowRunTests
 
         // Assert
         Assert.Equal(2, events.Count);
-        Assert.IsType<DurableHaltRequestedEvent>(events[0]);
-        Assert.IsType<DurableWorkflowCompletedEvent>(events[1]);
+        DurableHaltRequestedEvent haltResult = Assert.IsType<DurableHaltRequestedEvent>(events[0]);
+        Assert.Equal("exec-1", haltResult.ExecutorId);
+        DurableWorkflowCompletedEvent completedResult = Assert.IsType<DurableWorkflowCompletedEvent>(events[1]);
+        Assert.Equal("final", completedResult.Result);
     }
 
     [Fact]
@@ -440,8 +450,10 @@ public sealed class DurableStreamingWorkflowRunTests
 
         // Assert — event1 appears exactly once despite 3 polls with the same status
         Assert.Equal(2, events.Count);
-        Assert.IsType<DurableHaltRequestedEvent>(events[0]);
-        Assert.IsType<DurableWorkflowCompletedEvent>(events[1]);
+        DurableHaltRequestedEvent haltResult = Assert.IsType<DurableHaltRequestedEvent>(events[0]);
+        Assert.Equal("executor-1", haltResult.ExecutorId);
+        DurableWorkflowCompletedEvent completedResult = Assert.IsType<DurableWorkflowCompletedEvent>(events[1]);
+        Assert.Equal("result", completedResult.Result);
     }
 
     [Fact]
@@ -498,7 +510,7 @@ public sealed class DurableStreamingWorkflowRunTests
     }
 
     [Fact]
-    public async Task WaitForCompletionAsync_Failed_ThrowsWithErrorMessageAsync()
+    public async Task WaitForCompletionAsync_Failed_ThrowsTaskFailedExceptionAsync()
     {
         // Arrange
         Mock<DurableTaskClient> mockClient = new("test");
@@ -510,9 +522,9 @@ public sealed class DurableStreamingWorkflowRunTests
         DurableStreamingWorkflowRun run = new(mockClient.Object, InstanceId, CreateTestWorkflow());
 
         // Act & Assert
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        TaskFailedException ex = await Assert.ThrowsAsync<TaskFailedException>(
             () => run.WaitForCompletionAsync<string>().AsTask());
-        Assert.Equal("kaboom", ex.Message);
+        Assert.Equal("kaboom", ex.FailureDetails.ErrorMessage);
     }
 
     [Fact]
@@ -558,16 +570,14 @@ public sealed class DurableStreamingWorkflowRunTests
     }
 
     [Fact]
-    public void ExtractResult_UnwrappedStringOutput_FallsBackToDirectDeserialization()
+    public void ExtractResult_UnwrappedOutput_ThrowsInvalidOperationException()
     {
-        // Arrange — raw DurableDataConverter-style output (JSON-encoded string)
+        // Arrange — raw output not wrapped in DurableWorkflowResult
         string serializedOutput = JsonSerializer.Serialize("raw value");
 
-        // Act
-        string? result = DurableStreamingWorkflowRun.ExtractResult<string>(serializedOutput);
-
-        // Assert
-        Assert.Equal("raw value", result);
+        // Act & Assert
+        Assert.Throws<InvalidOperationException>(
+            () => DurableStreamingWorkflowRun.ExtractResult<string>(serializedOutput));
     }
 
     [Fact]

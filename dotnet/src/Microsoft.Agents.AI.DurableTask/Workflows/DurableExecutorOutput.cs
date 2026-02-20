@@ -1,11 +1,11 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 namespace Microsoft.Agents.AI.DurableTask.Workflows;
 
 /// <summary>
-/// Output payload from activity execution, containing the result, state updates, and emitted events.
+/// Output payload from executor execution, containing the result, state updates, and emitted events.
 /// </summary>
-internal sealed class DurableActivityOutput
+internal sealed class DurableExecutorOutput
 {
     /// <summary>
     /// Gets the executor result.

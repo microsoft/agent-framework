@@ -10,7 +10,7 @@ This sample demonstrates how executors in a durable workflow can share state via
 - Custom scopes with `scopeName` — partition state into isolated namespaces (e.g., `"shipping"`)
 - Clearing scopes with `QueueClearScopeAsync` — remove all entries under a scope when no longer needed
 - Early termination with `RequestHaltAsync` — halt the workflow when validation fails
-- State persistence across supersteps — the orchestration passes shared state to each activity
+- State persistence across supersteps — the orchestration passes shared state to each executor
 - Event streaming with `IStreamingWorkflowRun` — observe executor progress in real time
 
 ## Workflow
@@ -64,9 +64,8 @@ Started run: abc123
 
 ### Viewing Workflows in the DTS Dashboard
 
-After running a workflow, you can navigate to the Durable Task Scheduler (DTS) dashboard to inspect the orchestration status, activity inputs/outputs, and events.
+After running a workflow, you can navigate to the Durable Task Scheduler (DTS) dashboard to inspect the orchestration status, executor inputs/outputs, and events.
 
 If you are using the DTS emulator, the dashboard is available at `http://localhost:8082`.
 
-> [!NOTE]
-> Shared state updates are included in each activity's output (as `stateUpdates` with scoped keys), so they can be viewed in the dashboard by clicking on an activity and inspecting its output. However, there is no dedicated view for the aggregated shared state across all activities.
+To inspect shared state in the dashboard, click on an executor to view its input and output. The input contains a snapshot of the shared state the executor ran with, and the output includes any state updates it made (as `stateUpdates` with scoped keys).
