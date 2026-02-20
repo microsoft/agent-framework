@@ -4,6 +4,10 @@
     <BuildType Name="Publish" />
     <BuildType Name="Release" />
   </Configurations>
+  <Folder Name="/aspire-integration/" />
+  <Folder Name="/aspire-integration/Aspire.Hosting.AgentFramework.DevUI/">
+    <Project Path="aspire-integration/Aspire.Hosting.AgentFramework.DevUI/Aspire.Hosting.AgentFramework.DevUI.csproj" />
+  </Folder>
   <Folder Name="/Samples/">
     <File Path="samples/README.md" />
   </Folder>
@@ -22,6 +26,12 @@
     <Project Path="samples/AGUIClientServer/AGUIClient/AGUIClient.csproj" />
     <Project Path="samples/AGUIClientServer/AGUIDojoServer/AGUIDojoServer.csproj" />
     <Project Path="samples/AGUIClientServer/AGUIServer/AGUIServer.csproj" />
+  </Folder>
+  <Folder Name="/Samples/DevUIIntegration/">
+    <Project Path="samples/DevUIIntegration/DevUIIntegration.AppHost/DevUIIntegration.AppHost.csproj" />
+    <Project Path="samples/DevUIIntegration/DevUIIntegration.ServiceDefaults/DevUIIntegration.ServiceDefaults.csproj" />
+    <Project Path="samples/DevUIIntegration/EditorAgent/EditorAgent.csproj" />
+    <Project Path="samples/DevUIIntegration/WriterAgent/WriterAgent.csproj" />
   </Folder>
   <Folder Name="/Samples/Durable/" />
   <Folder Name="/Samples/Durable/Agents/" />
@@ -454,6 +464,7 @@
     <Project Path="tests/OpenAIResponse.IntegrationTests/OpenAIResponse.IntegrationTests.csproj" />
   </Folder>
   <Folder Name="/Tests/UnitTests/">
+    <Project Path="tests/Aspire.Hosting.AgentFramework.DevUI.UnitTests/Aspire.Hosting.AgentFramework.DevUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.A2A.UnitTests/Microsoft.Agents.AI.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Abstractions.UnitTests/Microsoft.Agents.AI.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AGUI.UnitTests/Microsoft.Agents.AI.AGUI.UnitTests.csproj" />
