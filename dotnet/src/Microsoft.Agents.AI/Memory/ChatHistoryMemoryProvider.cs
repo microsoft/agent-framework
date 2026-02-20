@@ -41,6 +41,18 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
     private const string DefaultFunctionToolName = "Search";
     private const string DefaultFunctionToolDescription = "Allows searching for related previous chat history to help answer the user question.";
 
+    private const string KeyField = "Key";
+    private const string RoleField = "Role";
+    private const string MessageIdField = "MessageId";
+    private const string AuthorNameField = "AuthorName";
+    private const string ApplicationIdField = "ApplicationId";
+    private const string AgentIdField = "AgentId";
+    private const string UserIdField = "UserId";
+    private const string SessionIdField = "SessionId";
+    private const string ContentField = "Content";
+    private const string CreatedAtField = "CreatedAt";
+    private const string ContentEmbeddingField = "ContentEmbedding";
+
     private readonly ProviderSessionState<State> _sessionState;
 
 #pragma warning disable CA2213 // VectorStore is not owned by this class - caller is responsible for disposal
@@ -98,17 +110,17 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
         {
             Properties =
             [
-                new VectorStoreKeyProperty("Key", typeof(Guid)),
-                new VectorStoreDataProperty("Role", typeof(string)) { IsIndexed = true },
-                new VectorStoreDataProperty("MessageId", typeof(string)) { IsIndexed = true },
-                new VectorStoreDataProperty("AuthorName", typeof(string)),
-                new VectorStoreDataProperty("ApplicationId", typeof(string)) { IsIndexed = true },
-                new VectorStoreDataProperty("AgentId", typeof(string)) { IsIndexed = true },
-                new VectorStoreDataProperty("UserId", typeof(string)) { IsIndexed = true },
-                new VectorStoreDataProperty("SessionId", typeof(string)) { IsIndexed = true },
-                new VectorStoreDataProperty("Content", typeof(string)) { IsFullTextIndexed = true },
-                new VectorStoreDataProperty("CreatedAt", typeof(string)) { IsIndexed = true },
-                new VectorStoreVectorProperty("ContentEmbedding", typeof(string), Throw.IfLessThan(vectorDimensions, 1))
+                new VectorStoreKeyProperty(KeyField, typeof(Guid)),
+                new VectorStoreDataProperty(RoleField, typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty(MessageIdField, typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty(AuthorNameField, typeof(string)),
+                new VectorStoreDataProperty(ApplicationIdField, typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty(AgentIdField, typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty(UserIdField, typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty(SessionIdField, typeof(string)) { IsIndexed = true },
+                new VectorStoreDataProperty(ContentField, typeof(string)) { IsFullTextIndexed = true },
+                new VectorStoreDataProperty(CreatedAtField, typeof(string)) { IsIndexed = true },
+                new VectorStoreVectorProperty(ContentEmbeddingField, typeof(string), Throw.IfLessThan(vectorDimensions, 1))
             ]
         };
 
@@ -233,17 +245,17 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
                 .Concat(context.ResponseMessages ?? [])
                 .Select(message => new Dictionary<string, object?>
                 {
-                    ["Key"] = Guid.NewGuid(),
-                    ["Role"] = message.Role.ToString(),
-                    ["MessageId"] = message.MessageId,
-                    ["AuthorName"] = message.AuthorName,
-                    ["ApplicationId"] = storageScope.ApplicationId,
-                    ["AgentId"] = storageScope.AgentId,
-                    ["UserId"] = storageScope.UserId,
-                    ["SessionId"] = storageScope.SessionId,
-                    ["Content"] = message.Text,
-                    ["CreatedAt"] = message.CreatedAt?.ToString("O") ?? DateTimeOffset.UtcNow.ToString("O"),
-                    ["ContentEmbedding"] = message.Text,
+                    [KeyField] = Guid.NewGuid(),
+                    [RoleField] = message.Role.ToString(),
+                    [MessageIdField] = message.MessageId,
+                    [AuthorNameField] = message.AuthorName,
+                    [ApplicationIdField] = storageScope.ApplicationId,
+                    [AgentIdField] = storageScope.AgentId,
+                    [UserIdField] = storageScope.UserId,
+                    [SessionIdField] = storageScope.SessionId,
+                    [ContentField] = message.Text,
+                    [CreatedAtField] = message.CreatedAt?.ToString("O") ?? DateTimeOffset.UtcNow.ToString("O"),
+                    [ContentEmbeddingField] = message.Text,
                 })
                 .ToList();
 
@@ -288,7 +300,7 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
         }
 
         // Format the results as a single context message
-        var outputResultsText = string.Join("\n", results.Select(x => (string?)x["Content"]).Where(c => !string.IsNullOrWhiteSpace(c)));
+        var outputResultsText = string.Join("\n", results.Select(x => (string?)x[ContentField]).Where(c => !string.IsNullOrWhiteSpace(c)));
         if (string.IsNullOrWhiteSpace(outputResultsText))
         {
             return string.Empty;
@@ -340,12 +352,12 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
         Expression<Func<Dictionary<string, object?>, bool>>? filter = null;
         if (applicationId != null)
         {
-            filter = x => (string?)x["ApplicationId"] == applicationId;
+            filter = x => (string?)x[ApplicationIdField] == applicationId;
         }
 
         if (agentId != null)
         {
-            Expression<Func<Dictionary<string, object?>, bool>> agentIdFilter = x => (string?)x["AgentId"] == agentId;
+            Expression<Func<Dictionary<string, object?>, bool>> agentIdFilter = x => (string?)x[AgentIdField] == agentId;
             filter = filter == null ? agentIdFilter : Expression.Lambda<Func<Dictionary<string, object?>, bool>>(
                 Expression.AndAlso(filter.Body, agentIdFilter.Body),
                 filter.Parameters);
@@ -353,7 +365,7 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
 
         if (userId != null)
         {
-            Expression<Func<Dictionary<string, object?>, bool>> userIdFilter = x => (string?)x["UserId"] == userId;
+            Expression<Func<Dictionary<string, object?>, bool>> userIdFilter = x => (string?)x[UserIdField] == userId;
             filter = filter == null ? userIdFilter : Expression.Lambda<Func<Dictionary<string, object?>, bool>>(
                 Expression.AndAlso(filter.Body, userIdFilter.Body),
                 filter.Parameters);
@@ -361,7 +373,7 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
 
         if (sessionId != null)
         {
-            Expression<Func<Dictionary<string, object?>, bool>> sessionIdFilter = x => (string?)x["SessionId"] == sessionId;
+            Expression<Func<Dictionary<string, object?>, bool>> sessionIdFilter = x => (string?)x[SessionIdField] == sessionId;
             filter = filter == null ? sessionIdFilter : Expression.Lambda<Func<Dictionary<string, object?>, bool>>(
                 Expression.AndAlso(filter.Body, sessionIdFilter.Body),
                 filter.Parameters);

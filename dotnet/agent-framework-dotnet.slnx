@@ -138,6 +138,7 @@
     <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step01_ChatHistoryMemory/AgentWithMemory_Step01_ChatHistoryMemory.csproj" />
     <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step02_MemoryUsingMem0/AgentWithMemory_Step02_MemoryUsingMem0.csproj" />
     <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step03_CustomMemory/AgentWithMemory_Step03_CustomMemory.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step04_MemoryUsingFoundry/AgentWithMemory_Step04_MemoryUsingFoundry.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
@@ -424,6 +425,7 @@
     <Project Path="src/Microsoft.Agents.AI.Hosting.AzureFunctions/Microsoft.Agents.AI.Hosting.AzureFunctions.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.OpenAI/Microsoft.Agents.AI.Hosting.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting/Microsoft.Agents.AI.Hosting.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.FoundryMemory/Microsoft.Agents.AI.FoundryMemory.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Mem0/Microsoft.Agents.AI.Mem0.csproj" />
     <Project Path="src/Microsoft.Agents.AI.OpenAI/Microsoft.Agents.AI.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Purview/Microsoft.Agents.AI.Purview.csproj" />
@@ -445,6 +447,7 @@
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests/Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Mem0.IntegrationTests/Microsoft.Agents.AI.Mem0.IntegrationTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.FoundryMemory.IntegrationTests/Microsoft.Agents.AI.FoundryMemory.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests/Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.csproj" />
     <Project Path="tests/OpenAIAssistant.IntegrationTests/OpenAIAssistant.IntegrationTests.csproj" />
     <Project Path="tests/OpenAIChatCompletion.IntegrationTests/OpenAIChatCompletion.IntegrationTests.csproj" />
@@ -467,6 +470,7 @@
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AzureFunctions.UnitTests/Microsoft.Agents.AI.Hosting.AzureFunctions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.UnitTests/Microsoft.Agents.AI.Hosting.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.FoundryMemory.UnitTests/Microsoft.Agents.AI.FoundryMemory.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Mem0.UnitTests/Microsoft.Agents.AI.Mem0.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.OpenAI.UnitTests/Microsoft.Agents.AI.OpenAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Purview.UnitTests/Microsoft.Agents.AI.Purview.UnitTests.csproj" />
