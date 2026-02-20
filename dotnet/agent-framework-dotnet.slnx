@@ -176,6 +176,7 @@
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step13_Plugins/FoundryAgents_Step13_Plugins.csproj" />
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step14_CodeInterpreter/FoundryAgents_Step14_CodeInterpreter.csproj" />
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step15_ComputerUse/FoundryAgents_Step15_ComputerUse.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step26_MemorySearch/FoundryAgents_Step26_MemorySearch.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/ModelContextProtocol/">
     <File Path="samples/GettingStarted/ModelContextProtocol/README.md" />

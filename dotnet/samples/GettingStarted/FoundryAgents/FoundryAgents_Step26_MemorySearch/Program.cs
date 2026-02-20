@@ -8,6 +8,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using OpenAI.Responses;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -15,7 +16,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJEC
 // Memory store configuration
 // NOTE: Memory stores must be created beforehand via Azure Portal or Python SDK.
 // The .NET SDK currently only supports using existing memory stores with agents.
-string memoryStoreName = Environment.GetEnvironmentVariable("AZURE_AI_MEMORY_STORE_NAME") ?? throw new InvalidOperationException("AZURE_AI_MEMORY_STORE_NAME is not set.");
+string memoryStoreName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_MEMORY_STORE_NAME") ?? throw new InvalidOperationException("AZURE_FOUNDRY_MEMORY_STORE_NAME is not set.");
 
 const string AgentInstructions = """
     You are a helpful assistant that remembers past conversations.
@@ -23,7 +24,8 @@ const string AgentInstructions = """
     When a user shares personal details or preferences, remember them for future conversations.
     """;
 
-const string AgentName = "MemorySearchAgent";
+const string AgentNameMEAI = "MemorySearchAgent-MEAI";
+const string AgentNameNative = "MemorySearchAgent-NATIVE";
 
 // Scope identifies the user or context for memory isolation.
 // Using a unique user identifier ensures memories are private to that user.
@@ -45,20 +47,9 @@ MemorySearchTool memorySearchTool = new(memoryStoreName, userScope)
     }
 };
 
-// Create the agent with Memory Search tool using native SDK type
-AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
-    name: AgentName,
-    creationOptions: new AgentVersionCreationOptions(
-        new PromptAgentDefinition(model: deploymentName)
-        {
-            Instructions = AgentInstructions,
-            Tools =
-            {
-                // MemorySearchTool can be implicitly converted to ResponseTool
-                memorySearchTool
-            }
-        })
-);
+// Create agent using Option 1 (MEAI) or Option 2 (Native SDK)
+AIAgent agent = await CreateAgentWithMEAI();
+// AIAgent agent = await CreateAgentWithNativeSDK();
 
 Console.WriteLine("Agent created with Memory Search tool. Starting conversation...\n");
 
@@ -104,3 +95,30 @@ Console.WriteLine("Agent deleted successfully.");
 // NOTE: Memory stores are long-lived resources and are NOT deleted with the agent.
 // To delete a memory store, use the Azure Portal or Python SDK:
 // await project_client.memory_stores.delete(memory_store.name)
+
+// --- Agent Creation Options ---
+#pragma warning disable CS8321 // Local function is declared but never used
+
+// Option 1 - Using MemorySearchTool wrapped as MEAI AITool
+async Task<AIAgent> CreateAgentWithMEAI()
+{
+    return await aiProjectClient.CreateAIAgentAsync(
+        model: deploymentName,
+        name: AgentNameMEAI,
+        instructions: AgentInstructions,
+        tools: [((ResponseTool)memorySearchTool).AsAITool()]);
+}
+
+// Option 2 - Using PromptAgentDefinition with MemorySearchTool (Native SDK)
+async Task<AIAgent> CreateAgentWithNativeSDK()
+{
+    return await aiProjectClient.CreateAIAgentAsync(
+        name: AgentNameNative,
+        creationOptions: new AgentVersionCreationOptions(
+            new PromptAgentDefinition(model: deploymentName)
+            {
+                Instructions = AgentInstructions,
+                Tools = { memorySearchTool }
+            })
+    );
+}
