@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <NoWarn>$(NoWarn);CA1812</NoWarn>
-    <RootNamespace>Agent_Step15_Plugins</RootNamespace>
+    <RootNamespace>Agent_Step12_Plugins</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>

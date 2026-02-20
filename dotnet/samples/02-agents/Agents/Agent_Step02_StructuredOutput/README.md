@@ -36,7 +36,7 @@ $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-
 Navigate to the sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/Agents/Agent_Step05_StructuredOutput
+cd dotnet/samples/02-agents/Agents/Agent_Step02_StructuredOutput
 dotnet run
 ```
 

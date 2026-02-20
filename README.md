@@ -77,7 +77,7 @@ Still have questions? Join our [weekly office hours](./COMMUNITY.md#public-commu
 - **Multiple Agent Provider Support**: Support for various LLM providers with more being added continuously
   - [Python examples](./python/samples/02-agents/providers/) | [.NET examples](./dotnet/samples/02-agents/AgentProviders/)
 - **Middleware**: Flexible middleware system for request/response processing, exception handling, and custom pipelines
-  - [Python middleware](./python/samples/02-agents/middleware/) | [.NET middleware](./dotnet/samples/02-agents/Agents/Agent_Step14_Middleware/)
+  - [Python middleware](./python/samples/02-agents/middleware/) | [.NET middleware](./dotnet/samples/02-agents/Agents/Agent_Step11_Middleware/)
 
 ### 💬 **We want your feedback!**
 
