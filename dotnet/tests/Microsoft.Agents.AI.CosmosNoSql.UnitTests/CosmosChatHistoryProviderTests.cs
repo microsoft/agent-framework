@@ -436,6 +436,110 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal("I'm sorry, I don't have access to current weather data.", persistedList[4].Text);
     }
 
+    [SkippableFact]
+    [Trait("Category", "CosmosDB")]
+    public async Task GetMessageCountAsync_WithMessages_ShouldReturnCorrectCountAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+        var conversationId = $"count-test-{Guid.NewGuid():N}";
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversationId));
+
+        var messages = new List<ChatMessage>();
+        for (int i = 1; i <= 5; i++)
+        {
+            messages.Add(new ChatMessage(ChatRole.User, $"Message {i}"));
+        }
+
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, messages, []);
+        await provider.InvokedAsync(context);
+        await Task.Delay(100);
+
+        // Act
+        int count = await provider.GetMessageCountAsync(session);
+
+        // Assert
+        Assert.Equal(5, count);
+    }
+
+    [SkippableFact]
+    [Trait("Category", "CosmosDB")]
+    public async Task GetMessageCountAsync_WithNoMessages_ShouldReturnZeroAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+        var conversationId = $"empty-count-test-{Guid.NewGuid():N}";
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversationId));
+
+        // Act
+        int count = await provider.GetMessageCountAsync(session);
+
+        // Assert
+        Assert.Equal(0, count);
+    }
+
+    [SkippableFact]
+    [Trait("Category", "CosmosDB")]
+    public async Task ClearMessagesAsync_WithMessages_ShouldDeleteAllAndReturnCountAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+        var conversationId = $"clear-test-{Guid.NewGuid():N}";
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversationId));
+
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Message 1"),
+            new(ChatRole.Assistant, "Message 2"),
+            new(ChatRole.User, "Message 3")
+        };
+
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, messages, []);
+        await provider.InvokedAsync(context);
+        await Task.Delay(100);
+
+        int countBefore = await provider.GetMessageCountAsync(session);
+        Assert.Equal(3, countBefore);
+
+        // Act
+        int deletedCount = await provider.ClearMessagesAsync(session);
+        await Task.Delay(100);
+
+        // Assert
+        Assert.Equal(3, deletedCount);
+
+        int countAfter = await provider.GetMessageCountAsync(session);
+        Assert.Equal(0, countAfter);
+    }
+
+    [SkippableFact]
+    [Trait("Category", "CosmosDB")]
+    public async Task ClearMessagesAsync_WithNoMessages_ShouldReturnZeroAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
+        var conversationId = $"empty-clear-test-{Guid.NewGuid():N}";
+
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(conversationId));
+
+        // Act
+        int deletedCount = await provider.ClearMessagesAsync(session);
+
+        // Assert
+        Assert.Equal(0, deletedCount);
+    }
+
     #endregion
 
     #region Disposal Tests
