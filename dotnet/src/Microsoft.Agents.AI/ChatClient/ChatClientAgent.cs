@@ -284,7 +284,7 @@ public sealed partial class ChatClientAgent : AIAgent
 
         List<ChatResponseUpdate> responseUpdates = GetResponseUpdates(continuationToken);
 
-        IAsyncEnumerator<ChatResponseUpdate> responseUpdatesEnumerator = null;
+        IAsyncEnumerator<ChatResponseUpdate> responseUpdatesEnumerator;
 
         try
         {
@@ -296,13 +296,6 @@ public sealed partial class ChatClientAgent : AIAgent
             await this.NotifyChatHistoryProviderOfFailureAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), chatOptions, cancellationToken).ConfigureAwait(false);
             await this.NotifyAIContextProviderOfFailureAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), cancellationToken).ConfigureAwait(false);
             throw;
-        }
-        finally
-        {
-            if (responseUpdatesEnumerator != null)
-            {
-                await responseUpdatesEnumerator.DisposeAsync().ConfigureAwait(false);
-            }
         }
 
         this._logger.LogAgentChatClientInvokedStreamingAgent(nameof(RunStreamingAsync), this.Id, loggingAgentName, this._chatClientType);
@@ -318,13 +311,6 @@ public sealed partial class ChatClientAgent : AIAgent
             await this.NotifyChatHistoryProviderOfFailureAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), chatOptions, cancellationToken).ConfigureAwait(false);
             await this.NotifyAIContextProviderOfFailureAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), cancellationToken).ConfigureAwait(false);
             throw;
-        }
-        finally
-        {
-            if (responseUpdatesEnumerator != null)
-            {
-                await responseUpdatesEnumerator.DisposeAsync().ConfigureAwait(false);
-            }
         }
 
         while (hasUpdates)
@@ -352,13 +338,6 @@ public sealed partial class ChatClientAgent : AIAgent
                 await this.NotifyChatHistoryProviderOfFailureAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), chatOptions, cancellationToken).ConfigureAwait(false);
                 await this.NotifyAIContextProviderOfFailureAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), cancellationToken).ConfigureAwait(false);
                 throw;
-            }
-            finally
-            {
-                if (responseUpdatesEnumerator != null)
-                {
-                    await responseUpdatesEnumerator.DisposeAsync().ConfigureAwait(false);
-                }
             }
         }
 
