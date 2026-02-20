@@ -512,6 +512,24 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     }
 #endif
 
+    [Fact]
+    public void DiscoverAndLoadSkills_FileWithUtf8Bom_ParsesSuccessfully()
+    {
+        // Arrange — prepend a UTF-8 BOM (\uFEFF) before the frontmatter
+        _ = this.CreateSkillDirectoryWithRawContent(
+            "bom-skill",
+            "\uFEFF---\nname: bom-skill\ndescription: Skill with BOM\n---\nBody content.");
+
+        // Act
+        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
+
+        // Assert
+        Assert.Single(skills);
+        Assert.True(skills.ContainsKey("bom-skill"));
+        Assert.Equal("Skill with BOM", skills["bom-skill"].Frontmatter.Description);
+        Assert.Equal("Body content.", skills["bom-skill"].Body);
+    }
+
     private string CreateSkillDirectory(string name, string description, string body)
     {
         string skillDir = Path.Combine(this._testRoot, name);
@@ -519,6 +537,14 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         File.WriteAllText(
             Path.Combine(skillDir, "SKILL.md"),
             $"---\nname: {name}\ndescription: {description}\n---\n{body}");
+        return skillDir;
+    }
+
+    private string CreateSkillDirectoryWithRawContent(string directoryName, string rawContent)
+    {
+        string skillDir = Path.Combine(this._testRoot, directoryName);
+        Directory.CreateDirectory(skillDir);
+        File.WriteAllText(Path.Combine(skillDir, "SKILL.md"), rawContent);
         return skillDir;
     }
 

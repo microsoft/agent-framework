@@ -111,6 +111,21 @@ public sealed class FileAgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
+    public void Constructor_InvalidPromptTemplate_ThrowsArgumentException()
+    {
+        // Arrange — template with unescaped braces and no valid {0} placeholder
+        var options = new FileAgentSkillsProviderOptions
+        {
+            SkillsInstructionPrompt = "Bad template with {unescaped} braces"
+        };
+
+        // Act & Assert
+        var ex = Assert.Throws<ArgumentException>(() => new FileAgentSkillsProvider(this._testRoot, options));
+        Assert.Contains("SkillsInstructionPrompt", ex.Message);
+        Assert.Equal("options", ex.ParamName);
+    }
+
+    [Fact]
     public async Task InvokingCoreAsync_SkillNamesAreXmlEscapedAsync()
     {
         // Arrange — description with XML-sensitive characters
@@ -172,6 +187,29 @@ public sealed class FileAgentSkillsProviderTests : IDisposable
         Assert.Contains("existing_tool", toolNames);
         Assert.Contains("load_skill", toolNames);
         Assert.Contains("read_skill_resource", toolNames);
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_SkillsListIsSortedByNameAsync()
+    {
+        // Arrange — create skills in reverse alphabetical order
+        this.CreateSkill("zulu-skill", "Zulu skill", "Body Z.");
+        this.CreateSkill("alpha-skill", "Alpha skill", "Body A.");
+        this.CreateSkill("mike-skill", "Mike skill", "Body M.");
+        var provider = new FileAgentSkillsProvider(this._testRoot);
+        var inputContext = new AIContext();
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, inputContext);
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — skills should appear in alphabetical order in the prompt
+        Assert.NotNull(result.Instructions);
+        int alphaIndex = result.Instructions!.IndexOf("alpha-skill", StringComparison.Ordinal);
+        int mikeIndex = result.Instructions.IndexOf("mike-skill", StringComparison.Ordinal);
+        int zuluIndex = result.Instructions.IndexOf("zulu-skill", StringComparison.Ordinal);
+        Assert.True(alphaIndex < mikeIndex, "alpha-skill should appear before mike-skill");
+        Assert.True(mikeIndex < zuluIndex, "mike-skill should appear before zulu-skill");
     }
 
     private void CreateSkill(string name, string description, string body)

@@ -29,11 +29,12 @@ internal sealed partial class FileAgentSkillLoader
 
     // Matches YAML frontmatter delimited by "---" lines. Group 1 = content between delimiters.
     // Multiline makes ^/$ match line boundaries; Singleline makes . match newlines across the block.
+    // The \uFEFF? prefix allows an optional UTF-8 BOM that some editors prepend.
     // Example: "---\nname: foo\n---\nBody" → Group 1: "name: foo\n"
 #if NET
-    private static readonly Regex s_frontmatterRegex = new(@"^---\s*$(.+?)^---\s*$", RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
+    private static readonly Regex s_frontmatterRegex = new(@"\A\uFEFF?^---\s*$(.+?)^---\s*$", RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
 #else
-    private static readonly Regex s_frontmatterRegex = new(@"^---\s*$(.+?)^---\s*$", RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
+    private static readonly Regex s_frontmatterRegex = new(@"\A\uFEFF?^---\s*$(.+?)^---\s*$", RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
 #endif
 
     // Matches markdown links to local resource files. Group 1 = relative file path.

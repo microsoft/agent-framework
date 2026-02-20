@@ -63,7 +63,7 @@ public sealed partial class FileAgentSkillsProvider : AIContextProvider
     private readonly ILogger<FileAgentSkillsProvider> _logger;
     private readonly FileAgentSkillLoader _loader;
     private readonly AITool[] _tools;
-    private readonly string _skillsInstructionPrompt;
+    private readonly string? _skillsInstructionPrompt;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FileAgentSkillsProvider"/> class that searches a single directory for skills.
@@ -91,10 +91,7 @@ public sealed partial class FileAgentSkillsProvider : AIContextProvider
         this._loader = new FileAgentSkillLoader(this._logger);
         this._skills = this._loader.DiscoverAndLoadSkills(skillPaths);
 
-        string promptTemplate = options?.SkillsInstructionPrompt ?? DefaultSkillsInstructionPrompt;
-        this._skillsInstructionPrompt = this._skills.Count > 0
-            ? string.Format(promptTemplate, this.BuildSkillsListPrompt())
-            : string.Empty;
+        this._skillsInstructionPrompt = BuildSkillsInstructionPrompt(options, this._skills);
 
         this._tools =
         [
@@ -119,11 +116,13 @@ public sealed partial class FileAgentSkillsProvider : AIContextProvider
             return new ValueTask<AIContext>(inputContext);
         }
 
-        string fullPrompt = this._skillsInstructionPrompt;
-
-        string? instructions = inputContext.Instructions is not null
-            ? inputContext.Instructions + "\n" + fullPrompt
-            : fullPrompt;
+        string? instructions = inputContext.Instructions;
+        if (!string.IsNullOrEmpty(this._skillsInstructionPrompt))
+        {
+            instructions = instructions is not null
+                ? instructions + "\n" + this._skillsInstructionPrompt
+                : this._skillsInstructionPrompt;
+        }
 
         return new ValueTask<AIContext>(new AIContext
         {
@@ -178,17 +177,43 @@ public sealed partial class FileAgentSkillsProvider : AIContextProvider
         }
     }
 
-    private string BuildSkillsListPrompt()
+    private static string? BuildSkillsInstructionPrompt(FileAgentSkillsProviderOptions? options, Dictionary<string, FileAgentSkill> skills)
     {
+        string promptTemplate = options?.SkillsInstructionPrompt ?? DefaultSkillsInstructionPrompt;
+
+        if (options?.SkillsInstructionPrompt is not null)
+        {
+            try
+            {
+                _ = string.Format(promptTemplate, string.Empty);
+            }
+            catch (FormatException ex)
+            {
+                throw new ArgumentException(
+                    "The provided SkillsInstructionPrompt is not a valid format string. It must contain a '{0}' placeholder and escape any literal '{' or '}' by doubling them ('{{' or '}}').",
+                    nameof(options),
+                    ex);
+            }
+        }
+
+        if (skills.Count == 0)
+        {
+            return null;
+        }
+
         var sb = new StringBuilder();
-        foreach (var skill in this._skills.Values)
+
+        // Order by name for deterministic prompt output across process restarts
+        // (Dictionary enumeration order is not guaranteed and varies with hash randomization).
+        foreach (var skill in skills.Values.OrderBy(s => s.Frontmatter.Name, StringComparer.Ordinal))
         {
             sb.AppendLine("  <skill>");
             sb.AppendLine($"    <name>{SecurityElement.Escape(skill.Frontmatter.Name)}</name>");
             sb.AppendLine($"    <description>{SecurityElement.Escape(skill.Frontmatter.Description)}</description>");
             sb.AppendLine("  </skill>");
         }
-        return sb.ToString().TrimEnd();
+
+        return string.Format(promptTemplate, sb.ToString().TrimEnd());
     }
 
     [LoggerMessage(LogLevel.Information, "Loading skill: {SkillName}")]
