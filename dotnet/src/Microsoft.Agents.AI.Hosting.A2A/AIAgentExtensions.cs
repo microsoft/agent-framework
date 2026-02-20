@@ -36,11 +36,13 @@ public static class AIAgentExtensions
         ITaskManager? taskManager = null,
         ILoggerFactory? loggerFactory = null,
         AgentSessionStore? agentSessionStore = null,
-        A2AResponseMode responseMode = A2AResponseMode.Auto,
+        A2AResponseMode? responseMode = null,
         JsonSerializerOptions? jsonSerializerOptions = null)
     {
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentNullException.ThrowIfNull(agent.Name);
+
+        responseMode ??= A2AResponseMode.Dynamic();
 
         var hostAgent = new AIHostAgent(
             innerAgent: agent,
@@ -84,7 +86,7 @@ public static class AIAgentExtensions
         ITaskManager? taskManager = null,
         ILoggerFactory? loggerFactory = null,
         AgentSessionStore? agentSessionStore = null,
-        A2AResponseMode responseMode = A2AResponseMode.Auto,
+        A2AResponseMode? responseMode = null,
         JsonSerializerOptions? jsonSerializerOptions = null)
     {
         taskManager = agent.MapA2A(taskManager, loggerFactory, agentSessionStore, responseMode, jsonSerializerOptions);
@@ -116,7 +118,7 @@ public static class AIAgentExtensions
 
         // Only enable background responses when the mode allows task-based results.
         // In Message mode, background responses are never enabled so the agent always completes synchronously.
-        bool allowBackground = responseMode != A2AResponseMode.Message;
+        bool allowBackground = responseMode.AllowBackgroundResponses;
 
         var options = messageSendParams.Metadata is not { Count: > 0 }
             ? new AgentRunOptions { AllowBackgroundResponses = allowBackground }
@@ -130,13 +132,15 @@ public static class AIAgentExtensions
 
         await hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
 
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-        if (responseMode is A2AResponseMode.Message || (responseMode is A2AResponseMode.Auto && response.ContinuationToken is null))
+        var decisionContext = new A2AResponseDecisionContext(messageSendParams, response);
+        var shouldReturnAsTask = await responseMode.ShouldReturnAsTaskAsync(decisionContext).ConfigureAwait(false);
+        if (!shouldReturnAsTask)
         {
             return CreateMessageFromResponse(contextId, response);
         }
 
         var agentTask = await InitializeTaskAsync(contextId, messageSendParams.Message, taskManager, cancellationToken).ConfigureAwait(false);
+#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         if (response.ContinuationToken is not null)
         {
             StoreContinuationToken(agentTask, response.ContinuationToken, continuationTokenJsonOptions);
