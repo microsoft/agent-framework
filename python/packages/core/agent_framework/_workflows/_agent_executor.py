@@ -144,10 +144,10 @@ class AgentExecutor(Executor):
         immediately run the agent to produce a new response.
         """
         # Replace cache with full conversation if available, else fall back to agent_response messages.
-        if prior.full_conversation is not None:
-            self._cache = list(prior.full_conversation)
-        else:
-            self._cache = list(prior.agent_response.messages)
+        source_messages = (
+            prior.full_conversation if prior.full_conversation is not None else prior.agent_response.messages
+        )
+        self._cache = list(source_messages)
         await self._run_agent_and_emit(ctx)
 
     @handler
@@ -311,7 +311,7 @@ class AgentExecutor(Executor):
         # Snapshot current conversation as cache + latest agent outputs.
         # Do not append to prior snapshots: callers may provide full-history messages
         # in request.messages, and extending would duplicate prior turns.
-        self._full_conversation = list(self._cache) + (list(response.messages) if response else [])
+        self._full_conversation = [*self._cache, *(list(response.messages) if response else [])]
 
         if response is None:
             # Agent did not complete (e.g., waiting for user input); do not emit response
