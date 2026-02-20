@@ -60,5 +60,4 @@ The sample runs two examples:
 ## Learn More
 
 - [Agent Skills Specification](https://agentskills.io/)
-- [Microsoft Agent Framework Documentation](../../../../docs/)
-- [AIContextProvider Pattern](../Agent_Step20_AdditionalAIContext/)
+- [Microsoft Agent Framework Documentation](../../../../../docs/)
