@@ -4,18 +4,15 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, ClassVar, Generic
+from typing import Any, ClassVar, Generic
 
-from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
-from pydantic import ValidationError
+from openai.lib.azure import AsyncAzureOpenAI
 
-from ..exceptions import ServiceInitializationError
+from .._settings import load_settings
 from ..openai import OpenAIAssistantsClient
 from ..openai._assistants_client import OpenAIAssistantsOptions
-from ._shared import AzureOpenAISettings
-
-if TYPE_CHECKING:
-    from azure.core.credentials import TokenCredential
+from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider, resolve_credential_to_token_provider
+from ._shared import AzureOpenAISettings, _apply_azure_defaults
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -25,8 +22,6 @@ if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
-
-__all__ = ["AzureOpenAIAssistantsClient"]
 
 
 # region Azure OpenAI Assistants Options TypedDict
@@ -62,10 +57,8 @@ class AzureOpenAIAssistantsClient(
         endpoint: str | None = None,
         base_url: str | None = None,
         api_version: str | None = None,
-        ad_token: str | None = None,
-        ad_token_provider: AsyncAzureADTokenProvider | None = None,
         token_endpoint: str | None = None,
-        credential: TokenCredential | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
         env_file_path: str | None = None,
@@ -94,11 +87,12 @@ class AzureOpenAIAssistantsClient(
             api_version: The deployment API version. If provided will override the value
                 in the env vars or .env file.
                 Can also be set via environment variable AZURE_OPENAI_API_VERSION.
-            ad_token: The Azure Active Directory token.
-            ad_token_provider: The Azure Active Directory token provider.
             token_endpoint: The token endpoint to request an Azure token.
                 Can also be set via environment variable AZURE_OPENAI_TOKEN_ENDPOINT.
-            credential: The Azure credential to use for authentication.
+            credential: Azure credential or token provider for authentication. Accepts a
+                ``TokenCredential``, ``AsyncTokenCredential``, or a callable that returns a
+                bearer token string (sync or async), for example from
+                ``azure.identity.get_bearer_token_provider()``.
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests.
             async_client: An existing client to use.
@@ -137,65 +131,57 @@ class AzureOpenAIAssistantsClient(
                 client: AzureOpenAIAssistantsClient[MyOptions] = AzureOpenAIAssistantsClient()
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            azure_openai_settings = AzureOpenAISettings(
-                # pydantic settings will see if there is a value, if not, will try the env var or .env file
-                api_key=api_key,  # type: ignore
-                base_url=base_url,  # type: ignore
-                endpoint=endpoint,  # type: ignore
-                chat_deployment_name=deployment_name,
-                api_version=api_version,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-                token_endpoint=token_endpoint,
-                default_api_version=self.DEFAULT_AZURE_API_VERSION,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Azure OpenAI settings.", ex) from ex
+        azure_openai_settings = load_settings(
+            AzureOpenAISettings,
+            env_prefix="AZURE_OPENAI_",
+            api_key=api_key,
+            base_url=base_url,
+            endpoint=endpoint,
+            chat_deployment_name=deployment_name,
+            api_version=api_version,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+            token_endpoint=token_endpoint,
+        )
+        _apply_azure_defaults(azure_openai_settings, default_api_version=self.DEFAULT_AZURE_API_VERSION)
 
-        if not azure_openai_settings.chat_deployment_name:
-            raise ServiceInitializationError(
+        if not azure_openai_settings["chat_deployment_name"]:
+            raise ValueError(
                 "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_CHAT_DEPLOYMENT_NAME' environment variable."
             )
 
-        # Handle authentication: try API key first, then AD token, then Entra ID
-        if (
-            not async_client
-            and not azure_openai_settings.api_key
-            and not ad_token
-            and not ad_token_provider
-            and azure_openai_settings.token_endpoint
-            and credential
-        ):
-            ad_token = azure_openai_settings.get_azure_auth_token(credential)
+        # Resolve credential to token provider
+        ad_token_provider = None
+        if not async_client and not azure_openai_settings["api_key"] and credential:
+            ad_token_provider = resolve_credential_to_token_provider(
+                credential, azure_openai_settings["token_endpoint"]
+            )
 
-        if not async_client and not azure_openai_settings.api_key and not ad_token and not ad_token_provider:
-            raise ServiceInitializationError("The Azure OpenAI API key, ad_token, or ad_token_provider is required.")
+        if not async_client and not azure_openai_settings["api_key"] and not ad_token_provider:
+            raise ValueError("Please provide either api_key, credential, or a client.")
 
         # Create Azure client if not provided
         if not async_client:
             client_params: dict[str, Any] = {
-                "api_version": azure_openai_settings.api_version,
+                "api_version": azure_openai_settings["api_version"],
                 "default_headers": default_headers,
             }
 
-            if azure_openai_settings.api_key:
-                client_params["api_key"] = azure_openai_settings.api_key.get_secret_value()
-            elif ad_token:
-                client_params["azure_ad_token"] = ad_token
+            if azure_openai_settings["api_key"]:
+                client_params["api_key"] = azure_openai_settings["api_key"].get_secret_value()
             elif ad_token_provider:
                 client_params["azure_ad_token_provider"] = ad_token_provider
 
-            if azure_openai_settings.base_url:
-                client_params["base_url"] = str(azure_openai_settings.base_url)
-            elif azure_openai_settings.endpoint:
-                client_params["azure_endpoint"] = str(azure_openai_settings.endpoint)
+            if azure_openai_settings["base_url"]:
+                client_params["base_url"] = str(azure_openai_settings["base_url"])
+            elif azure_openai_settings["endpoint"]:
+                client_params["azure_endpoint"] = str(azure_openai_settings["endpoint"])
 
             async_client = AsyncAzureOpenAI(**client_params)
 
         super().__init__(
-            model_id=azure_openai_settings.chat_deployment_name,
+            model_id=azure_openai_settings["chat_deployment_name"],
             assistant_id=assistant_id,
             assistant_name=assistant_name,
             assistant_description=assistant_description,

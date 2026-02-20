@@ -9,7 +9,7 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     ChatResponse,
     ChatResponseUpdate,
@@ -38,10 +38,10 @@ class StubAgent(BaseAgent):
 
     def run(  # type: ignore[override]
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
         if stream:
@@ -76,9 +76,9 @@ class StubManagerAgent(Agent):
 
     async def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         if self._call_count == 0:
@@ -118,6 +118,51 @@ class StubManagerAgent(Agent):
                 )
             ],
             value=payload,
+        )
+
+
+class ConcatenatedJsonManagerAgent(Agent):
+    """Manager agent that emits concatenated JSON in a single assistant message."""
+
+    def __init__(self) -> None:
+        super().__init__(client=MockChatClient(), name="concat_manager", description="Concatenated JSON manager")
+        self._call_count = 0
+
+    async def run(
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse:
+        if self._call_count == 0:
+            self._call_count += 1
+            return AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        text=(
+                            '{"terminate": false, "reason": "invalid candidate", '
+                            '"next_speaker": "unknown", "final_message": null} '
+                            '{"terminate": false, "reason": "pick known participant", '
+                            '"next_speaker": "agent", "final_message": null}'
+                        ),
+                        author_name=self.name,
+                    )
+                ]
+            )
+
+        return AgentResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    text=(
+                        '{"terminate": true, "reason": "Task complete", '
+                        '"next_speaker": null, "final_message": "concatenated manager final"}'
+                    ),
+                    author_name=self.name,
+                )
+            ]
         )
 
 
@@ -221,6 +266,29 @@ async def test_group_chat_as_agent_accepts_conversation() -> None:
     assert response.messages, "Expected agent conversation output"
 
 
+async def test_agent_manager_handles_concatenated_json_output() -> None:
+    manager = ConcatenatedJsonManagerAgent()
+    worker = StubAgent("agent", "worker response")
+
+    workflow = GroupChatBuilder(
+        participants=[worker],
+        orchestrator_agent=manager,
+    ).build()
+
+    outputs: list[list[Message]] = []
+    async for event in workflow.run("coordinate task", stream=True):
+        if event.type == "output":
+            data = event.data
+            if isinstance(data, list):
+                outputs.append(cast(list[Message], data))
+
+    assert outputs
+    conversation = outputs[-1]
+    assert any(msg.author_name == "agent" and msg.text == "worker response" for msg in conversation)
+    assert conversation[-1].author_name == manager.name
+    assert conversation[-1].text == "concatenated manager final"
+
+
 # Comprehensive tests for group chat functionality
 
 
@@ -278,7 +346,7 @@ class TestGroupChatBuilder:
                 super().__init__(name="", description="test")
 
             def run(
-                self, messages: Any = None, *, stream: bool = False, thread: Any = None, **kwargs: Any
+                self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any
             ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
                 if stream:
 
@@ -620,7 +688,7 @@ async def test_group_chat_checkpoint_runtime_only() -> None:
 
     assert baseline_output is not None
 
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
     assert len(checkpoints) > 0, "Runtime-only checkpointing should have created checkpoints"
 
 
@@ -656,8 +724,8 @@ async def test_group_chat_checkpoint_runtime_overrides_buildtime() -> None:
 
         assert baseline_output is not None
 
-        buildtime_checkpoints = await buildtime_storage.list_checkpoints()
-        runtime_checkpoints = await runtime_storage.list_checkpoints()
+        buildtime_checkpoints = await buildtime_storage.list_checkpoints(workflow_name=wf.name)
+        runtime_checkpoints = await runtime_storage.list_checkpoints(workflow_name=wf.name)
 
         assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
@@ -828,9 +896,9 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
 
         async def run(
             self,
-            messages: str | Message | Sequence[str | Message] | None = None,
+            messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
             *,
-            thread: AgentThread | None = None,
+            session: AgentSession | None = None,
             **kwargs: Any,
         ) -> AgentResponse:
             if self._call_count == 0:

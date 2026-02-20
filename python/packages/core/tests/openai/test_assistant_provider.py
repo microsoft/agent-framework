@@ -9,7 +9,6 @@ from openai.types.beta.assistant import Assistant
 from pydantic import BaseModel, Field
 
 from agent_framework import Agent, normalize_tools, tool
-from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIAssistantProvider, OpenAIAssistantsClient
 from agent_framework.openai._shared import from_assistant_tools, to_assistant_tools
 
@@ -99,7 +98,6 @@ class WeatherResponse(BaseModel):
 
 # endregion
 
-
 # region Initialization Tests
 
 
@@ -131,11 +129,17 @@ class TestOpenAIAssistantProviderInit:
         """Test initialization fails without API key when settings return None."""
         from unittest.mock import patch
 
-        # Mock OpenAISettings to return None for api_key
-        with patch("agent_framework.openai._assistant_provider.OpenAISettings") as mock_settings:
-            mock_settings.return_value.api_key = None
+        # Mock load_settings to return a dict with None for api_key
+        with patch("agent_framework.openai._assistant_provider.load_settings") as mock_load:
+            mock_load.return_value = {
+                "api_key": None,
+                "org_id": None,
+                "base_url": None,
+                "chat_model_id": None,
+                "responses_model_id": None,
+            }
 
-            with pytest.raises(ServiceInitializationError) as exc_info:
+            with pytest.raises(ValueError) as exc_info:
                 OpenAIAssistantProvider()
 
             assert "API key is required" in str(exc_info.value)
@@ -184,7 +188,6 @@ class TestOpenAIAssistantProviderContextManager:
 
 
 # endregion
-
 
 # region create_agent Tests
 
@@ -360,7 +363,6 @@ class TestOpenAIAssistantProviderCreateAgent:
 
 # endregion
 
-
 # region get_agent Tests
 
 
@@ -448,7 +450,6 @@ class TestOpenAIAssistantProviderGetAgent:
 
 # endregion
 
-
 # region as_agent Tests
 
 
@@ -533,7 +534,6 @@ class TestOpenAIAssistantProviderAsAgent:
 
 
 # endregion
-
 
 # region Tool Conversion Tests
 
@@ -637,7 +637,6 @@ class TestToolConversion:
 
 # endregion
 
-
 # region Tool Validation Tests
 
 
@@ -696,7 +695,6 @@ class TestToolValidation:
 
 # endregion
 
-
 # region Tool Merging Tests
 
 
@@ -754,9 +752,7 @@ class TestToolMerging:
 
 # endregion
 
-
 # region Integration Tests
-
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"

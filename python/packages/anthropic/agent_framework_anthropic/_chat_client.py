@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
@@ -24,12 +25,9 @@ from agent_framework import (
     ResponseStream,
     TextSpanRegion,
     UsageDetails,
-    get_logger,
-    prepare_function_call_results,
 )
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import SecretString, load_settings
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
-from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropic
 from anthropic.types.beta import (
@@ -44,10 +42,12 @@ from anthropic.types.beta import (
 from anthropic.types.beta.beta_bash_code_execution_tool_result_error import (
     BetaBashCodeExecutionToolResultError,
 )
+from anthropic.types.beta.beta_code_execution_result_block import BetaCodeExecutionResultBlock
 from anthropic.types.beta.beta_code_execution_tool_result_error import (
     BetaCodeExecutionToolResultError,
 )
-from pydantic import BaseModel, SecretStr, ValidationError
+from anthropic.types.beta.beta_encrypted_code_execution_result_block import BetaEncryptedCodeExecutionResultBlock
+from pydantic import BaseModel
 
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
@@ -69,7 +69,7 @@ __all__ = [
     "ThinkingConfig",
 ]
 
-logger = get_logger("agent_framework.anthropic")
+logger = logging.getLogger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
@@ -192,40 +192,20 @@ FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
 }
 
 
-class AnthropicSettings(AFBaseSettings):
+class AnthropicSettings(TypedDict, total=False):
     """Anthropic Project settings.
 
-    The settings are first loaded from environment variables with the prefix 'ANTHROPIC_'.
-    If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
-    are ignored; however, validation will fail alerting that the settings are missing.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'ANTHROPIC_'.
 
-    Keyword Args:
+    Keys:
         api_key: The Anthropic API key.
         chat_model_id: The Anthropic chat model ID.
-        env_file_path: If provided, the .env settings are read from this file path location.
-        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework.anthropic import AnthropicSettings
-
-            # Using environment variables
-            # Set ANTHROPIC_API_KEY=your_anthropic_api_key
-            # ANTHROPIC_CHAT_MODEL_ID=claude-sonnet-4-5-20250929
-
-            # Or passing parameters directly
-            settings = AnthropicSettings(chat_model_id="claude-sonnet-4-5-20250929")
-
-            # Or loading from a .env file
-            settings = AnthropicSettings(env_file_path="path/to/.env")
     """
 
-    env_prefix: ClassVar[str] = "ANTHROPIC_"
-
-    api_key: SecretStr | None = None
-    chat_model_id: str | None = None
+    api_key: SecretString | None
+    chat_model_id: str | None
 
 
 class AnthropicClient(
@@ -311,25 +291,24 @@ class AnthropicClient(
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
 
         """
-        try:
-            anthropic_settings = AnthropicSettings(
-                api_key=api_key,  # type: ignore[arg-type]
-                chat_model_id=model_id,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Anthropic settings.", ex) from ex
+        anthropic_settings = load_settings(
+            AnthropicSettings,
+            env_prefix="ANTHROPIC_",
+            api_key=api_key,
+            chat_model_id=model_id,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
         if anthropic_client is None:
-            if not anthropic_settings.api_key:
-                raise ServiceInitializationError(
+            if not anthropic_settings["api_key"]:
+                raise ValueError(
                     "Anthropic API key is required. Set via 'api_key' parameter "
                     "or 'ANTHROPIC_API_KEY' environment variable."
                 )
 
             anthropic_client = AsyncAnthropic(
-                api_key=anthropic_settings.api_key.get_secret_value(),
+                api_key=anthropic_settings["api_key"].get_secret_value(),
                 default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
             )
 
@@ -343,9 +322,10 @@ class AnthropicClient(
         # Initialize instance variables
         self.anthropic_client = anthropic_client
         self.additional_beta_flags = additional_beta_flags or []
-        self.model_id = anthropic_settings.chat_model_id
-        # streaming requires tracking the last function call ID and name
+        self.model_id = anthropic_settings["chat_model_id"]
+        # streaming requires tracking the last function call ID, name, and content type
         self._last_call_id_name: tuple[str, str] | None = None
+        self._last_call_content_type: str | None = None
 
     # region Static factory methods for hosted tools
 
@@ -353,11 +333,13 @@ class AnthropicClient(
     def get_code_interpreter_tool(
         *,
         type_name: str | None = None,
+        name: str = "code_execution",
     ) -> dict[str, Any]:
         """Create a code interpreter tool configuration for Anthropic.
 
         Keyword Args:
             type_name: Override the tool type name. Defaults to "code_execution_20250825".
+            name: The name for this tool. Defaults to "code_execution".
 
         Returns:
             A dict-based tool configuration ready to pass to ChatAgent.
@@ -370,17 +352,19 @@ class AnthropicClient(
                 tool = AnthropicClient.get_code_interpreter_tool()
                 agent = AnthropicClient().as_agent(tools=[tool])
         """
-        return {"type": type_name or "code_execution_20250825"}
+        return {"type": type_name or "code_execution_20250825", "name": name}
 
     @staticmethod
     def get_web_search_tool(
         *,
         type_name: str | None = None,
+        name: str = "web_search",
     ) -> dict[str, Any]:
         """Create a web search tool configuration for Anthropic.
 
         Keyword Args:
             type_name: Override the tool type name. Defaults to "web_search_20250305".
+            name: The name for this tool. Defaults to "web_search".
 
         Returns:
             A dict-based tool configuration ready to pass to ChatAgent.
@@ -393,7 +377,7 @@ class AnthropicClient(
                 tool = AnthropicClient.get_web_search_tool()
                 agent = AnthropicClient().as_agent(tools=[tool])
         """
-        return {"type": type_name or "web_search_20250305"}
+        return {"type": type_name or "web_search_20250305", "name": name}
 
     @staticmethod
     def get_mcp_tool(
@@ -510,6 +494,10 @@ class AnthropicClient(
         run_options: dict[str, Any] = {
             k: v for k, v in options.items() if v is not None and k not in {"instructions", "response_format"}
         }
+        # Framework-level options handled elsewhere; do not forward as raw Anthropic request kwargs.
+        run_options.pop("allow_multiple_tool_calls", None)
+        # Stream mode is controlled explicitly at call sites.
+        run_options.pop("stream", None)
 
         # Translation between options keys and Anthropic Messages API
         for old_key, new_key in OPTION_TRANSLATIONS.items():
@@ -674,11 +662,30 @@ class AnthropicClient(
                     a_content.append({
                         "type": "tool_result",
                         "tool_use_id": content.call_id,
-                        "content": prepare_function_call_results(content.result),
+                        "content": content.result if content.result is not None else "",
                         "is_error": content.exception is not None,
                     })
+                case "mcp_server_tool_call":
+                    mcp_call: dict[str, Any] = {
+                        "type": "mcp_tool_use",
+                        "id": content.call_id,
+                        "name": content.tool_name,
+                        "server_name": content.server_name or "",
+                        "input": content.parse_arguments() or {},
+                    }
+                    a_content.append(mcp_call)
+                case "mcp_server_tool_result":
+                    mcp_result: dict[str, Any] = {
+                        "type": "mcp_tool_result",
+                        "tool_use_id": content.call_id,
+                        "content": content.output if content.output is not None else "",
+                    }
+                    a_content.append(mcp_result)
                 case "text_reasoning":
-                    a_content.append({"type": "thinking", "thinking": content.text})
+                    thinking_block: dict[str, Any] = {"type": "thinking", "thinking": content.text}
+                    if content.protected_data:
+                        thinking_block["signature"] = content.protected_data
+                    a_content.append(thinking_block)
                 case _:
                     logger.debug(f"Ignoring unsupported content type: {content.type} for now")
 
@@ -742,6 +749,8 @@ class AnthropicClient(
         if options.get("tool_choice") is None:
             return result or None
         tool_mode = validate_tool_mode(options.get("tool_choice"))
+        if tool_mode is None:
+            return result or None
         allow_multiple = options.get("allow_multiple_tool_calls")
         match tool_mode.get("mode"):
             case "auto":
@@ -880,12 +889,13 @@ class AnthropicClient(
                     )
                 case "tool_use" | "mcp_tool_use" | "server_tool_use":
                     self._last_call_id_name = (content_block.id, content_block.name)
+                    self._last_call_content_type = content_block.type
                     if content_block.type == "mcp_tool_use":
                         contents.append(
                             Content.from_mcp_server_tool_call(
                                 call_id=content_block.id,
                                 tool_name=content_block.name,
-                                server_name=None,
+                                server_name=getattr(content_block, "server_name", None),
                                 arguments=content_block.input,
                                 raw_representation=content_block,
                             )
@@ -954,10 +964,23 @@ class AnthropicClient(
                                 )
                             )
                         else:
-                            if content_block.content.stdout:
+                            if (
+                                isinstance(content_block.content, BetaCodeExecutionResultBlock)
+                                and content_block.content.stdout
+                            ):
                                 code_outputs.append(
                                     Content.from_text(
                                         text=content_block.content.stdout,
+                                        raw_representation=content_block.content,
+                                    )
+                                )
+                            if (
+                                isinstance(content_block.content, BetaEncryptedCodeExecutionResultBlock)
+                                and content_block.content.encrypted_stdout
+                            ):
+                                code_outputs.append(
+                                    Content.from_text(
+                                        text=content_block.content.encrypted_stdout,
                                         raw_representation=content_block.content,
                                     )
                                 )
@@ -1130,24 +1153,32 @@ class AnthropicClient(
                         )
                     )
                 case "input_json_delta":
-                    # For streaming argument deltas, only pass call_id and arguments.
-                    # Pass empty string for name - it causes ag-ui to emit duplicate ToolCallStartEvents
-                    # since it triggers on `if content.name:`. The initial tool_use event already
-                    # provides the name, so deltas should only carry incremental arguments.
-                    # This matches OpenAI's behavior where streaming chunks have name="".
-                    call_id, _name = self._last_call_id_name if self._last_call_id_name else ("", "")
-                    contents.append(
-                        Content.from_function_call(
-                            call_id=call_id,
-                            name="",
-                            arguments=content_block.partial_json,
-                            raw_representation=content_block,
+                    # Skip argument deltas for MCP tools — execution is handled server-side.
+                    if self._last_call_content_type == "mcp_tool_use":
+                        pass
+                    else:
+                        call_id = self._last_call_id_name[0] if self._last_call_id_name else ""
+                        contents.append(
+                            Content.from_function_call(
+                                call_id=call_id,
+                                name="",
+                                arguments=content_block.partial_json,
+                                raw_representation=content_block,
+                            )
                         )
-                    )
                 case "thinking" | "thinking_delta":
                     contents.append(
                         Content.from_text_reasoning(
                             text=content_block.thinking,
+                            protected_data=getattr(content_block, "signature", None),
+                            raw_representation=content_block,
+                        )
+                    )
+                case "signature_delta":
+                    contents.append(
+                        Content.from_text_reasoning(
+                            text=None,
+                            protected_data=content_block.signature,
                             raw_representation=content_block,
                         )
                     )

@@ -30,6 +30,7 @@ from agent_framework.observability import (
     ChatTelemetryLayer,
     MessageListTimestampFilter,
     OtelAttr,
+    _capture_messages,
     get_function_span,
 )
 
@@ -441,19 +442,19 @@ def mock_chat_agent():
             self.description = "Test agent description"
             self.default_options: dict[str, Any] = {"model_id": "TestModel"}
 
-        def run(self, messages=None, *, thread=None, stream=False, **kwargs):
+        def run(self, messages=None, *, session=None, stream=False, **kwargs):
             if stream:
                 return self._run_stream_impl(messages=messages, **kwargs)
             return self._run_impl(messages=messages, **kwargs)
 
-        async def _run_impl(self, messages=None, *, thread=None, **kwargs):
+        async def _run_impl(self, messages=None, *, session=None, **kwargs):
             return AgentResponse(
                 messages=[Message("assistant", ["Agent response"])],
                 usage_details=UsageDetails(input_token_count=15, output_token_count=25),
                 response_id="test_response_id",
             )
 
-        async def _run_stream_impl(self, messages=None, *, thread=None, **kwargs):
+        async def _run_stream_impl(self, messages=None, *, session=None, **kwargs):
             from agent_framework import AgentResponse, AgentResponseUpdate, ResponseStream
 
             async def _stream():
@@ -900,7 +901,7 @@ def test_console_exporters_opt_in_false(monkeypatch):
     monkeypatch.setenv("ENABLE_CONSOLE_EXPORTERS", "false")
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings()
     assert settings.enable_console_exporters is False
 
 
@@ -910,7 +911,7 @@ def test_console_exporters_opt_in_true(monkeypatch):
 
     monkeypatch.setenv("ENABLE_CONSOLE_EXPORTERS", "true")
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings()
     assert settings.enable_console_exporters is True
 
 
@@ -920,7 +921,7 @@ def test_console_exporters_default_false(monkeypatch):
 
     monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings()
     assert settings.enable_console_exporters is False
 
 
@@ -995,7 +996,7 @@ def test_observability_settings_is_setup_initial(monkeypatch):
     from agent_framework.observability import ObservabilitySettings
 
     monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings()
     assert settings.is_setup is False
 
 
@@ -1463,7 +1464,7 @@ def test_observability_settings_configure_not_enabled(monkeypatch):
     from agent_framework.observability import ObservabilitySettings
 
     monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings()
 
     # Should not raise, should just return early
     settings._configure()
@@ -1484,7 +1485,7 @@ def test_observability_settings_configure_already_setup(monkeypatch):
     ]:
         monkeypatch.delenv(key, raising=False)
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings()
 
     # Manually mark as set up
     settings._executed_setup = True
@@ -1572,12 +1573,12 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
             messages=None,
             *,
             stream: bool = False,
-            thread=None,
+            session=None,
             **kwargs,
         ):
             if stream:
                 return ResponseStream(
-                    self._run_stream(messages=messages, thread=thread),
+                    self._run_stream(messages=messages, session=session),
                     finalizer=lambda x: AgentResponse.from_updates(x),
                 )
             return AgentResponse(messages=[Message("assistant", ["Test response"])])
@@ -1586,7 +1587,7 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
             self,
             messages=None,
             *,
-            thread=None,
+            session=None,
             **kwargs,
         ):
             from agent_framework import AgentResponseUpdate
@@ -1635,7 +1636,7 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
         def default_options(self):
             return self._default_options
 
-        async def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):
+        async def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
             raise RuntimeError("Agent failed")
 
     class FailingAgent(AgentTelemetryLayer, _FailingAgent):
@@ -1685,15 +1686,15 @@ async def test_agent_streaming_observability(span_exporter: InMemorySpanExporter
         def default_options(self):
             return self._default_options
 
-        def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+        def run(self, messages=None, *, stream=False, session=None, **kwargs):
             if stream:
                 return self._run_stream_impl(messages=messages, **kwargs)
             return self._run_impl(messages=messages, **kwargs)
 
-        async def _run_impl(self, messages=None, *, thread=None, **kwargs):
+        async def _run_impl(self, messages=None, *, session=None, **kwargs):
             return AgentResponse(messages=[Message("assistant", ["Test"])])
 
-        def _run_stream_impl(self, messages=None, *, thread=None, **kwargs):
+        def _run_stream_impl(self, messages=None, *, session=None, **kwargs):
             async def _stream():
                 yield AgentResponseUpdate(contents=[Content.from_text("Hello ")], role="assistant")
                 yield AgentResponseUpdate(contents=[Content.from_text("World")], role="assistant")
@@ -1822,15 +1823,15 @@ async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, en
         def default_options(self):
             return self._default_options
 
-        def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+        def run(self, messages=None, *, stream=False, session=None, **kwargs):
             if stream:
                 return self._run_stream_impl(messages=messages, **kwargs)
             return self._run_impl(messages=messages, **kwargs)
 
-        async def _run_impl(self, messages=None, *, thread=None, **kwargs):
+        async def _run_impl(self, messages=None, *, session=None, **kwargs):
             return AgentResponse(messages=[])
 
-        def _run_stream_impl(self, messages=None, *, thread=None, **kwargs):
+        def _run_stream_impl(self, messages=None, *, session=None, **kwargs):
             async def _stream():
                 yield AgentResponseUpdate(contents=[Content.from_text("Starting")], role="assistant")
                 raise RuntimeError("Stream failed")
@@ -1919,7 +1920,7 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
         def default_options(self):
             return self._default_options
 
-        async def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):
+        async def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
             if stream:
                 return ResponseStream(
                     self._run_stream(messages=messages, **kwargs),
@@ -1927,7 +1928,7 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
                 )
             return AgentResponse(messages=[])
 
-        async def _run_stream(self, messages=None, *, thread=None, **kwargs):
+        async def _run_stream(self, messages=None, *, session=None, **kwargs):
             from agent_framework import AgentResponseUpdate
 
             yield AgentResponseUpdate(contents=[Content.from_text("test")], role="assistant")
@@ -1974,15 +1975,15 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
         def default_options(self):
             return self._default_options
 
-        def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+        def run(self, messages=None, *, stream=False, session=None, **kwargs):
             if stream:
                 return self._run_stream(messages=messages, **kwargs)
             return self._run(messages=messages, **kwargs)
 
-        async def _run(self, messages=None, *, thread=None, **kwargs):
+        async def _run(self, messages=None, *, session=None, **kwargs):
             return AgentResponse(messages=[])
 
-        async def _run_stream(self, messages=None, *, thread=None, **kwargs):
+        async def _run_stream(self, messages=None, *, session=None, **kwargs):
             yield AgentResponseUpdate(contents=[Content.from_text("test")], role="assistant")
 
     class TestAgent(AgentTelemetryLayer, _TestAgent):
@@ -2020,7 +2021,7 @@ def test_configure_providers_with_span_exporters(monkeypatch):
     ]:
         monkeypatch.delenv(key, raising=False)
 
-    settings = ObservabilitySettings(env_file_path="test.env")
+    settings = ObservabilitySettings()
 
     # Create mock span exporter
     mock_span_exporter = Mock(spec=SpanExporter)
@@ -2263,3 +2264,336 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
 
     # Third span: second chat (LLM call with function result)
     assert sorted_spans[2].name.startswith("chat"), f"Third span should be 'chat', got '{sorted_spans[2].name}'"
+
+
+# region Test non-ASCII character handling in JSON serialization
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_capture_messages_preserves_non_ascii_characters(mock_chat_client, span_exporter: InMemorySpanExporter):
+    """Test that non-ASCII characters (e.g., Japanese) are preserved in span attributes."""
+    import json
+
+    japanese_text = "こんにちは世界"  # "Hello World" in Japanese
+
+    class ClientWithJapanese(mock_chat_client):
+        async def _inner_get_response(self, *, messages, options, **kwargs):
+            return ChatResponse(
+                messages=[Message(role="assistant", text=japanese_text)],
+                usage_details=UsageDetails(input_token_count=5, output_token_count=10),
+            )
+
+    client = ClientWithJapanese()
+    messages = [Message(role="user", text=japanese_text)]
+
+    span_exporter.clear()
+    response = await client.get_response(messages=messages, model_id="Test")
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify input messages preserve Japanese characters
+    input_messages_json = span.attributes[OtelAttr.INPUT_MESSAGES]
+    assert japanese_text in input_messages_json
+    # Ensure it's not escaped to Unicode
+    assert "\\u" not in input_messages_json
+
+    # Verify output messages preserve Japanese characters
+    output_messages_json = span.attributes[OtelAttr.OUTPUT_MESSAGES]
+    assert japanese_text in output_messages_json
+    assert "\\u" not in output_messages_json
+
+    # Verify JSON is valid and contains the text
+    input_messages = json.loads(input_messages_json)
+    assert input_messages[0]["parts"][0]["content"] == japanese_text
+    output_messages = json.loads(output_messages_json)
+    assert output_messages[0]["parts"][0]["content"] == japanese_text
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_system_instructions_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
+    """Test that non-ASCII characters are preserved in system instructions span attribute."""
+    import json
+
+    from opentelemetry import trace
+
+    chinese_text = "你好世界"  # "Hello World" in Chinese
+
+    tracer = trace.get_tracer("test")
+    span_exporter.clear()
+
+    with tracer.start_as_current_span("test_span") as span:
+        _capture_messages(
+            span=span,
+            provider_name="test_provider",
+            messages=[Message(role="user", text="Test")],
+            system_instructions=chinese_text,
+        )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify system instructions preserve Chinese characters
+    system_instructions_json = span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS]
+    assert chinese_text in system_instructions_json
+    assert "\\u" not in system_instructions_json
+
+    # Verify JSON is valid and contains the text
+    system_instructions = json.loads(system_instructions_json)
+    assert system_instructions[0]["content"] == chinese_text
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_tool_arguments_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
+    """Test that non-ASCII characters are preserved in tool arguments span attribute."""
+    import json
+
+    korean_text = "안녕하세요"  # "Hello" in Korean
+
+    @tool
+    def greet(message: str) -> str:
+        """Greet with a message."""
+        return f"Greeted: {message}"
+
+    span_exporter.clear()
+    await greet.invoke(message=korean_text)
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify tool arguments preserve Korean characters
+    tool_arguments_json = span.attributes[OtelAttr.TOOL_ARGUMENTS]
+    assert korean_text in tool_arguments_json
+    assert "\\u" not in tool_arguments_json
+
+    # Verify JSON is valid and contains the text
+    tool_arguments = json.loads(tool_arguments_json)
+    assert tool_arguments["message"] == korean_text
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_tool_result_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
+    """Test that non-ASCII characters are preserved in tool result span attribute."""
+    arabic_text = "مرحبا بالعالم"  # "Hello World" in Arabic
+
+    @tool
+    def echo(text: str) -> str:
+        """Echo the text back."""
+        return text
+
+    span_exporter.clear()
+    result = await echo.invoke(text=arabic_text)
+
+    assert result == arabic_text
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify tool result preserves Arabic characters
+    tool_result = span.attributes[OtelAttr.TOOL_RESULT]
+    assert arabic_text in tool_result
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_tool_arguments_pydantic_preserves_non_ascii_characters(
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    """Test that non-ASCII characters are preserved in tool arguments when using a Pydantic model."""
+    import json
+
+    from pydantic import BaseModel
+
+    japanese_text = "こんにちは"  # "Hello" in Japanese
+
+    class Greeting(BaseModel):
+        message: str
+
+    @tool
+    def greet_with_model(greeting: Greeting) -> str:
+        """Greet with a message contained in a Pydantic model."""
+        # When invoked via the tool's input_model, greeting is passed as a dict
+        if isinstance(greeting, dict):
+            return f"Greeted: {greeting['message']}"
+        return f"Greeted: {greeting.message}"
+
+    span_exporter.clear()
+    # Use the tool's input_model to properly pass the Pydantic model argument
+    input_model = greet_with_model.input_model
+    await greet_with_model.invoke(arguments=input_model(greeting=Greeting(message=japanese_text)))
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Verify tool arguments preserve Japanese characters
+    tool_arguments_json = span.attributes[OtelAttr.TOOL_ARGUMENTS]
+    assert japanese_text in tool_arguments_json
+    assert "\\u" not in tool_arguments_json
+
+    # Verify JSON is valid and contains the text
+    tool_arguments = json.loads(tool_arguments_json)
+    assert tool_arguments["greeting"]["message"] == japanese_text
+
+
+# region Test merged options for instructions
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_instructions_from_default_options(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that instructions from default_options are captured in agent telemetry."""
+    import json
+
+    agent = mock_chat_agent()
+    agent.default_options = {"model_id": "TestModel", "instructions": "Default system instructions."}
+
+    messages = [Message(role="user", text="Test message")]
+    span_exporter.clear()
+    response = await agent.run(messages)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Instructions from default_options should be captured
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 1
+    assert system_instructions[0]["content"] == "Default system instructions."
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_instructions_from_options_override(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that instructions from options are captured when no default_options instructions exist."""
+    import json
+
+    agent = mock_chat_agent()
+    agent.default_options = {"model_id": "TestModel"}  # No default instructions
+
+    messages = [Message(role="user", text="Test message")]
+    span_exporter.clear()
+    response = await agent.run(messages, options={"instructions": "Override instructions."})
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 1
+    assert system_instructions[0]["content"] == "Override instructions."
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_instructions_merged_from_default_and_options(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that instructions from both default_options and options are merged (concatenated)."""
+    import json
+
+    agent = mock_chat_agent()
+    agent.default_options = {"model_id": "TestModel", "instructions": "Default instructions."}
+
+    messages = [Message(role="user", text="Test message")]
+    span_exporter.clear()
+    response = await agent.run(messages, options={"instructions": "Additional instructions."})
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    # Merged instructions should contain both default and override, concatenated with newline
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 1
+    assert "Default instructions." in system_instructions[0]["content"]
+    assert "Additional instructions." in system_instructions[0]["content"]
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_streaming_instructions_from_default_options(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that streaming agent telemetry captures instructions from default_options."""
+    import json
+
+    agent = mock_chat_agent()
+    agent.default_options = {"model_id": "TestModel", "instructions": "Default streaming instructions."}
+
+    messages = [Message(role="user", text="Test message")]
+    span_exporter.clear()
+    updates = []
+    stream = agent.run(messages, stream=True)
+    async for update in stream:
+        updates.append(update)
+    await stream.get_final_response()
+
+    assert len(updates) == 2
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 1
+    assert system_instructions[0]["content"] == "Default streaming instructions."
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_streaming_instructions_merged_from_default_and_options(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that streaming agent telemetry captures merged instructions from default_options and options."""
+    import json
+
+    agent = mock_chat_agent()
+    agent.default_options = {"model_id": "TestModel", "instructions": "Default instructions."}
+
+    messages = [Message(role="user", text="Test message")]
+    span_exporter.clear()
+    updates = []
+    stream = agent.run(messages, stream=True, options={"instructions": "Stream override."})
+    async for update in stream:
+        updates.append(update)
+    await stream.get_final_response()
+
+    assert len(updates) == 2
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    assert OtelAttr.SYSTEM_INSTRUCTIONS in span.attributes
+    system_instructions = json.loads(span.attributes[OtelAttr.SYSTEM_INSTRUCTIONS])
+    assert len(system_instructions) == 1
+    assert "Default instructions." in system_instructions[0]["content"]
+    assert "Stream override." in system_instructions[0]["content"]
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_agent_no_instructions_in_default_or_options(
+    mock_chat_agent, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that system_instructions is not set when neither default_options nor options have instructions."""
+    agent = mock_chat_agent()
+    agent.default_options = {"model_id": "TestModel"}  # No instructions
+
+    messages = [Message(role="user", text="Test message")]
+    span_exporter.clear()
+    response = await agent.run(messages)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    assert OtelAttr.SYSTEM_INSTRUCTIONS not in span.attributes

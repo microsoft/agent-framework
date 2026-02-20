@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import builtins
 import sys
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
@@ -554,6 +556,58 @@ instructions: You are a helpful assistant.
         with pytest.raises(DeclarativeLoaderError, match="ChatClient must be provided"):
             factory.create_agent_from_dict(agent_def)
 
+    def test_create_agent_from_dict_output_schema_in_default_options(self):
+        """Test that outputSchema is passed as response_format in Agent.default_options."""
+        from unittest.mock import MagicMock
+
+        from pydantic import BaseModel
+
+        from agent_framework_declarative import AgentFactory
+
+        agent_def = {
+            "kind": "Prompt",
+            "name": "TestAgent",
+            "instructions": "You are helpful.",
+            "outputSchema": {
+                "properties": {
+                    "answer": {"type": "string", "required": True, "description": "The answer."},
+                },
+            },
+        }
+
+        mock_client = MagicMock()
+        factory = AgentFactory(client=mock_client)
+        agent = factory.create_agent_from_dict(agent_def)
+
+        assert "response_format" in agent.default_options
+        assert isinstance(agent.default_options["response_format"], type)
+        assert issubclass(agent.default_options["response_format"], BaseModel)
+
+    def test_create_agent_from_dict_chat_options_in_default_options(self):
+        """Test that chat options (temperature, top_p) are in Agent.default_options."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        agent_def = {
+            "kind": "Prompt",
+            "name": "TestAgent",
+            "instructions": "You are helpful.",
+            "model": {
+                "options": {
+                    "temperature": 0.7,
+                    "topP": 0.9,
+                },
+            },
+        }
+
+        mock_client = MagicMock()
+        factory = AgentFactory(client=mock_client)
+        agent = factory.create_agent_from_dict(agent_def)
+
+        assert agent.default_options.get("temperature") == 0.7
+        assert agent.default_options.get("top_p") == 0.9
+
 
 class TestAgentFactorySafeMode:
     """Tests for AgentFactory safe_mode parameter."""
@@ -905,3 +959,105 @@ tools:
 
         # Verify project_connection_id is set from connection name
         assert mcp_tool.get("project_connection_id") == "my-oauth-connection"
+
+
+class TestProviderResponseFormat:
+    """response_format from outputSchema must be passed inside default_options."""
+
+    @staticmethod
+    def _make_mock_prompt_agent(*, with_output_schema: bool = False) -> MagicMock:
+        """Create a mock PromptAgent to avoid serialization complexity."""
+        mock_model = MagicMock()
+        mock_model.id = "gpt-4"
+        mock_model.connection = None
+
+        agent = MagicMock()
+        agent.name = "test-agent"
+        agent.description = "test"
+        agent.instructions = "be helpful"
+        agent.model = mock_model
+        agent.tools = None
+
+        if with_output_schema:
+            mock_schema = MagicMock()
+            mock_schema.to_json_schema.return_value = {
+                "type": "object",
+                "properties": {"answer": {"type": "string"}},
+            }
+            agent.outputSchema = mock_schema
+        else:
+            agent.outputSchema = None
+
+        return agent
+
+    @staticmethod
+    def _make_mock_provider() -> tuple[MagicMock, AsyncMock]:
+        """Create a mock provider class and its instance."""
+        mock_agent = MagicMock()
+        mock_provider_instance = AsyncMock()
+        mock_provider_instance.create_agent = AsyncMock(return_value=mock_agent)
+        mock_provider_class = MagicMock(return_value=mock_provider_instance)
+        return mock_provider_class, mock_provider_instance
+
+    @pytest.mark.asyncio
+    async def test_response_format_in_default_options(self):
+        """Provider.create_agent() should receive response_format inside default_options."""
+        from agent_framework_declarative._loader import AgentFactory
+
+        prompt_agent = self._make_mock_prompt_agent(with_output_schema=True)
+        mock_provider_class, mock_provider_instance = self._make_mock_provider()
+
+        mapping = {"package": "some_module", "name": "SomeProvider"}
+        factory = AgentFactory()
+
+        original_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "some_module":
+                mod = MagicMock()
+                mod.SomeProvider = mock_provider_class
+                return mod
+            return original_import(name, *args, **kwargs)
+
+        with (
+            patch.object(builtins, "__import__", side_effect=mock_import),
+            patch.object(factory, "_parse_tools", return_value=None),
+        ):
+            await factory._create_agent_with_provider(prompt_agent, mapping)
+
+        mock_provider_instance.create_agent.assert_called_once()
+        call_kwargs = mock_provider_instance.create_agent.call_args.kwargs
+
+        assert "response_format" not in call_kwargs
+        default_options = call_kwargs.get("default_options")
+        assert default_options is not None
+        assert "response_format" in default_options
+
+    @pytest.mark.asyncio
+    async def test_no_default_options_without_output_schema(self):
+        """When there's no outputSchema, default_options should be None."""
+        from agent_framework_declarative._loader import AgentFactory
+
+        prompt_agent = self._make_mock_prompt_agent(with_output_schema=False)
+        mock_provider_class, mock_provider_instance = self._make_mock_provider()
+
+        mapping = {"package": "some_module", "name": "SomeProvider"}
+        factory = AgentFactory()
+
+        original_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "some_module":
+                mod = MagicMock()
+                mod.SomeProvider = mock_provider_class
+                return mod
+            return original_import(name, *args, **kwargs)
+
+        with (
+            patch.object(builtins, "__import__", side_effect=mock_import),
+            patch.object(factory, "_parse_tools", return_value=None),
+        ):
+            await factory._create_agent_with_provider(prompt_agent, mapping)
+
+        call_kwargs = mock_provider_instance.create_agent.call_args.kwargs
+        assert call_kwargs.get("default_options") is None

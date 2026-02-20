@@ -74,14 +74,14 @@ async def test_discovery_accepts_agents_with_only_run():
 
         init_file = agent_dir / "__init__.py"
         init_file.write_text("""
-from agent_framework import AgentResponse, AgentThread, Message, Role, Content
+from agent_framework import AgentResponse, AgentSession, Message, Role, Content
 
 class NonStreamingAgent:
     id = "non_streaming"
     name = "Non-Streaming Agent"
     description = "Agent with run() method"
 
-    async def run(self, messages=None, *, thread=None, **kwargs):
+    async def run(self, messages=None, *, session=None, **kwargs):
         return AgentResponse(
             messages=[Message(
                 role="assistant",
@@ -90,8 +90,8 @@ class NonStreamingAgent:
             response_id="test"
         )
 
-    def get_new_thread(self, **kwargs):
-        return AgentThread()
+    def create_session(self, **kwargs):
+        return AgentSession()
 
 agent = NonStreamingAgent()
 """)
@@ -188,19 +188,19 @@ workflow = WorkflowBuilder(start_executor=executor).build()
         agent_dir = temp_path / "my_agent"
         agent_dir.mkdir()
         (agent_dir / "agent.py").write_text("""
-from agent_framework import AgentResponse, AgentThread, Message, Role, TextContent
+from agent_framework import AgentResponse, AgentSession, Message, Role, TextContent
 
 class TestAgent:
     name = "Test Agent"
 
-    async def run(self, messages=None, *, thread=None, **kwargs):
+    async def run(self, messages=None, *, session=None, **kwargs):
         return AgentResponse(
             messages=[Message(role="assistant", contents=[Content.from_text(text="test")])],
             response_id="test"
         )
 
-    def get_new_thread(self, **kwargs):
-        return AgentThread()
+    def create_session(self, **kwargs):
+        return AgentSession()
 
 agent = TestAgent()
 """)
@@ -320,7 +320,7 @@ class WeatherAgent:
     name = "Weather Agent"
     description = "Gets weather information"
 
-    def run(self, input_str, *, stream: bool = False, thread=None, **kwargs):
+    def run(self, input_str, *, stream: bool = False, session=None, **kwargs):
         return f"Weather in {input_str}"
 """)
 

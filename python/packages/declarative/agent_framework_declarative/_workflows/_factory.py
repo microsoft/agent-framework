@@ -12,6 +12,7 @@ enabling checkpointing, visualization, and pause/resume capabilities.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -22,16 +23,16 @@ from agent_framework import (
     CheckpointStorage,
     SupportsAgentRun,
     Workflow,
-    get_logger,
 )
+from agent_framework.exceptions import WorkflowException
 
 from .._loader import AgentFactory
 from ._declarative_builder import DeclarativeWorkflowBuilder
 
-logger = get_logger("agent_framework.declarative.workflows")
+logger = logging.getLogger("agent_framework.declarative")
 
 
-class DeclarativeWorkflowError(Exception):
+class DeclarativeWorkflowError(WorkflowException):
     """Exception raised for errors in declarative workflow processing."""
 
     pass

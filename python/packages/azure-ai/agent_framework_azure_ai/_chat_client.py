@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import os
 import re
 import sys
@@ -15,14 +16,13 @@ from agent_framework import (
     Agent,
     Annotation,
     BaseChatClient,
+    BaseContextProvider,
     ChatAndFunctionMiddlewareTypes,
-    ChatMessageStoreProtocol,
     ChatMiddlewareLayer,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    ContextProvider,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
@@ -32,10 +32,14 @@ from agent_framework import (
     Role,
     TextSpanRegion,
     UsageDetails,
-    get_logger,
-    prepare_function_call_results,
 )
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
+from agent_framework._settings import load_settings
+from agent_framework._tools import ToolTypes
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
+from agent_framework.exceptions import (
+    ChatClientException,
+    ChatClientInvalidRequestException,
+)
 from agent_framework.observability import ChatTelemetryLayer
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import (
@@ -84,8 +88,7 @@ from azure.ai.agents.models import (
     ToolDefinition,
     ToolOutput,
 )
-from azure.core.credentials_async import AsyncTokenCredential
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from ._shared import AzureAISettings, to_azure_ai_agent_tools
 
@@ -103,7 +106,7 @@ else:
     from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
 
-logger = get_logger("agent_framework.azure")
+logger = logging.getLogger("agent_framework.azure")
 
 __all__ = ["AzureAIAgentClient", "AzureAIAgentOptions"]
 
@@ -211,6 +214,7 @@ class AzureAIAgentClient(
     """Azure AI Agent Chat client with middleware, telemetry, and function invocation support."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     # region Hosted Tool Factory Methods
 
@@ -414,7 +418,7 @@ class AzureAIAgentClient(
         thread_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
-        credential: AsyncTokenCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
         should_cleanup_agent: bool = True,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
@@ -438,7 +442,8 @@ class AzureAIAgentClient(
                 Ignored when a agents_client is passed.
             model_deployment_name: The model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
-            credential: Azure async credential to use for authentication.
+            credential: Azure credential for authentication. Accepts a TokenCredential,
+                AsyncTokenCredential, or a callable token provider.
             should_cleanup_agent: Whether to cleanup (delete) agents created by this client when
                 the client is closed or context is exited. Defaults to True. Only affects agents
                 created by this client instance; existing agents passed via agent_id are never deleted.
@@ -482,37 +487,37 @@ class AzureAIAgentClient(
                 client: AzureAIAgentClient[MyOptions] = AzureAIAgentClient(credential=credential)
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            azure_ai_settings = AzureAISettings(
-                project_endpoint=project_endpoint,
-                model_deployment_name=model_deployment_name,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Azure AI settings.", ex) from ex
+        azure_ai_settings = load_settings(
+            AzureAISettings,
+            env_prefix="AZURE_AI_",
+            project_endpoint=project_endpoint,
+            model_deployment_name=model_deployment_name,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
         # If no agents_client is provided, create one
         should_close_client = False
         if agents_client is None:
-            if not azure_ai_settings.project_endpoint:
-                raise ServiceInitializationError(
+            resolved_endpoint = azure_ai_settings.get("project_endpoint")
+            if not resolved_endpoint:
+                raise ValueError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
                     "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
                 )
 
-            if agent_id is None and not azure_ai_settings.model_deployment_name:
-                raise ServiceInitializationError(
+            if agent_id is None and not azure_ai_settings.get("model_deployment_name"):
+                raise ValueError(
                     "Azure AI model deployment name is required. Set via 'model_deployment_name' parameter "
                     "or 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
                 )
 
             # Use provided credential
             if not credential:
-                raise ServiceInitializationError("Azure credential is required when agents_client is not provided.")
+                raise ValueError("Azure credential is required when agents_client is not provided.")
             agents_client = AgentsClient(
-                endpoint=azure_ai_settings.project_endpoint,
-                credential=credential,
+                endpoint=resolved_endpoint,
+                credential=credential,  # type: ignore[arg-type]
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             should_close_client = True
@@ -530,7 +535,7 @@ class AzureAIAgentClient(
         self.agent_id = agent_id
         self.agent_name = agent_name
         self.agent_description = agent_description
-        self.model_id = azure_ai_settings.model_deployment_name
+        self.model_id = azure_ai_settings.get("model_deployment_name")
         self.thread_id = thread_id
         self.should_cleanup_agent = should_cleanup_agent  # Track whether we should delete the agent
         self._agent_created = False  # Track whether agent was created inside this class
@@ -604,7 +609,7 @@ class AzureAIAgentClient(
         # If no agent_id is provided, create a temporary agent
         if self.agent_id is None:
             if "model" not in run_options or not run_options["model"]:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Model deployment name is required for agent creation, "
                     "can also be passed to the get_response methods."
                 )
@@ -914,7 +919,7 @@ class AzureAIAgentClient(
                                             response_id=response_id,
                                         )
                             case AgentStreamEvent.THREAD_RUN_FAILED:
-                                raise ServiceResponseException(event_data.last_error.message)
+                                raise ChatClientException(event_data.last_error.message)
                             case _:
                                 yield ChatResponseUpdate(
                                     contents=[],
@@ -1157,7 +1162,7 @@ class AzureAIAgentClient(
                 # Runtime JSON schema dict - pass through as-is
                 run_options["response_format"] = response_format
             else:
-                raise ServiceInvalidRequestError(
+                raise ChatClientInvalidRequestException(
                     "response_format must be a Pydantic BaseModel class or a dict with runtime JSON schema."
                 )
 
@@ -1389,7 +1394,7 @@ class AzureAIAgentClient(
                     if tool_outputs is None:
                         tool_outputs = []
                     tool_outputs.append(
-                        ToolOutput(tool_call_id=call_id, output=prepare_function_call_results(content.result))
+                        ToolOutput(tool_call_id=call_id, output=content.result if content.result is not None else "")
                     )
                 elif content.type == "function_approval_response":
                     if tool_approvals is None:
@@ -1428,14 +1433,9 @@ class AzureAIAgentClient(
         name: str | None = None,
         description: str | None = None,
         instructions: str | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: AzureAIAgentOptionsT | Mapping[str, Any] | None = None,
-        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> Agent[AzureAIAgentOptionsT]:
@@ -1455,8 +1455,7 @@ class AzureAIAgentClient(
             instructions: Optional instructions for the agent.
             tools: The tools to use for the request.
             default_options: A TypedDict containing chat options.
-            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
-            context_provider: Context providers to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
             kwargs: Any additional keyword arguments.
 
@@ -1470,8 +1469,7 @@ class AzureAIAgentClient(
             instructions=instructions,
             tools=tools,
             default_options=default_options,
-            chat_message_store_factory=chat_message_store_factory,
-            context_provider=context_provider,
+            context_providers=context_providers,
             middleware=middleware,
             **kwargs,
         )

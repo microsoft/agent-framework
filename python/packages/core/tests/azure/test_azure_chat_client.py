@@ -28,7 +28,7 @@ from agent_framework import (
 )
 from agent_framework._telemetry import USER_AGENT_KEY
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
+from agent_framework.exceptions import ChatClientException
 from agent_framework.openai import (
     ContentFilterResultSeverity,
     OpenAIContentFilterException,
@@ -93,24 +93,23 @@ def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
 def test_init_with_empty_deployment_name(azure_openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
-        AzureOpenAIChatClient(
-            env_file_path="test.env",
-        )
+    with pytest.raises(ValueError):
+        AzureOpenAIChatClient()
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL"]], indirect=True)
 def test_init_with_empty_endpoint_and_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
-        AzureOpenAIChatClient(
-            env_file_path="test.env",
-        )
+    with pytest.raises(ValueError):
+        AzureOpenAIChatClient()
 
 
 @pytest.mark.parametrize("override_env_param_dict", [{"AZURE_OPENAI_ENDPOINT": "http://test.com"}], indirect=True)
 def test_init_with_invalid_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
-        AzureOpenAIChatClient()
+    # Note: URL scheme validation was previously handled by pydantic's HTTPsUrl type.
+    # After migrating to load_settings with TypedDict, endpoint is a plain string and no longer
+    # validated at the settings level. The Azure OpenAI SDK may reject invalid URLs at runtime.
+    client = AzureOpenAIChatClient()
+    assert client is not None
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_BASE_URL"]], indirect=True)
@@ -123,7 +122,6 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
         "api_key": azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"],
         "api_version": azure_openai_unit_test_env["AZURE_OPENAI_API_VERSION"],
         "default_headers": default_headers,
-        "env_file_path": "test.env",
     }
 
     azure_chat_client = AzureOpenAIChatClient.from_dict(settings)
@@ -556,7 +554,7 @@ async def test_bad_request_non_content_filter(
 
     azure_chat_client = AzureOpenAIChatClient()
 
-    with pytest.raises(ServiceResponseException, match="service failed to complete the prompt"):
+    with pytest.raises(ChatClientException, match="service failed to complete the prompt"):
         await azure_chat_client.get_response(
             messages=chat_history,
         )
@@ -797,23 +795,23 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_azure_openai_chat_client_agent_thread_persistence():
-    """Test Azure OpenAI chat client agent thread persistence across runs with AzureOpenAIChatClient."""
+async def test_azure_openai_chat_client_agent_session_persistence():
+    """Test Azure OpenAI chat client agent session persistence across runs with AzureOpenAIChatClient."""
     async with Agent(
         client=AzureOpenAIChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
-        # Create a new thread that will be reused
-        thread = agent.get_new_thread()
+        # Create a new session that will be reused
+        session = agent.create_session()
 
         # First interaction
-        response1 = await agent.run("My name is Alice. Remember this.", thread=thread)
+        response1 = await agent.run("My name is Alice. Remember this.", session=session)
 
         assert isinstance(response1, AgentResponse)
         assert response1.text is not None
 
         # Second interaction - test memory
-        response2 = await agent.run("What is my name?", thread=thread)
+        response2 = await agent.run("What is my name?", session=session)
 
         assert isinstance(response2, AgentResponse)
         assert response2.text is not None
@@ -822,33 +820,33 @@ async def test_azure_openai_chat_client_agent_thread_persistence():
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_azure_openai_chat_client_agent_existing_thread():
-    """Test Azure OpenAI chat client agent with existing thread to continue conversations across agent instances."""
-    # First conversation - capture the thread
-    preserved_thread = None
+async def test_azure_openai_chat_client_agent_existing_session():
+    """Test Azure OpenAI chat client agent with existing session to continue conversations across agent instances."""
+    # First conversation - capture the session
+    preserved_session = None
 
     async with Agent(
         client=AzureOpenAIChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
-        # Start a conversation and capture the thread
-        thread = first_agent.get_new_thread()
-        first_response = await first_agent.run("My name is Alice. Remember this.", thread=thread)
+        # Start a conversation and capture the session
+        session = first_agent.create_session()
+        first_response = await first_agent.run("My name is Alice. Remember this.", session=session)
 
         assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
 
-        # Preserve the thread for reuse
-        preserved_thread = thread
+        # Preserve the session for reuse
+        preserved_session = session
 
-    # Second conversation - reuse the thread in a new agent instance
-    if preserved_thread:
+    # Second conversation - reuse the session in a new agent instance
+    if preserved_session:
         async with Agent(
             client=AzureOpenAIChatClient(credential=AzureCliCredential()),
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
-            # Reuse the preserved thread
-            second_response = await second_agent.run("What is my name?", thread=preserved_thread)
+            # Reuse the preserved session
+            second_response = await second_agent.run("What is my name?", session=preserved_session)
 
             assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None

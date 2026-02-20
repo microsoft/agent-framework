@@ -15,9 +15,7 @@ from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from pydantic import BaseModel
 
 from agent_framework import ChatResponseUpdate, Message
-from agent_framework.exceptions import (
-    ServiceResponseException,
-)
+from agent_framework.exceptions import ChatClientException
 from agent_framework.openai import OpenAIChatClient
 
 
@@ -182,7 +180,7 @@ async def test_cmc_general_exception(
     chat_history.append(Message(role="user", text="hello world"))
 
     openai_chat_completion = OpenAIChatClient()
-    with pytest.raises(ServiceResponseException):
+    with pytest.raises(ChatClientException):
         await openai_chat_completion.get_response(
             messages=chat_history,
         )

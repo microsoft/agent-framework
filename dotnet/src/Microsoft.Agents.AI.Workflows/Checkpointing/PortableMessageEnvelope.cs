@@ -25,6 +25,7 @@ internal sealed class PortableMessageEnvelope
     {
         this.MessageType = envelope.MessageType;
         this.Message = new PortableValue(envelope.Message);
+        this.Source = envelope.Source;
         this.TargetId = envelope.TargetId;
     }
 

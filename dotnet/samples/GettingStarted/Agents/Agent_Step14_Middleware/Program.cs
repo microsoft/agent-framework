@@ -2,8 +2,9 @@
 
 // This sample shows multiple middleware layers working together with Azure OpenAI:
 // chat client (global/per-request), agent run (PII filtering and guardrails),
-// function invocation (logging and result overrides), and human-in-the-loop
-// approval workflows for sensitive function calls.
+// function invocation (logging and result overrides), human-in-the-loop
+// approval workflows for sensitive function calls, and MessageAIContextProvider
+// middleware for injecting additional context messages into the agent pipeline.
 
 using System.ComponentModel;
 using System.Text.RegularExpressions;
@@ -17,7 +18,10 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? th
 var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 
 // Get a client to create/retrieve server side agents with
-var azureOpenAIClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+var azureOpenAIClient = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
     .GetChatClient(deploymentName);
 
 [Description("Get the weather for a given location.")]
@@ -92,6 +96,20 @@ var response = await originalAgent // Using per-request middleware pipeline with
     .RunAsync("What's the current time and the weather in Seattle?", session, optionsWithApproval);
 
 Console.WriteLine($"Per-request middleware response: {response}");
+
+// MessageAIContextProvider middleware that injects additional messages into the agent request.
+// This allows any AIAgent (not just ChatClientAgent) to benefit from MessageAIContextProvider-based
+// context enrichment. Multiple providers can be passed to Use and they are called in sequence,
+// each receiving the output of the previous one.
+Console.WriteLine("\n\n=== Example 5: MessageAIContextProvider middleware ===");
+
+var contextProviderAgent = originalAgent
+    .AsBuilder()
+    .Use([new DateTimeContextProvider()])
+    .Build();
+
+var contextResponse = await contextProviderAgent.RunAsync("Is it almost time for lunch?");
+Console.WriteLine($"Context-enriched response: {contextResponse}");
 
 // Function invocation middleware that logs before and after function calls.
 async ValueTask<object?> FunctionCallMiddleware(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
@@ -255,4 +273,24 @@ async Task<ChatResponse> PerRequestChatClientMiddleware(IEnumerable<ChatMessage>
     Console.WriteLine("Per-Request Chat Client Middleware - Post-Chat");
 
     return response;
+}
+
+/// <summary>
+/// A <see cref="MessageAIContextProvider"/> that injects the current date and time into the agent's context.
+/// This is a simple example of how to use a MessageAIContextProvider to enrich agent messages
+/// via the <see cref="AIAgentBuilder.Use(MessageAIContextProvider[])"/> extension method.
+/// </summary>
+internal sealed class DateTimeContextProvider : MessageAIContextProvider
+{
+    protected override ValueTask<IEnumerable<ChatMessage>> ProvideMessagesAsync(
+        InvokingContext context,
+        CancellationToken cancellationToken = default)
+    {
+        Console.WriteLine("DateTimeContextProvider - Injecting current date/time context");
+
+        return new ValueTask<IEnumerable<ChatMessage>>(
+            [
+                new ChatMessage(ChatRole.User, $"For reference, the current date and time is: {DateTimeOffset.Now}")
+            ]);
+    }
 }

@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import logging
 import os
 from typing import Annotated, Any
+from unittest.mock import MagicMock
 
 import pytest
 from azure.identity import AzureCliCredential
@@ -19,7 +21,6 @@ from agent_framework import (
     tool,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
-from agent_framework.exceptions import ServiceInitializationError
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -28,6 +29,8 @@ skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
     else "Integration tests are disabled.",
 )
+
+logger = logging.getLogger(__name__)
 
 
 class OutputStruct(BaseModel):
@@ -77,7 +80,7 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
 
 def test_init_validation_fail() -> None:
     # Test successful initialization
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         AzureOpenAIResponsesClient(api_key="34523", deployment_name={"test": "dict"})  # type: ignore
 
 
@@ -109,9 +112,120 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]], indirect=True)
 def test_init_with_empty_model_id(azure_openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
-        AzureOpenAIResponsesClient(
-            env_file_path="test.env",
+    with pytest.raises(ValueError):
+        AzureOpenAIResponsesClient()
+
+
+def test_init_with_project_client(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test initialization with an existing AIProjectClient."""
+    from unittest.mock import patch
+
+    from openai import AsyncOpenAI
+
+    # Create a mock AIProjectClient that returns a mock AsyncOpenAI client
+    mock_openai_client = MagicMock(spec=AsyncOpenAI)
+    mock_openai_client.default_headers = {}
+
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = mock_openai_client
+
+    with patch(
+        "agent_framework.azure._responses_client.AzureOpenAIResponsesClient._create_client_from_project",
+        return_value=mock_openai_client,
+    ):
+        azure_responses_client = AzureOpenAIResponsesClient(
+            project_client=mock_project_client,
+            deployment_name="gpt-4o",
+        )
+
+    assert azure_responses_client.model_id == "gpt-4o"
+    assert azure_responses_client.client is mock_openai_client
+    assert isinstance(azure_responses_client, SupportsChatGetResponse)
+
+
+def test_init_with_project_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test initialization with a project endpoint and credential."""
+    from unittest.mock import patch
+
+    from openai import AsyncOpenAI
+
+    mock_openai_client = MagicMock(spec=AsyncOpenAI)
+    mock_openai_client.default_headers = {}
+
+    with patch(
+        "agent_framework.azure._responses_client.AzureOpenAIResponsesClient._create_client_from_project",
+        return_value=mock_openai_client,
+    ):
+        azure_responses_client = AzureOpenAIResponsesClient(
+            project_endpoint="https://test-project.services.ai.azure.com",
+            deployment_name="gpt-4o",
+            credential=AzureCliCredential(),
+        )
+
+    assert azure_responses_client.model_id == "gpt-4o"
+    assert azure_responses_client.client is mock_openai_client
+    assert isinstance(azure_responses_client, SupportsChatGetResponse)
+
+
+def test_create_client_from_project_with_project_client() -> None:
+    """Test _create_client_from_project with an existing project client."""
+    from openai import AsyncOpenAI
+
+    mock_openai_client = MagicMock(spec=AsyncOpenAI)
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = mock_openai_client
+
+    result = AzureOpenAIResponsesClient._create_client_from_project(
+        project_client=mock_project_client,
+        project_endpoint=None,
+        credential=None,
+    )
+
+    assert result is mock_openai_client
+    mock_project_client.get_openai_client.assert_called_once()
+
+
+def test_create_client_from_project_with_endpoint() -> None:
+    """Test _create_client_from_project with a project endpoint."""
+    from unittest.mock import patch
+
+    from openai import AsyncOpenAI
+
+    mock_openai_client = MagicMock(spec=AsyncOpenAI)
+    mock_credential = MagicMock()
+
+    with patch("agent_framework.azure._responses_client.AIProjectClient") as MockAIProjectClient:
+        mock_instance = MockAIProjectClient.return_value
+        mock_instance.get_openai_client.return_value = mock_openai_client
+
+        result = AzureOpenAIResponsesClient._create_client_from_project(
+            project_client=None,
+            project_endpoint="https://test-project.services.ai.azure.com",
+            credential=mock_credential,
+        )
+
+    assert result is mock_openai_client
+    MockAIProjectClient.assert_called_once()
+    mock_instance.get_openai_client.assert_called_once()
+
+
+def test_create_client_from_project_missing_endpoint() -> None:
+    """Test _create_client_from_project raises error when endpoint is missing."""
+    with pytest.raises(ValueError, match="project endpoint is required"):
+        AzureOpenAIResponsesClient._create_client_from_project(
+            project_client=None,
+            project_endpoint=None,
+            credential=MagicMock(),
+        )
+
+
+def test_create_client_from_project_missing_credential() -> None:
+    """Test _create_client_from_project raises error when credential is missing."""
+    with pytest.raises(ValueError, match="credential is required"):
+        AzureOpenAIResponsesClient._create_client_from_project(
+            project_client=None,
+            project_endpoint="https://test-project.services.ai.azure.com",
+            credential=None,
         )
 
 
@@ -220,8 +334,10 @@ async def test_integration_options(
             messages = [Message(role="user", text="What is the weather in Seattle?")]
         elif option_name == "response_format":
             # Use prompt that works well with structured output
-            messages = [Message(role="user", text="The weather in Seattle is sunny")]
-            messages.append(Message(role="user", text="What is the weather in Seattle?"))
+            messages = [
+                Message(role="user", text="The weather in Seattle is sunny"),
+                Message(role="user", text="What is the weather in Seattle?"),
+            ]
         else:
             # Generic prompt for simple options
             messages = [Message(role="user", text="Say 'Hello World' briefly.")]
@@ -282,7 +398,12 @@ async def test_integration_web_search() -> None:
 
     for streaming in [False, True]:
         content = {
-            "messages": "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+            "messages": [
+                Message(
+                    role="user",
+                    text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+                )
+            ],
             "options": {
                 "tool_choice": "auto",
                 "tools": [AzureOpenAIResponsesClient.get_web_search_tool()],
@@ -302,7 +423,7 @@ async def test_integration_web_search() -> None:
 
         # Test that the client will use the web search tool with location
         content = {
-            "messages": "What is the current weather? Do not ask for my current location.",
+            "messages": [Message(role="user", text="What is the current weather? Do not ask for my current location.")],
             "options": {
                 "tool_choice": "auto",
                 "tools": [
@@ -384,7 +505,7 @@ async def test_integration_client_agent_hosted_mcp_tool() -> None:
     """Integration test for MCP tool with Azure Response Agent using Microsoft Learn MCP."""
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
     response = await client.get_response(
-        "How to create an Azure storage account using az cli?",
+        messages=[Message(role="user", text="How to create an Azure storage account using az cli?")],
         options={
             # this needs to be high enough to handle the full MCP tool response.
             "max_tokens": 5000,
@@ -409,7 +530,7 @@ async def test_integration_client_agent_hosted_code_interpreter_tool():
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
     response = await client.get_response(
-        "Calculate the sum of numbers from 1 to 10 using Python code.",
+        messages=[Message(role="user", text="Calculate the sum of numbers from 1 to 10 using Python code.")],
         options={
             "tools": [AzureOpenAIResponsesClient.get_code_interpreter_tool()],
         },
@@ -423,33 +544,33 @@ async def test_integration_client_agent_hosted_code_interpreter_tool():
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-async def test_integration_client_agent_existing_thread():
-    """Test Azure Responses Client agent with existing thread to continue conversations across agent instances."""
-    # First conversation - capture the thread
-    preserved_thread = None
+async def test_integration_client_agent_existing_session():
+    """Test Azure Responses Client agent with existing session to continue conversations across agent instances."""
+    # First conversation - capture the session
+    preserved_session = None
 
     async with Agent(
         client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
-        # Start a conversation and capture the thread
-        thread = first_agent.get_new_thread()
-        first_response = await first_agent.run("My hobby is photography. Remember this.", thread=thread, store=True)
+        # Start a conversation and capture the session
+        session = first_agent.create_session()
+        first_response = await first_agent.run("My hobby is photography. Remember this.", session=session, store=True)
 
         assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
 
-        # Preserve the thread for reuse
-        preserved_thread = thread
+        # Preserve the session for reuse
+        preserved_session = session
 
-    # Second conversation - reuse the thread in a new agent instance
-    if preserved_thread:
+    # Second conversation - reuse the session in a new agent instance
+    if preserved_session:
         async with Agent(
             client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
-            # Reuse the preserved thread
-            second_response = await second_agent.run("What is my hobby?", thread=preserved_thread)
+            # Reuse the preserved session
+            second_response = await second_agent.run("What is my hobby?", session=preserved_session)
 
             assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None

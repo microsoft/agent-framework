@@ -308,15 +308,15 @@ class AgentFrameworkExecutor:
             # Convert input to proper Message or string
             user_message = self._convert_input_to_chat_message(request.input)
 
-            # Get thread from conversation parameter (OpenAI standard!)
-            thread = None
+            # Get session from conversation parameter (OpenAI standard!)
+            session = None
             conversation_id = request._get_conversation_id()
             if conversation_id:
-                thread = self.conversation_store.get_thread(conversation_id)
-                if thread:
+                session = self.conversation_store.get_session(conversation_id)
+                if session:
                     logger.debug(f"Using existing conversation: {conversation_id}")
                 else:
-                    logger.warning(f"Conversation {conversation_id} not found, proceeding without thread")
+                    logger.warning(f"Conversation {conversation_id} not found, proceeding without session")
 
             if isinstance(user_message, str):
                 logger.debug(f"Executing agent with text input: {user_message[:100]}...")
@@ -331,8 +331,8 @@ class AgentFrameworkExecutor:
             # Agent must have run() method - use stream=True for streaming
             if hasattr(agent, "run") and callable(agent.run):
                 # Use Agent Framework's run() with stream=True for streaming
-                if thread:
-                    async for update in agent.run(user_message, stream=True, thread=thread):
+                if session:
+                    async for update in agent.run(user_message, stream=True, session=session):
                         for trace_event in trace_collector.get_pending_events():
                             yield trace_event
 
@@ -430,7 +430,7 @@ class AgentFrameworkExecutor:
             elif hil_responses:
                 # Only auto-resume from latest checkpoint when we have HIL responses
                 # Regular "Run" clicks should start fresh, not resume from checkpoints
-                checkpoints = await checkpoint_storage.list_checkpoints()  # No workflow_id filter needed!
+                checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
                 if checkpoints:
                     latest = max(checkpoints, key=lambda cp: cp.timestamp)
                     checkpoint_id = latest.checkpoint_id

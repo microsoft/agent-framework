@@ -17,9 +17,15 @@ Demonstrates how to create and attach tools to agents in both frameworks.
 
 import asyncio
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 
 async def run_autogen() -> None:
     """AutoGen agent with a FunctionTool."""
+
     from autogen_agentchat.agents import AssistantAgent
     from autogen_core.tools import FunctionTool
     from autogen_ext.models.openai import OpenAIChatCompletionClient
@@ -62,7 +68,7 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
 
     # Define tool with @tool decorator (automatic schema inference)
-    # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/getting_started/tools/function_tool_with_approval.py and samples/getting_started/tools/function_tool_with_approval_and_threads.py.
+    # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
     @tool(approval_mode="never_require")
     def get_weather(location: str) -> str:
         """Get the weather for a location.

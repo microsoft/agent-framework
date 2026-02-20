@@ -13,17 +13,18 @@ from agent_framework import (
     AgentMiddlewareTypes,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
+    BaseContextProvider,
     Content,
-    ContextProvider,
     Message,
     ResponseStream,
     normalize_messages,
 )
-from agent_framework._tools import FunctionTool
-from agent_framework._types import normalize_tools
-from agent_framework.exceptions import ServiceException, ServiceInitializationError
+from agent_framework._settings import load_settings
+from agent_framework._tools import FunctionTool, ToolTypes
+from agent_framework._types import AgentRunInputs, normalize_tools
+from agent_framework.exceptions import AgentException
 from copilot import CopilotClient, CopilotSession
 from copilot.generated.session_events import SessionEvent, SessionEventType
 from copilot.types import (
@@ -38,9 +39,6 @@ from copilot.types import (
     ToolResult,
 )
 from copilot.types import Tool as CopilotTool
-from pydantic import ValidationError
-
-from ._settings import GitHubCopilotSettings
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
@@ -55,6 +53,30 @@ PermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], Permission
 """Type for permission request handlers."""
 
 logger = logging.getLogger("agent_framework.github_copilot")
+
+
+class GitHubCopilotSettings(TypedDict, total=False):
+    """GitHub Copilot model settings.
+
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'GITHUB_COPILOT_'.
+
+    Keys:
+        cli_path: Path to the Copilot CLI executable.
+            Can be set via environment variable GITHUB_COPILOT_CLI_PATH.
+        model: Model to use (e.g., "gpt-5", "claude-sonnet-4").
+            Can be set via environment variable GITHUB_COPILOT_MODEL.
+        timeout: Request timeout in seconds.
+            Can be set via environment variable GITHUB_COPILOT_TIMEOUT.
+        log_level: CLI log level.
+            Can be set via environment variable GITHUB_COPILOT_LOG_LEVEL.
+    """
+
+    cli_path: str | None
+    model: str | None
+    timeout: float | None
+    log_level: str | None
 
 
 class GitHubCopilotOptions(TypedDict, total=False):
@@ -149,13 +171,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsT | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -171,7 +189,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             id: ID of the GitHubCopilotAgent.
             name: Name of the GitHubCopilotAgent.
             description: Description of the GitHubCopilotAgent.
-            context_provider: Context Provider, to be used by the agent.
+            context_providers: Context Providers, to be used by the agent.
             middleware: Agent middleware used by the agent.
             tools: Tools to use for the agent. Can be functions
                 or tool definition dicts. These are converted to Copilot SDK tools internally.
@@ -181,13 +199,13 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             env_file_encoding: Encoding of the .env file, defaults to 'utf-8'.
 
         Raises:
-            ServiceInitializationError: If required configuration is missing or invalid.
+            ValueError: If required configuration is missing or invalid.
         """
         super().__init__(
             id=id,
             name=name,
             description=description,
-            context_provider=context_provider,
+            context_providers=context_providers,
             middleware=list(middleware) if middleware else None,
         )
 
@@ -207,17 +225,16 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         on_permission_request: PermissionHandlerType | None = opts.pop("on_permission_request", None)
         mcp_servers: dict[str, MCPServerConfig] | None = opts.pop("mcp_servers", None)
 
-        try:
-            self._settings = GitHubCopilotSettings(
-                cli_path=cli_path,
-                model=model,
-                timeout=timeout,
-                log_level=log_level,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create GitHub Copilot settings.", ex) from ex
+        self._settings = load_settings(
+            GitHubCopilotSettings,
+            env_prefix="GITHUB_COPILOT_",
+            cli_path=cli_path,
+            model=model,
+            timeout=timeout,
+            log_level=log_level,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
         self._tools = normalize_tools(tools)
         self._permission_handler = on_permission_request
@@ -242,17 +259,17 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         agent as an async context manager.
 
         Raises:
-            ServiceException: If the client fails to start.
+            AgentException: If the client fails to start.
         """
         if self._started:
             return
 
         if self._client is None:
             client_options: CopilotClientOptions = {}
-            if self._settings.cli_path:
-                client_options["cli_path"] = self._settings.cli_path
-            if self._settings.log_level:
-                client_options["log_level"] = self._settings.log_level  # type: ignore[typeddict-item]
+            if self._settings["cli_path"]:
+                client_options["cli_path"] = self._settings["cli_path"]
+            if self._settings["log_level"]:
+                client_options["log_level"] = self._settings["log_level"]  # type: ignore[typeddict-item]
 
             self._client = CopilotClient(client_options if client_options else None)
 
@@ -260,7 +277,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             await self._client.start()
             self._started = True
         except Exception as ex:
-            raise ServiceException(f"Failed to start GitHub Copilot client: {ex}") from ex
+            raise AgentException(f"Failed to start GitHub Copilot client: {ex}") from ex
 
     async def stop(self) -> None:
         """Stop the Copilot client and clean up resources.
@@ -278,10 +295,10 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         options: OptionsT | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
@@ -289,20 +306,20 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         options: OptionsT | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         options: OptionsT | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
@@ -317,7 +334,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
-            thread: The conversation thread associated with the message(s).
+            session: The conversation session associated with the message(s).
             options: Runtime options (model, timeout, etc.).
             kwargs: Additional keyword arguments.
 
@@ -326,7 +343,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             When stream=True: A ResponseStream of AgentResponseUpdate items.
 
         Raises:
-            ServiceException: If the request fails.
+            AgentException: If the request fails.
         """
         if stream:
 
@@ -334,16 +351,16 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 return AgentResponse.from_updates(updates)
 
             return ResponseStream(
-                self._stream_updates(messages=messages, thread=thread, options=options, **kwargs),
+                self._stream_updates(messages=messages, session=session, options=options, **kwargs),
                 finalizer=_finalize,
             )
-        return self._run_impl(messages=messages, thread=thread, options=options, **kwargs)
+        return self._run_impl(messages=messages, session=session, options=options, **kwargs)
 
     async def _run_impl(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         options: OptionsT | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
@@ -351,20 +368,20 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if not self._started:
             await self.start()
 
-        if not thread:
-            thread = self.get_new_thread()
+        if not session:
+            session = self.create_session()
 
         opts: dict[str, Any] = dict(options) if options else {}
-        timeout = opts.pop("timeout", None) or self._settings.timeout or DEFAULT_TIMEOUT_SECONDS
+        timeout = opts.pop("timeout", None) or self._settings["timeout"] or DEFAULT_TIMEOUT_SECONDS
 
-        session = await self._get_or_create_session(thread, streaming=False, runtime_options=opts)
+        copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
         input_messages = normalize_messages(messages)
         prompt = "\n".join([message.text for message in input_messages])
 
         try:
-            response_event = await session.send_and_wait({"prompt": prompt}, timeout=timeout)
+            response_event = await copilot_session.send_and_wait({"prompt": prompt}, timeout=timeout)
         except Exception as ex:
-            raise ServiceException(f"GitHub Copilot request failed: {ex}") from ex
+            raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
 
         response_messages: list[Message] = []
         response_id: str | None = None
@@ -389,9 +406,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     async def _stream_updates(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         options: OptionsT | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
@@ -401,7 +418,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             messages: The message(s) to send to the agent.
 
         Keyword Args:
-            thread: The conversation thread associated with the message(s).
+            session: The conversation session associated with the message(s).
             options: Runtime options (model, timeout, etc.).
             kwargs: Additional keyword arguments.
 
@@ -409,17 +426,17 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             AgentResponseUpdate items.
 
         Raises:
-            ServiceException: If the request fails.
+            AgentException: If the request fails.
         """
         if not self._started:
             await self.start()
 
-        if not thread:
-            thread = self.get_new_thread()
+        if not session:
+            session = self.create_session()
 
         opts: dict[str, Any] = dict(options) if options else {}
 
-        session = await self._get_or_create_session(thread, streaming=True, runtime_options=opts)
+        copilot_session = await self._get_or_create_session(session, streaming=True, runtime_options=opts)
         input_messages = normalize_messages(messages)
         prompt = "\n".join([message.text for message in input_messages])
 
@@ -440,12 +457,12 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 queue.put_nowait(None)
             elif event.type == SessionEventType.SESSION_ERROR:
                 error_msg = event.data.message or "Unknown error"
-                queue.put_nowait(ServiceException(f"GitHub Copilot session error: {error_msg}"))
+                queue.put_nowait(AgentException(f"GitHub Copilot session error: {error_msg}"))
 
-        unsubscribe = session.on(event_handler)
+        unsubscribe = copilot_session.on(event_handler)
 
         try:
-            await session.send({"prompt": prompt})
+            await copilot_session.send({"prompt": prompt})
 
             while (item := await queue.get()) is not None:
                 if isinstance(item, Exception):
@@ -479,7 +496,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     def _prepare_tools(
         self,
-        tools: list[FunctionTool | MutableMapping[str, Any]],
+        tools: Sequence[ToolTypes | CopilotTool],
     ) -> list[CopilotTool]:
         """Convert Agent Framework tools to Copilot SDK tools.
 
@@ -492,15 +509,17 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         copilot_tools: list[CopilotTool] = []
 
         for tool in tools:
-            if isinstance(tool, FunctionTool):
-                copilot_tools.append(self._tool_to_copilot_tool(tool))  # type: ignore
-            elif isinstance(tool, CopilotTool):
+            if isinstance(tool, CopilotTool):
                 copilot_tools.append(tool)
+            elif isinstance(tool, FunctionTool):
+                copilot_tools.append(self._tool_to_copilot_tool(tool))  # type: ignore
+            elif isinstance(tool, MutableMapping):
+                copilot_tools.append(tool)  # type: ignore[arg-type]
             # Note: Other tool types (e.g., dict-based hosted tools) are skipped
 
         return copilot_tools
 
-    def _tool_to_copilot_tool(self, ai_func: FunctionTool[Any, Any]) -> CopilotTool:
+    def _tool_to_copilot_tool(self, ai_func: FunctionTool) -> CopilotTool:
         """Convert an FunctionTool to a Copilot SDK tool."""
 
         async def handler(invocation: ToolInvocation) -> ToolResult:
@@ -531,14 +550,14 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
     async def _get_or_create_session(
         self,
-        thread: AgentThread,
+        agent_session: AgentSession,
         streaming: bool = False,
         runtime_options: dict[str, Any] | None = None,
     ) -> CopilotSession:
-        """Get an existing session or create a new one for the thread.
+        """Get an existing session or create a new one for the session.
 
         Args:
-            thread: The conversation thread.
+            agent_session: The conversation session.
             streaming: Whether to enable streaming for the session.
             runtime_options: Runtime options from run that take precedence.
 
@@ -546,20 +565,20 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             A CopilotSession instance.
 
         Raises:
-            ServiceException: If the session cannot be created.
+            AgentException: If the session cannot be created.
         """
         if not self._client:
-            raise ServiceException("GitHub Copilot client not initialized. Call start() first.")
+            raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
 
         try:
-            if thread.service_thread_id:
-                return await self._resume_session(thread.service_thread_id, streaming)
+            if agent_session.service_session_id:
+                return await self._resume_session(agent_session.service_session_id, streaming)
 
             session = await self._create_session(streaming, runtime_options)
-            thread.service_thread_id = session.session_id
+            agent_session.service_session_id = session.session_id
             return session
         except Exception as ex:
-            raise ServiceException(f"Failed to create GitHub Copilot session: {ex}") from ex
+            raise AgentException(f"Failed to create GitHub Copilot session: {ex}") from ex
 
     async def _create_session(
         self,
@@ -573,12 +592,12 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             runtime_options: Runtime options that take precedence over default_options.
         """
         if not self._client:
-            raise ServiceException("GitHub Copilot client not initialized. Call start() first.")
+            raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
 
         opts = runtime_options or {}
         config: SessionConfig = {"streaming": streaming}
 
-        model = opts.get("model") or self._settings.model
+        model = opts.get("model") or self._settings["model"]
         if model:
             config["model"] = model  # type: ignore[typeddict-item]
 
@@ -602,7 +621,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     async def _resume_session(self, session_id: str, streaming: bool) -> CopilotSession:
         """Resume an existing Copilot session by ID."""
         if not self._client:
-            raise ServiceException("GitHub Copilot client not initialized. Call start() first.")
+            raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
 
         config: ResumeSessionConfig = {"streaming": streaming}
 

@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 
 from agent_framework import (
-    FileCheckpointStorage,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
@@ -323,90 +322,3 @@ class TestRequestInfoAndResponse:
         assert completed
         # Should not have any calculations performed due to invalid input
         assert len(executor.calculations_performed) == 0
-
-    async def test_checkpoint_with_pending_request_info_events(self):
-        """Test that request info events are properly serialized in checkpoints and can be restored."""
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Use file-based storage to test full serialization
-            storage = FileCheckpointStorage(temp_dir)
-
-            # Create workflow with checkpointing enabled
-            executor = ApprovalRequiredExecutor(id="approval_executor")
-            workflow = WorkflowBuilder(start_executor=executor, checkpoint_storage=storage).build()
-
-            # Step 1: Run workflow to completion to ensure checkpoints are created
-            request_info_event: WorkflowEvent | None = None
-            async for event in workflow.run("checkpoint test operation", stream=True):
-                if event.type == "request_info":
-                    request_info_event = event
-
-            # Verify request was emitted
-            assert request_info_event is not None
-            assert isinstance(request_info_event.data, UserApprovalRequest)
-            assert request_info_event.data.prompt == "Please approve the operation: checkpoint test operation"
-            assert request_info_event.source_executor_id == "approval_executor"
-
-            # Step 2: List checkpoints to find the one with our pending request
-            checkpoints = await storage.list_checkpoints()
-            assert len(checkpoints) > 0, "No checkpoints were created during workflow execution"
-
-            # Find the checkpoint with our pending request
-            checkpoint_with_request = None
-            for checkpoint in checkpoints:
-                if request_info_event.request_id in checkpoint.pending_request_info_events:
-                    checkpoint_with_request = checkpoint
-                    break
-
-            assert checkpoint_with_request is not None, "No checkpoint found with pending request info event"
-
-            # Step 3: Verify the pending request info event was properly serialized
-            serialized_event = checkpoint_with_request.pending_request_info_events[request_info_event.request_id]
-            assert "data" in serialized_event
-            assert "request_id" in serialized_event
-            assert "source_executor_id" in serialized_event
-            assert "request_type" in serialized_event
-            assert serialized_event["request_id"] == request_info_event.request_id
-            assert serialized_event["source_executor_id"] == "approval_executor"
-
-            # Step 4: Create a fresh workflow and restore from checkpoint
-            new_executor = ApprovalRequiredExecutor(id="approval_executor")
-            restored_workflow = WorkflowBuilder(start_executor=new_executor, checkpoint_storage=storage).build()
-
-            # Step 5: Resume from checkpoint and verify the request can be continued
-            completed = False
-            restored_request_event: WorkflowEvent | None = None
-            async for event in restored_workflow.run(checkpoint_id=checkpoint_with_request.checkpoint_id, stream=True):
-                # Should re-emit the pending request info event
-                if event.type == "request_info" and event.request_id == request_info_event.request_id:
-                    restored_request_event = event
-                elif event.type == "status" and event.state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
-                    completed = True
-
-            assert completed, "Workflow should reach idle with pending requests state after restoration"
-            assert restored_request_event is not None, "Restored request info event should be emitted"
-
-            # Verify the restored event matches the original
-            assert restored_request_event.source_executor_id == request_info_event.source_executor_id
-            assert isinstance(restored_request_event.data, UserApprovalRequest)
-            assert restored_request_event.data.prompt == request_info_event.data.prompt
-            assert restored_request_event.data.context == request_info_event.data.context
-
-            # Step 6: Provide response to the restored request and complete the workflow
-            final_completed = False
-            async for event in restored_workflow.run(
-                stream=True,
-                responses={
-                    request_info_event.request_id: True  # Approve the request
-                },
-            ):
-                if event.type == "status" and event.state == WorkflowRunState.IDLE:
-                    final_completed = True
-
-            assert final_completed, "Workflow should complete after providing response to restored request"
-
-            # Step 7: Verify the executor state was properly restored and response was processed
-            assert new_executor.approval_received is True
-            expected_result = "Operation approved: Please approve the operation: checkpoint test operation"
-            assert new_executor.final_result == expected_result

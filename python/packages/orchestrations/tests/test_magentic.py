@@ -9,7 +9,7 @@ import pytest
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     Content,
     Executor,
@@ -150,10 +150,10 @@ class StubAgent(BaseAgent):
 
     def run(  # type: ignore[override]
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
         if stream:
@@ -362,10 +362,15 @@ async def test_magentic_checkpoint_resume_round_trip():
     assert req_event is not None
     assert isinstance(req_event.data, MagenticPlanReviewRequest)
 
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
     assert checkpoints
     checkpoints.sort(key=lambda cp: cp.timestamp)
     resume_checkpoint = checkpoints[-1]
+    loaded_checkpoint = await storage.load(resume_checkpoint.checkpoint_id)
+    assert loaded_checkpoint is not None
+    # Regression check: checkpoints with pending request_info must include executor state.
+    assert "_executor_state" in loaded_checkpoint.state
+    assert "magentic_orchestrator" in loaded_checkpoint.state["_executor_state"]
 
     manager2 = FakeManager()
     wf_resume = MagenticBuilder(
@@ -378,7 +383,7 @@ async def test_magentic_checkpoint_resume_round_trip():
     completed: WorkflowEvent | None = None
     req_event = None
     async for event in wf_resume.run(
-        resume_checkpoint.checkpoint_id,
+        checkpoint_id=resume_checkpoint.checkpoint_id,
         stream=True,
     ):
         if event.type == "request_info" and event.request_type is MagenticPlanReviewRequest:
@@ -406,10 +411,10 @@ class StubManagerAgent(BaseAgent):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
-        thread: Any = None,
+        session: Any = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
         if stream:
@@ -521,7 +526,7 @@ class StubThreadAgent(BaseAgent):
     def __init__(self, name: str | None = None) -> None:
         super().__init__(name=name or "agentA")
 
-    def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
         if stream:
             return self._run_stream()
 
@@ -549,7 +554,7 @@ class StubAssistantsAgent(BaseAgent):
         super().__init__(name="agentA")
         self.client = StubAssistantsClient()  # type name contains 'AssistantsClient'
 
-    def run(self, messages=None, *, stream: bool = False, thread=None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
         if stream:
             return self._run_stream()
 
@@ -605,8 +610,9 @@ async def test_agent_executor_invoke_with_assistants_client_messages():
 
 async def _collect_checkpoints(
     storage: InMemoryCheckpointStorage,
+    workflow_name: str,
 ) -> list[WorkflowCheckpoint]:
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow_name)
     assert checkpoints
     checkpoints.sort(key=lambda cp: cp.timestamp)
     return checkpoints
@@ -619,12 +625,13 @@ async def test_magentic_checkpoint_resume_inner_loop_superstep():
         participants=[StubThreadAgent()], checkpoint_storage=storage, manager=InvokeOnceManager()
     ).build()
 
-    async for event in workflow.run("inner-loop task", stream=True):
-        if event.type == "output":
-            break
+    async for _ in workflow.run("inner-loop task", stream=True):
+        continue
 
-    checkpoints = await _collect_checkpoints(storage)
-    inner_loop_checkpoint = next(cp for cp in checkpoints if cp.metadata.get("superstep") == 1)  # type: ignore[reportUnknownMemberType]
+    checkpoints = await _collect_checkpoints(storage, workflow.name)
+    # The first checkpoint is after the manager has run.
+    # The second checkpoint is after the participant has run.
+    inner_loop_checkpoint = checkpoints[1]
 
     resumed = MagenticBuilder(
         participants=[StubThreadAgent()], checkpoint_storage=storage, manager=InvokeOnceManager()
@@ -651,7 +658,7 @@ async def test_magentic_checkpoint_resume_from_saved_state():
         if event.type == "output":
             break
 
-    checkpoints = await _collect_checkpoints(storage)
+    checkpoints = await _collect_checkpoints(storage, workflow.name)
 
     # Verify we can resume from the last saved checkpoint
     resumed_state = checkpoints[-1]  # Use the last checkpoint
@@ -688,7 +695,7 @@ async def test_magentic_checkpoint_resume_rejects_participant_renames():
     assert req_event is not None
     assert isinstance(req_event.data, MagenticPlanReviewRequest)
 
-    checkpoints = await _collect_checkpoints(storage)
+    checkpoints = await _collect_checkpoints(storage, workflow.name)
     target_checkpoint = checkpoints[-1]
 
     renamed_workflow = MagenticBuilder(
@@ -772,7 +779,7 @@ async def test_magentic_checkpoint_runtime_only() -> None:
 
     assert baseline_output is not None
 
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
     assert len(checkpoints) > 0, "Runtime-only checkpointing should have created checkpoints"
 
 
@@ -806,8 +813,8 @@ async def test_magentic_checkpoint_runtime_overrides_buildtime() -> None:
 
         assert baseline_output is not None
 
-        buildtime_checkpoints = await buildtime_storage.list_checkpoints()
-        runtime_checkpoints = await runtime_storage.list_checkpoints()
+        buildtime_checkpoints = await buildtime_storage.list_checkpoints(workflow_name=wf.name)
+        runtime_checkpoints = await runtime_storage.list_checkpoints(workflow_name=wf.name)
 
         assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
@@ -856,13 +863,13 @@ async def test_magentic_checkpoint_restore_no_duplicate_history():
             break
 
     # Get checkpoint
-    checkpoints = await storage.list_checkpoints()
+    checkpoints = await storage.list_checkpoints(workflow_name=wf.name)
     assert len(checkpoints) > 0, "Should have created checkpoints"
 
     latest_checkpoint = checkpoints[-1]
 
     # Load checkpoint and verify no duplicates in state
-    checkpoint_data = await storage.load_checkpoint(latest_checkpoint.checkpoint_id)
+    checkpoint_data = await storage.load(latest_checkpoint.checkpoint_id)
     assert checkpoint_data is not None
 
     # Check the magentic_context in the checkpoint

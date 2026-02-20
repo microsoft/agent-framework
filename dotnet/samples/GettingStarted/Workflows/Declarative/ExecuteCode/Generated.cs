@@ -49,7 +49,7 @@ public static class SampleWorkflowProvider
     /// <summary>
     /// Invokes an agent to process messages and return a response within a conversation context.
     /// </summary>
-    internal sealed class QuestionStudentExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "question_student", session, agentProvider)
+    internal sealed class QuestionStudentExecutor(FormulaSession session, ResponseAgentProvider agentProvider) : AgentExecutor(id: "question_student", session, agentProvider)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -86,7 +86,7 @@ public static class SampleWorkflowProvider
     /// <summary>
     /// Invokes an agent to process messages and return a response within a conversation context.
     /// </summary>
-    internal sealed class QuestionTeacherExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "question_teacher", session, agentProvider)
+    internal sealed class QuestionTeacherExecutor(FormulaSession session, ResponseAgentProvider agentProvider) : AgentExecutor(id: "question_teacher", session, agentProvider)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)

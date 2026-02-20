@@ -13,7 +13,10 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOIN
 var model = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4.1-mini";
 
 // Get a client to create/retrieve server side agents with.
-var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+var persistentAgentsClient = new PersistentAgentsClient(endpoint, new DefaultAzureCredential());
 
 // **** MCP Tool with Auto Approval ****
 // *************************************

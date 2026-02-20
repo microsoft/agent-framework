@@ -19,7 +19,6 @@ namespace Microsoft.Agents.AI.Mem0.UnitTests;
 public sealed class Mem0ProviderTests : IDisposable
 {
     private static readonly AIAgent s_mockAgent = new Mock<AIAgent>().Object;
-    private static readonly AgentSession s_mockSession = new Mock<AgentSession>().Object;
 
     private readonly Mock<ILogger<Mem0Provider>> _loggerMock;
     private readonly Mock<ILoggerFactory> _loggerFactoryMock;
@@ -55,35 +54,39 @@ public sealed class Mem0ProviderTests : IDisposable
         using HttpClient client = new();
 
         // Act & Assert
-        var ex = Assert.Throws<ArgumentException>(() => new Mem0Provider(client, new Mem0ProviderScope() { ThreadId = "tid" }));
+        var ex = Assert.Throws<ArgumentException>(() => new Mem0Provider(client, _ => new Mem0Provider.State(new Mem0ProviderScope { ThreadId = "tid" })));
         Assert.StartsWith("The HttpClient BaseAddress must be set for Mem0 operations.", ex.Message);
     }
 
     [Fact]
-    public void Constructor_Throws_WhenNoStorageScopeValueIsSet()
+    public void Constructor_Throws_WhenStateInitializerIsNull()
     {
         // Act & Assert
-        var ex = Assert.Throws<ArgumentException>(() => new Mem0Provider(this._httpClient, new Mem0ProviderScope()));
-        Assert.StartsWith("At least one of ApplicationId, AgentId, ThreadId, or UserId must be provided for the storage scope.", ex.Message);
+        var ex = Assert.Throws<ArgumentNullException>(() => new Mem0Provider(this._httpClient, null!));
+        Assert.Contains("stateInitializer", ex.Message);
     }
 
     [Fact]
-    public void Constructor_Throws_WhenNoSearchScopeValueIsSet()
+    public void StateKey_ReturnsDefaultKey_WhenNoOptionsProvided()
     {
-        // Act & Assert
-        var ex = Assert.Throws<ArgumentException>(() => new Mem0Provider(this._httpClient, new Mem0ProviderScope() { ThreadId = "tid" }, new Mem0ProviderScope()));
-        Assert.StartsWith("At least one of ApplicationId, AgentId, ThreadId, or UserId must be provided for the search scope.", ex.Message);
+        // Arrange & Act
+        var provider = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(new Mem0ProviderScope { ThreadId = "tid" }));
+
+        // Assert
+        Assert.Equal("Mem0Provider", provider.StateKey);
     }
 
     [Fact]
-    public void DeserializingConstructor_Throws_WithEmptyJsonElement()
+    public void StateKey_ReturnsCustomKey_WhenSetViaOptions()
     {
-        // Arrange
-        var jsonElement = JsonSerializer.SerializeToElement(new object(), Mem0JsonUtilities.DefaultOptions);
+        // Arrange & Act
+        var provider = new Mem0Provider(
+            this._httpClient,
+            _ => new Mem0Provider.State(new Mem0ProviderScope { ThreadId = "tid" }),
+            new Mem0ProviderOptions { StateKey = "custom-key" });
 
-        // Act & Assert
-        var ex = Assert.Throws<InvalidOperationException>(() => new Mem0Provider(this._httpClient, jsonElement));
-        Assert.StartsWith("The Mem0Provider state did not contain the required scope properties.", ex.Message);
+        // Assert
+        Assert.Equal("custom-key", provider.StateKey);
     }
 
     [Fact]
@@ -98,8 +101,9 @@ public sealed class Mem0ProviderTests : IDisposable
             ThreadId = "session",
             UserId = "user"
         };
-        var sut = new Mem0Provider(this._httpClient, storageScope, options: new() { EnableSensitiveTelemetryData = true }, loggerFactory: this._loggerFactoryMock.Object);
-        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "What is my name?")]);
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope), options: new() { EnableSensitiveTelemetryData = true }, loggerFactory: this._loggerFactoryMock.Object);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, mockSession, new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, "What is my name?") } });
 
         // Act
         var aiContext = await sut.InvokingAsync(invokingContext);
@@ -114,9 +118,13 @@ public sealed class Mem0ProviderTests : IDisposable
         Assert.Equal("What is my name?", doc.RootElement.GetProperty("query").GetString());
 
         Assert.NotNull(aiContext.Messages);
-        var contextMessage = Assert.Single(aiContext.Messages);
+        var messages = aiContext.Messages.ToList();
+        Assert.Equal(2, messages.Count);
+        Assert.Equal(AgentRequestMessageSourceType.External, messages[0].GetAgentRequestMessageSourceType());
+        var contextMessage = messages[1];
         Assert.Equal(ChatRole.User, contextMessage.Role);
         Assert.Contains("Name is Caoimhe", contextMessage.Text);
+        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, contextMessage.GetAgentRequestMessageSourceType());
 
         this._loggerMock.Verify(
             l => l.Log(
@@ -162,9 +170,10 @@ public sealed class Mem0ProviderTests : IDisposable
             UserId = "user"
         };
         var options = new Mem0ProviderOptions { EnableSensitiveTelemetryData = enableSensitiveTelemetryData };
+        var mockSession = new TestAgentSession();
 
-        var sut = new Mem0Provider(this._httpClient, storageScope, options: options, loggerFactory: this._loggerFactoryMock.Object);
-        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Who am I?")]);
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope), options: options, loggerFactory: this._loggerFactoryMock.Object);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, mockSession, new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, "Who am I?") } });
 
         // Act
         await sut.InvokingAsync(invokingContext, CancellationToken.None);
@@ -204,7 +213,8 @@ public sealed class Mem0ProviderTests : IDisposable
         this._handler.EnqueueEmptyOk(); // For second CreateMemory
         this._handler.EnqueueEmptyOk(); // For third CreateMemory
         var storageScope = new Mem0ProviderScope { ApplicationId = "a", AgentId = "b", ThreadId = "c", UserId = "d" };
-        var sut = new Mem0Provider(this._httpClient, storageScope);
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope));
 
         var requestMessages = new List<ChatMessage>
         {
@@ -218,7 +228,7 @@ public sealed class Mem0ProviderTests : IDisposable
         };
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages) { ResponseMessages = responseMessages });
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, mockSession, requestMessages, responseMessages));
 
         // Assert
         var memoryPosts = this._handler.Requests.Where(r => r.RequestMessage.RequestUri!.AbsolutePath == "/v1/memories/" && r.RequestMessage.Method == HttpMethod.Post).ToList();
@@ -235,7 +245,8 @@ public sealed class Mem0ProviderTests : IDisposable
     {
         // Arrange
         var storageScope = new Mem0ProviderScope { ApplicationId = "a", AgentId = "b", ThreadId = "c", UserId = "d" };
-        var sut = new Mem0Provider(this._httpClient, storageScope);
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope));
 
         var requestMessages = new List<ChatMessage>
         {
@@ -245,7 +256,7 @@ public sealed class Mem0ProviderTests : IDisposable
         };
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages) { ResponseMessages = null, InvokeException = new InvalidOperationException("Request Failed") });
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, mockSession, requestMessages, new InvalidOperationException("Request Failed")));
 
         // Assert
         Assert.Empty(this._handler.Requests);
@@ -256,7 +267,8 @@ public sealed class Mem0ProviderTests : IDisposable
     {
         // Arrange
         var storageScope = new Mem0ProviderScope { ApplicationId = "a", AgentId = "b", ThreadId = "c", UserId = "d" };
-        var sut = new Mem0Provider(this._httpClient, storageScope, loggerFactory: this._loggerFactoryMock.Object);
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope), loggerFactory: this._loggerFactoryMock.Object);
         this._handler.EnqueueEmptyInternalServerError();
 
         var requestMessages = new List<ChatMessage>
@@ -271,7 +283,7 @@ public sealed class Mem0ProviderTests : IDisposable
         };
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages) { ResponseMessages = responseMessages });
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, mockSession, requestMessages, responseMessages));
 
         // Assert
         this._loggerMock.Verify(
@@ -310,7 +322,8 @@ public sealed class Mem0ProviderTests : IDisposable
         };
 
         var options = new Mem0ProviderOptions { EnableSensitiveTelemetryData = enableSensitiveTelemetryData };
-        var sut = new Mem0Provider(this._httpClient, storageScope, options: options, loggerFactory: this._loggerFactoryMock.Object);
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope), options: options, loggerFactory: this._loggerFactoryMock.Object);
         var requestMessages = new List<ChatMessage>
         {
             new(ChatRole.User, "User text")
@@ -321,7 +334,7 @@ public sealed class Mem0ProviderTests : IDisposable
         };
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages) { ResponseMessages = responseMessages });
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, mockSession, requestMessages, responseMessages));
 
         // Assert
         Assert.Equal(expectedLogCount, this._loggerMock.Invocations.Count);
@@ -343,11 +356,12 @@ public sealed class Mem0ProviderTests : IDisposable
     {
         // Arrange
         var storageScope = new Mem0ProviderScope { ApplicationId = "app", AgentId = "agent", ThreadId = "session", UserId = "user" };
-        var sut = new Mem0Provider(this._httpClient, storageScope);
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope));
         this._handler.EnqueueEmptyOk(); // for DELETE
+        var mockSession = new TestAgentSession();
 
         // Act
-        await sut.ClearStoredMemoriesAsync();
+        await sut.ClearStoredMemoriesAsync(mockSession);
 
         // Assert
         var delete = Assert.Single(this._handler.Requests, r => r.RequestMessage.Method == HttpMethod.Delete);
@@ -355,61 +369,20 @@ public sealed class Mem0ProviderTests : IDisposable
     }
 
     [Fact]
-    public void Serialize_RoundTripsScopes()
-    {
-        // Arrange
-        var storageScope = new Mem0ProviderScope { ApplicationId = "app", AgentId = "agent", ThreadId = "session", UserId = "user" };
-        var sut = new Mem0Provider(this._httpClient, storageScope, options: new() { ContextPrompt = "Custom:" }, loggerFactory: this._loggerFactoryMock.Object);
-
-        // Act
-        var stateElement = sut.Serialize();
-        using JsonDocument doc = JsonDocument.Parse(stateElement.GetRawText());
-        var storageScopeElement = doc.RootElement.GetProperty("storageScope");
-        Assert.Equal("app", storageScopeElement.GetProperty("applicationId").GetString());
-        Assert.Equal("agent", storageScopeElement.GetProperty("agentId").GetString());
-        Assert.Equal("session", storageScopeElement.GetProperty("threadId").GetString());
-        Assert.Equal("user", storageScopeElement.GetProperty("userId").GetString());
-
-        var sut2 = new Mem0Provider(this._httpClient, stateElement);
-        var stateElement2 = sut2.Serialize();
-
-        // Assert
-        using JsonDocument doc2 = JsonDocument.Parse(stateElement2.GetRawText());
-        var storageScopeElement2 = doc2.RootElement.GetProperty("storageScope");
-        Assert.Equal("app", storageScopeElement2.GetProperty("applicationId").GetString());
-        Assert.Equal("agent", storageScopeElement2.GetProperty("agentId").GetString());
-        Assert.Equal("session", storageScopeElement2.GetProperty("threadId").GetString());
-        Assert.Equal("user", storageScopeElement2.GetProperty("userId").GetString());
-    }
-
-    [Fact]
-    public void Serialize_DoesNotIncludeDefaultContextPrompt()
-    {
-        // Arrange
-        var storageScope = new Mem0ProviderScope { ApplicationId = "app" };
-        var sut = new Mem0Provider(this._httpClient, storageScope);
-
-        // Act
-        var stateElement = sut.Serialize();
-
-        // Assert
-        using JsonDocument doc = JsonDocument.Parse(stateElement.GetRawText());
-        Assert.False(doc.RootElement.TryGetProperty("contextPrompt", out _));
-    }
-
-    [Fact]
     public async Task InvokingAsync_ShouldNotThrow_WhenSearchFailsAsync()
     {
         // Arrange
         var storageScope = new Mem0ProviderScope { ApplicationId = "app" };
-        var provider = new Mem0Provider(this._httpClient, storageScope, loggerFactory: this._loggerFactoryMock.Object);
-        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [new ChatMessage(ChatRole.User, "Q?")]);
+        var mockSession = new TestAgentSession();
+        var provider = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope), loggerFactory: this._loggerFactoryMock.Object);
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, mockSession, new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, "Q?") } });
 
         // Act
         var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
 
         // Assert
-        Assert.Null(aiContext.Messages);
+        Assert.NotNull(aiContext.Messages);
+        Assert.Single(aiContext.Messages);
         Assert.Null(aiContext.Tools);
         this._loggerMock.Verify(
             l => l.Log(
@@ -420,6 +393,240 @@ public sealed class Mem0ProviderTests : IDisposable
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
     }
+
+    [Fact]
+    public async Task StateInitializer_IsCalledOnceAndStoredInStateBagAsync()
+    {
+        // Arrange
+        this._handler.EnqueueJsonResponse("[]");
+        this._handler.EnqueueJsonResponse("[]");
+        var storageScope = new Mem0ProviderScope { ApplicationId = "app" };
+        var mockSession = new TestAgentSession();
+        int initializerCallCount = 0;
+        var sut = new Mem0Provider(this._httpClient, _ =>
+        {
+            initializerCallCount++;
+            return new Mem0Provider.State(storageScope);
+        });
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, mockSession, new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, "Q?") } });
+
+        // Act
+        await sut.InvokingAsync(invokingContext, CancellationToken.None);
+        await sut.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(1, initializerCallCount);
+    }
+
+    [Fact]
+    public async Task StateKey_CanBeConfiguredViaOptionsAsync()
+    {
+        // Arrange
+        this._handler.EnqueueJsonResponse("[]");
+        var storageScope = new Mem0ProviderScope { ApplicationId = "app" };
+        var mockSession = new TestAgentSession();
+        const string CustomKey = "MyCustomKey";
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope), options: new() { StateKey = CustomKey });
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, mockSession, new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, "Q?") } });
+
+        // Act
+        await sut.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.True(mockSession.StateBag.TryGetValue<Mem0Provider.State>(CustomKey, out var state, Mem0JsonUtilities.DefaultOptions));
+        Assert.NotNull(state);
+    }
+
+    [Fact]
+    public async Task InvokingAsync_DefaultFilter_ExcludesNonExternalMessagesFromSearchAsync()
+    {
+        // Arrange
+        this._handler.EnqueueJsonResponse("[]"); // Empty search results
+        var storageScope = new Mem0ProviderScope { ApplicationId = "app", AgentId = "agent", ThreadId = "session", UserId = "user" };
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope));
+
+        var requestMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "External message"),
+            new(ChatRole.System, "From history") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, "HistorySource") } } },
+            new(ChatRole.System, "From context provider") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.AIContextProvider, "ContextSource") } } },
+        };
+
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, mockSession, new AIContext { Messages = requestMessages });
+
+        // Act
+        await sut.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert - Search query should only contain the External message
+        var searchRequest = Assert.Single(this._handler.Requests, r => r.RequestMessage.Method == HttpMethod.Post);
+        using JsonDocument doc = JsonDocument.Parse(searchRequest.RequestBody);
+        Assert.Equal("External message", doc.RootElement.GetProperty("query").GetString());
+    }
+
+    [Fact]
+    public async Task InvokingAsync_CustomSearchInputFilter_OverridesDefaultAsync()
+    {
+        // Arrange
+        this._handler.EnqueueJsonResponse("[]"); // Empty search results
+        var storageScope = new Mem0ProviderScope { ApplicationId = "app", AgentId = "agent", ThreadId = "session", UserId = "user" };
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope), options: new Mem0ProviderOptions
+        {
+            SearchInputMessageFilter = messages => messages // No filtering
+        });
+
+        var requestMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "External message"),
+            new(ChatRole.System, "From history") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, "HistorySource") } } },
+        };
+
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, mockSession, new AIContext { Messages = requestMessages });
+
+        // Act
+        await sut.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert - Search query should contain all messages (custom identity filter)
+        var searchRequest = Assert.Single(this._handler.Requests, r => r.RequestMessage.Method == HttpMethod.Post);
+        using JsonDocument doc = JsonDocument.Parse(searchRequest.RequestBody);
+        var queryText = doc.RootElement.GetProperty("query").GetString();
+        Assert.Contains("External message", queryText);
+        Assert.Contains("From history", queryText);
+    }
+
+    [Fact]
+    public async Task InvokedAsync_DefaultFilter_ExcludesNonExternalMessagesFromStorageAsync()
+    {
+        // Arrange
+        this._handler.EnqueueEmptyOk(); // For the one message that should be stored
+        var storageScope = new Mem0ProviderScope { ApplicationId = "a", AgentId = "b", ThreadId = "c", UserId = "d" };
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope));
+
+        var requestMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "External message"),
+            new(ChatRole.System, "From history") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, "HistorySource") } } },
+        };
+
+        // Act
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, mockSession, requestMessages, []));
+
+        // Assert - Only the External message should be persisted
+        var memoryPosts = this._handler.Requests.Where(r => r.RequestMessage.RequestUri!.AbsolutePath == "/v1/memories/" && r.RequestMessage.Method == HttpMethod.Post).ToList();
+        Assert.Single(memoryPosts);
+        Assert.Contains("External message", memoryPosts[0].RequestBody);
+        Assert.DoesNotContain(memoryPosts, r => ContainsOrdinal(r.RequestBody, "From history"));
+    }
+
+    [Fact]
+    public async Task InvokedAsync_CustomStorageInputFilter_OverridesDefaultAsync()
+    {
+        // Arrange
+        this._handler.EnqueueEmptyOk(); // For first CreateMemory
+        this._handler.EnqueueEmptyOk(); // For second CreateMemory
+        var storageScope = new Mem0ProviderScope { ApplicationId = "a", AgentId = "b", ThreadId = "c", UserId = "d" };
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope), options: new Mem0ProviderOptions
+        {
+            StorageInputMessageFilter = messages => messages // No filtering - store everything
+        });
+
+        var requestMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "External message"),
+            new(ChatRole.System, "From history") { AdditionalProperties = new() { { AgentRequestMessageSourceAttribution.AdditionalPropertiesKey, new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, "HistorySource") } } },
+        };
+
+        // Act
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, mockSession, requestMessages, []));
+
+        // Assert - Both messages should be persisted (identity filter overrides default)
+        var memoryPosts = this._handler.Requests.Where(r => r.RequestMessage.RequestUri!.AbsolutePath == "/v1/memories/" && r.RequestMessage.Method == HttpMethod.Post).ToList();
+        Assert.Equal(2, memoryPosts.Count);
+    }
+
+    #region MessageAIContextProvider.InvokingAsync Tests
+
+    [Fact]
+    public async Task MessageInvokingAsync_SearchesAndReturnsMergedMessagesAsync()
+    {
+        // Arrange
+        this._handler.EnqueueJsonResponse("[ { \"id\": \"1\", \"memory\": \"Name is Caoimhe\", \"hash\": \"h\", \"metadata\": null, \"score\": 0.9, \"created_at\": \"2023-01-01T00:00:00Z\", \"updated_at\": null, \"user_id\": \"u\", \"app_id\": null, \"agent_id\": \"agent\", \"thread_id\": \"session\" } ]");
+        var storageScope = new Mem0ProviderScope
+        {
+            ApplicationId = "app",
+            AgentId = "agent",
+            ThreadId = "session",
+            UserId = "user"
+        };
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope));
+
+        var inputMsg = new ChatMessage(ChatRole.User, "What is my name?");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, mockSession, [inputMsg]);
+
+        // Act
+        var messages = (await sut.InvokingAsync(context)).ToList();
+
+        // Assert - input message + memory message, with stamping
+        Assert.Equal(2, messages.Count);
+        Assert.Equal("What is my name?", messages[0].Text);
+        Assert.Contains("Name is Caoimhe", messages[1].Text);
+        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, messages[1].GetAgentRequestMessageSourceType());
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_NoMemories_ReturnsOnlyInputMessagesAsync()
+    {
+        // Arrange
+        this._handler.EnqueueJsonResponse("[]");
+        var storageScope = new Mem0ProviderScope
+        {
+            UserId = "user"
+        };
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope));
+
+        var inputMsg = new ChatMessage(ChatRole.User, "Hello");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, mockSession, [inputMsg]);
+
+        // Act
+        var messages = (await sut.InvokingAsync(context)).ToList();
+
+        // Assert
+        Assert.Single(messages);
+        Assert.Equal("Hello", messages[0].Text);
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_DefaultFilter_ExcludesNonExternalMessagesAsync()
+    {
+        // Arrange
+        this._handler.EnqueueJsonResponse("[]");
+        var storageScope = new Mem0ProviderScope
+        {
+            UserId = "user"
+        };
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope));
+
+        var externalMsg = new ChatMessage(ChatRole.User, "External question");
+        var historyMsg = new ChatMessage(ChatRole.User, "History message")
+            .WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, "src");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, mockSession, [externalMsg, historyMsg]);
+
+        // Act
+        await sut.InvokingAsync(context);
+
+        // Assert - Only External message used for search query
+        var searchRequest = Assert.Single(this._handler.Requests, r => r.RequestMessage.Method == HttpMethod.Post && ContainsOrdinal(r.RequestMessage.RequestUri!.AbsoluteUri, "/v1/memories/search/"));
+        using JsonDocument doc = JsonDocument.Parse(searchRequest.RequestBody);
+        Assert.Equal("External question", doc.RootElement.GetProperty("query").GetString());
+    }
+
+    #endregion
 
     private static bool ContainsOrdinal(string source, string value) => source.IndexOf(value, StringComparison.Ordinal) >= 0;
 
@@ -464,5 +671,13 @@ public sealed class Mem0ProviderTests : IDisposable
         public void EnqueueEmptyOk() => this._responses.Enqueue(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
 
         public void EnqueueEmptyInternalServerError() => this._responses.Enqueue(new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError));
+    }
+
+    private sealed class TestAgentSession : AgentSession
+    {
+        public TestAgentSession()
+        {
+            this.StateBag = new AgentSessionStateBag();
+        }
     }
 }

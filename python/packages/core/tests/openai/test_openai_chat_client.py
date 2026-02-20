@@ -17,10 +17,9 @@ from agent_framework import (
     Content,
     Message,
     SupportsChatGetResponse,
-    prepare_function_call_results,
     tool,
 )
-from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
+from agent_framework.exceptions import ChatClientException
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
 
@@ -43,7 +42,7 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
 
 def test_init_validation_fail() -> None:
     # Test successful initialization
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         OpenAIChatClient(api_key="34523", model_id={"test": "dict"})  # type: ignore
 
 
@@ -97,20 +96,17 @@ def test_init_base_url_from_settings_env() -> None:
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_CHAT_MODEL_ID"]], indirect=True)
 def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
-        OpenAIChatClient(
-            env_file_path="test.env",
-        )
+    with pytest.raises(ValueError):
+        OpenAIChatClient()
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
     model_id = "test_model_id"
 
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         OpenAIChatClient(
             model_id=model_id,
-            env_file_path="test.env",
         )
 
 
@@ -191,6 +187,21 @@ def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None
     assert result["tools"] == [dict_tool]
 
 
+def test_prepare_tools_with_single_function_tool(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that a single FunctionTool is accepted for tool preparation."""
+    client = OpenAIChatClient()
+
+    @tool(approval_mode="never_require")
+    def test_function(query: str) -> str:
+        """A test function."""
+        return f"Result for {query}"
+
+    result = client._prepare_tools_for_openai(test_function)
+    assert "tools" in result
+    assert len(result["tools"]) == 1
+    assert result["tools"][0]["type"] == "function"
+
+
 @tool(approval_mode="never_require")
 def get_story_text() -> str:
     """Returns a story about Emily and David."""
@@ -224,7 +235,7 @@ async def test_exception_message_includes_original_error_details() -> None:
 
     with (
         patch.object(client.client.chat.completions, "create", side_effect=mock_error),
-        pytest.raises(ServiceResponseException) as exc_info,
+        pytest.raises(ChatClientException) as exc_info,
     ):
         await client._inner_get_response(messages=messages, options={})  # type: ignore
 
@@ -281,17 +292,21 @@ def test_chat_response_content_order_text_before_tool_calls(openai_unit_test_env
 
 
 def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, str]):
-    """Test that falsy values (like empty list) in function result are properly handled."""
+    """Test that falsy values (like empty list) in function result are properly handled.
+
+    Note: In practice, FunctionTool.invoke() always returns a pre-parsed string.
+    These tests verify that the OpenAI client correctly passes through string results.
+    """
     client = OpenAIChatClient()
 
-    # Test with empty list (falsy but not None)
+    # Test with empty list serialized as JSON string (as FunctionTool.invoke would produce)
     message_with_empty_list = Message(
-        role="tool", contents=[Content.from_function_result(call_id="call-123", result=[])]
+        role="tool", contents=[Content.from_function_result(call_id="call-123", result="[]")]
     )
 
     openai_messages = client._prepare_message_for_openai(message_with_empty_list)
     assert len(openai_messages) == 1
-    assert openai_messages[0]["content"] == "[]"  # Empty list should be JSON serialized
+    assert openai_messages[0]["content"] == "[]"  # Empty list JSON string
 
     # Test with empty string (falsy but not None)
     message_with_empty_string = Message(
@@ -302,12 +317,14 @@ def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, s
     assert len(openai_messages) == 1
     assert openai_messages[0]["content"] == ""  # Empty string should be preserved
 
-    # Test with False (falsy but not None)
-    message_with_false = Message(role="tool", contents=[Content.from_function_result(call_id="call-789", result=False)])
+    # Test with False serialized as JSON string (as FunctionTool.invoke would produce)
+    message_with_false = Message(
+        role="tool", contents=[Content.from_function_result(call_id="call-789", result="false")]
+    )
 
     openai_messages = client._prepare_message_for_openai(message_with_false)
     assert len(openai_messages) == 1
-    assert openai_messages[0]["content"] == "false"  # False should be JSON serialized
+    assert openai_messages[0]["content"] == "false"  # False JSON string
 
 
 def test_function_result_exception_handling(openai_unit_test_env: dict[str, str]):
@@ -332,9 +349,11 @@ def test_function_result_exception_handling(openai_unit_test_env: dict[str, str]
     assert openai_messages[0]["tool_call_id"] == "call-123"
 
 
-def test_prepare_function_call_results_string_passthrough():
+def test_parse_result_string_passthrough():
     """Test that string values are passed through directly without JSON encoding."""
-    result = prepare_function_call_results("simple string")
+    from agent_framework import FunctionTool
+
+    result = FunctionTool.parse_result("simple string")
     assert result == "simple string"
     assert isinstance(result, str)
 
@@ -760,11 +779,11 @@ def test_prepare_options_without_model_id(openai_unit_test_env: dict[str, str]) 
 
 def test_prepare_options_without_messages(openai_unit_test_env: dict[str, str]) -> None:
     """Test that prepare_options raises error when messages are missing."""
-    from agent_framework.exceptions import ServiceInvalidRequestError
+    from agent_framework.exceptions import ChatClientInvalidRequestException
 
     client = OpenAIChatClient()
 
-    with pytest.raises(ServiceInvalidRequestError, match="Messages are required"):
+    with pytest.raises(ChatClientInvalidRequestException, match="Messages are required"):
         client._prepare_options([], {})
 
 
@@ -913,7 +932,7 @@ async def test_streaming_exception_handling(openai_unit_test_env: dict[str, str]
 
     with (
         patch.object(client.client.chat.completions, "create", side_effect=mock_error),
-        pytest.raises(ServiceResponseException),
+        pytest.raises(ChatClientException),
     ):
         async for _ in client._inner_get_response(messages=messages, stream=True, options={}):  # type: ignore
             pass
@@ -1076,7 +1095,12 @@ async def test_integration_web_search() -> None:
         # Use static method for web search tool
         web_search_tool = OpenAIChatClient.get_web_search_tool()
         content = {
-            "messages": "Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+            "messages": [
+                Message(
+                    role="user",
+                    text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+                )
+            ],
             "options": {
                 "tool_choice": "auto",
                 "tools": [web_search_tool],
@@ -1103,7 +1127,7 @@ async def test_integration_web_search() -> None:
             }
         )
         content = {
-            "messages": "What is the current weather? Do not ask for my current location.",
+            "messages": [Message(role="user", text="What is the current weather? Do not ask for my current location.")],
             "options": {
                 "tool_choice": "auto",
                 "tools": [web_search_tool_with_location],

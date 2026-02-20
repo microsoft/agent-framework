@@ -8,11 +8,10 @@ import sys
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic
 
-from azure.core.credentials import TokenCredential
-from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
+from openai.lib.azure import AsyncAzureOpenAI
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from agent_framework import (
     Annotation,
@@ -23,14 +22,16 @@ from agent_framework import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
 )
-from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIChatOptions
 from agent_framework.openai._chat_client import RawOpenAIChatClient
 
+from .._settings import load_settings
+from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
+    _apply_azure_defaults,
 )
 
 if sys.version_info >= (3, 13):
@@ -51,7 +52,6 @@ if TYPE_CHECKING:
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-__all__ = ["AzureOpenAIChatClient", "AzureOpenAIChatOptions", "AzureUserSecurityContext"]
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
@@ -168,10 +168,8 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         endpoint: str | None = None,
         base_url: str | None = None,
         api_version: str | None = None,
-        ad_token: str | None = None,
-        ad_token_provider: AsyncAzureADTokenProvider | None = None,
         token_endpoint: str | None = None,
-        credential: TokenCredential | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
         env_file_path: str | None = None,
@@ -198,11 +196,12 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
             api_version: The deployment API version. If provided will override the value
                 in the env vars or .env file.
                 Can also be set via environment variable AZURE_OPENAI_API_VERSION.
-            ad_token: The Azure Active Directory token.
-            ad_token_provider: The Azure Active Directory token provider.
             token_endpoint: The token endpoint to request an Azure token.
                 Can also be set via environment variable AZURE_OPENAI_TOKEN_ENDPOINT.
-            credential: The Azure credential for authentication.
+            credential: Azure credential or token provider for authentication. Accepts a
+                ``TokenCredential``, ``AsyncTokenCredential``, or a callable that returns a
+                bearer token string (sync or async), for example from
+                ``azure.identity.get_bearer_token_provider()``.
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests.
             async_client: An existing client to use.
@@ -247,37 +246,33 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
                 client: AzureOpenAIChatClient[MyOptions] = AzureOpenAIChatClient()
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            # Filter out any None values from the arguments
-            azure_openai_settings = AzureOpenAISettings(
-                # pydantic settings will see if there is a value, if not, will try the env var or .env file
-                api_key=api_key,  # type: ignore
-                base_url=base_url,  # type: ignore
-                endpoint=endpoint,  # type: ignore
-                chat_deployment_name=deployment_name,
-                api_version=api_version,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-                token_endpoint=token_endpoint,
-            )
-        except ValidationError as exc:
-            raise ServiceInitializationError(f"Failed to validate settings: {exc}") from exc
+        azure_openai_settings = load_settings(
+            AzureOpenAISettings,
+            env_prefix="AZURE_OPENAI_",
+            api_key=api_key,
+            base_url=base_url,
+            endpoint=endpoint,
+            chat_deployment_name=deployment_name,
+            api_version=api_version,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+            token_endpoint=token_endpoint,
+        )
+        _apply_azure_defaults(azure_openai_settings)
 
-        if not azure_openai_settings.chat_deployment_name:
-            raise ServiceInitializationError(
+        if not azure_openai_settings["chat_deployment_name"]:
+            raise ValueError(
                 "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_CHAT_DEPLOYMENT_NAME' environment variable."
             )
 
         super().__init__(
-            deployment_name=azure_openai_settings.chat_deployment_name,
-            endpoint=azure_openai_settings.endpoint,
-            base_url=azure_openai_settings.base_url,
-            api_version=azure_openai_settings.api_version,  # type: ignore
-            api_key=azure_openai_settings.api_key.get_secret_value() if azure_openai_settings.api_key else None,
-            ad_token=ad_token,
-            ad_token_provider=ad_token_provider,
-            token_endpoint=azure_openai_settings.token_endpoint,
+            deployment_name=azure_openai_settings["chat_deployment_name"],
+            endpoint=azure_openai_settings["endpoint"],
+            base_url=azure_openai_settings["base_url"],
+            api_version=azure_openai_settings["api_version"],  # type: ignore
+            api_key=azure_openai_settings["api_key"].get_secret_value() if azure_openai_settings["api_key"] else None,
+            token_endpoint=azure_openai_settings["token_endpoint"],
             credential=credential,
             default_headers=default_headers,
             client=async_client,

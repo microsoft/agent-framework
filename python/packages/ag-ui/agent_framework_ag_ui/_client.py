@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
     from ._types import AGUIChatOptions
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger("agent_framework.ag_ui")
 
 
 def _unwrap_server_function_call_contents(contents: MutableSequence[Content | dict[str, Any]]) -> None:
@@ -171,11 +171,11 @@ class AGUIChatClient(
 
             client = AGUIChatClient(endpoint="http://localhost:8888/")
             agent = Agent(name="assistant", client=client)
-            thread = await agent.get_new_thread()
+            session = agent.create_session()
 
             # Agent automatically maintains history and sends full context
-            response = await agent.run("Hello!", thread=thread)
-            response2 = await agent.run("How are you?", thread=thread)
+            response = await agent.run("Hello!", session=session)
+            response2 = await agent.run("How are you?", session=session)
 
         Streaming usage:
 
@@ -267,7 +267,7 @@ class AGUIChatClient(
         if any(getattr(tool, "name", None) == tool_name for tool in additional_tools):
             return
 
-        placeholder: FunctionTool[Any, Any] = FunctionTool(
+        placeholder: FunctionTool = FunctionTool(
             name=tool_name,
             description="Server-managed tool placeholder (AG-UI)",
             func=None,
@@ -277,9 +277,6 @@ class AGUIChatClient(
         registered: set[str] = getattr(self, "_registered_server_tools", set())
         registered.add(tool_name)
         self._registered_server_tools = registered  # type: ignore[attr-defined]
-        from agent_framework._logging import get_logger
-
-        logger = get_logger()
         logger.debug(f"[AGUIChatClient] Registered server placeholder: {tool_name}")
 
     def _extract_state_from_messages(self, messages: Sequence[Message]) -> tuple[list[Message], dict[str, Any] | None]:
@@ -310,9 +307,6 @@ class AGUIChatClient(
                         messages_without_state = list(messages[:-1]) if len(messages) > 1 else []
                         return messages_without_state, state
                 except (json.JSONDecodeError, ValueError, KeyError) as e:
-                    from agent_framework._logging import get_logger
-
-                    logger = get_logger()
                     logger.warning(f"Failed to extract state from message: {e}")
 
         return list(messages), None

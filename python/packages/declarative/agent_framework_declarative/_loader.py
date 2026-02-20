@@ -16,7 +16,7 @@ from agent_framework import (
     FunctionTool as AFFunctionTool,
 )
 from agent_framework._tools import _create_model_from_json_schema  # type: ignore
-from agent_framework.exceptions import AgentFrameworkException
+from agent_framework.exceptions import AgentException
 from dotenv import load_dotenv
 
 from ._models import (
@@ -104,7 +104,7 @@ PROVIDER_TYPE_OBJECT_MAPPING: dict[str, ProviderTypeMapping] = {
 }
 
 
-class DeclarativeLoaderError(AgentFrameworkException):
+class DeclarativeLoaderError(AgentException):
     """Exception raised for errors in the declarative loader."""
 
     pass
@@ -452,7 +452,7 @@ class AgentFactory:
             name=prompt_agent.name,
             description=prompt_agent.description,
             instructions=prompt_agent.instructions,
-            **chat_options,
+            default_options=chat_options,  # type: ignore[arg-type]
         )
 
     async def create_agent_from_yaml_path_async(self, yaml_path: str | Path) -> Agent:
@@ -569,7 +569,7 @@ class AgentFactory:
             name=prompt_agent.name,
             description=prompt_agent.description,
             instructions=prompt_agent.instructions,
-            **chat_options,
+            default_options=chat_options,  # type: ignore[arg-type]
         )
 
     async def _create_agent_with_provider(self, prompt_agent: PromptAgent, mapping: ProviderTypeMapping) -> Agent:
@@ -605,10 +605,11 @@ class AgentFactory:
         # Parse tools
         tools = self._parse_tools(prompt_agent.tools) if prompt_agent.tools else None
 
-        # Parse response format
-        response_format = None
+        # Parse response format into default_options
+        default_options: dict[str, Any] | None = None
         if prompt_agent.outputSchema:
             response_format = _create_model_from_json_schema("agent", prompt_agent.outputSchema.to_json_schema())
+            default_options = {"response_format": response_format}
 
         # Create the agent using the provider
         # The provider's create_agent returns a Agent directly
@@ -620,7 +621,7 @@ class AgentFactory:
                 instructions=prompt_agent.instructions,
                 description=prompt_agent.description,
                 tools=tools,
-                response_format=response_format,
+                default_options=default_options,
             ),
         )
 

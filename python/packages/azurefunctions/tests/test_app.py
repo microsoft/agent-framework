@@ -1164,5 +1164,282 @@ class TestMCPToolEndpoint:
         assert body["agents"][0]["mcp_tool_enabled"] is True
 
 
+class TestAgentFunctionAppErrorPaths:
+    """Test suite for error handling paths."""
+
+    def test_init_with_invalid_max_poll_retries(self) -> None:
+        """Test initialization handles invalid max_poll_retries by falling back to default."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        # Test with invalid type
+        app = AgentFunctionApp(agents=[mock_agent], max_poll_retries="invalid")
+        assert app.max_poll_retries >= 1  # Should use default
+
+        # Test with None
+        app2 = AgentFunctionApp(agents=[mock_agent], max_poll_retries=None)
+        assert app2.max_poll_retries >= 1  # Should use default
+
+    def test_init_with_invalid_poll_interval_seconds(self) -> None:
+        """Test initialization handles invalid poll_interval_seconds by falling back to default."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        # Test with invalid type
+        app = AgentFunctionApp(agents=[mock_agent], poll_interval_seconds="invalid")
+        assert app.poll_interval_seconds > 0  # Should use default
+
+        # Test with None
+        app2 = AgentFunctionApp(agents=[mock_agent], poll_interval_seconds=None)
+        assert app2.poll_interval_seconds > 0  # Should use default
+
+    def test_get_agent_raises_for_unregistered_agent(self) -> None:
+        """Test get_agent raises ValueError for unregistered agent."""
+        mock_agent = Mock()
+        mock_agent.name = "RegisteredAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent], enable_http_endpoints=False)
+
+        # Create mock orchestration context
+        mock_context = Mock()
+
+        # Should raise ValueError for unregistered agent
+        with pytest.raises(ValueError, match="Agent 'UnknownAgent' is not registered"):
+            app.get_agent(mock_context, "UnknownAgent")
+
+    def test_convert_payload_to_text_with_response_key(self) -> None:
+        """Test _convert_payload_to_text returns response key value."""
+        app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
+
+        # Test with response key
+        payload = {"response": "Test response"}
+        result = app._convert_payload_to_text(payload)
+        assert result == "Test response"
+
+        # Test with error key
+        payload = {"error": "Error message"}
+        result = app._convert_payload_to_text(payload)
+        assert result == "Error message"
+
+        # Test with message key
+        payload = {"message": "Message text"}
+        result = app._convert_payload_to_text(payload)
+        assert result == "Message text"
+
+        # Test with no matching keys - should return JSON string
+        payload = {"other": "value"}
+        result = app._convert_payload_to_text(payload)
+        assert "other" in result
+        assert "value" in result
+
+    def test_create_session_id_with_thread_id(self) -> None:
+        """Test _create_session_id with provided thread_id."""
+        app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
+
+        # With thread_id provided
+        session_id = app._create_session_id("TestAgent", "my-thread-123")
+        assert session_id.key == "my-thread-123"
+
+        # Without thread_id (None) - should generate random
+        session_id = app._create_session_id("TestAgent", None)
+        assert session_id.key is not None
+        assert len(session_id.key) > 0
+
+    def test_resolve_thread_id_from_body(self) -> None:
+        """Test _resolve_thread_id extracts from body."""
+        app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
+
+        mock_req = Mock()
+        mock_req.params = {}
+
+        # Thread ID in body - field name is "thread_id"
+        req_body = {"thread_id": "body-thread-123"}
+        result = app._resolve_thread_id(mock_req, req_body)
+        assert result == "body-thread-123"
+
+    def test_select_body_parser_json_content_type(self) -> None:
+        """Test _select_body_parser for JSON content type."""
+        app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
+
+        # Test with application/json
+        parser, format_str = app._select_body_parser("application/json")
+        assert parser == app._parse_json_body
+        assert format_str == "json"
+
+        # Test with +json suffix
+        parser, format_str = app._select_body_parser("application/vnd.api+json")
+        assert parser == app._parse_json_body
+        assert format_str == "json"
+
+    def test_accepts_json_response_with_accept_header(self) -> None:
+        """Test _accepts_json_response checks accept header."""
+        app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
+
+        # With application/json in accept header
+        headers = {"accept": "application/json"}
+        result = app._accepts_json_response(headers)
+        assert result is True
+
+        # Without accept header
+        headers = {}
+        result = app._accepts_json_response(headers)
+        assert result is False
+
+    def test_parse_json_body_invalid_type(self) -> None:
+        """Test _parse_json_body raises error for invalid JSON."""
+        from agent_framework_azurefunctions._errors import IncomingRequestError
+
+        app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
+
+        # Mock request with non-dict JSON
+        mock_req = Mock()
+        mock_req.get_json.return_value = ["not", "a", "dict"]
+
+        with pytest.raises(IncomingRequestError, match="Invalid JSON payload"):
+            app._parse_json_body(mock_req)
+
+    def test_coerce_to_bool_with_none(self) -> None:
+        """Test _coerce_to_bool handles None and various value types."""
+        app = AgentFunctionApp(enable_http_endpoints=False, enable_health_check=False)
+
+        # None returns False
+        assert app._coerce_to_bool(None) is False
+
+        # Integer
+        assert app._coerce_to_bool(1) is True
+        assert app._coerce_to_bool(0) is False
+
+        # String
+        assert app._coerce_to_bool("true") is True
+        assert app._coerce_to_bool("false") is False
+
+        # Other type returns False
+        assert app._coerce_to_bool([]) is False
+
+
+class TestAgentFunctionAppWorkflow:
+    """Test suite for AgentFunctionApp workflow support."""
+
+    def test_init_with_workflow_stores_workflow(self) -> None:
+        """Test that workflow is stored when provided."""
+        mock_workflow = Mock()
+        mock_workflow.executors = {}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
+
+        assert app.workflow is mock_workflow
+
+    def test_init_with_workflow_extracts_agents(self) -> None:
+        """Test that agents are extracted from workflow executors."""
+        from agent_framework import AgentExecutor
+
+        mock_agent = Mock()
+        mock_agent.name = "WorkflowAgent"
+
+        mock_executor = Mock(spec=AgentExecutor)
+        mock_executor.agent = mock_agent
+
+        mock_workflow = Mock()
+        mock_workflow.executors = {"WorkflowAgent": mock_executor}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            patch.object(AgentFunctionApp, "_setup_agent_functions"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
+
+        assert "WorkflowAgent" in app.agents
+
+    def test_init_with_workflow_calls_setup_methods(self) -> None:
+        """Test that workflow setup methods are called."""
+        mock_executor = Mock()
+        mock_executor.id = "TestExecutor"
+
+        mock_workflow = Mock()
+        # Include a non-AgentExecutor so _setup_executor_activity is called
+        mock_workflow.executors = {"TestExecutor": mock_executor}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity") as setup_exec,
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            AgentFunctionApp(workflow=mock_workflow)
+
+        setup_exec.assert_called_once()
+        setup_orch.assert_called_once()
+
+    def test_init_without_workflow_does_not_call_workflow_setup(self) -> None:
+        """Test that workflow setup is not called when no workflow provided."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity") as setup_exec,
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration") as setup_orch,
+        ):
+            AgentFunctionApp(agents=[mock_agent])
+
+        setup_exec.assert_not_called()
+        setup_orch.assert_not_called()
+
+    def test_init_with_workflow_deduplicates_agents(self) -> None:
+        """Test that agents in both 'agents' and workflow are not double-registered."""
+        from agent_framework import AgentExecutor
+
+        mock_agent = Mock()
+        mock_agent.name = "SharedAgent"
+
+        mock_executor = Mock(spec=AgentExecutor)
+        mock_executor.agent = mock_agent
+
+        mock_workflow = Mock()
+        mock_workflow.executors = {"SharedAgent": mock_executor}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+            patch.object(AgentFunctionApp, "_setup_agent_functions"),
+        ):
+            # Same agent passed explicitly AND present in workflow — should not raise
+            app = AgentFunctionApp(agents=[mock_agent], workflow=mock_workflow)
+
+        assert "SharedAgent" in app.agents
+
+    def test_build_status_url(self) -> None:
+        """Test _build_status_url constructs correct URL."""
+        mock_workflow = Mock()
+        mock_workflow.executors = {}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
+
+        url = app._build_status_url("http://localhost:7071/api/workflow/run", "instance-123")
+
+        assert url == "http://localhost:7071/api/workflow/status/instance-123"
+
+    def test_build_status_url_handles_trailing_slash(self) -> None:
+        """Test _build_status_url handles URLs without /api/ correctly."""
+        mock_workflow = Mock()
+        mock_workflow.executors = {}
+
+        with (
+            patch.object(AgentFunctionApp, "_setup_executor_activity"),
+            patch.object(AgentFunctionApp, "_setup_workflow_orchestration"),
+        ):
+            app = AgentFunctionApp(workflow=mock_workflow)
+
+        url = app._build_status_url("http://localhost:7071/", "instance-456")
+
+        assert "instance-456" in url
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

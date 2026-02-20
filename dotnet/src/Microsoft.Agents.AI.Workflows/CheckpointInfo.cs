@@ -7,14 +7,14 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI.Workflows;
 
 /// <summary>
-/// Represents a checkpoint with a unique identifier and a timestamp indicating when it was created.
+/// Represents a checkpoint with a unique identifier.
 /// </summary>
 public sealed class CheckpointInfo : IEquatable<CheckpointInfo>
 {
     /// <summary>
-    /// Gets the unique identifier for the current run.
+    /// Gets the unique identifier for the current session.
     /// </summary>
-    public string RunId { get; }
+    public string SessionId { get; }
 
     /// <summary>
     /// The unique identifier for the checkpoint.
@@ -22,37 +22,34 @@ public sealed class CheckpointInfo : IEquatable<CheckpointInfo>
     public string CheckpointId { get; }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CheckpointInfo"/> class with a unique identifier and the current
-    /// UTC timestamp.
+    /// Initializes a new instance of the <see cref="CheckpointInfo"/> class with a unique identifier.
     /// </summary>
-    /// <remarks>This constructor generates a new unique identifier using a GUID in a 32-character, lowercase,
-    /// hexadecimal format  and sets the timestamp to the current UTC time.</remarks>
-    internal CheckpointInfo(string runId) : this(runId, Guid.NewGuid().ToString("N")) { }
+    internal CheckpointInfo(string sessionId) : this(sessionId, Guid.NewGuid().ToString("N")) { }
 
     /// <summary>
-    /// Initializes a new instance of the CheckpointInfo class with the specified run and checkpoint identifiers.
+    /// Initializes a new instance of the CheckpointInfo class with the specified session and checkpoint identifiers.
     /// </summary>
-    /// <param name="runId">The unique identifier for the run. Cannot be null or empty.</param>
+    /// <param name="sessionId">The unique identifier for the session. Cannot be null or empty.</param>
     /// <param name="checkpointId">The unique identifier for the checkpoint. Cannot be null or empty.</param>
     [JsonConstructor]
-    public CheckpointInfo(string runId, string checkpointId)
+    public CheckpointInfo(string sessionId, string checkpointId)
     {
-        this.RunId = Throw.IfNullOrEmpty(runId);
+        this.SessionId = Throw.IfNullOrEmpty(sessionId);
         this.CheckpointId = Throw.IfNullOrEmpty(checkpointId);
     }
 
     /// <inheritdoc/>
     public bool Equals(CheckpointInfo? other) =>
         other is not null &&
-        this.RunId == other.RunId &&
+        this.SessionId == other.SessionId &&
         this.CheckpointId == other.CheckpointId;
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => this.Equals(obj as CheckpointInfo);
 
     /// <inheritdoc/>
-    public override int GetHashCode() => HashCode.Combine(this.RunId, this.CheckpointId);
+    public override int GetHashCode() => HashCode.Combine(this.SessionId, this.CheckpointId);
 
     /// <inheritdoc/>
-    public override string ToString() => $"CheckpointInfo(RunId: {this.RunId}, CheckpointId: {this.CheckpointId})";
+    public override string ToString() => $"CheckpointInfo(SessionId: {this.SessionId}, CheckpointId: {this.CheckpointId})";
 }

@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import sys
 from collections.abc import (
     AsyncIterable,
     Awaitable,
     Callable,
     Mapping,
-    MutableMapping,
     Sequence,
 )
 from functools import partial, wraps
@@ -24,9 +24,9 @@ from typing import (
     Final,
     Generic,
     Literal,
+    TypeAlias,
     TypedDict,
     Union,
-    cast,
     get_args,
     get_origin,
     overload,
@@ -35,7 +35,6 @@ from typing import (
 from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import BaseModel, Field, ValidationError, create_model
 
-from ._logging import get_logger
 from ._serialization import SerializationMixin
 from .exceptions import ToolException
 from .observability import (
@@ -59,6 +58,7 @@ else:
 
 if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
+    from ._mcp import MCPTool
     from ._middleware import FunctionMiddlewarePipeline, FunctionMiddlewareTypes
     from ._types import (
         ChatOptions,
@@ -70,27 +70,16 @@ if TYPE_CHECKING:
     )
 
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+else:
+    MCPTool = Any  # type: ignore[assignment,misc]
 
 
-logger = get_logger()
+logger = logging.getLogger("agent_framework")
 
-__all__ = [
-    "FunctionInvocationConfiguration",
-    "FunctionInvocationLayer",
-    "FunctionTool",
-    "normalize_function_invocation_configuration",
-    "tool",
-]
-
-
-logger = get_logger()
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 # region Helpers
-
-ArgsT = TypeVar("ArgsT", bound=BaseModel, default=BaseModel)
-ReturnT = TypeVar("ReturnT", default=Any)
 
 
 def _parse_inputs(
@@ -184,11 +173,7 @@ def _default_histogram() -> Histogram:
 ClassT = TypeVar("ClassT", bound="SerializationMixin")
 
 
-class EmptyInputModel(BaseModel):
-    """An empty input model for functions with no parameters."""
-
-
-class FunctionTool(SerializationMixin, Generic[ArgsT, ReturnT]):
+class FunctionTool(SerializationMixin):
     """A tool that wraps a Python function to make it callable by AI models.
 
     This class wraps a Python function to make it callable by AI models with automatic
@@ -241,6 +226,8 @@ class FunctionTool(SerializationMixin, Generic[ArgsT, ReturnT]):
         "input_model",
         "_invocation_duration_histogram",
         "_cached_parameters",
+        "_input_schema",
+        "_schema_supplied",
     }
 
     def __init__(
@@ -252,8 +239,9 @@ class FunctionTool(SerializationMixin, Generic[ArgsT, ReturnT]):
         max_invocations: int | None = None,
         max_invocation_exceptions: int | None = None,
         additional_properties: dict[str, Any] | None = None,
-        func: Callable[..., Awaitable[ReturnT] | ReturnT] | None = None,
-        input_model: type[ArgsT] | Mapping[str, Any] | None = None,
+        func: Callable[..., Any] | None = None,
+        input_model: type[BaseModel] | Mapping[str, Any] | None = None,
+        result_parser: Callable[[Any], str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the FunctionTool.
@@ -281,6 +269,12 @@ class FunctionTool(SerializationMixin, Generic[ArgsT, ReturnT]):
                 parameters, explicitly provide ``input_model`` (either a Pydantic
                 ``BaseModel`` or a JSON schema dictionary) so the model can reason about
                 the expected arguments.
+            result_parser: An optional callable with signature ``Callable[[Any], str]`` that
+                overrides the default result parsing behavior. When provided, this callable
+                is used to convert the raw function return value to a string instead of the
+                built-in :meth:`parse_result` logic. Depending on your function, it may be
+                easiest to just do the serialization directly in the function body rather
+                than providing a custom ``result_parser``.
             **kwargs: Additional keyword arguments.
         """
         # Core attributes (formerly from BaseTool)
@@ -293,7 +287,16 @@ class FunctionTool(SerializationMixin, Generic[ArgsT, ReturnT]):
         # FunctionTool-specific attributes
         self.func = func
         self._instance = None  # Store the instance for bound methods
-        self.input_model = self._resolve_input_model(input_model)
+
+        # Track if schema was supplied as JSON dict (for optimization)
+        if isinstance(input_model, Mapping):
+            self._schema_supplied = True
+            self._input_schema: dict[str, Any] = dict(input_model)
+            self.input_model: type[BaseModel] | None = None
+        else:
+            self._schema_supplied = False
+            self.input_model = self._resolve_input_model(input_model)
+            self._input_schema = self.input_model.model_json_schema()
         self._cached_parameters: dict[str, Any] | None = None
         self.approval_mode = approval_mode or "never_require"
         if max_invocations is not None and max_invocations < 1:
@@ -306,6 +309,7 @@ class FunctionTool(SerializationMixin, Generic[ArgsT, ReturnT]):
         self.invocation_exception_count = 0
         self._invocation_duration_histogram = _default_histogram()
         self.type: Literal["function_tool"] = "function_tool"
+        self.result_parser = result_parser
         self._forward_runtime_kwargs: bool = False
         if self.func:
             sig = inspect.signature(self.func)
@@ -328,7 +332,7 @@ class FunctionTool(SerializationMixin, Generic[ArgsT, ReturnT]):
             return True
         return self.func is None
 
-    def __get__(self, obj: Any, objtype: type | None = None) -> FunctionTool[ArgsT, ReturnT]:
+    def __get__(self, obj: Any, objtype: type | None = None) -> FunctionTool:
         """Implement the descriptor protocol to support bound methods.
 
         When a FunctionTool is accessed as an attribute of a class instance,
@@ -359,19 +363,32 @@ class FunctionTool(SerializationMixin, Generic[ArgsT, ReturnT]):
 
         return self
 
-    def _resolve_input_model(self, input_model: type[ArgsT] | Mapping[str, Any] | None) -> type[ArgsT]:
+    def _resolve_input_model(self, input_model: type[BaseModel] | None) -> type[BaseModel]:
         """Resolve the input model for the function."""
-        if input_model is None:
-            if self.func is None:
-                return cast(type[ArgsT], EmptyInputModel)
-            return cast(type[ArgsT], _create_input_model_from_func(func=self.func, name=self.name))
-        if inspect.isclass(input_model) and issubclass(input_model, BaseModel):
-            return input_model
-        if isinstance(input_model, Mapping):
-            return cast(type[ArgsT], _create_model_from_json_schema(self.name, input_model))
-        raise TypeError("input_model must be a Pydantic BaseModel subclass or a JSON schema dict.")
+        if input_model is not None:
+            if inspect.isclass(input_model) and issubclass(input_model, BaseModel):
+                return input_model
+            raise TypeError("input_model must be a Pydantic BaseModel subclass or a JSON schema dict.")
 
-    def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
+        if self.func is None:
+            return create_model(f"{self.name}_input")
+
+        func = self.func.func if isinstance(self.func, FunctionTool) else self.func
+        if func is None:
+            return create_model(f"{self.name}_input")
+        sig = inspect.signature(func)
+        fields: dict[str, Any] = {
+            pname: (
+                _parse_annotation(param.annotation) if param.annotation is not inspect.Parameter.empty else str,
+                param.default if param.default is not inspect.Parameter.empty else ...,
+            )
+            for pname, param in sig.parameters.items()
+            if pname not in {"self", "cls"}
+            and param.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
+        }
+        return create_model(f"{self.name}_input", **fields)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Call the wrapped function with the provided arguments."""
         if self.declaration_only:
             raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
@@ -400,32 +417,61 @@ class FunctionTool(SerializationMixin, Generic[ArgsT, ReturnT]):
     async def invoke(
         self,
         *,
-        arguments: ArgsT | None = None,
+        arguments: BaseModel | Mapping[str, Any] | None = None,
         **kwargs: Any,
-    ) -> ReturnT:
+    ) -> str:
         """Run the AI function with the provided arguments as a Pydantic model.
 
+        The raw return value of the wrapped function is automatically parsed into a ``str``
+        (either plain text or serialized JSON) using :meth:`parse_result` or the custom
+        ``result_parser`` if one was provided.
+
         Keyword Args:
-            arguments: A Pydantic model instance containing the arguments for the function.
+            arguments: A mapping or model instance containing the arguments for the function.
             kwargs: Keyword arguments to pass to the function, will not be used if ``arguments`` is provided.
 
         Returns:
-            The result of the function execution.
+            The parsed result as a string — either plain text or serialized JSON.
 
         Raises:
-            TypeError: If arguments is not an instance of the expected input model.
+            TypeError: If arguments is not mapping-like or fails schema checks.
         """
         if self.declaration_only:
             raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
         global OBSERVABILITY_SETTINGS
         from .observability import OBSERVABILITY_SETTINGS
 
+        parser = self.result_parser or FunctionTool.parse_result
+
         original_kwargs = dict(kwargs)
         tool_call_id = original_kwargs.pop("tool_call_id", None)
         if arguments is not None:
-            if not isinstance(arguments, self.input_model):
-                raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-            kwargs = arguments.model_dump(exclude_none=True)
+            try:
+                if isinstance(arguments, Mapping):
+                    parsed_arguments = dict(arguments)
+                    if self.input_model is not None and not self._schema_supplied:
+                        parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(
+                            exclude_none=True
+                        )
+                elif isinstance(arguments, BaseModel):
+                    if (
+                        self.input_model is not None
+                        and not self._schema_supplied
+                        and not isinstance(arguments, self.input_model)
+                    ):
+                        raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
+                    parsed_arguments = arguments.model_dump(exclude_none=True)
+                else:
+                    raise TypeError(
+                        f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
+                    )
+            except ValidationError as exc:
+                raise TypeError(f"Invalid arguments for '{self.name}': {exc}") from exc
+            kwargs = _validate_arguments_against_schema(
+                arguments=parsed_arguments,
+                schema=self.parameters(),
+                tool_name=self.name,
+            )
             if getattr(self, "_forward_runtime_kwargs", False) and original_kwargs:
                 kwargs.update(original_kwargs)
         else:
@@ -435,39 +481,42 @@ class FunctionTool(SerializationMixin, Generic[ArgsT, ReturnT]):
             logger.debug(f"Function arguments: {kwargs}")
             res = self.__call__(**kwargs)
             result = await res if inspect.isawaitable(res) else res
+            try:
+                parsed = parser(result)
+            except Exception:
+                logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
+                parsed = str(result)
             logger.info(f"Function {self.name} succeeded.")
-            logger.debug(f"Function result: {result or 'None'}")
-            return result  # type: ignore[reportReturnType]
+            logger.debug(f"Function result: {parsed or 'None'}")
+            return parsed
 
         attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
-        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
-            # Filter out framework kwargs that are not JSON serializable
-            serializable_kwargs = {
-                k: v
-                for k, v in kwargs.items()
-                if k
-                not in {
-                    "chat_options",
-                    "tools",
-                    "tool_choice",
-                    "thread",
-                    "conversation_id",
-                    "options",
-                    "response_format",
-                }
+        # Filter out framework kwargs that are not JSON serializable.
+        serializable_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if k
+            not in {
+                "chat_options",
+                "tools",
+                "tool_choice",
+                "session",
+                "conversation_id",
+                "options",
+                "response_format",
             }
+        }
+        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
             attributes.update({
-                OtelAttr.TOOL_ARGUMENTS: arguments.model_dump_json()
-                if arguments
-                else json.dumps(serializable_kwargs, default=str)
-                if serializable_kwargs
-                else "None"
+                OtelAttr.TOOL_ARGUMENTS: (
+                    json.dumps(serializable_kwargs, default=str, ensure_ascii=False) if serializable_kwargs else "None"
+                )
             })
         with get_function_span(attributes=attributes) as span:
             attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
             logger.info(f"Function name: {self.name}")
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
-                logger.debug(f"Function arguments: {kwargs}")
+                logger.debug(f"Function arguments: {serializable_kwargs}")
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
             try:
@@ -481,19 +530,16 @@ class FunctionTool(SerializationMixin, Generic[ArgsT, ReturnT]):
                 logger.error(f"Function failed. Error: {exception}")
                 raise
             else:
+                try:
+                    parsed = parser(result)
+                except Exception:
+                    logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
+                    parsed = str(result)
                 logger.info(f"Function {self.name} succeeded.")
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
-                    from ._types import prepare_function_call_results
-
-                    try:
-                        json_result = prepare_function_call_results(result)
-                    except (TypeError, OverflowError):
-                        span.set_attribute(OtelAttr.TOOL_RESULT, "<non-serializable result>")
-                        logger.debug("Function result: <non-serializable result>")
-                    else:
-                        span.set_attribute(OtelAttr.TOOL_RESULT, json_result)
-                        logger.debug(f"Function result: {json_result}")
-                return result  # type: ignore[reportReturnType]
+                    span.set_attribute(OtelAttr.TOOL_RESULT, parsed)
+                    logger.debug(f"Function result: {parsed}")
+                return parsed
             finally:
                 duration = (end_time_stamp or perf_counter()) - start_time_stamp
                 span.set_attribute(OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION, duration)
@@ -508,8 +554,51 @@ class FunctionTool(SerializationMixin, Generic[ArgsT, ReturnT]):
             The result is cached after the first call for performance.
         """
         if self._cached_parameters is None:
-            self._cached_parameters = self.input_model.model_json_schema()
+            self._cached_parameters = self._input_schema
         return self._cached_parameters
+
+    @staticmethod
+    def _make_dumpable(value: Any) -> Any:
+        """Recursively convert a value to a JSON-dumpable form."""
+        from ._types import Content
+
+        if isinstance(value, list):
+            return [FunctionTool._make_dumpable(item) for item in value]
+        if isinstance(value, dict):
+            return {k: FunctionTool._make_dumpable(v) for k, v in value.items()}
+        if isinstance(value, Content):
+            return value.to_dict(exclude={"raw_representation", "additional_properties"})
+        if isinstance(value, BaseModel):
+            return value.model_dump()
+        if hasattr(value, "to_dict"):
+            return value.to_dict()
+        if hasattr(value, "text") and isinstance(value.text, str):
+            return value.text
+        return value
+
+    @staticmethod
+    def parse_result(result: Any) -> str:
+        """Convert a raw function return value to a string representation.
+
+        The return value is always a ``str`` — either plain text or serialized JSON.
+        This is called automatically by :meth:`invoke` before returning the result,
+        ensuring that the result stored in ``Content.from_function_result`` is
+        already in a form that can be passed directly to LLM APIs.
+
+        Args:
+            result: The raw return value from the wrapped function.
+
+        Returns:
+            A string representation of the result, either plain text or serialized JSON.
+        """
+        if result is None:
+            return ""
+        if isinstance(result, str):
+            return result
+        dumpable = FunctionTool._make_dumpable(result)
+        if isinstance(dumpable, str):
+            return dumpable
+        return json.dumps(dumpable, default=str)
 
     def to_json_schema_spec(self) -> dict[str, Any]:
         """Convert a FunctionTool to the JSON Schema function specification format.
@@ -535,14 +624,46 @@ class FunctionTool(SerializationMixin, Generic[ArgsT, ReturnT]):
         return as_dict
 
 
+ToolTypes: TypeAlias = FunctionTool | MCPTool | Mapping[str, Any] | Any
+
+
+def normalize_tools(
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+) -> list[ToolTypes]:
+    """Normalize tool inputs while preserving non-callable tool objects.
+
+    Args:
+        tools: A single tool or sequence of tools.
+
+    Returns:
+        A normalized list where callable inputs are converted to ``FunctionTool``
+        using :func:`tool`, and existing tool objects are passed through unchanged.
+    """
+    if not tools:
+        return []
+
+    tool_items = (
+        list(tools)
+        if isinstance(tools, Sequence) and not isinstance(tools, (str, bytes, bytearray, Mapping))
+        else [tools]
+    )
+    from ._mcp import MCPTool
+
+    normalized: list[ToolTypes] = []
+    for tool_item in tool_items:
+        # check known types, these are also callable, so we need to do that first
+        if isinstance(tool_item, (FunctionTool, Mapping, MCPTool)):
+            normalized.append(tool_item)
+            continue
+        if callable(tool_item):
+            normalized.append(tool(tool_item))
+            continue
+        normalized.append(tool_item)
+    return normalized
+
+
 def _tools_to_dict(
-    tools: (
-        FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None
-    ),
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
 ) -> list[str | dict[str, Any]] | None:
     """Parse the tools to a dict.
 
@@ -552,32 +673,20 @@ def _tools_to_dict(
     Returns:
         A list of tool specifications as dictionaries, or None if no tools provided.
     """
-    if not tools:
+    normalized_tools = normalize_tools(tools)
+    if not normalized_tools:
         return None
-    if not isinstance(tools, list):
-        if isinstance(tools, FunctionTool):
-            return [tools.to_json_schema_spec()]
-        if isinstance(tools, SerializationMixin):
-            return [tools.to_dict()]
-        if isinstance(tools, dict):
-            return [tools]
-        if callable(tools):
-            return [tool(tools).to_json_schema_spec()]
-        logger.warning("Can't parse tool.")
-        return None
+
     results: list[str | dict[str, Any]] = []
-    for tool_item in tools:
+    for tool_item in normalized_tools:
         if isinstance(tool_item, FunctionTool):
             results.append(tool_item.to_json_schema_spec())
             continue
         if isinstance(tool_item, SerializationMixin):
             results.append(tool_item.to_dict())
             continue
-        if isinstance(tool_item, dict):
-            results.append(tool_item)
-            continue
-        if callable(tool_item):
-            results.append(tool(tool_item).to_json_schema_spec())
+        if isinstance(tool_item, Mapping):
+            results.append(dict(tool_item))
             continue
         logger.warning("Can't parse tool.")
     return results
@@ -619,23 +728,79 @@ def _parse_annotation(annotation: Any) -> Any:
     return annotation
 
 
-def _create_input_model_from_func(func: Callable[..., Any], name: str) -> type[BaseModel]:
-    """Create a Pydantic model from a function's signature."""
-    # Unwrap FunctionTool objects to get the underlying function
-    if isinstance(func, FunctionTool):
-        func = func.func  # type: ignore[assignment]
+def _matches_json_schema_type(value: Any, schema_type: str) -> bool:
+    """Check a value against a simple JSON schema primitive type."""
+    match schema_type:
+        case "string":
+            return isinstance(value, str)
+        case "integer":
+            return isinstance(value, int) and not isinstance(value, bool)
+        case "number":
+            return (isinstance(value, int | float)) and not isinstance(value, bool)
+        case "boolean":
+            return isinstance(value, bool)
+        case "array":
+            return isinstance(value, list)
+        case "object":
+            return isinstance(value, dict)
+        case "null":
+            return value is None
+        case _:
+            return True
 
-    sig = inspect.signature(func)
-    fields = {
-        pname: (
-            _parse_annotation(param.annotation) if param.annotation is not inspect.Parameter.empty else str,
-            param.default if param.default is not inspect.Parameter.empty else ...,
-        )
-        for pname, param in sig.parameters.items()
-        if pname not in {"self", "cls"}
-        and param.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
-    }
-    return create_model(f"{name}_input", **fields)  # type: ignore[call-overload, no-any-return]
+
+def _validate_arguments_against_schema(
+    *,
+    arguments: Mapping[str, Any],
+    schema: Mapping[str, Any],
+    tool_name: str,
+) -> dict[str, Any]:
+    """Run lightweight argument checks for schema-supplied tools."""
+    parsed_arguments = dict(arguments)
+
+    required_raw = schema.get("required", [])
+    required_fields = [field for field in required_raw if isinstance(field, str)]
+    missing_fields = [field for field in required_fields if field not in parsed_arguments]
+    if missing_fields:
+        raise TypeError(f"Missing required argument(s) for '{tool_name}': {', '.join(sorted(missing_fields))}")
+
+    properties_raw = schema.get("properties")
+    properties = properties_raw if isinstance(properties_raw, Mapping) else {}
+
+    if schema.get("additionalProperties") is False:
+        unexpected_fields = sorted(field for field in parsed_arguments if field not in properties)
+        if unexpected_fields:
+            raise TypeError(f"Unexpected argument(s) for '{tool_name}': {', '.join(unexpected_fields)}")
+
+    for field_name, field_value in parsed_arguments.items():
+        field_schema = properties.get(field_name)
+        if not isinstance(field_schema, Mapping):
+            continue
+
+        enum_values = field_schema.get("enum")
+        if isinstance(enum_values, list) and enum_values and field_value not in enum_values:
+            raise TypeError(
+                f"Invalid value for '{field_name}' in '{tool_name}': {field_value!r} is not in {enum_values!r}"
+            )
+
+        schema_type = field_schema.get("type")
+        if isinstance(schema_type, str):
+            if not _matches_json_schema_type(field_value, schema_type):
+                raise TypeError(
+                    f"Invalid type for '{field_name}' in '{tool_name}': "
+                    f"expected {schema_type}, got {type(field_value).__name__}"
+                )
+            continue
+
+        if isinstance(schema_type, list):
+            allowed_types = [item for item in schema_type if isinstance(item, str)]
+            if allowed_types and not any(_matches_json_schema_type(field_value, item) for item in allowed_types):
+                raise TypeError(
+                    f"Invalid type for '{field_name}' in '{tool_name}': expected one of "
+                    f"{allowed_types}, got {type(field_value).__name__}"
+                )
+
+    return parsed_arguments
 
 
 # Map JSON Schema types to Pydantic types
@@ -874,7 +1039,7 @@ def _create_model_from_json_schema(tool_name: str, schema_json: Mapping[str, Any
 
 @overload
 def tool(
-    func: Callable[..., ReturnT | Awaitable[ReturnT]],
+    func: Callable[..., Any],
     *,
     name: str | None = None,
     description: str | None = None,
@@ -883,7 +1048,8 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-) -> FunctionTool[Any, ReturnT]: ...
+    result_parser: Callable[[Any], str] | None = None,
+) -> FunctionTool: ...
 
 
 @overload
@@ -897,11 +1063,12 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-) -> Callable[[Callable[..., ReturnT | Awaitable[ReturnT]]], FunctionTool[Any, ReturnT]]: ...
+    result_parser: Callable[[Any], str] | None = None,
+) -> Callable[[Callable[..., Any]], FunctionTool]: ...
 
 
 def tool(
-    func: Callable[..., ReturnT | Awaitable[ReturnT]] | None = None,
+    func: Callable[..., Any] | None = None,
     *,
     name: str | None = None,
     description: str | None = None,
@@ -910,7 +1077,8 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-) -> FunctionTool[Any, ReturnT] | Callable[[Callable[..., ReturnT | Awaitable[ReturnT]]], FunctionTool[Any, ReturnT]]:
+    result_parser: Callable[[Any], str] | None = None,
+) -> FunctionTool | Callable[[Callable[..., Any]], FunctionTool]:
     """Decorate a function to turn it into a FunctionTool that can be passed to models and executed automatically.
 
     This decorator creates a Pydantic model from the function's signature,
@@ -950,6 +1118,12 @@ def tool(
         max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
             If None, there is no limit, should be at least 1.
         additional_properties: Additional properties to set on the function.
+        result_parser: An optional callable with signature ``Callable[[Any], str]`` that
+            overrides the default result parsing. When provided, this callable converts the
+            raw function return value to a string instead of using the built-in
+            :meth:`FunctionTool.parse_result`. Depending on your function, it may be
+            easiest to just do the serialization directly in the function body rather
+            than providing a custom ``result_parser``.
 
     Note:
         When approval_mode is set to "always_require", the function will not be executed
@@ -1028,12 +1202,12 @@ def tool(
 
     """
 
-    def decorator(func: Callable[..., ReturnT | Awaitable[ReturnT]]) -> FunctionTool[Any, ReturnT]:
+    def decorator(func: Callable[..., Any]) -> FunctionTool:
         @wraps(func)
-        def wrapper(f: Callable[..., ReturnT | Awaitable[ReturnT]]) -> FunctionTool[Any, ReturnT]:
+        def wrapper(f: Callable[..., Any]) -> FunctionTool:
             tool_name: str = name or getattr(f, "__name__", "unknown_function")  # type: ignore[assignment]
             tool_desc: str = description or (f.__doc__ or "")
-            return FunctionTool[Any, ReturnT](
+            return FunctionTool(
                 name=tool_name,
                 description=tool_desc,
                 approval_mode=approval_mode,
@@ -1042,6 +1216,7 @@ def tool(
                 additional_properties=additional_properties or {},
                 func=f,
                 input_model=schema,
+                result_parser=result_parser,
             )
 
         return wrapper(func)
@@ -1125,7 +1300,7 @@ async def _auto_invoke_function(
     custom_args: dict[str, Any] | None = None,
     *,
     config: FunctionInvocationConfiguration,
-    tool_map: dict[str, FunctionTool[BaseModel, Any]],
+    tool_map: dict[str, FunctionTool],
     sequence_index: int | None = None,
     request_index: int | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,  # Optional MiddlewarePipeline
@@ -1157,7 +1332,7 @@ async def _auto_invoke_function(
     # this function is called. This function only handles the actual execution of approved,
     # non-declaration-only functions.
 
-    tool: FunctionTool[BaseModel, Any] | None = None
+    tool: FunctionTool | None = None
     if function_call_content.type == "function_call":
         tool = tool_map.get(function_call_content.name)  # type: ignore[arg-type]
         # Tool should exist because _try_execute_function_calls validates this
@@ -1190,8 +1365,16 @@ async def _auto_invoke_function(
         if key not in {"_function_middleware_pipeline", "middleware", "conversation_id"}
     }
     try:
-        args = tool.input_model.model_validate(parsed_args)
-    except ValidationError as exc:
+        if not tool._schema_supplied and tool.input_model is not None:
+            args = tool.input_model.model_validate(parsed_args).model_dump(exclude_none=True)
+        else:
+            args = dict(parsed_args)
+        args = _validate_arguments_against_schema(
+            arguments=args,
+            schema=tool.parameters(),
+            tool_name=tool.name,
+        )
+    except (TypeError, ValidationError) as exc:
         message = "Error: Argument parsing failed."
         if config["include_detailed_errors"]:
             message = f"{message} Exception: {exc}"
@@ -1268,20 +1451,12 @@ async def _auto_invoke_function(
 
 
 def _get_tool_map(
-    tools: FunctionTool
-    | Callable[..., Any]
-    | MutableMapping[str, Any]
-    | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]],
-) -> dict[str, FunctionTool[Any, Any]]:
-    tool_list: dict[str, FunctionTool[Any, Any]] = {}
-    for tool_item in tools if isinstance(tools, list) else [tools]:
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]],
+) -> dict[str, FunctionTool]:
+    tool_list: dict[str, FunctionTool] = {}
+    for tool_item in normalize_tools(tools):
         if isinstance(tool_item, FunctionTool):
             tool_list[tool_item.name] = tool_item
-            continue
-        if callable(tool_item):
-            # Convert to AITool if it's a function or callable
-            ai_tool = tool(tool_item)
-            tool_list[ai_tool.name] = ai_tool
     return tool_list
 
 
@@ -1289,10 +1464,7 @@ async def _try_execute_function_calls(
     custom_args: dict[str, Any],
     attempt_idx: int,
     function_calls: Sequence[Content],
-    tools: FunctionTool
-    | Callable[..., Any]
-    | MutableMapping[str, Any]
-    | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]],
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]],
     config: FunctionInvocationConfiguration,
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline to avoid circular imports
 ) -> tuple[Sequence[Content], bool]:
@@ -1471,32 +1643,50 @@ async def _ensure_response_stream(
     return stream
 
 
-def _extract_tools(options: dict[str, Any] | None) -> Any:
+def _extract_tools(
+    options: dict[str, Any] | None,
+) -> ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None:
     """Extract tools from options dict.
 
     Args:
         options: The options dict containing chat options.
 
     Returns:
-        FunctionTool | Callable[..., Any] | MutableMapping[str, Any] |
-        Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]] | None
+        ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None
     """
     if options and isinstance(options, dict):
         return options.get("tools")
     return None
 
 
+def _is_hosted_tool_approval(content: Any) -> bool:
+    """Check if a function_approval_request/response is for a hosted tool (e.g. MCP).
+
+    Hosted tool approvals have a server_label in function_call.additional_properties
+    and should be passed through to the API untouched rather than processed locally.
+    """
+    fc = getattr(content, "function_call", None)
+    if fc is None:
+        return False
+    ap = getattr(fc, "additional_properties", None)
+    return bool(ap and ap.get("server_label"))
+
+
 def _collect_approval_responses(
     messages: list[Message],
 ) -> dict[str, Content]:
-    """Collect approval responses (both approved and rejected) from messages."""
+    """Collect approval responses (both approved and rejected) from messages.
+
+    Hosted tool approvals (e.g. MCP) are excluded because they must be
+    forwarded to the API as-is rather than processed locally.
+    """
     from ._types import Message
 
     fcc_todo: dict[str, Content] = {}
     for msg in messages:
         for content in msg.contents if isinstance(msg, Message) else []:
-            # Collect BOTH approved and rejected responses
-            if content.type == "function_approval_response":
+            # Collect BOTH approved and rejected responses, but skip hosted tool approvals
+            if content.type == "function_approval_response" and not _is_hosted_tool_approval(content):
                 fcc_todo[content.id] = content  # type: ignore[attr-defined, index]
     return fcc_todo
 
@@ -1525,6 +1715,9 @@ def _replace_approval_contents_with_results(
 
         for content_idx, content in enumerate(msg.contents):
             if content.type == "function_approval_request":
+                # Skip hosted tool approvals — they must pass through to the API unchanged
+                if _is_hosted_tool_approval(content):
+                    continue
                 # Don't add the function call if it already exists (would create duplicate)
                 if content.function_call.call_id in existing_call_ids:  # type: ignore[attr-defined, union-attr, operator]
                     # Just mark for removal - the function call already exists
@@ -1533,6 +1726,9 @@ def _replace_approval_contents_with_results(
                     # Put back the function call content only if it doesn't exist
                     msg.contents[content_idx] = content.function_call  # type: ignore[attr-defined, assignment]
             elif content.type == "function_approval_response":
+                # Skip hosted tool approvals — they must pass through to the API unchanged
+                if _is_hosted_tool_approval(content):
+                    continue
                 if content.approved and content.id in fcc_todo:  # type: ignore[attr-defined]
                     # Replace with the corresponding result
                     if result_idx < len(approved_function_results):
@@ -1565,10 +1761,26 @@ def _get_result_hooks_from_stream(stream: Any) -> list[Callable[[Any], Any]]:
 
 
 def _extract_function_calls(response: ChatResponse) -> list[Content]:
-    function_results = {it.call_id for it in response.messages[0].contents if it.type == "function_result"}
-    return [
-        it for it in response.messages[0].contents if it.type == "function_call" and it.call_id not in function_results
-    ]
+    function_results = {
+        item.call_id
+        for message in response.messages
+        for item in message.contents
+        if item.type == "function_result" and item.call_id
+    }
+    seen_call_ids: set[str] = set()
+    function_calls: list[Content] = []
+    for message in response.messages:
+        for item in message.contents:
+            if item.type != "function_call":
+                continue
+            if item.call_id and item.call_id in function_results:
+                continue
+            if item.call_id and item.call_id in seen_call_ids:
+                continue
+            if item.call_id:
+                seen_call_ids.add(item.call_id)
+            function_calls.append(item)
+    return function_calls
 
 
 def _prepend_fcc_messages(response: ChatResponse, fcc_messages: list[Message]) -> None:
@@ -1626,27 +1838,22 @@ def _handle_function_call_results(
 
     if had_errors:
         errors_in_a_row += 1
-        if errors_in_a_row >= max_errors:
+        reached_error_limit = errors_in_a_row >= max_errors
+        if reached_error_limit:
             logger.warning(
                 "Maximum consecutive function call errors reached (%d). "
                 "Stopping further function calls for this request.",
                 max_errors,
             )
-            return {
-                "action": "stop",
-                "errors_in_a_row": errors_in_a_row,
-                "result_message": None,
-                "update_role": None,
-                "function_call_results": None,
-            }
     else:
         errors_in_a_row = 0
+        reached_error_limit = False
 
     result_message = Message(role="tool", contents=function_call_results)
     response.messages.append(result_message)
     fcc_messages.extend(response.messages)
     return {
-        "action": "continue",
+        "action": "stop" if reached_error_limit else "continue",
         "errors_in_a_row": errors_in_a_row,
         "result_message": result_message,
         "update_role": "tool",
@@ -1769,7 +1976,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -1779,7 +1986,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
@@ -1789,7 +1996,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1798,7 +2005,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1810,7 +2017,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             ChatResponse,
             ChatResponseUpdate,
             ResponseStream,
-            prepare_messages,
         )
 
         super_get_response = super().get_response  # type: ignore[misc]
@@ -1829,12 +2035,18 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             config=self.function_invocation_configuration,
             middleware_pipeline=function_middleware_pipeline,
         )
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "session"}
+
         # Make options mutable so we can update conversation_id during function invocation loop
         mutable_options: dict[str, Any] = dict(options) if options else {}
         # Remove additional_function_arguments from options passed to underlying chat client
         # It's for tool invocation only and not recognized by chat service APIs
         mutable_options.pop("additional_function_arguments", None)
+        # Support tools passed via kwargs in direct client.get_response(...) calls.
+        if "tools" in filtered_kwargs:
+            if mutable_options.get("tools") is None:
+                mutable_options["tools"] = filtered_kwargs["tools"]
+            filtered_kwargs.pop("tools", None)
 
         if not stream:
 
@@ -1842,7 +2054,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 nonlocal mutable_options
                 nonlocal filtered_kwargs
                 errors_in_a_row: int = 0
-                prepped_messages = prepare_messages(messages)
+                prepped_messages = list(messages)
                 fcc_messages: list[Message] = []
                 response: ChatResponse | None = None
 
@@ -1890,7 +2102,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     if result["action"] == "return":
                         return response
                     if result["action"] == "stop":
-                        break
+                        # Error threshold reached: force a final non-tool turn so
+                        # function_call_output items are submitted before exit.
+                        mutable_options["tool_choice"] = "none"
                     errors_in_a_row = result["errors_in_a_row"]
 
                     # When tool_choice is 'required', reset tool_choice after one iteration to avoid infinite loops
@@ -1936,7 +2150,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             nonlocal mutable_options
             nonlocal stream_result_hooks
             errors_in_a_row: int = 0
-            prepped_messages = prepare_messages(messages)
+            prepped_messages = list(messages)
             fcc_messages: list[Message] = []
             response: ChatResponse | None = None
 
@@ -1957,6 +2171,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 )
                 errors_in_a_row = approval_result["errors_in_a_row"]
                 if approval_result["action"] == "stop":
+                    mutable_options["tool_choice"] = "none"
                     return
 
                 inner_stream = await _ensure_response_stream(
@@ -2005,7 +2220,11 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         contents=result["function_call_results"] or [],
                         role=role,
                     )
-                if result["action"] != "continue":
+                if result["action"] == "stop":
+                    # Error threshold reached: submit collected function_call_output
+                    # items once more with tools disabled.
+                    mutable_options["tool_choice"] = "none"
+                elif result["action"] != "continue":
                     return
 
                 # When tool_choice is 'required', reset the tool_choice after one iteration to avoid infinite loops

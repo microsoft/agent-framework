@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from datetime import datetime, timezone
@@ -17,15 +18,17 @@ from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
 from openai.types.chat.completion_create_params import WebSearchOptions
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from .._clients import BaseChatClient
-from .._logging import get_logger
 from .._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
+from .._settings import load_settings
 from .._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
+    ToolTypes,
+    normalize_tools,
 )
 from .._types import (
     ChatOptions,
@@ -36,12 +39,10 @@ from .._types import (
     Message,
     ResponseStream,
     UsageDetails,
-    prepare_function_call_results,
 )
 from ..exceptions import (
-    ServiceInitializationError,
-    ServiceInvalidRequestError,
-    ServiceResponseException,
+    ChatClientException,
+    ChatClientInvalidRequestException,
 )
 from ..observability import ChatTelemetryLayer
 from ._exceptions import OpenAIContentFilterException
@@ -60,9 +61,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-__all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
-
-logger = get_logger("agent_framework.openai")
+logger = logging.getLogger("agent_framework.openai")
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
@@ -234,12 +233,12 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             f"{type(self)} service encountered a content error: {ex}",
                             inner_exception=ex,
                         ) from ex
-                    raise ServiceResponseException(
+                    raise ChatClientException(
                         f"{type(self)} service failed to complete the prompt: {ex}",
                         inner_exception=ex,
                     ) from ex
                 except Exception as ex:
-                    raise ServiceResponseException(
+                    raise ChatClientException(
                         f"{type(self)} service failed to complete the prompt: {ex}",
                         inner_exception=ex,
                     ) from ex
@@ -259,12 +258,12 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         f"{type(self)} service encountered a content error: {ex}",
                         inner_exception=ex,
                     ) from ex
-                raise ServiceResponseException(
+                raise ChatClientException(
                     f"{type(self)} service failed to complete the prompt: {ex}",
                     inner_exception=ex,
                 ) from ex
             except Exception as ex:
-                raise ServiceResponseException(
+                raise ChatClientException(
                     f"{type(self)} service failed to complete the prompt: {ex}",
                     inner_exception=ex,
                 ) from ex
@@ -273,21 +272,24 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
     # region content creation
 
-    def _prepare_tools_for_openai(self, tools: Sequence[Any]) -> dict[str, Any]:
+    def _prepare_tools_for_openai(
+        self,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+    ) -> dict[str, Any]:
         """Prepare tools for the OpenAI Chat Completions API.
 
         Converts FunctionTool to JSON schema format. Web search tools are routed
         to web_search_options parameter. All other tools pass through unchanged.
 
         Args:
-            tools: Sequence of tools to prepare.
+            tools: Tool(s) to prepare.
 
         Returns:
             Dict containing tools and optionally web_search_options.
         """
         chat_tools: list[Any] = []
         web_search_options: dict[str, Any] | None = None
-        for tool in tools:
+        for tool in normalize_tools(tools):
             if isinstance(tool, FunctionTool):
                 chat_tools.append(tool.to_json_schema_spec())
             elif isinstance(tool, MutableMapping) and tool.get("type") == "web_search":
@@ -317,7 +319,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if messages and "messages" not in run_options:
             run_options["messages"] = self._prepare_messages_for_openai(messages)
         if "messages" not in run_options:
-            raise ServiceInvalidRequestError("Messages are required for chat completions")
+            raise ChatClientInvalidRequestException("Messages are required for chat completions")
 
         # Translation between options keys and Chat Completion API
         for old_key, new_key in OPTION_TRANSLATIONS.items():
@@ -340,15 +342,16 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             run_options.pop("tool_choice", None)
         elif tool_choice := run_options.pop("tool_choice", None):
             tool_mode = validate_tool_mode(tool_choice)
-            if (mode := tool_mode.get("mode")) == "required" and (
-                func_name := tool_mode.get("required_function_name")
-            ) is not None:
-                run_options["tool_choice"] = {
-                    "type": "function",
-                    "function": {"name": func_name},
-                }
-            else:
-                run_options["tool_choice"] = mode
+            if tool_mode is not None:
+                if (mode := tool_mode.get("mode")) == "required" and (
+                    func_name := tool_mode.get("required_function_name")
+                ) is not None:
+                    run_options["tool_choice"] = {
+                        "type": "function",
+                        "function": {"name": func_name},
+                    }
+                else:
+                    run_options["tool_choice"] = mode
 
         # response format
         if response_format := options.get("response_format"):
@@ -555,9 +558,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     args["tool_call_id"] = content.call_id
                     # Always include content for tool results - API requires it even if empty
                     # Functions returning None should still have a tool result message
-                    args["content"] = (
-                        prepare_function_call_results(content.result) if content.result is not None else ""
-                    )
+                    args["content"] = content.result if content.result is not None else ""
                 case "text_reasoning" if (protected_data := content.protected_data) is not None:
                     all_messages[-1]["reasoning_details"] = json.loads(protected_data)
                 case _:
@@ -718,33 +719,32 @@ class OpenAIChatClient(  # type: ignore[misc]
                 client: OpenAIChatClient[MyOptions] = OpenAIChatClient(model_id="<model name>")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            openai_settings = OpenAISettings(
-                api_key=api_key,  # type: ignore[reportArgumentType]
-                base_url=base_url,
-                org_id=org_id,
-                chat_model_id=model_id,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
+        openai_settings = load_settings(
+            OpenAISettings,
+            env_prefix="OPENAI_",
+            api_key=api_key,
+            base_url=base_url,
+            org_id=org_id,
+            chat_model_id=model_id,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
 
-        if not async_client and not openai_settings.api_key:
-            raise ServiceInitializationError(
+        if not async_client and not openai_settings["api_key"]:
+            raise ValueError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
-        if not openai_settings.chat_model_id:
-            raise ServiceInitializationError(
+        if not openai_settings["chat_model_id"]:
+            raise ValueError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
 
         super().__init__(
-            model_id=openai_settings.chat_model_id,
-            api_key=self._get_api_key(openai_settings.api_key),
-            base_url=openai_settings.base_url if openai_settings.base_url else None,
-            org_id=openai_settings.org_id,
+            model_id=openai_settings["chat_model_id"],
+            api_key=self._get_api_key(openai_settings["api_key"]),
+            base_url=openai_settings["base_url"] if openai_settings["base_url"] else None,
+            org_id=openai_settings["org_id"],
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,

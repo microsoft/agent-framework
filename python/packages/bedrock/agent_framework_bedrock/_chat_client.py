@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
@@ -26,17 +27,15 @@ from agent_framework import (
     Message,
     ResponseStream,
     UsageDetails,
-    get_logger,
-    prepare_function_call_results,
     validate_tool_mode,
 )
-from agent_framework._pydantic import AFBaseSettings
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidResponseError
+from agent_framework._settings import SecretString, load_settings
+from agent_framework.exceptions import ChatClientInvalidResponseException
 from agent_framework.observability import ChatTelemetryLayer
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
-from pydantic import BaseModel, SecretStr, ValidationError
+from pydantic import BaseModel
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -51,7 +50,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-logger = get_logger("agent_framework.bedrock")
+logger = logging.getLogger("agent_framework.bedrock")
 
 
 __all__ = [
@@ -205,16 +204,14 @@ FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
 }
 
 
-class BedrockSettings(AFBaseSettings):
+class BedrockSettings(TypedDict, total=False):
     """Bedrock configuration settings pulled from environment variables or .env files."""
 
-    env_prefix: ClassVar[str] = "BEDROCK_"
-
-    region: str = DEFAULT_REGION
-    chat_model_id: str | None = None
-    access_key: SecretStr | None = None
-    secret_key: SecretStr | None = None
-    session_token: SecretStr | None = None
+    region: str | None
+    chat_model_id: str | None
+    access_key: SecretString | None
+    secret_key: SecretString | None
+    session_token: SecretString | None
 
 
 class BedrockChatClient(
@@ -263,7 +260,7 @@ class BedrockChatClient(
         Examples:
             .. code-block:: python
 
-                from agent_framework.bedrock import BedrockChatClient
+                from agent_framework.amazon import BedrockChatClient
 
                 # Basic usage with default credentials
                 client = BedrockChatClient(model_id="<model name>")
@@ -280,24 +277,25 @@ class BedrockChatClient(
                 client = BedrockChatClient[MyOptions](model_id="<model name>")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        try:
-            settings = BedrockSettings(
-                region=region,
-                chat_model_id=model_id,
-                access_key=access_key,  # type: ignore[arg-type]
-                secret_key=secret_key,  # type: ignore[arg-type]
-                session_token=session_token,  # type: ignore[arg-type]
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to initialize Bedrock settings.", ex) from ex
+        settings = load_settings(
+            BedrockSettings,
+            env_prefix="BEDROCK_",
+            region=region,
+            chat_model_id=model_id,
+            access_key=access_key,
+            secret_key=secret_key,
+            session_token=session_token,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+        if not settings.get("region"):
+            settings["region"] = DEFAULT_REGION
 
         if client is None:
             session = boto3_session or self._create_session(settings)
             client = session.client(
                 "bedrock-runtime",
-                region_name=settings.region,
+                region_name=settings["region"],
                 config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
             )
 
@@ -307,17 +305,17 @@ class BedrockChatClient(
             **kwargs,
         )
         self._bedrock_client = client
-        self.model_id = settings.chat_model_id
-        self.region = settings.region
+        self.model_id = settings["chat_model_id"]
+        self.region = settings["region"]
 
     @staticmethod
     def _create_session(settings: BedrockSettings) -> Boto3Session:
-        session_kwargs: dict[str, Any] = {"region_name": settings.region or DEFAULT_REGION}
-        if settings.access_key and settings.secret_key:
-            session_kwargs["aws_access_key_id"] = settings.access_key.get_secret_value()
-            session_kwargs["aws_secret_access_key"] = settings.secret_key.get_secret_value()
-        if settings.session_token:
-            session_kwargs["aws_session_token"] = settings.session_token.get_secret_value()
+        session_kwargs: dict[str, Any] = {"region_name": settings.get("region") or DEFAULT_REGION}
+        if settings.get("access_key") and settings.get("secret_key"):
+            session_kwargs["aws_access_key_id"] = settings["access_key"].get_secret_value()  # type: ignore[union-attr]
+            session_kwargs["aws_secret_access_key"] = settings["secret_key"].get_secret_value()  # type: ignore[union-attr]
+        if settings.get("session_token"):
+            session_kwargs["aws_session_token"] = settings["session_token"].get_secret_value()  # type: ignore[union-attr]
         return Boto3Session(**session_kwargs)
 
     @override
@@ -364,13 +362,13 @@ class BedrockChatClient(
     ) -> dict[str, Any]:
         model_id = options.get("model_id") or self.model_id
         if not model_id:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Bedrock model_id is required. Set via chat options or BEDROCK_CHAT_MODEL_ID environment variable."
             )
 
         system_prompts, conversation = self._prepare_bedrock_messages(messages)
         if not conversation:
-            raise ServiceInitializationError("At least one non-system message is required for Bedrock requests.")
+            raise ValueError("At least one non-system message is required for Bedrock requests.")
         # Prepend instructions from options if they exist
         if instructions := options.get("instructions"):
             system_prompts = [{"text": instructions}, *system_prompts]
@@ -402,7 +400,7 @@ class BedrockChatClient(
                     else:
                         tool_config["toolChoice"] = {"any": {}}
                 case _:
-                    raise ServiceInitializationError(f"Unsupported tool mode for Bedrock: {tool_mode.get('mode')}")
+                    raise ValueError(f"Unsupported tool mode for Bedrock: {tool_mode.get('mode')}")
         if tool_config:
             run_options["toolConfig"] = tool_config
 
@@ -529,7 +527,7 @@ class BedrockChatClient(
         return None
 
     def _convert_tool_result_to_blocks(self, result: Any) -> list[dict[str, Any]]:
-        prepared_result = prepare_function_call_results(result)
+        prepared_result = result if isinstance(result, str) else FunctionTool.parse_result(result)
         try:
             parsed_result = json.loads(prepared_result)
         except json.JSONDecodeError:
@@ -631,7 +629,9 @@ class BedrockChatClient(
             if isinstance(tool_use, MutableMapping):
                 tool_name = tool_use.get("name")
                 if not tool_name:
-                    raise ServiceInvalidResponseError("Bedrock response missing required tool name in toolUse block.")
+                    raise ChatClientInvalidResponseException(
+                        "Bedrock response missing required tool name in toolUse block."
+                    )
                 contents.append(
                     Content.from_function_call(
                         call_id=tool_use.get("toolUseId") or self._generate_tool_call_id(),

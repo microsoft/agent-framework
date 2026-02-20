@@ -59,7 +59,7 @@ public class InProcessExecutionTests
         var inputMessage = new ChatMessage(ChatRole.User, "Hello");
 
         // Act: Execute using streaming version with TurnToken
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, new List<ChatMessage> { inputMessage });
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, new List<ChatMessage> { inputMessage });
 
         // Send TurnToken to actually trigger execution (this is the key step)
         bool messageSent = await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
@@ -108,7 +108,7 @@ public class InProcessExecutionTests
         var nonStreamingEvents = nonStreamingRun.OutgoingEvents.ToList();
 
         // Act 2: Execute using StreamAsync (streaming) with TurnToken
-        await using StreamingRun streamingRun = await InProcessExecution.StreamAsync(workflow2, new List<ChatMessage> { inputMessage });
+        await using StreamingRun streamingRun = await InProcessExecution.RunStreamingAsync(workflow2, new List<ChatMessage> { inputMessage });
         await streamingRun.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
         List<WorkflowEvent> streamingEvents = [];
@@ -149,7 +149,7 @@ public class InProcessExecutionTests
         protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(System.Text.Json.JsonElement serializedState,
             System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) => new(new SimpleTestAgentSession());
 
-        protected override System.Text.Json.JsonElement SerializeSessionCore(AgentSession session, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null)
+        protected override ValueTask<System.Text.Json.JsonElement> SerializeSessionCoreAsync(AgentSession session, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => default;
 
         protected override Task<AgentResponse> RunCoreAsync(
@@ -195,5 +195,5 @@ public class InProcessExecutionTests
     /// <summary>
     /// Simple session implementation for SimpleTestAgent.
     /// </summary>
-    private sealed class SimpleTestAgentSession : InMemoryAgentSession;
+    private sealed class SimpleTestAgentSession : AgentSession;
 }

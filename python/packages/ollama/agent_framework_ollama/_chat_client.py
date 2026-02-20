@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -28,13 +29,11 @@ from agent_framework import (
     Message,
     ResponseStream,
     UsageDetails,
-    get_logger,
 )
-from agent_framework._pydantic import AFBaseSettings
+from agent_framework._settings import load_settings
 from agent_framework.exceptions import (
-    ServiceInitializationError,
-    ServiceInvalidRequestError,
-    ServiceResponseException,
+    ChatClientException,
+    ChatClientInvalidRequestException,
 )
 from agent_framework.observability import ChatTelemetryLayer
 from ollama import AsyncClient
@@ -42,7 +41,7 @@ from ollama import AsyncClient
 # Rename imported types to avoid naming conflicts with Agent Framework types
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -275,16 +274,14 @@ OllamaChatOptionsT = TypeVar("OllamaChatOptionsT", bound=TypedDict, default="Oll
 # endregion
 
 
-class OllamaSettings(AFBaseSettings):
+class OllamaSettings(TypedDict, total=False):
     """Ollama settings."""
 
-    env_prefix: ClassVar[str] = "OLLAMA_"
-
-    host: str | None = None
-    model_id: str | None = None
+    host: str | None
+    model_id: str | None
 
 
-logger = get_logger("agent_framework.ollama")
+logger = logging.getLogger("agent_framework.ollama")
 
 
 class OllamaChatClient(
@@ -322,23 +319,19 @@ class OllamaChatClient(
             env_file_encoding: The encoding to use when reading the dotenv (.env) file. Defaults to 'utf-8'.
             **kwargs: Additional keyword arguments passed to BaseChatClient.
         """
-        try:
-            ollama_settings = OllamaSettings(
-                host=host,
-                model_id=model_id,
-                env_file_encoding=env_file_encoding,
-                env_file_path=env_file_path,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Ollama settings.", ex) from ex
+        ollama_settings = load_settings(
+            OllamaSettings,
+            env_prefix="OLLAMA_",
+            required_fields=["model_id"],
+            host=host,
+            model_id=model_id,
+            env_file_encoding=env_file_encoding,
+            env_file_path=env_file_path,
+        )
 
-        if ollama_settings.model_id is None:
-            raise ServiceInitializationError(
-                "Ollama chat model ID must be provided via model_id or OLLAMA_MODEL_ID environment variable."
-            )
-
-        self.model_id = ollama_settings.model_id
-        self.client = client or AsyncClient(host=ollama_settings.host)
+        self.model_id = ollama_settings["model_id"]
+        # we can just pass in None for the host, the default is set by the Ollama package.
+        self.client = client or AsyncClient(host=ollama_settings.get("host"))
         # Save Host URL for serialization with to_dict()
         self.host = str(self.client._client.base_url)  # pyright: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
 
@@ -370,7 +363,7 @@ class OllamaChatClient(
                         **kwargs,
                     )
                 except Exception as ex:
-                    raise ServiceResponseException(f"Ollama streaming chat request failed : {ex}", ex) from ex
+                    raise ChatClientException(f"Ollama streaming chat request failed : {ex}", ex) from ex
 
                 async for part in response_object:
                     yield self._parse_streaming_response_from_ollama(part)
@@ -388,7 +381,7 @@ class OllamaChatClient(
                     **kwargs,
                 )
             except Exception as ex:
-                raise ServiceResponseException(f"Ollama chat request failed : {ex}", ex) from ex
+                raise ChatClientException(f"Ollama chat request failed : {ex}", ex) from ex
 
             return self._parse_response_from_ollama(response)
 
@@ -430,7 +423,7 @@ class OllamaChatClient(
         if messages and "messages" not in run_options:
             run_options["messages"] = self._prepare_messages_for_ollama(messages)
         if "messages" not in run_options:
-            raise ServiceInvalidRequestError("Messages are required for chat completions")
+            raise ChatClientInvalidRequestException("Messages are required for chat completions")
 
         # model id
         if not run_options.get("model"):
@@ -464,7 +457,7 @@ class OllamaChatClient(
 
     def _format_user_message(self, message: Message) -> list[OllamaMessage]:
         if not any(c.type in {"text", "data"} for c in message.contents) and not message.text:
-            raise ServiceInvalidRequestError(
+            raise ChatClientInvalidRequestException(
                 "Ollama connector currently only supports user messages with TextContent or DataContent."
             )
 
@@ -475,7 +468,9 @@ class OllamaChatClient(
         data_contents = [c for c in message.contents if c.type == "data"]
         if data_contents:
             if not any(c.has_top_level_media_type("image") for c in data_contents):
-                raise ServiceInvalidRequestError("Only image data content is supported for user messages in Ollama.")
+                raise ChatClientInvalidRequestException(
+                    "Only image data content is supported for user messages in Ollama."
+                )
             # Ollama expects base64 strings without prefix
             user_message["images"] = [c.uri.split(",")[1] for c in data_contents if c.uri]
         return [user_message]

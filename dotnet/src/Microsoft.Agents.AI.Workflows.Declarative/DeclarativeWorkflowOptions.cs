@@ -13,12 +13,12 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// <summary>
 /// Configuration options for workflow execution.
 /// </summary>
-public sealed class DeclarativeWorkflowOptions(WorkflowAgentProvider agentProvider)
+public sealed class DeclarativeWorkflowOptions(ResponseAgentProvider agentProvider)
 {
     /// <summary>
     /// Defines the agent provider.
     /// </summary>
-    public WorkflowAgentProvider AgentProvider { get; } = Throw.IfNull(agentProvider);
+    public ResponseAgentProvider AgentProvider { get; } = Throw.IfNull(agentProvider);
 
     /// <summary>
     /// Defines the configuration settings for the workflow.
