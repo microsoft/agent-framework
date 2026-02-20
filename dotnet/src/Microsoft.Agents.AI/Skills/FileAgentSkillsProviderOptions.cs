@@ -1,10 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.Shared.DiagnosticIds;
+
 namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Configuration options for <see cref="FileAgentSkillsProvider"/>.
 /// </summary>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class FileAgentSkillsProviderOptions
 {
     /// <summary>
