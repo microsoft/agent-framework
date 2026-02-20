@@ -107,28 +107,17 @@ public sealed partial class FileAgentSkillsProvider : AIContextProvider
     }
 
     /// <inheritdoc />
-    protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
-        var inputContext = context.AIContext;
-
         if (this._skills.Count == 0)
         {
-            return new ValueTask<AIContext>(inputContext);
-        }
-
-        string? instructions = inputContext.Instructions;
-        if (!string.IsNullOrEmpty(this._skillsInstructionPrompt))
-        {
-            instructions = instructions is not null
-                ? instructions + "\n" + this._skillsInstructionPrompt
-                : this._skillsInstructionPrompt;
+            return base.ProvideAIContextAsync(context, cancellationToken);
         }
 
         return new ValueTask<AIContext>(new AIContext
         {
-            Instructions = instructions,
-            Messages = inputContext.Messages,
-            Tools = (inputContext.Tools ?? []).Concat(this._tools)
+            Instructions = this._skillsInstructionPrompt,
+            Tools = this._tools
         });
     }
 

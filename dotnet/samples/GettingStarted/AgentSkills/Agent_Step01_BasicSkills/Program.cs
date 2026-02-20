@@ -19,7 +19,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYM
 
 // --- Skills Provider ---
 // Discovers skills from the 'skills' directory and makes them available to the agent
-var skillsProvider = new FileAgentSkillsProvider(skillPath: Path.Combine(Directory.GetCurrentDirectory(), "skills"));
+var skillsProvider = new FileAgentSkillsProvider(skillPath: Path.Combine(AppContext.BaseDirectory, "skills"));
 
 // --- Agent Setup ---
 AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())

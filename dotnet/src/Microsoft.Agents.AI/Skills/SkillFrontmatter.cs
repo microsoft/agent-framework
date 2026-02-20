@@ -12,8 +12,8 @@ internal sealed class SkillFrontmatter
     /// <summary>
     /// Initializes a new instance of the <see cref="SkillFrontmatter"/> class.
     /// </summary>
-    /// <param name="name">Skill name (lowercase, hyphens, max 64 characters).</param>
-    /// <param name="description">Skill description (max 1024 characters).</param>
+    /// <param name="name">Skill name.</param>
+    /// <param name="description">Skill description.</param>
     public SkillFrontmatter(string name, string description)
     {
         this.Name = Throw.IfNullOrWhitespace(name);
