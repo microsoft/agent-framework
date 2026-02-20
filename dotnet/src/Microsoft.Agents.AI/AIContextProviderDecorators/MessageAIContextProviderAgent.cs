@@ -68,7 +68,7 @@ internal sealed class MessageAIContextProviderAgent : DelegatingAIAgent
 
         List<AgentResponseUpdate> responseUpdates = [];
 
-        IAsyncEnumerator<AgentResponseUpdate> enumerator;
+        IAsyncEnumerator<AgentResponseUpdate> enumerator = null;
         try
         {
             enumerator = this.InnerAgent.RunStreamingAsync(enrichedMessages, session, options, cancellationToken).GetAsyncEnumerator(cancellationToken);
@@ -77,6 +77,13 @@ internal sealed class MessageAIContextProviderAgent : DelegatingAIAgent
         {
             await this.NotifyProvidersOfFailureAsync(session, enrichedMessages, ex, cancellationToken).ConfigureAwait(false);
             throw;
+        }
+        finally
+        {
+            if (enumerator != null)
+            {
+                await enumerator.DisposeAsync().ConfigureAwait(false);
+            }
         }
 
         bool hasUpdates;
@@ -88,6 +95,13 @@ internal sealed class MessageAIContextProviderAgent : DelegatingAIAgent
         {
             await this.NotifyProvidersOfFailureAsync(session, enrichedMessages, ex, cancellationToken).ConfigureAwait(false);
             throw;
+        }
+        finally
+        {
+            if (enumerator != null)
+            {
+                await enumerator.DisposeAsync().ConfigureAwait(false);
+            }
         }
 
         while (hasUpdates)
@@ -104,6 +118,13 @@ internal sealed class MessageAIContextProviderAgent : DelegatingAIAgent
             {
                 await this.NotifyProvidersOfFailureAsync(session, enrichedMessages, ex, cancellationToken).ConfigureAwait(false);
                 throw;
+            }
+            finally
+            {
+                if (enumerator != null)
+                {
+                    await enumerator.DisposeAsync().ConfigureAwait(false);
+                }
             }
         }
 

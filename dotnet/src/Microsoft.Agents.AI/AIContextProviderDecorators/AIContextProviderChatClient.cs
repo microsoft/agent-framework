@@ -83,7 +83,7 @@ internal sealed class AIContextProviderChatClient : DelegatingChatClient
 
         List<ChatResponseUpdate> responseUpdates = [];
 
-        IAsyncEnumerator<ChatResponseUpdate> enumerator;
+        IAsyncEnumerator<ChatResponseUpdate> enumerator = null;
         try
         {
             enumerator = base.GetStreamingResponseAsync(enrichedMessages, enrichedOptions, cancellationToken).GetAsyncEnumerator(cancellationToken);
@@ -92,6 +92,13 @@ internal sealed class AIContextProviderChatClient : DelegatingChatClient
         {
             await this.NotifyProvidersOfFailureAsync(runContext, enrichedMessages, ex, cancellationToken).ConfigureAwait(false);
             throw;
+        }
+        finally
+        {
+            if (enumerator != null)
+            {
+                await enumerator.DisposeAsync().ConfigureAwait(false);
+            }
         }
 
         bool hasUpdates;
@@ -103,6 +110,13 @@ internal sealed class AIContextProviderChatClient : DelegatingChatClient
         {
             await this.NotifyProvidersOfFailureAsync(runContext, enrichedMessages, ex, cancellationToken).ConfigureAwait(false);
             throw;
+        }
+        finally
+        {
+            if (enumerator != null)
+            {
+                await enumerator.DisposeAsync().ConfigureAwait(false);
+            }
         }
 
         while (hasUpdates)
@@ -119,6 +133,13 @@ internal sealed class AIContextProviderChatClient : DelegatingChatClient
             {
                 await this.NotifyProvidersOfFailureAsync(runContext, enrichedMessages, ex, cancellationToken).ConfigureAwait(false);
                 throw;
+            }
+            finally
+            {
+                if (enumerator != null)
+                {
+                    await enumerator.DisposeAsync().ConfigureAwait(false);
+                }
             }
         }
 

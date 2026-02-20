@@ -114,6 +114,7 @@ Console.WriteLine($"Context-enriched response: {contextResponse}");
 // AIContextProvider at the chat client level. Unlike the agent-level MessageAIContextProvider,
 // this operates within the IChatClient pipeline and can also enrich tools and instructions.
 // It must be used within the context of a running AIAgent (uses AIAgent.CurrentRunContext).
+// In this case we are attaching an AIContextProvider that only adds messages.
 Console.WriteLine("\n\n=== Example 6: AIContextProvider on chat client pipeline ===");
 
 var chatClientProviderAgent = azureOpenAIClient.AsIChatClient()
