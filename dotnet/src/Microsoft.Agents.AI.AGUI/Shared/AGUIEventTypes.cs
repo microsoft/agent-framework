@@ -31,4 +31,6 @@ internal static class AGUIEventTypes
     public const string StateSnapshot = "STATE_SNAPSHOT";
 
     public const string StateDelta = "STATE_DELTA";
+
+    public const string Custom = "CUSTOM";
 }
