@@ -45,7 +45,6 @@ jobs:
           PR_NUMBER: ${{ github.event.inputs.pr-number }}
           BRANCH: ${{ github.event.inputs.branch }}
           REPO: ${{ github.repository }}
-          REPO_OWNER: ${{ github.repository_owner }}
         run: |
           if [ -n "$PR_NUMBER" ] && [ -n "$BRANCH" ]; then
             echo "::error::Please provide either a PR number or a branch name, not both."
@@ -63,17 +62,11 @@ jobs:
               exit 1
             fi
 
-            PR_DATA=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state,headRepository,headRepositoryOwner)
+            PR_DATA=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state)
             PR_STATE=$(echo "$PR_DATA" | jq -r '.state')
-            HEAD_OWNER=$(echo "$PR_DATA" | jq -r '.headRepositoryOwner.login')
 
             if [ "$PR_STATE" != "OPEN" ]; then
               echo "::error::PR #$PR_NUMBER is not open (state: $PR_STATE)"
-              exit 1
-            fi
-
-            if [ "$HEAD_OWNER" != "$REPO_OWNER" ]; then
-              echo "::error::PR #$PR_NUMBER is from a fork ($HEAD_OWNER). Running integration tests against fork PRs is not allowed for security reasons."
               exit 1
             fi
 
