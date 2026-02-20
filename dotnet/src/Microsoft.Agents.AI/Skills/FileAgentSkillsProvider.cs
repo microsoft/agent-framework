@@ -170,7 +170,7 @@ public sealed partial class FileAgentSkillsProvider : AIContextProvider
     {
         string promptTemplate = DefaultSkillsInstructionPrompt;
 
-        if (options?.SkillsInstructionPrompt is not null optionsInstructions)
+        if (options?.SkillsInstructionPrompt is { } optionsInstructions)
         {
             try
             {
