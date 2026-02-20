@@ -103,7 +103,7 @@ async def test_run_started_event_emission(streaming_chat_client_stub):
     input_data = {"messages": [{"role": "user", "content": "Hi"}]}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # First event should be RunStartedEvent
@@ -131,7 +131,7 @@ async def test_predict_state_custom_event_emission(streaming_chat_client_stub):
     input_data = {"messages": [{"role": "user", "content": "Hi"}]}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Find PredictState event
@@ -142,6 +142,83 @@ async def test_predict_state_custom_event_emission(streaming_chat_client_stub):
     assert len(predict_value) == 2
     assert {"state_key": "document", "tool": "write_doc", "tool_argument": "content"} in predict_value
     assert {"state_key": "summary", "tool": "summarize", "tool_argument": "text"} in predict_value
+
+
+async def test_usage_content_emits_custom_usage_event(streaming_chat_client_stub):
+    """Usage content from the wrapped agent should be surfaced as a custom usage event."""
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    async def stream_fn(
+        messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        yield ChatResponseUpdate(
+            contents=[
+                Content.from_usage(
+                    {
+                        "input_token_count": 10,
+                        "output_token_count": 4,
+                        "total_token_count": 14,
+                    }
+                )
+            ]
+        )
+
+    agent = Agent(name="usage_agent", instructions="Usage test", client=streaming_chat_client_stub(stream_fn))
+    wrapper = AgentFrameworkAgent(agent=agent)
+
+    events: list[Any] = []
+    async for event in wrapper.run({"messages": [{"role": "user", "content": "Hi"}]}):
+        events.append(event)
+
+    usage_events = [event for event in events if event.type == "CUSTOM" and event.name == "usage"]
+    assert len(usage_events) == 1
+    assert usage_events[0].value["input_token_count"] == 10
+    assert usage_events[0].value["output_token_count"] == 4
+    assert usage_events[0].value["total_token_count"] == 14
+
+
+async def test_multimodal_input_is_forwarded_to_agent_run(streaming_chat_client_stub):
+    """Multimodal AG-UI input should be converted and passed through to agent.run."""
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    captured_messages: list[Message] = []
+
+    async def stream_fn(
+        messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        captured_messages[:] = list(messages)
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Processed multimodal input")])
+
+    agent = Agent(name="multimodal_agent", instructions="Multimodal test", client=streaming_chat_client_stub(stream_fn))
+    wrapper = AgentFrameworkAgent(agent=agent)
+
+    input_data = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is in this image?"},
+                    {
+                        "type": "image",
+                        "source": {"type": "url", "url": "https://example.com/cat.png", "mimeType": "image/png"},
+                    },
+                ],
+            }
+        ]
+    }
+
+    _ = [event async for event in wrapper.run(input_data)]
+
+    assert len(captured_messages) == 1
+    message = captured_messages[0]
+    assert message.role == "user"
+    assert len(message.contents) == 2
+    assert message.contents[0].type == "text"
+    assert message.contents[0].text == "What is in this image?"
+    assert message.contents[1].type == "uri"
+    assert message.contents[1].uri == "https://example.com/cat.png"
 
 
 async def test_initial_state_snapshot_with_schema(streaming_chat_client_stub):
@@ -163,7 +240,7 @@ async def test_initial_state_snapshot_with_schema(streaming_chat_client_stub):
     }
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Find StateSnapshotEvent
@@ -190,7 +267,7 @@ async def test_state_initialization_object_type(streaming_chat_client_stub):
     input_data = {"messages": [{"role": "user", "content": "Hi"}]}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Find StateSnapshotEvent
@@ -217,7 +294,7 @@ async def test_state_initialization_array_type(streaming_chat_client_stub):
     input_data = {"messages": [{"role": "user", "content": "Hi"}]}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Find StateSnapshotEvent
@@ -243,7 +320,7 @@ async def test_run_finished_event_emission(streaming_chat_client_stub):
     input_data = {"messages": [{"role": "user", "content": "Hi"}]}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Last event should be RunFinishedEvent
@@ -280,7 +357,7 @@ async def test_tool_result_confirm_changes_accepted(streaming_chat_client_stub):
     }
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Should emit text message confirming acceptance
@@ -322,7 +399,7 @@ async def test_tool_result_confirm_changes_rejected(streaming_chat_client_stub):
     }
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Should emit text message asking what to change
@@ -362,7 +439,7 @@ async def test_tool_result_function_approval_accepted(streaming_chat_client_stub
     }
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Should list enabled steps
@@ -405,7 +482,7 @@ async def test_tool_result_function_approval_rejected(streaming_chat_client_stub
     }
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Should ask what to change about the plan
@@ -441,7 +518,7 @@ async def test_thread_metadata_tracking(streaming_chat_client_stub):
     }
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # AG-UI internal metadata should NOT be passed to chat client options
@@ -479,7 +556,7 @@ async def test_state_context_injection(streaming_chat_client_stub):
     }
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Current state should NOT be passed to chat client options
@@ -502,7 +579,7 @@ async def test_no_messages_provided(streaming_chat_client_stub):
     input_data: dict[str, Any] = {"messages": []}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Should emit RunStartedEvent and RunFinishedEvent only
@@ -526,7 +603,7 @@ async def test_message_end_event_emission(streaming_chat_client_stub):
     input_data: dict[str, Any] = {"messages": [{"role": "user", "content": "Hi"}]}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Should have TextMessageEndEvent before RunFinishedEvent
@@ -556,7 +633,7 @@ async def test_error_handling_with_exception(streaming_chat_client_stub):
     input_data: dict[str, Any] = {"messages": [{"role": "user", "content": "Hi"}]}
 
     with pytest.raises(RuntimeError, match="Simulated failure"):
-        async for _ in wrapper.run_agent(input_data):
+        async for _ in wrapper.run(input_data):
             pass
 
 
@@ -586,7 +663,7 @@ async def test_json_decode_error_in_tool_result(streaming_chat_client_stub):
     }
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Orphaned tool result should be sanitized out
@@ -616,7 +693,7 @@ async def test_agent_with_use_service_session_is_false(streaming_chat_client_stu
     input_data = {"messages": [{"role": "user", "content": "Hi"}], "thread_id": "conv_123456"}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
     assert request_service_session_id is None  # type: ignore[attr-defined] (service_session_id should be set)
 
@@ -643,7 +720,7 @@ async def test_agent_with_use_service_session_is_true(streaming_chat_client_stub
     input_data = {"messages": [{"role": "user", "content": "Hi"}], "thread_id": "conv_123456"}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
     request_service_session_id = agent.client.last_service_session_id
     assert request_service_session_id == "conv_123456"  # type: ignore[attr-defined] (service_session_id should be set)
@@ -714,7 +791,7 @@ async def test_function_approval_mode_executes_tool(streaming_chat_client_stub):
     }
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Verify the run completed successfully
@@ -802,7 +879,7 @@ async def test_function_approval_mode_rejection(streaming_chat_client_stub):
     }
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     # Verify the run completed

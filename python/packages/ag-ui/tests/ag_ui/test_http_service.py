@@ -107,8 +107,8 @@ async def test_post_run_successful_streaming(mock_http_client, sample_events):
     assert call_args.kwargs["headers"] == {"Accept": "text/event-stream"}
 
 
-async def test_post_run_with_state_and_tools(mock_http_client):
-    """Test posting run with state and tools."""
+async def test_post_run_with_state_tools_and_interrupts(mock_http_client):
+    """Test posting run with state, tools, and interrupt metadata."""
 
     async def mock_aiter_lines():
         return
@@ -127,8 +127,18 @@ async def test_post_run_with_state_and_tools(mock_http_client):
 
     state = {"user_context": {"name": "Alice"}}
     tools = [{"type": "function", "function": {"name": "test_tool"}}]
+    available_interrupts = [{"id": "req_1", "type": "request_info"}]
+    resume = {"interrupts": [{"id": "req_1", "value": "approved"}]}
 
-    async for _ in service.post_run(thread_id="thread_123", run_id="run_456", messages=[], state=state, tools=tools):
+    async for _ in service.post_run(
+        thread_id="thread_123",
+        run_id="run_456",
+        messages=[],
+        state=state,
+        tools=tools,
+        available_interrupts=available_interrupts,
+        resume=resume,
+    ):
         pass
 
     # Verify state and tools were included in request
@@ -136,6 +146,8 @@ async def test_post_run_with_state_and_tools(mock_http_client):
     request_data = call_args.kwargs["json"]
     assert request_data["state"] == state
     assert request_data["tools"] == tools
+    assert request_data["availableInterrupts"] == available_interrupts
+    assert request_data["resume"] == resume
 
 
 async def test_post_run_http_error(mock_http_client):

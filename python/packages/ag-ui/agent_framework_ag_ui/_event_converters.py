@@ -55,7 +55,8 @@ class AGUIEventConverter:
                 update = converter.convert_event(event)
                 assert update.contents[0].text == "Hello"
         """
-        event_type = event.get("type", "")
+        raw_event_type = str(event.get("type", ""))
+        event_type = raw_event_type.upper()
 
         if event_type == "RUN_STARTED":
             return self._handle_run_started(event)
@@ -77,6 +78,8 @@ class AGUIEventConverter:
             return self._handle_run_finished(event)
         elif event_type == "RUN_ERROR":
             return self._handle_run_error(event)
+        elif event_type in {"CUSTOM", "CUSTOM_EVENT"}:
+            return self._handle_custom_event(event, raw_event_type)
 
         return None
 
@@ -176,14 +179,20 @@ class AGUIEventConverter:
 
     def _handle_run_finished(self, event: dict[str, Any]) -> ChatResponseUpdate:
         """Handle RUN_FINISHED event."""
+        additional_properties: dict[str, Any] = {
+            "thread_id": self.thread_id,
+            "run_id": self.run_id,
+        }
+        if "interrupt" in event:
+            additional_properties["interrupt"] = event.get("interrupt")
+        if "result" in event:
+            additional_properties["result"] = event.get("result")
+
         return ChatResponseUpdate(
             role="assistant",
             finish_reason="stop",
             contents=[],
-            additional_properties={
-                "thread_id": self.thread_id,
-                "run_id": self.run_id,
-            },
+            additional_properties=additional_properties,
         )
 
     def _handle_run_error(self, event: dict[str, Any]) -> ChatResponseUpdate:
@@ -202,5 +211,24 @@ class AGUIEventConverter:
             additional_properties={
                 "thread_id": self.thread_id,
                 "run_id": self.run_id,
+            },
+        )
+
+    def _handle_custom_event(self, event: dict[str, Any], raw_event_type: str) -> ChatResponseUpdate:
+        """Handle CUSTOM/CUSTOM_EVENT events.
+
+        Custom events are surfaced as metadata so callers can inspect protocol-specific payloads.
+        """
+        return ChatResponseUpdate(
+            role="assistant",
+            contents=[],
+            additional_properties={
+                "thread_id": self.thread_id,
+                "run_id": self.run_id,
+                "ag_ui_custom_event": {
+                    "name": event.get("name"),
+                    "value": event.get("value"),
+                    "raw_type": raw_event_type,
+                },
             },
         )

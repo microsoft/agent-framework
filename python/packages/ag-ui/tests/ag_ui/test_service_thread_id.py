@@ -32,7 +32,7 @@ async def test_service_thread_id_when_there_are_updates(stub_agent):
     }
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     assert isinstance(events[0], RunStartedEvent)
@@ -54,7 +54,7 @@ async def test_service_thread_id_when_no_user_message(stub_agent):
     }
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     assert len(events) == 2
@@ -74,7 +74,7 @@ async def test_service_thread_id_when_user_supplied_thread_id(stub_agent):
     input_data: dict[str, Any] = {"messages": [{"role": "user", "content": "Hi"}], "threadId": "conv_12345"}
 
     events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
+    async for event in wrapper.run(input_data):
         events.append(event)
 
     assert isinstance(events[0], RunStartedEvent)
