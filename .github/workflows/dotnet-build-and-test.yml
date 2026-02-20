@@ -42,19 +42,16 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      dotnetChanges: ${{ steps.filter.outputs.dotnet }}
-      cosmosDbChanges: ${{ steps.filter.outputs.cosmosdb }}
+      dotnetChanges: ${{ inputs.checkout-ref != '' && 'true' || steps.filter.outputs.dotnet }}
+      cosmosDbChanges: ${{ inputs.checkout-ref != '' && 'true' || steps.filter.outputs.cosmosdb }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.checkout-ref }}
-      - name: Fetch base branch for comparison
-        if: ${{ inputs.checkout-ref != '' }}
-        run: git fetch origin main --depth=1
       - uses: dorny/paths-filter@v3
+        if: ${{ inputs.checkout-ref == '' }}
         id: filter
         with:
-          base: ${{ inputs.checkout-ref != '' && 'main' || '' }}
           filters: |
             dotnet:
               - 'dotnet/**'

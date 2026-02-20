@@ -4,6 +4,7 @@
 #
 # It reuses the existing dotnet-build-and-test and python-merge-tests workflows,
 # passing a ref so they check out and test the correct code.
+# Changed paths are detected here so only the relevant test suites run.
 #
 
 name: Integration Tests (Manual)
@@ -37,6 +38,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       checkout-ref: ${{ steps.resolve.outputs.checkout-ref }}
+      dotnet-changes: ${{ steps.detect-changes.outputs.dotnet }}
+      python-changes: ${{ steps.detect-changes.outputs.python }}
     steps:
       - name: Resolve checkout ref
         id: resolve
@@ -82,9 +85,40 @@ jobs:
             echo "Running integration tests for branch $BRANCH"
           fi
 
+      - name: Detect changed paths
+        id: detect-changes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.inputs.pr-number }}
+          BRANCH: ${{ github.event.inputs.branch }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -n "$PR_NUMBER" ]; then
+            CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --repo "$REPO" --name-only)
+          else
+            # For branches, compare against main using the GitHub API
+            CHANGED_FILES=$(gh api "repos/$REPO/compare/main...$BRANCH" --jq '.files[].filename')
+          fi
+
+          DOTNET_CHANGES=false
+          PYTHON_CHANGES=false
+
+          if echo "$CHANGED_FILES" | grep -q '^dotnet/'; then
+            DOTNET_CHANGES=true
+          fi
+
+          if echo "$CHANGED_FILES" | grep -q '^python/'; then
+            PYTHON_CHANGES=true
+          fi
+
+          echo "dotnet=$DOTNET_CHANGES" >> "$GITHUB_OUTPUT"
+          echo "python=$PYTHON_CHANGES" >> "$GITHUB_OUTPUT"
+          echo "Detected changes — dotnet: $DOTNET_CHANGES, python: $PYTHON_CHANGES"
+
   dotnet-integration-tests:
     name: .NET Integration Tests
     needs: resolve-ref
+    if: needs.resolve-ref.outputs.dotnet-changes == 'true'
     uses: ./.github/workflows/dotnet-build-and-test.yml
     with:
       checkout-ref: ${{ needs.resolve-ref.outputs.checkout-ref }}
@@ -93,6 +127,7 @@ jobs:
   python-integration-tests:
     name: Python Integration Tests
     needs: resolve-ref
+    if: needs.resolve-ref.outputs.python-changes == 'true'
     uses: ./.github/workflows/python-merge-tests.yml
     with:
       checkout-ref: ${{ needs.resolve-ref.outputs.checkout-ref }}

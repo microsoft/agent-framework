@@ -33,18 +33,14 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      pythonChanges: ${{ steps.filter.outputs.python}}
+      pythonChanges: ${{ inputs.checkout-ref != '' && 'true' || steps.filter.outputs.python }}
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref }}
-      - name: Fetch base branch for comparison
-        if: ${{ inputs.checkout-ref != '' }}
-        run: git fetch origin main --depth=1
+        if: ${{ inputs.checkout-ref == '' }}
       - uses: dorny/paths-filter@v3
+        if: ${{ inputs.checkout-ref == '' }}
         id: filter
         with:
-          base: ${{ inputs.checkout-ref != '' && 'main' || '' }}
           filters: |
             python:
               - 'python/**'
