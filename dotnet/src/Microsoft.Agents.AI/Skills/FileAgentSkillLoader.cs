@@ -182,7 +182,7 @@ internal sealed partial class FileAgentSkillLoader
         string skillFilePath = Path.Combine(directory, SkillFileName);
         if (File.Exists(skillFilePath))
         {
-            results.Add(directory);
+            results.Add(Path.GetFullPath(directory));
         }
 
         if (currentDepth >= MaxSearchDepth)
