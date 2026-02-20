@@ -177,7 +177,7 @@ internal sealed partial class FileAgentSkillLoader
             return;
         }
 
-        foreach (string subdirectory in Directory.GetDirectories(directory))
+        foreach (string subdirectory in Directory.EnumerateDirectories(directory))
         {
             SearchDirectoriesForSkills(subdirectory, results, currentDepth + 1);
         }
@@ -327,14 +327,7 @@ internal sealed partial class FileAgentSkillLoader
         {
             currentPath = Path.Combine(currentPath, segment);
 
-            if (Directory.Exists(currentPath) &&
-                (new DirectoryInfo(currentPath).Attributes & FileAttributes.ReparsePoint) != 0)
-            {
-                return true;
-            }
-
-            if (File.Exists(currentPath) &&
-                (new FileInfo(currentPath).Attributes & FileAttributes.ReparsePoint) != 0)
+            if ((File.GetAttributes(currentPath) & FileAttributes.ReparsePoint) != 0)
             {
                 return true;
             }
@@ -366,7 +359,10 @@ internal sealed partial class FileAgentSkillLoader
     /// </summary>
     private static string NormalizeResourcePath(string path)
     {
-        path = path.Replace('\\', '/');
+        if (path.IndexOf('\\') >= 0)
+        {
+            path = path.Replace('\\', '/');
+        }
 
         if (path.StartsWith("./", StringComparison.Ordinal))
         {
