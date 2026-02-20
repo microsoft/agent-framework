@@ -34,10 +34,7 @@ public static class Program
         // Set up the Azure OpenAI client
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential()).GetChatClient(deploymentName).AsIChatClient();
+        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
         // Create the executors
         var sloganWriter = new SloganWriterExecutor("SloganWriter", chatClient);
@@ -51,7 +48,7 @@ public static class Program
             .Build();
 
         // Execute the workflow
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input: "Create a slogan for a new electric SUV that is affordable and fun to drive.");
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input: "Create a slogan for a new electric SUV that is affordable and fun to drive.");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is SloganGeneratedEvent or FeedbackEvent)

@@ -9,7 +9,7 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 
 internal interface ISuperStepRunner
 {
-    string RunId { get; }
+    string SessionId { get; }
 
     string StartExecutorId { get; }
 

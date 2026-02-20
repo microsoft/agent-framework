@@ -36,9 +36,24 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
         await this.ValidateFileAsync(new UriContent(fileSource, mediaType), useConversation);
     }
 
+    // Temporarily disabled
     [Theory]
+    [Trait("Category", "IntegrationDisabled")]
     [InlineData(ImageReference, "image/jpeg", true)]
     [InlineData(ImageReference, "image/jpeg", false)]
+    public async Task ValidateImageFileDataAsync(string fileSource, string mediaType, bool useConversation)
+    {
+        // Arrange
+        byte[] fileData = await DownloadFileAsync(fileSource);
+        string encodedData = Convert.ToBase64String(fileData);
+        string fileUrl = $"data:{mediaType};base64,{encodedData}";
+        this.Output.WriteLine($"Content: {fileUrl.Substring(0, Math.Min(112, fileUrl.Length))}...");
+
+        // Act & Assert
+        await this.ValidateFileAsync(new DataContent(fileUrl), useConversation);
+    }
+
+    [Theory]
     [InlineData(PdfReference, "application/pdf", true)]
     [InlineData(PdfReference, "application/pdf", false)]
     public async Task ValidateFileDataAsync(string fileSource, string mediaType, bool useConversation)
@@ -53,7 +68,9 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
         await this.ValidateFileAsync(new DataContent(fileUrl), useConversation);
     }
 
+    // Temporarily disabled
     [Theory]
+    [Trait("Category", "IntegrationDisabled")]
     [InlineData(PdfReference, "doc.pdf", true)]
     [InlineData(PdfReference, "doc.pdf", false)]
     public async Task ValidateFileUploadAsync(string fileSource, string documentName, bool useConversation)

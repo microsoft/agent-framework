@@ -25,7 +25,7 @@ public class AgentEventsTests
             .Build();
 
         // Act
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, new List<ChatMessage> { new(ChatRole.User, "Hello") });
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, new List<ChatMessage> { new(ChatRole.User, "Hello") });
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
         List<WorkflowOutputEvent> outputEvents = new();

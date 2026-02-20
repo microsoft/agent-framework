@@ -642,7 +642,7 @@ public class AgentWorkflowBuilderTests
         StringBuilder sb = new();
 
         InProcessExecutionEnvironment environment = executionEnvironment.ToWorkflowExecutionEnvironment();
-        await using StreamingRun run = await environment.StreamAsync(workflow, input);
+        await using StreamingRun run = await environment.RunStreamingAsync(workflow, input);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
         WorkflowOutputEvent? output = null;

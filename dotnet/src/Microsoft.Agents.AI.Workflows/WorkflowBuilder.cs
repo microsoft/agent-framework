@@ -422,30 +422,26 @@ public class WorkflowBuilder
     }
 
     /// <summary>
-    /// Adds a fan-in edge to the workflow, connecting multiple source executors to a single target executor with an
-    /// optional trigger condition.
+    /// Adds a fan-in "barrier" edge to the workflow, connecting multiple source executors to a single target executor. Messages
+    /// will be held until every source executor has generated at least one message, then they will be streamed to the target
+    /// executor in the following step.
     /// </summary>
-    /// <remarks>This method establishes a fan-in relationship, allowing the target executor to be activated
-    /// based on the completion or state of multiple sources. The trigger parameter can be used to customize activation
-    /// behavior.</remarks>
     /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
     /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanInEdge(IEnumerable<ExecutorBinding> sources, ExecutorBinding target)
-        => this.AddFanInEdge(sources, target, label: null);
+    public WorkflowBuilder AddFanInBarrierEdge(IEnumerable<ExecutorBinding> sources, ExecutorBinding target)
+        => this.AddFanInBarrierEdge(sources, target, label: null);
 
     /// <summary>
-    /// Adds a fan-in edge to the workflow, connecting multiple source executors to a single target executor with an
-    /// optional trigger condition.
+    /// Adds a fan-in "barrier" edge to the workflow, connecting multiple source executors to a single target executor. Messages
+    /// will be held until every source executor has generated at least one message, then they will be streamed to the target
+    /// executor in the following step.
     /// </summary>
-    /// <remarks>This method establishes a fan-in relationship, allowing the target executor to be activated
-    /// based on the completion or state of multiple sources. The trigger parameter can be used to customize activation
-    /// behavior.</remarks>
     /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
     /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
     /// <param name="label">An optional label for the edge. Will be used in visualizations.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
-    public WorkflowBuilder AddFanInEdge(IEnumerable<ExecutorBinding> sources, ExecutorBinding target, string? label = null)
+    public WorkflowBuilder AddFanInBarrierEdge(IEnumerable<ExecutorBinding> sources, ExecutorBinding target, string? label = null)
     {
         Throw.IfNull(target);
         Throw.IfNull(sources);
@@ -472,10 +468,10 @@ public class WorkflowBuilder
         return this;
     }
 
-    /// <inheritdoc cref="AddFanInEdge(IEnumerable{ExecutorBinding}, ExecutorBinding)"/>
-    [Obsolete("Use AddFanInEdge(IEnumerable<ExecutorBinding>, ExecutorBinding) instead.")]
-    public WorkflowBuilder AddFanInEdge(ExecutorBinding target, params IEnumerable<ExecutorBinding> sources)
-        => this.AddFanInEdge(sources, target);
+    /// <inheritdoc cref="AddFanInBarrierEdge(IEnumerable{ExecutorBinding}, ExecutorBinding)"/>
+    [Obsolete("Use AddFanInBarrierEdge(IEnumerable<ExecutorBinding>, ExecutorBinding) instead.")]
+    public WorkflowBuilder AddFanInBarrierEdge(ExecutorBinding target, params IEnumerable<ExecutorBinding> sources)
+        => this.AddFanInBarrierEdge(sources, target);
 
     private void Validate(bool validateOrphans)
     {

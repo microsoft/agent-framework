@@ -34,10 +34,7 @@ public static class Program
         // Set up the Azure OpenAI client
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential()).GetChatClient(deploymentName).AsIChatClient();
+        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
         // Create the executors
         ChatClientAgent physicist = new(
@@ -56,12 +53,12 @@ public static class Program
         // Build the workflow by adding executors and connecting them
         var workflow = new WorkflowBuilder(startExecutor)
             .AddFanOutEdge(startExecutor, [physicist, chemist])
-            .AddFanInEdge([physicist, chemist], aggregationExecutor)
+            .AddFanInBarrierEdge([physicist, chemist], aggregationExecutor)
             .WithOutputFrom(aggregationExecutor)
             .Build();
 
         // Execute the workflow in streaming mode
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input: "What is temperature?");
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input: "What is temperature?");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is WorkflowOutputEvent output)

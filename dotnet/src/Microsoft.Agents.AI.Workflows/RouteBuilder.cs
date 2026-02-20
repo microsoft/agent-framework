@@ -158,7 +158,7 @@ public class RouteBuilder
 
         async ValueTask<ExternalResponse?> InvokeHandlerAsync(ExternalResponse response, IWorkflowContext context, CancellationToken cancellationToken)
         {
-            if (!response.DataIs(out TResponse? typedResponse))
+            if (!response.TryGetDataAs(out TResponse? typedResponse))
             {
                 throw new InvalidOperationException($"Received response data is not of expected type {typeof(TResponse).FullName} for port {port.Id}.");
             }

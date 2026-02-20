@@ -125,12 +125,13 @@ Create a simple Agent, using OpenAI Responses, that writes a haiku about the Mic
 
 ```c#
 // dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
-using System;
+using Microsoft.Agents.AI;
 using OpenAI;
+using OpenAI.Responses;
 
 // Replace the <apikey> with your OpenAI API key.
 var agent = new OpenAIClient("<apikey>")
-    .GetOpenAIResponseClient("gpt-4o-mini")
+    .GetResponsesClient("gpt-4o-mini")
     .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
@@ -142,14 +143,17 @@ Create a simple Agent, using Azure OpenAI Responses with token based auth, that 
 // dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
 // dotnet add package Azure.Identity
 // Use `az login` to authenticate with Azure CLI
-using System;
+using System.ClientModel.Primitives;
+using Azure.Identity;
+using Microsoft.Agents.AI;
 using OpenAI;
+using OpenAI.Responses;
 
 // Replace <resource> and gpt-4o-mini with your Azure OpenAI resource name and deployment name.
 var agent = new OpenAIClient(
     new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri("https://<resource>.openai.azure.com/openai/v1") })
-    .GetOpenAIResponseClient("gpt-4o-mini")
+    .GetResponsesClient("gpt-4o-mini")
     .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));

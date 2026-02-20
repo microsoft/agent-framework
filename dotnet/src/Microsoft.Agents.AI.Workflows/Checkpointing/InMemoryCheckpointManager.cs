@@ -13,54 +13,54 @@ namespace Microsoft.Agents.AI.Workflows.Checkpointing;
 internal sealed class InMemoryCheckpointManager : ICheckpointManager
 {
     [JsonInclude]
-    internal Dictionary<string, RunCheckpointCache<Checkpoint>> Store { get; } = [];
+    internal Dictionary<string, SessionCheckpointCache<Checkpoint>> Store { get; } = [];
 
     public InMemoryCheckpointManager() { }
 
     [JsonConstructor]
-    internal InMemoryCheckpointManager(Dictionary<string, RunCheckpointCache<Checkpoint>> store)
+    internal InMemoryCheckpointManager(Dictionary<string, SessionCheckpointCache<Checkpoint>> store)
     {
         this.Store = store;
     }
 
-    private RunCheckpointCache<Checkpoint> GetRunStore(string runId)
+    private SessionCheckpointCache<Checkpoint> GetSessionStore(string sessionId)
     {
-        if (!this.Store.TryGetValue(runId, out RunCheckpointCache<Checkpoint>? runStore))
+        if (!this.Store.TryGetValue(sessionId, out SessionCheckpointCache<Checkpoint>? sessionStore))
         {
-            runStore = this.Store[runId] = new();
+            sessionStore = this.Store[sessionId] = new();
         }
 
-        return runStore;
+        return sessionStore;
     }
 
-    public ValueTask<CheckpointInfo> CommitCheckpointAsync(string runId, Checkpoint checkpoint)
+    public ValueTask<CheckpointInfo> CommitCheckpointAsync(string sessionId, Checkpoint checkpoint)
     {
-        RunCheckpointCache<Checkpoint> runStore = this.GetRunStore(runId);
+        SessionCheckpointCache<Checkpoint> sessionStore = this.GetSessionStore(sessionId);
 
         CheckpointInfo key;
         do
         {
-            key = new(runId);
-        } while (!runStore.Add(key, checkpoint));
+            key = new(sessionId);
+        } while (!sessionStore.Add(key, checkpoint));
 
         return new(key);
     }
 
-    public ValueTask<Checkpoint> LookupCheckpointAsync(string runId, CheckpointInfo checkpointInfo)
+    public ValueTask<Checkpoint> LookupCheckpointAsync(string sessionId, CheckpointInfo checkpointInfo)
     {
-        if (!this.GetRunStore(runId).TryGet(checkpointInfo, out Checkpoint? value))
+        if (!this.GetSessionStore(sessionId).TryGet(checkpointInfo, out Checkpoint? value))
         {
-            throw new KeyNotFoundException($"Could not retrieve checkpoint with id {checkpointInfo.CheckpointId} for run {runId}");
+            throw new KeyNotFoundException($"Could not retrieve checkpoint with id {checkpointInfo.CheckpointId} for session {sessionId}");
         }
 
         return new(value);
     }
 
-    internal bool HasCheckpoints(string runId) => this.GetRunStore(runId).HasCheckpoints;
+    internal bool HasCheckpoints(string sessionId) => this.GetSessionStore(sessionId).HasCheckpoints;
 
-    public bool TryGetLastCheckpoint(string runId, [NotNullWhen(true)] out CheckpointInfo? checkpoint)
-        => this.GetRunStore(runId).TryGetLastCheckpointInfo(out checkpoint);
+    public bool TryGetLastCheckpoint(string sessionId, [NotNullWhen(true)] out CheckpointInfo? checkpoint)
+        => this.GetSessionStore(sessionId).TryGetLastCheckpointInfo(out checkpoint);
 
-    public ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string runId, CheckpointInfo? withParent = null)
-        => new(this.GetRunStore(runId).CheckpointIndex.AsReadOnly());
+    public ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent = null)
+        => new(this.GetSessionStore(sessionId).CheckpointIndex.AsReadOnly());
 }
