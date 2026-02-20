@@ -161,9 +161,11 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Act
         var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
 
-        // Assert
+        // Assert – filesystem enumeration order is not guaranteed, so we only
+        // verify that exactly one of the two duplicates was kept.
         Assert.Single(skills);
-        Assert.Equal("First", skills["dupe"].Frontmatter.Description);
+        string desc = skills["dupe"].Frontmatter.Description;
+        Assert.True(desc == "First" || desc == "Second", $"Unexpected description: {desc}");
     }
 
     [Fact]

@@ -31,11 +31,7 @@ internal sealed partial class FileAgentSkillLoader
     // Multiline makes ^/$ match line boundaries; Singleline makes . match newlines across the block.
     // The \uFEFF? prefix allows an optional UTF-8 BOM that some editors prepend.
     // Example: "---\nname: foo\n---\nBody" → Group 1: "name: foo\n"
-#if NET
     private static readonly Regex s_frontmatterRegex = new(@"\A\uFEFF?^---\s*$(.+?)^---\s*$", RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
-#else
-    private static readonly Regex s_frontmatterRegex = new(@"\A\uFEFF?^---\s*$(.+?)^---\s*$", RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled);
-#endif
 
     // Matches markdown links to local resource files. Group 1 = relative file path.
     // Supports optional ./ or ../ prefixes; excludes URLs (no ":" in the path character class).
@@ -43,21 +39,13 @@ internal sealed partial class FileAgentSkillLoader
     // and forward slashes. Paths with spaces or special characters are not supported.
     // Examples: [doc](refs/FAQ.md) → "refs/FAQ.md", [s](./s.json) → "./s.json",
     //           [p](../shared/doc.txt) → "../shared/doc.txt"
-#if NET
     private static readonly Regex s_resourceLinkRegex = new(@"\[.*?\]\((\.?\.?/?[\w][\w\-./]*\.\w+)\)", RegexOptions.Compiled, TimeSpan.FromSeconds(5));
-#else
-    private static readonly Regex s_resourceLinkRegex = new(@"\[.*?\]\((\.?\.?/?[\w][\w\-./]*\.\w+)\)", RegexOptions.Compiled);
-#endif
 
     // Matches YAML "key: value" lines. Group 1 = key, Group 2 = quoted value, Group 3 = unquoted value.
     // Accepts single or double quotes; the lazy quantifier trims trailing whitespace on unquoted values.
     // Examples: "name: foo" → (name, _, foo), "name: 'foo bar'" → (name, foo bar, _),
     //           "description: \"A skill\"" → (description, A skill, _)
-#if NET
     private static readonly Regex s_yamlKeyValueRegex = new(@"^\s*(\w+)\s*:\s*(?:[""'](.+?)[""']|(.+?))\s*$", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
-#else
-    private static readonly Regex s_yamlKeyValueRegex = new(@"^\s*(\w+)\s*:\s*(?:[""'](.+?)[""']|(.+?))\s*$", RegexOptions.Multiline | RegexOptions.Compiled);
-#endif
 
     // Validates skill names: lowercase letters, numbers, and hyphens only; must not start or end with a hyphen.
     // Examples: "my-skill" ✓, "skill123" ✓, "-bad" ✗, "bad-" ✗, "Bad" ✗
@@ -142,7 +130,7 @@ internal sealed partial class FileAgentSkillLoader
 
         if (!File.Exists(fullPath))
         {
-            throw new InvalidOperationException($"Resource file '{resourceName}' not found at '{fullPath}'.");
+            throw new InvalidOperationException($"Resource file '{resourceName}' not found in skill '{skill.Frontmatter.Name}'.");
         }
 
         if (HasSymlinkInPath(fullPath, normalizedSourcePath))
@@ -298,7 +286,7 @@ internal sealed partial class FileAgentSkillLoader
 
             if (!File.Exists(fullPath))
             {
-                LogMissingResource(this._logger, skillName, resourceName, fullPath);
+                LogMissingResource(this._logger, skillName, resourceName);
                 return false;
             }
 
@@ -406,8 +394,8 @@ internal sealed partial class FileAgentSkillLoader
     [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' has an invalid '{FieldName}' value: {Reason}")]
     private static partial void LogInvalidFieldValue(ILogger logger, string skillFilePath, string fieldName, string reason);
 
-    [LoggerMessage(LogLevel.Warning, "Excluding skill '{SkillName}': referenced resource '{ResourceName}' does not exist at '{FullPath}'")]
-    private static partial void LogMissingResource(ILogger logger, string skillName, string resourceName, string fullPath);
+    [LoggerMessage(LogLevel.Warning, "Excluding skill '{SkillName}': referenced resource '{ResourceName}' does not exist")]
+    private static partial void LogMissingResource(ILogger logger, string skillName, string resourceName);
 
     [LoggerMessage(LogLevel.Warning, "Excluding skill '{SkillName}': resource '{ResourceName}' references a path outside the skill directory")]
     private static partial void LogResourcePathTraversal(ILogger logger, string skillName, string resourceName);
