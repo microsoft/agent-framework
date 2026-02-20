@@ -42,7 +42,7 @@ public sealed class UsageAndAnnotationsTests
             }
         ];
 
-        // Act — Should not throw even if UsageContent is not mapped to an event
+        // Act — Should not throw when handling UsageContent mapped to a CustomEvent
         List<BaseEvent> events = [];
         await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync()
             .AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
