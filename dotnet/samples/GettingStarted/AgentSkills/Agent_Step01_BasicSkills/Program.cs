@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use Agent Skills with a ChatClientAgent.
 // Agent Skills are modular packages of instructions and resources that extend an agent's capabilities.
