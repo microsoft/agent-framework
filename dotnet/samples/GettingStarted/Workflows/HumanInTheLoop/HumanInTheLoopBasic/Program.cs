@@ -27,7 +27,7 @@ public static class Program
         var workflow = WorkflowFactory.BuildWorkflow();
 
         // Execute the workflow
-        await using StreamingRun handle = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init);
+        await using StreamingRun handle = await InProcessExecution.RunStreamingAsync(workflow, NumberSignal.Init);
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync())
         {
             switch (evt)
@@ -48,9 +48,9 @@ public static class Program
 
     private static ExternalResponse HandleExternalRequest(ExternalRequest request)
     {
-        if (request.DataIs<NumberSignal>())
+        if (request.TryGetDataAs<NumberSignal>(out var signal))
         {
-            switch (request.DataAs<NumberSignal>())
+            switch (signal)
             {
                 case NumberSignal.Init:
                     int initialGuess = ReadIntegerFromConsole("Please provide your initial guess: ");

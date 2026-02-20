@@ -16,7 +16,7 @@ from agent_framework import (
     FunctionTool as AFFunctionTool,
 )
 from agent_framework._tools import _create_model_from_json_schema  # type: ignore
-from agent_framework.exceptions import AgentFrameworkException
+from agent_framework.exceptions import AgentException
 from dotenv import load_dotenv
 
 from ._models import (
@@ -104,7 +104,7 @@ PROVIDER_TYPE_OBJECT_MAPPING: dict[str, ProviderTypeMapping] = {
 }
 
 
-class DeclarativeLoaderError(AgentFrameworkException):
+class DeclarativeLoaderError(AgentException):
     """Exception raised for errors in the declarative loader."""
 
     pass

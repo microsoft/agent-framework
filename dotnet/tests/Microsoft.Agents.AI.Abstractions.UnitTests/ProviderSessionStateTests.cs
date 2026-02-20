@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
 /// <summary>
@@ -7,6 +9,56 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 /// </summary>
 public class ProviderSessionStateTests
 {
+    #region Constructor Tests
+
+    [Fact]
+    public void Constructor_ThrowsForNullStateInitializer()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => new ProviderSessionState<TestState>(null!, "test-key"));
+    }
+
+    [Fact]
+    public void Constructor_ThrowsForNullStateKey()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => new ProviderSessionState<TestState>(_ => new TestState(), null!));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("  ")]
+    public void Constructor_ThrowsForEmptyOrWhitespaceStateKey(string stateKey)
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentException>(() => new ProviderSessionState<TestState>(_ => new TestState(), stateKey));
+    }
+
+    [Fact]
+    public void Constructor_AcceptsNullJsonSerializerOptions()
+    {
+        // Act - should not throw
+        var sessionState = new ProviderSessionState<TestState>(_ => new TestState(), "test-key", jsonSerializerOptions: null);
+
+        // Assert - instance is created and functional
+        Assert.Equal("test-key", sessionState.StateKey);
+    }
+
+    [Fact]
+    public void Constructor_AcceptsCustomJsonSerializerOptions()
+    {
+        // Arrange
+        var customOptions = new System.Text.Json.JsonSerializerOptions();
+
+        // Act - should not throw
+        var sessionState = new ProviderSessionState<TestState>(_ => new TestState(), "test-key", customOptions);
+
+        // Assert - instance is created and functional
+        Assert.Equal("test-key", sessionState.StateKey);
+    }
+
+    #endregion
+
     #region GetOrInitializeState Tests
 
     [Fact]

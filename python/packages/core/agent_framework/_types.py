@@ -531,6 +531,7 @@ class Content:
     def from_text_reasoning(
         cls: type[ContentT],
         *,
+        id: str | None = None,
         text: str | None = None,
         protected_data: str | None = None,
         annotations: Sequence[Annotation] | None = None,
@@ -540,6 +541,7 @@ class Content:
         """Create text reasoning content."""
         return cls(
             "text_reasoning",
+            id=id,
             text=text,
             protected_data=protected_data,
             annotations=annotations,

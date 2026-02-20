@@ -15,8 +15,9 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 internal class WorkflowHostExecutor : Executor, IAsyncDisposable
 {
-    private readonly string _runId;
+    private readonly string _sessionId;
     private readonly Workflow _workflow;
+    private readonly ProtocolDescriptor _workflowProtocol;
     private readonly object _ownershipToken;
 
     private InProcessRunner? _activeRunner;
@@ -30,19 +31,25 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
     [MemberNotNullWhen(true, nameof(_checkpointManager))]
     private bool WithCheckpointing => this._checkpointManager != null;
 
-    public WorkflowHostExecutor(string id, Workflow workflow, string runId, object ownershipToken, ExecutorOptions? options = null) : base(id, options)
+    public WorkflowHostExecutor(string id, Workflow workflow, ProtocolDescriptor workflowProtocol, string sessionId, object ownershipToken, ExecutorOptions? options = null) : base(id, options)
     {
         this._options = options ?? new();
 
-        Throw.IfNull(workflow);
-        this._runId = Throw.IfNull(runId);
+        this._sessionId = Throw.IfNull(sessionId);
         this._ownershipToken = Throw.IfNull(ownershipToken);
         this._workflow = Throw.IfNull(workflow);
+        this._workflowProtocol = Throw.IfNull(workflowProtocol);
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        return routeBuilder.AddCatchAll(this.QueueExternalMessageAsync);
+        if (this._options.AutoYieldOutputHandlerResultObject)
+        {
+            protocolBuilder = protocolBuilder.YieldsOutputTypes(this._workflowProtocol.Yields);
+        }
+
+        return protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddCatchAll(this.QueueExternalMessageAsync))
+                              .SendsMessageTypes(this._workflowProtocol.Yields);
     }
 
     private async ValueTask QueueExternalMessageAsync(PortableValue portableValue, IWorkflowContext context, CancellationToken cancellationToken)
@@ -73,7 +80,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
     {
         if (this._activeRunner == null)
         {
-            if (this.JoinContext.WithCheckpointing)
+            if (this.JoinContext.IsCheckpointingEnabled)
             {
                 // Use a seprate in-memory checkpoint manager for scoping purposes. We do not need to worry about
                 // serialization because we will be relying on the parent workflow's checkpoint manager to do that,
@@ -84,7 +91,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
 
             this._activeRunner = InProcessRunner.CreateSubworkflowRunner(this._workflow,
                                                                          this._checkpointManager,
-                                                                         this._runId,
+                                                                         this._sessionId,
                                                                          this._ownershipToken,
                                                                          this.JoinContext.ConcurrentRunsEnabled);
         }
@@ -114,7 +121,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
             if (resume)
             {
                 // Attempting to resume from checkpoint
-                if (!this._checkpointManager.TryGetLastCheckpoint(this._runId, out CheckpointInfo? lastCheckpoint))
+                if (!this._checkpointManager.TryGetLastCheckpoint(this._sessionId, out CheckpointInfo? lastCheckpoint))
                 {
                     throw new InvalidOperationException("No checkpoints available to resume from.");
                 }

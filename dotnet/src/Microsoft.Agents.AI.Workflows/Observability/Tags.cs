@@ -11,7 +11,7 @@ internal static class Tags
     public const string BuildErrorMessage = "build.error.message";
     public const string BuildErrorType = "build.error.type";
     public const string ErrorType = "error.type";
-    public const string RunId = "run.id";
+    public const string SessionId = "session.id";
     public const string ExecutorId = "executor.id";
     public const string ExecutorType = "executor.type";
     public const string ExecutorInput = "executor.input";

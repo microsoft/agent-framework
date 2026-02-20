@@ -34,22 +34,29 @@ internal sealed class RequestInfoExecutor : Executor
         this._allowWrapped = allowWrapped;
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        routeBuilder = routeBuilder
-            // Handle incoming requests (as raw request payloads)
-            .AddHandlerUntyped(this.Port.Request, this.HandleAsync)
-            .AddCatchAll(this.HandleCatchAllAsync);
+        return protocolBuilder.ConfigureRoutes(ConfigureRoutes)
+                              .SendsMessage<ExternalRequest>()
+                              .SendsMessageType(this.Port.Response);
 
-        if (this._allowWrapped)
+        void ConfigureRoutes(RouteBuilder routeBuilder)
         {
             routeBuilder = routeBuilder
-                .AddHandler<ExternalRequest, ExternalRequest>(this.HandleAsync);
-        }
+                // Handle incoming requests (as raw request payloads)
+                .AddHandlerUntyped(this.Port.Request, this.HandleAsync)
+                .AddCatchAll(this.HandleCatchAllAsync);
 
-        return routeBuilder
-            // Handle incoming responses (as wrapped Response object)
-            .AddHandler<ExternalResponse, ExternalResponse?>(this.HandleAsync);
+            if (this._allowWrapped)
+            {
+                routeBuilder = routeBuilder
+                    .AddHandler<ExternalRequest, ExternalRequest>(this.HandleAsync);
+            }
+
+            routeBuilder
+                // Handle incoming responses (as wrapped Response object)
+                .AddHandler<ExternalResponse, ExternalResponse?>(this.HandleAsync);
+        }
     }
 
     internal void AttachRequestSink(IExternalRequestSink requestSink) => this.RequestSink = Throw.IfNull(requestSink);

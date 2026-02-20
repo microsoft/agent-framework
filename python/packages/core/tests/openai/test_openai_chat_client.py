@@ -19,7 +19,7 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
-from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
+from agent_framework.exceptions import ChatClientException
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
 
@@ -42,7 +42,7 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
 
 def test_init_validation_fail() -> None:
     # Test successful initialization
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         OpenAIChatClient(api_key="34523", model_id={"test": "dict"})  # type: ignore
 
 
@@ -96,7 +96,7 @@ def test_init_base_url_from_settings_env() -> None:
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_CHAT_MODEL_ID"]], indirect=True)
 def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         OpenAIChatClient()
 
 
@@ -104,7 +104,7 @@ def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
     model_id = "test_model_id"
 
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         OpenAIChatClient(
             model_id=model_id,
         )
@@ -235,7 +235,7 @@ async def test_exception_message_includes_original_error_details() -> None:
 
     with (
         patch.object(client.client.chat.completions, "create", side_effect=mock_error),
-        pytest.raises(ServiceResponseException) as exc_info,
+        pytest.raises(ChatClientException) as exc_info,
     ):
         await client._inner_get_response(messages=messages, options={})  # type: ignore
 
@@ -779,11 +779,11 @@ def test_prepare_options_without_model_id(openai_unit_test_env: dict[str, str]) 
 
 def test_prepare_options_without_messages(openai_unit_test_env: dict[str, str]) -> None:
     """Test that prepare_options raises error when messages are missing."""
-    from agent_framework.exceptions import ServiceInvalidRequestError
+    from agent_framework.exceptions import ChatClientInvalidRequestException
 
     client = OpenAIChatClient()
 
-    with pytest.raises(ServiceInvalidRequestError, match="Messages are required"):
+    with pytest.raises(ChatClientInvalidRequestException, match="Messages are required"):
         client._prepare_options([], {})
 
 
@@ -932,7 +932,7 @@ async def test_streaming_exception_handling(openai_unit_test_env: dict[str, str]
 
     with (
         patch.object(client.client.chat.completions, "create", side_effect=mock_error),
-        pytest.raises(ServiceResponseException),
+        pytest.raises(ChatClientException),
     ):
         async for _ in client._inner_get_response(messages=messages, stream=True, options={}):  # type: ignore
             pass

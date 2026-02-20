@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
-from ._exceptions import WorkflowCheckpointException
+from ..exceptions import WorkflowCheckpointException
 
 logger = logging.getLogger(__name__)
 
@@ -324,12 +324,12 @@ class FileCheckpointStorage:
 
         encoded_checkpoint = await asyncio.to_thread(_read)
 
-        from ._checkpoint_encoding import CheckpointDecodingError, decode_checkpoint_value
+        from ._checkpoint_encoding import decode_checkpoint_value
 
         try:
             decoded_checkpoint_dict = decode_checkpoint_value(encoded_checkpoint)
-        except CheckpointDecodingError as exc:
-            raise WorkflowCheckpointException(f"Failed to decode checkpoint {checkpoint_id}: {exc}") from exc
+        except WorkflowCheckpointException:
+            raise
         checkpoint = WorkflowCheckpoint.from_dict(decoded_checkpoint_dict)
         logger.info(f"Loaded checkpoint {checkpoint_id} from {file_path}")
         return checkpoint
