@@ -22,7 +22,7 @@ from agent_framework.exceptions import (
     IntegrationInvalidRequestException,
 )
 from redisvl.index import AsyncSearchIndex
-from redisvl.query import HybridQuery, TextQuery
+from redisvl.query import AggregateHybridQuery, TextQuery
 from redisvl.query.filter import FilterExpression, Tag
 from redisvl.utils.token_escaper import TokenEscaper
 from redisvl.utils.vectorize import BaseVectorizer
@@ -366,7 +366,7 @@ class RedisContextProvider(BaseContextProvider):
         try:
             if self.redis_vectorizer and self.vector_field_name:
                 vector = await self.redis_vectorizer.aembed(q)
-                query = HybridQuery(
+                query = AggregateHybridQuery(
                     text=q,
                     text_field_name="content",
                     vector=vector,

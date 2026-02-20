@@ -271,6 +271,46 @@ class TestRedisContextProviderContextManager:
             assert p is provider
 
 
+class TestRedisContextProviderHybridQuery:
+    """Test for AggregateHybridQuery parameter compatibility with redisvl 0.14.0."""
+
+    async def test_aggregate_hybrid_query_uses_alpha(
+        self,
+        mock_index: AsyncMock,
+        patch_index_from_dict: MagicMock,  # noqa: ARG002 - fixture modifies behavior via side effects
+    ):
+        """Ensure AggregateHybridQuery is called with alpha parameter for backward compatibility."""
+        from redisvl.utils.vectorize import BaseVectorizer
+
+        # Create a mock vectorizer that inherits from BaseVectorizer
+        mock_vectorizer = MagicMock(spec=BaseVectorizer)
+        mock_vectorizer.dims = 128
+        mock_vectorizer.dtype = "float32"
+        mock_vectorizer.aembed = AsyncMock(return_value=[0.1] * 128)
+
+        mock_index.query = AsyncMock(return_value=[{"content": "test result"}])
+
+        provider = RedisContextProvider(
+            source_id="ctx",
+            user_id="u1",
+            redis_vectorizer=mock_vectorizer,
+            vector_field_name="embedding",
+        )
+
+        # Call _redis_search with custom alpha
+        with patch("agent_framework_redis._context_provider.AggregateHybridQuery") as mock_hybrid_query:
+            mock_hybrid_query.return_value = MagicMock()
+            await provider._redis_search(text="test query", alpha=0.5)
+
+            # Verify AggregateHybridQuery was called with alpha parameter
+            mock_hybrid_query.assert_called_once()
+            call_kwargs = mock_hybrid_query.call_args.kwargs
+            assert "alpha" in call_kwargs
+            assert call_kwargs["alpha"] == 0.5
+            # linear_alpha should NOT be in the call (that's for the new HybridQuery)
+            assert "linear_alpha" not in call_kwargs
+
+
 # ===========================================================================
 # RedisHistoryProvider tests
 # ===========================================================================
