@@ -168,13 +168,13 @@ public sealed partial class FileAgentSkillsProvider : AIContextProvider
 
     private static string? BuildSkillsInstructionPrompt(FileAgentSkillsProviderOptions? options, Dictionary<string, FileAgentSkill> skills)
     {
-        string promptTemplate = options?.SkillsInstructionPrompt ?? DefaultSkillsInstructionPrompt;
+        string promptTemplate = DefaultSkillsInstructionPrompt;
 
-        if (options?.SkillsInstructionPrompt is not null)
+        if (options?.SkillsInstructionPrompt is not null optionsInstructions)
         {
             try
             {
-                _ = string.Format(promptTemplate, string.Empty);
+                promptTemplate = string.Format(optionsInstructions, string.Empty);
             }
             catch (FormatException ex)
             {
