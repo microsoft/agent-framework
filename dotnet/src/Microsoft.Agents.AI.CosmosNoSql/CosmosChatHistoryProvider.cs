@@ -435,7 +435,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         var partitionKey = BuildPartitionKey(state);
 
         // Efficient count query
-        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.conversationId = @conversationId AND c.Type = @type")
+        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.conversationId = @conversationId AND c.type = @type")
             .WithParameter("@conversationId", state.ConversationId)
             .WithParameter("@type", "ChatMessage");
 
@@ -469,7 +469,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         var partitionKey = BuildPartitionKey(state);
 
         // Batch delete for efficiency
-        var query = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c.conversationId = @conversationId AND c.Type = @type")
+        var query = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c.conversationId = @conversationId AND c.type = @type")
             .WithParameter("@conversationId", state.ConversationId)
             .WithParameter("@type", "ChatMessage");
 
