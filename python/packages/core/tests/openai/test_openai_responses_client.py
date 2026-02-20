@@ -821,8 +821,9 @@ def test_prepare_message_for_openai_includes_reasoning_with_function_call() -> N
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     reasoning = Content.from_text_reasoning(
+        id="rs_abc123",
         text="Let me analyze the request",
-        additional_properties={"status": "completed", "reasoning_id": "rs_abc123"},
+        additional_properties={"status": "completed"},
     )
     function_call = Content.from_function_call(
         call_id="call_123",
@@ -841,7 +842,7 @@ def test_prepare_message_for_openai_includes_reasoning_with_function_call() -> N
     assert "function_call" in types
 
     reasoning_item = next(item for item in result if item["type"] == "reasoning")
-    assert reasoning_item["summary"]["text"] == "Let me analyze the request"
+    assert reasoning_item["summary"][0]["text"] == "Let me analyze the request"
     assert reasoning_item["id"] == "rs_abc123", "Reasoning id must be preserved for the API"
 
 
@@ -860,8 +861,9 @@ def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
             role="assistant",
             contents=[
                 Content.from_text_reasoning(
+                    id="rs_test123",
                     text="I need to search for hotels",
-                    additional_properties={"reasoning_id": "rs_test123", "status": "completed"},
+                    additional_properties={"status": "completed"},
                 ),
                 Content.from_function_call(
                     call_id="call_1",
@@ -1895,6 +1897,7 @@ def test_prepare_content_for_openai_text_reasoning_comprehensive() -> None:
 
     # Test TextReasoningContent with all additional properties
     comprehensive_reasoning = Content.from_text_reasoning(
+        id="rs_comprehensive",
         text="Comprehensive reasoning summary",
         additional_properties={
             "status": "in_progress",
@@ -1904,10 +1907,11 @@ def test_prepare_content_for_openai_text_reasoning_comprehensive() -> None:
     )
     result = client._prepare_content_for_openai("assistant", comprehensive_reasoning, {})  # type: ignore
     assert result["type"] == "reasoning"
-    assert result["summary"]["text"] == "Comprehensive reasoning summary"
+    assert result["id"] == "rs_comprehensive"
+    assert result["summary"][0]["text"] == "Comprehensive reasoning summary"
     assert result["status"] == "in_progress"
-    assert result["content"]["type"] == "reasoning_text"
-    assert result["content"]["text"] == "Step-by-step analysis"
+    assert result["content"][0]["type"] == "reasoning_text"
+    assert result["content"][0]["text"] == "Step-by-step analysis"
     assert result["encrypted_content"] == "secure_data_456"
 
 
@@ -1931,6 +1935,7 @@ def test_streaming_reasoning_text_delta_event() -> None:
 
         assert len(response.contents) == 1
         assert response.contents[0].type == "text_reasoning"
+        assert response.contents[0].id == "reasoning_123"
         assert response.contents[0].text == "reasoning delta"
         assert response.contents[0].raw_representation == event
         mock_metadata.assert_called_once_with(event)

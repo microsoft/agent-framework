@@ -41,7 +41,7 @@ internal sealed class WorkflowSession : AgentSession
         return true;
     }
 
-    public WorkflowSession(Workflow workflow, string runId, IWorkflowExecutionEnvironment executionEnvironment, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
+    public WorkflowSession(Workflow workflow, string sessionId, IWorkflowExecutionEnvironment executionEnvironment, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
     {
         this._workflow = Throw.IfNull(workflow);
         this._executionEnvironment = Throw.IfNull(executionEnvironment);
@@ -55,7 +55,7 @@ internal sealed class WorkflowSession : AgentSession
             this._executionEnvironment = inProcEnv.WithCheckpointing(this.EnsureExternalizedInMemoryCheckpointing());
         }
 
-        this.RunId = Throw.IfNullOrEmpty(runId);
+        this.SessionId = Throw.IfNullOrEmpty(sessionId);
         this.ChatHistoryProvider = new WorkflowChatHistoryProvider();
     }
 
@@ -85,7 +85,7 @@ internal sealed class WorkflowSession : AgentSession
             throw new ArgumentException("The session was saved with an externalized checkpoint manager, but the incoming execution environment does not support it.", nameof(executionEnvironment));
         }
 
-        this.RunId = sessionState.RunId;
+        this.SessionId = sessionState.SessionId;
         this.ChatHistoryProvider = new WorkflowChatHistoryProvider();
 
         this.LastCheckpoint = sessionState.LastCheckpoint;
@@ -98,7 +98,7 @@ internal sealed class WorkflowSession : AgentSession
     {
         JsonMarshaller marshaller = new(jsonSerializerOptions);
         SessionState info = new(
-            this.RunId,
+            this.SessionId,
             this.LastCheckpoint,
             this._inMemoryCheckpointManager,
             this.StateBag);
@@ -149,7 +149,7 @@ internal sealed class WorkflowSession : AgentSession
         {
             StreamingRun run =
                 await this._executionEnvironment
-                            .ResumeStreamAsync(this._workflow,
+                            .ResumeStreamingAsync(this._workflow,
                                                this.LastCheckpoint,
                                                cancellationToken)
                             .ConfigureAwait(false);
@@ -159,9 +159,9 @@ internal sealed class WorkflowSession : AgentSession
         }
 
         return await this._executionEnvironment
-                            .StreamAsync(this._workflow,
+                            .RunStreamingAsync(this._workflow,
                                          messages,
-                                         this.RunId,
+                                         this.SessionId,
                                          cancellationToken)
                             .ConfigureAwait(false);
     }
@@ -262,18 +262,18 @@ internal sealed class WorkflowSession : AgentSession
 
     public string? LastResponseId { get; set; }
 
-    public string RunId { get; }
+    public string SessionId { get; }
 
     /// <inheritdoc/>
     public WorkflowChatHistoryProvider ChatHistoryProvider { get; }
 
     internal sealed class SessionState(
-        string runId,
+        string sessionId,
         CheckpointInfo? lastCheckpoint,
         InMemoryCheckpointManager? checkpointManager = null,
         AgentSessionStateBag? stateBag = null)
     {
-        public string RunId { get; } = runId;
+        public string SessionId { get; } = sessionId;
         public CheckpointInfo? LastCheckpoint { get; } = lastCheckpoint;
         public InMemoryCheckpointManager? CheckpointManager { get; } = checkpointManager;
         public AgentSessionStateBag StateBag { get; } = stateBag ?? new();

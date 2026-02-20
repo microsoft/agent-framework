@@ -32,7 +32,7 @@ public static class Program
             .Build();
 
         // Execute the workflow
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init);
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, NumberSignal.Init);
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is WorkflowOutputEvent outputEvent)

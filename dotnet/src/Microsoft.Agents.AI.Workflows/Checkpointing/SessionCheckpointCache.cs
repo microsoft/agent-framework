@@ -6,7 +6,7 @@ using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.AI.Workflows.Checkpointing;
 
-internal sealed class RunCheckpointCache<TStoreObject>
+internal sealed class SessionCheckpointCache<TStoreObject>
 {
     [JsonInclude]
     internal List<CheckpointInfo> CheckpointIndex { get; } = [];
@@ -14,10 +14,10 @@ internal sealed class RunCheckpointCache<TStoreObject>
     [JsonInclude]
     internal Dictionary<CheckpointInfo, TStoreObject> Cache { get; } = [];
 
-    public RunCheckpointCache() { }
+    public SessionCheckpointCache() { }
 
     [JsonConstructor]
-    internal RunCheckpointCache(List<CheckpointInfo> checkpointIndex, Dictionary<CheckpointInfo, TStoreObject> cache)
+    internal SessionCheckpointCache(List<CheckpointInfo> checkpointIndex, Dictionary<CheckpointInfo, TStoreObject> cache)
     {
         this.CheckpointIndex = checkpointIndex;
         this.Cache = cache;
@@ -29,13 +29,13 @@ internal sealed class RunCheckpointCache<TStoreObject>
     public bool IsInIndex(CheckpointInfo key) => this.Cache.ContainsKey(key);
     public bool TryGet(CheckpointInfo key, [MaybeNullWhen(false)] out TStoreObject value) => this.Cache.TryGetValue(key, out value);
 
-    public CheckpointInfo Add(string runId, TStoreObject value)
+    public CheckpointInfo Add(string sessionId, TStoreObject value)
     {
         CheckpointInfo key;
 
         do
         {
-            key = new(runId);
+            key = new(sessionId);
         } while (!this.Add(key, value));
 
         return key;

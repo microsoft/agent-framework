@@ -50,10 +50,7 @@ public static class Program
         // Set up the Azure OpenAI client
         string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-        IChatClient chatClient = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential()).GetChatClient(deploymentName).AsIChatClient();
+        IChatClient chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
         // Create executors for content creation and review
         WriterExecutor writer = new(chatClient);
@@ -92,7 +89,7 @@ public static class Program
     private static async Task ExecuteWorkflowAsync(Workflow workflow, string input)
     {
         // Execute in streaming mode to see real-time progress
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input);
 
         // Watch the workflow events
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())

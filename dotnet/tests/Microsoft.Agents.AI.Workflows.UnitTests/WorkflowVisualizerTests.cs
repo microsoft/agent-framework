@@ -114,7 +114,7 @@ public class WorkflowVisualizerTests
         // Build a connected workflow: start fans out to s1 and s2, which then fan-in to t
         var workflow = new WorkflowBuilder("start")
             .AddFanOutEdge(start, [s1, s2])
-            .AddFanInEdge([s1, s2], t)  // AddFanInEdge(target, sources)
+            .AddFanInBarrierEdge([s1, s2], t)  // AddFanInBarrierEdge(target, sources)
             .Build();
 
         var dotContent = workflow.ToDotString();
@@ -202,7 +202,7 @@ public class WorkflowVisualizerTests
         var workflow = new WorkflowBuilder("start")
             .AddEdge<string>(start, a, Condition) // Conditional edge
             .AddFanOutEdge(a, [b, c]) // Fan-out
-            .AddFanInEdge([b, c], end) // Fan-in - AddFanInEdge(target, sources)
+            .AddFanInBarrierEdge([b, c], end) // Fan-in - AddFanInEdge(target, sources)
             .Build();
 
         var dotContent = workflow.ToDotString();
@@ -310,7 +310,7 @@ public class WorkflowVisualizerTests
 
         var workflow = new WorkflowBuilder("start")
             .AddFanOutEdge(start, [s1, s2])
-            .AddFanInEdge([s1, s2], t)
+            .AddFanInBarrierEdge([s1, s2], t)
             .Build();
 
         var mermaidContent = workflow.ToMermaidString();
@@ -381,7 +381,7 @@ public class WorkflowVisualizerTests
         var workflow = new WorkflowBuilder("start")
             .AddEdge<string>(start, a, Condition) // Conditional edge
             .AddFanOutEdge(a, [b, c]) // Fan-out
-            .AddFanInEdge([b, c], end) // Fan-in
+            .AddFanInBarrierEdge([b, c], end) // Fan-in
             .Build();
 
         var mermaidContent = workflow.ToMermaidString();

@@ -93,15 +93,15 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
         }
     }
 
-    private string GetFileNameForCheckpoint(string runId, CheckpointInfo key)
-        => Path.Combine(this.Directory.FullName, $"{runId}_{key.CheckpointId}.json");
+    private string GetFileNameForCheckpoint(string sessionId, CheckpointInfo key)
+        => Path.Combine(this.Directory.FullName, $"{sessionId}_{key.CheckpointId}.json");
 
-    private CheckpointInfo GetUnusedCheckpointInfo(string runId)
+    private CheckpointInfo GetUnusedCheckpointInfo(string sessionId)
     {
         CheckpointInfo key;
         do
         {
-            key = new(runId);
+            key = new(sessionId);
         } while (!this.CheckpointIndex.Add(key));
 
         return key;
@@ -110,12 +110,12 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
     /// <inheritdoc/>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1835:Prefer the 'Memory'-based overloads for 'ReadAsync' and 'WriteAsync'",
         Justification = "Memory-based overload is missing for 4.7.2")]
-    public override async ValueTask<CheckpointInfo> CreateCheckpointAsync(string runId, JsonElement value, CheckpointInfo? parent = null)
+    public override async ValueTask<CheckpointInfo> CreateCheckpointAsync(string sessionId, JsonElement value, CheckpointInfo? parent = null)
     {
         this.CheckDisposed();
 
-        CheckpointInfo key = this.GetUnusedCheckpointInfo(runId);
-        string fileName = this.GetFileNameForCheckpoint(runId, key);
+        CheckpointInfo key = this.GetUnusedCheckpointInfo(sessionId);
+        string fileName = this.GetFileNameForCheckpoint(sessionId, key);
         try
         {
             using Stream checkpointStream = File.Open(fileName, FileMode.Create, FileAccess.Write, FileShare.None);
@@ -145,10 +145,10 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
     }
 
     /// <inheritdoc/>
-    public override async ValueTask<JsonElement> RetrieveCheckpointAsync(string runId, CheckpointInfo key)
+    public override async ValueTask<JsonElement> RetrieveCheckpointAsync(string sessionId, CheckpointInfo key)
     {
         this.CheckDisposed();
-        string fileName = this.GetFileNameForCheckpoint(runId, key);
+        string fileName = this.GetFileNameForCheckpoint(sessionId, key);
 
         if (!this.CheckpointIndex.Contains(key) ||
             !File.Exists(fileName))
@@ -163,7 +163,7 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
     }
 
     /// <inheritdoc/>
-    public override ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string runId, CheckpointInfo? withParent = null)
+    public override ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent = null)
     {
         this.CheckDisposed();
 

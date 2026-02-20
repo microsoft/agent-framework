@@ -25,7 +25,7 @@ public static class WorkflowHostingExtensions
     /// <param name="includeWorkflowOutputsInResponse">If <see langword="true"/>, will transform outgoing workflow outputs
     /// into into content in <see cref="AgentResponseUpdate"/>s or the <see cref="AgentResponse"/> as appropriate.</param>
     /// <returns></returns>
-    public static AIAgent AsAgent(
+    public static AIAgent AsAIAgent(
         this Workflow workflow,
         string? id = null,
         string? name = null,

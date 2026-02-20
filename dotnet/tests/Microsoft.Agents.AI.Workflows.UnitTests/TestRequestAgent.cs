@@ -325,7 +325,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
 
         static TRequest AssertAndExtractRequestContent<TRequest>(ExternalRequest request)
         {
-            request.DataIs(out TRequest? content).Should().BeTrue();
+            request.TryGetDataAs(out TRequest? content).Should().BeTrue();
             return content!;
         }
     }
