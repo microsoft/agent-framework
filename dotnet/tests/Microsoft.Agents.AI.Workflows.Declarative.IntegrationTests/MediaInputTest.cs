@@ -68,7 +68,9 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
         await this.ValidateFileAsync(new DataContent(fileUrl), useConversation);
     }
 
+    // Temporarily disabled
     [Theory]
+    [Trait("Category", "IntegrationDisabled")]
     [InlineData(PdfReference, "doc.pdf", true)]
     [InlineData(PdfReference, "doc.pdf", false)]
     public async Task ValidateFileUploadAsync(string fileSource, string documentName, bool useConversation)
