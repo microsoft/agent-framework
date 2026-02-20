@@ -440,6 +440,78 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Equal("Mixed separator content.", content);
     }
 
+#if NET
+    private static readonly string[] s_symlinkResource = ["refs/data.md"];
+
+    [Fact]
+    public void DiscoverAndLoadSkills_SymlinkInPath_ExcludesSkill()
+    {
+        // Arrange — a "refs" subdirectory is a symlink pointing outside the skill directory
+        string skillDir = Path.Combine(this._testRoot, "symlink-escape-skill");
+        Directory.CreateDirectory(skillDir);
+
+        string outsideDir = Path.Combine(this._testRoot, "outside");
+        Directory.CreateDirectory(outsideDir);
+        File.WriteAllText(Path.Combine(outsideDir, "secret.md"), "secret content");
+
+        string refsLink = Path.Combine(skillDir, "refs");
+        try
+        {
+            Directory.CreateSymbolicLink(refsLink, outsideDir);
+        }
+        catch (IOException)
+        {
+            // Symlink creation requires elevation on some platforms; skip gracefully.
+            return;
+        }
+
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: symlink-escape-skill\ndescription: Symlinked directory escape\n---\nSee [doc](refs/secret.md).");
+
+        // Act
+        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
+
+        // Assert — skill should be excluded because refs/ is a symlink (reparse point)
+        Assert.False(skills.ContainsKey("symlink-escape-skill"));
+    }
+
+    [Fact]
+    public async Task ReadSkillResourceAsync_SymlinkInPath_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange — build a skill with a symlinked subdirectory
+        string skillDir = Path.Combine(this._testRoot, "symlink-read-skill");
+        string refsDir = Path.Combine(skillDir, "refs");
+        Directory.CreateDirectory(skillDir);
+
+        string outsideDir = Path.Combine(this._testRoot, "outside-read");
+        Directory.CreateDirectory(outsideDir);
+        File.WriteAllText(Path.Combine(outsideDir, "data.md"), "external data");
+
+        try
+        {
+            Directory.CreateSymbolicLink(refsDir, outsideDir);
+        }
+        catch (IOException)
+        {
+            // Symlink creation requires elevation on some platforms; skip gracefully.
+            return;
+        }
+
+        // Manually construct a skill that bypasses discovery validation
+        var frontmatter = new SkillFrontmatter("symlink-read-skill", "A skill");
+        var skill = new FileAgentSkill(
+            frontmatter: frontmatter,
+            body: "See [doc](refs/data.md).",
+            sourcePath: skillDir,
+            resourceNames: s_symlinkResource);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => this._loader.ReadSkillResourceAsync(skill, "refs/data.md"));
+    }
+#endif
+
     private string CreateSkillDirectory(string name, string description, string body)
     {
         string skillDir = Path.Combine(this._testRoot, name);

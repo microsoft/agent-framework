@@ -139,16 +139,14 @@ internal sealed partial class FileAgentSkillLoader
             throw new InvalidOperationException($"Resource file '{resourceName}' references a path outside the skill directory.");
         }
 
-#if NET
-        if (!IsSymlinkWithinDirectory(fullPath, normalizedSourcePath))
-        {
-            throw new InvalidOperationException($"Resource file '{resourceName}' is a symlink that resolves outside the skill directory.");
-        }
-#endif
-
         if (!File.Exists(fullPath))
         {
             throw new InvalidOperationException($"Resource file '{resourceName}' not found at '{fullPath}'.");
+        }
+
+        if (HasSymlinkInPath(fullPath, normalizedSourcePath))
+        {
+            throw new InvalidOperationException($"Resource file '{resourceName}' is a symlink that resolves outside the skill directory.");
         }
 
         LogResourceReading(this._logger, resourceName, skill.Frontmatter.Name);
@@ -297,17 +295,15 @@ internal sealed partial class FileAgentSkillLoader
                 return false;
             }
 
-#if NET
-            if (!IsSymlinkWithinDirectory(fullPath, normalizedSkillPath))
-            {
-                LogResourceSymlinkEscape(this._logger, skillName, resourceName);
-                return false;
-            }
-#endif
-
             if (!File.Exists(fullPath))
             {
                 LogMissingResource(this._logger, skillName, resourceName, fullPath);
+                return false;
+            }
+
+            if (HasSymlinkInPath(fullPath, normalizedSkillPath))
+            {
+                LogResourceSymlinkEscape(this._logger, skillName, resourceName);
                 return false;
             }
         }
@@ -324,24 +320,39 @@ internal sealed partial class FileAgentSkillLoader
         return fullPath.StartsWith(normalizedDirectoryPath, StringComparison.OrdinalIgnoreCase);
     }
 
-#if NET
     /// <summary>
-    /// Checks that a symlink at <paramref name="fullPath"/> does not resolve outside
-    /// <paramref name="normalizedDirectoryPath"/>.
+    /// Checks whether any segment in <paramref name="fullPath"/> (relative to
+    /// <paramref name="normalizedDirectoryPath"/>) is a symlink (reparse point).
+    /// Uses <see cref="FileAttributes.ReparsePoint"/> which is available on all target frameworks.
     /// </summary>
-    private static bool IsSymlinkWithinDirectory(string fullPath, string normalizedDirectoryPath)
+    private static bool HasSymlinkInPath(string fullPath, string normalizedDirectoryPath)
     {
-        // ResolveLinkTarget with returnFinalTarget: true follows the full symlink chain,
-        // guarding against chained symlinks that escape the skill directory.
-        string? resolvedTarget = File.ResolveLinkTarget(fullPath, returnFinalTarget: true)?.FullName;
-        if (resolvedTarget != null)
+        string relativePath = fullPath.Substring(normalizedDirectoryPath.Length);
+        string[] segments = relativePath.Split(
+            new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+            StringSplitOptions.RemoveEmptyEntries);
+
+        string currentPath = normalizedDirectoryPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        foreach (string segment in segments)
         {
-            return resolvedTarget.StartsWith(normalizedDirectoryPath, StringComparison.OrdinalIgnoreCase);
+            currentPath = Path.Combine(currentPath, segment);
+
+            if (Directory.Exists(currentPath) &&
+                (new DirectoryInfo(currentPath).Attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                return true;
+            }
+
+            if (File.Exists(currentPath) &&
+                (new FileInfo(currentPath).Attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                return true;
+            }
         }
 
-        return true;
+        return false;
     }
-#endif
 
     private static List<string> ExtractResourcePaths(string content)
     {
@@ -403,10 +414,8 @@ internal sealed partial class FileAgentSkillLoader
     [LoggerMessage(LogLevel.Warning, "Duplicate skill name '{SkillName}': skill from '{NewPath}' skipped in favor of existing skill from '{ExistingPath}'")]
     private static partial void LogDuplicateSkillName(ILogger logger, string skillName, string newPath, string existingPath);
 
-#if NET
     [LoggerMessage(LogLevel.Warning, "Excluding skill '{SkillName}': resource '{ResourceName}' is a symlink that resolves outside the skill directory")]
     private static partial void LogResourceSymlinkEscape(ILogger logger, string skillName, string resourceName);
-#endif
 
     [LoggerMessage(LogLevel.Information, "Reading resource '{FileName}' from skill '{SkillName}'")]
     private static partial void LogResourceReading(ILogger logger, string fileName, string skillName);
