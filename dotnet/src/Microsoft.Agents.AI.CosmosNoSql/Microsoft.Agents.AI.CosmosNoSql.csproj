@@ -3,7 +3,6 @@
   <PropertyGroup>
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.AI</RootNamespace>
-    <NoWarn>$(NoWarn);MEAI001</NoWarn>
     <VersionSuffix>preview</VersionSuffix>
   </PropertyGroup>
 

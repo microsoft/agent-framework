@@ -10,10 +10,7 @@ Tests basic agent operations including:
 - Empty thread ID handling
 """
 
-from typing import Any
-
 import pytest
-from dt_testutils import create_agent_client
 
 # Module-level markers - applied to all tests in this module
 pytestmark = [
@@ -28,13 +25,10 @@ class TestSingleAgent:
     """Test suite for single agent functionality."""
 
     @pytest.fixture(autouse=True)
-    def setup(self, worker_process: dict[str, Any], dts_endpoint: str) -> None:
+    def setup(self, agent_client_factory: type) -> None:
         """Setup test fixtures."""
-        self.endpoint: str = dts_endpoint
-        self.taskhub: str = str(worker_process["taskhub"])
-
-        # Create agent client
-        _, self.agent_client = create_agent_client(self.endpoint, self.taskhub)
+        # Create agent client using the factory fixture
+        _, self.agent_client = agent_client_factory.create()
 
     def test_agent_registration(self) -> None:
         """Test that the Joker agent is registered and accessible."""
@@ -45,9 +39,9 @@ class TestSingleAgent:
     def test_single_interaction(self):
         """Test a single interaction with the agent."""
         agent = self.agent_client.get_agent("Joker")
-        thread = agent.get_new_thread()
+        session = agent.create_session()
 
-        response = agent.run("Tell me a short joke about programming.", thread=thread)
+        response = agent.run("Tell me a short joke about programming.", session=session)
 
         assert response is not None
         assert response.text is not None
@@ -56,33 +50,33 @@ class TestSingleAgent:
     def test_conversation_continuity(self):
         """Test that conversation context is maintained across turns."""
         agent = self.agent_client.get_agent("Joker")
-        thread = agent.get_new_thread()
+        session = agent.create_session()
 
         # First turn: Ask for a joke about a specific topic
-        response1 = agent.run("Tell me a joke about cats.", thread=thread)
+        response1 = agent.run("Tell me a joke about cats.", session=session)
         assert response1 is not None
         assert len(response1.text) > 0
 
         # Second turn: Ask a follow-up that requires context
-        response2 = agent.run("Can you make it funnier?", thread=thread)
+        response2 = agent.run("Can you make it funnier?", session=session)
         assert response2 is not None
         assert len(response2.text) > 0
 
         # The agent should understand "it" refers to the previous joke
 
-    def test_multiple_threads(self):
-        """Test that different threads maintain separate contexts."""
+    def test_multiple_sessions(self):
+        """Test that different sessions maintain separate contexts."""
         agent = self.agent_client.get_agent("Joker")
 
-        # Create two separate threads
-        thread1 = agent.get_new_thread()
-        thread2 = agent.get_new_thread()
+        # Create two separate sessions
+        session1 = agent.create_session()
+        session2 = agent.create_session()
 
-        assert thread1.session_id != thread2.session_id
+        assert session1.durable_session_id != session2.durable_session_id
 
-        # Send different messages to each thread
-        response1 = agent.run("Tell me a joke about dogs.", thread=thread1)
-        response2 = agent.run("Tell me a joke about birds.", thread=thread2)
+        # Send different messages to each session
+        response1 = agent.run("Tell me a joke about dogs.", session=session1)
+        response2 = agent.run("Tell me a joke about birds.", session=session2)
 
         assert response1 is not None
         assert response2 is not None

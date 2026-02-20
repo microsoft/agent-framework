@@ -9,9 +9,9 @@ Run with: pytest tests/test_orchestration_context.py -v
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentProtocol
+from agent_framework import SupportsAgentRun
 
-from agent_framework_durabletask import DurableAgentThread
+from agent_framework_durabletask import DurableAgentSession
 from agent_framework_durabletask._orchestration_context import DurableAIAgentOrchestrationContext
 from agent_framework_durabletask._shim import DurableAIAgent
 
@@ -36,7 +36,7 @@ class TestDurableAIAgentOrchestrationContextGetAgent:
         agent = agent_context.get_agent("assistant")
 
         assert isinstance(agent, DurableAIAgent)
-        assert isinstance(agent, AgentProtocol)
+        assert isinstance(agent, SupportsAgentRun)
 
     def test_get_agent_shim_has_correct_name(self, agent_context: DurableAIAgentOrchestrationContext) -> None:
         """Verify retrieved agent has the correct name."""
@@ -74,24 +74,24 @@ class TestDurableAIAgentOrchestrationContextIntegration:
         assert hasattr(agent, "run")
         assert callable(agent.run)
 
-    def test_orchestration_agent_can_create_threads(self, agent_context: DurableAIAgentOrchestrationContext) -> None:
-        """Verify agent from context can create DurableAgentThread instances."""
+    def test_orchestration_agent_can_create_sessions(self, agent_context: DurableAIAgentOrchestrationContext) -> None:
+        """Verify agent from context can create DurableAgentSession instances."""
         agent = agent_context.get_agent("assistant")
 
-        thread = agent.get_new_thread()
+        session = agent.create_session()
 
-        assert isinstance(thread, DurableAgentThread)
+        assert isinstance(session, DurableAgentSession)
 
-    def test_orchestration_agent_thread_with_parameters(
+    def test_orchestration_agent_session_with_parameters(
         self, agent_context: DurableAIAgentOrchestrationContext
     ) -> None:
-        """Verify agent can create threads with custom parameters."""
+        """Verify agent can create sessions with custom parameters."""
         agent = agent_context.get_agent("assistant")
 
-        thread = agent.get_new_thread(service_thread_id="orch-session-456")
+        session = agent.create_session(service_session_id="orch-session-456")
 
-        assert isinstance(thread, DurableAgentThread)
-        assert thread.service_thread_id == "orch-session-456"
+        assert isinstance(session, DurableAgentSession)
+        assert session.service_session_id == "orch-session-456"
 
 
 if __name__ == "__main__":

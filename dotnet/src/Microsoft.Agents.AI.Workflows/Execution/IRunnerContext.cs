@@ -3,11 +3,14 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Observability;
 
 namespace Microsoft.Agents.AI.Workflows.Execution;
 
 internal interface IRunnerContext : IExternalRequestSink, ISuperStepJoinContext
 {
+    WorkflowTelemetryContext TelemetryContext { get; }
+
     ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default);
     ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null, CancellationToken cancellationToken = default);
 

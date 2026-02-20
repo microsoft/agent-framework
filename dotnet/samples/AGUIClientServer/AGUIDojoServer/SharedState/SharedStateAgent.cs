@@ -78,7 +78,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
 
         var response = allUpdates.ToAgentResponse();
 
-        if (response.TryDeserialize(this._jsonSerializerOptions, out JsonElement stateSnapshot))
+        if (TryDeserialize(response.Text, this._jsonSerializerOptions, out JsonElement stateSnapshot))
         {
             byte[] stateBytes = JsonSerializer.SerializeToUtf8Bytes(
                 stateSnapshot,
@@ -101,6 +101,27 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
         await foreach (var update in this.InnerAgent.RunStreamingAsync(secondRunMessages, session, options, cancellationToken).ConfigureAwait(false))
         {
             yield return update;
+        }
+    }
+
+    private static bool TryDeserialize<T>(string json, JsonSerializerOptions jsonSerializerOptions, out T structuredOutput)
+    {
+        try
+        {
+            T? result = JsonSerializer.Deserialize<T>(json, jsonSerializerOptions);
+            if (result is null)
+            {
+                structuredOutput = default!;
+                return false;
+            }
+
+            structuredOutput = result;
+            return true;
+        }
+        catch
+        {
+            structuredOutput = default!;
+            return false;
         }
     }
 }

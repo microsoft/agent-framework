@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/orchestrations/sequential.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 """Side-by-side sequential orchestrations for Agent Framework and Semantic Kernel."""
@@ -6,13 +15,18 @@ import asyncio
 from collections.abc import Sequence
 from typing import cast
 
-from agent_framework import ChatMessage, SequentialBuilder, WorkflowOutputEvent
+from agent_framework import Message
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from semantic_kernel.agents import Agent, ChatCompletionAgent, SequentialOrchestration
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import ChatMessageContent
+
+# Load environment variables from .env file
+load_dotenv()
 
 PROMPT = "Write a tagline for a budget-friendly eBike."
 
@@ -60,25 +74,25 @@ async def sk_agent_response_callback(
 ######################################################################
 
 
-async def run_agent_framework_example(prompt: str) -> list[ChatMessage]:
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+async def run_agent_framework_example(prompt: str) -> list[Message]:
+    client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    writer = chat_client.as_agent(
+    writer = client.as_agent(
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
         name="writer",
     )
 
-    reviewer = chat_client.as_agent(
+    reviewer = client.as_agent(
         instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
         name="reviewer",
     )
 
-    workflow = SequentialBuilder().participants([writer, reviewer]).build()
+    workflow = SequentialBuilder(participants=[writer, reviewer]).build()
 
-    conversation_outputs: list[list[ChatMessage]] = []
-    async for event in workflow.run_stream(prompt):
-        if isinstance(event, WorkflowOutputEvent):
-            conversation_outputs.append(cast(list[ChatMessage], event.data))
+    conversation_outputs: list[list[Message]] = []
+    async for event in workflow.run(prompt, stream=True):
+        if event.type == "output":
+            conversation_outputs.append(cast(list[Message], event.data))
 
     return conversation_outputs[-1] if conversation_outputs else []
 
@@ -102,7 +116,7 @@ async def run_semantic_kernel_example(prompt: str) -> str:
         await runtime.stop_when_idle()
 
 
-def _format_conversation(conversation: list[ChatMessage]) -> None:
+def _format_conversation(conversation: list[Message]) -> None:
     if not conversation:
         print("No Agent Framework output.")
         return

@@ -2,6 +2,8 @@
 
 """Event converter for AG-UI protocol events to Agent Framework types."""
 
+from __future__ import annotations
+
 from typing import Any
 
 from agent_framework import (

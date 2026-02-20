@@ -51,6 +51,14 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         this._workflowModel.Build(builder);
 
+        // Apply telemetry if configured
+        if (this._workflowOptions.IsTelemetryEnabled)
+        {
+            builder.WorkflowBuilder.WithOpenTelemetry(
+                this._workflowOptions.ConfigureTelemetry,
+                this._workflowOptions.TelemetryActivitySource);
+        }
+
         // Build final workflow
         return builder.WorkflowBuilder.Build(validateOrphans: false);
     }
@@ -193,7 +201,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         {
             // Transition to end of inner actions
             string endActionsId = ForeachExecutor.Steps.End(action.Id);
-            this.ContinueWith(new DelegateActionExecutor(endActionsId, this._workflowState, action.ResetAsync), action.Id);
+            this.ContinueWith(new DelegateActionExecutor(endActionsId, this._workflowState, action.CompleteAsync), action.Id);
             // Transition to select the next item
             this._workflowModel.AddLink(endActionsId, loopId);
         }
@@ -380,6 +388,27 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         // Define post action
         this._workflowModel.AddNode(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId);
+    }
+
+    protected override void Visit(InvokeFunctionTool item)
+    {
+        this.Trace(item);
+
+        // Entry point to invoke function tool - always yields for external execution
+        InvokeFunctionToolExecutor action = new(item, this._workflowOptions.AgentProvider, this._workflowState);
+        this.ContinueWith(action);
+
+        // Define request-port for function tool invocation (always requires external input)
+        string externalInputPortId = InvokeFunctionToolExecutor.Steps.ExternalInput(action.Id);
+        RequestPortAction externalInputPort = new(RequestPort.Create<ExternalInputRequest, ExternalInputResponse>(externalInputPortId));
+        this._workflowModel.AddNode(externalInputPort, action.ParentId);
+        this._workflowModel.AddLinkFromPeer(action.ParentId, externalInputPortId);
+
+        // Capture response when external input is received
+        string resumeId = InvokeFunctionToolExecutor.Steps.Resume(action.Id);
+        this.ContinueWith(
+            new DelegateActionExecutor<ExternalInputResponse>(resumeId, this._workflowState, action.CaptureResponseAsync),
+            action.ParentId);
     }
 
     protected override void Visit(InvokeAzureResponse item)

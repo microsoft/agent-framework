@@ -12,7 +12,7 @@ pip install agent-framework-ag-ui
 
 ### Using Example Agents with Any Chat Client
 
-All example agents are factory functions that accept any `ChatClientProtocol`-compatible chat client:
+All example agents are factory functions that accept any `SupportsChatGetResponse`-compatible chat client:
 
 ```python
 from fastapi import FastAPI
@@ -38,15 +38,15 @@ add_agent_framework_fastapi_endpoint(app, weather_agent(openai_client), "/weathe
 
 ```python
 from fastapi import FastAPI
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 
 # Create your agent
-agent = ChatAgent(
+agent = Agent(
     name="my_agent",
     instructions="You are a helpful assistant.",
-    chat_client=AzureOpenAIChatClient(model_id="gpt-4o"),
+    client=AzureOpenAIChatClient(model_id="gpt-4o"),
 )
 
 # Create FastAPI app and add AG-UI endpoint
@@ -70,21 +70,21 @@ This integration supports all 7 AG-UI features:
 
 ## Examples
 
-All example agents are implemented as **factory functions** that accept any chat client implementing `ChatClientProtocol`. This provides maximum flexibility to use Azure OpenAI, OpenAI, Anthropic, or any custom chat client implementation.
+All example agents are implemented as **factory functions** that accept any chat client implementing `SupportsChatGetResponse`. This provides maximum flexibility to use Azure OpenAI, OpenAI, Anthropic, or any custom chat client implementation.
 
 ### Available Example Agents
 
 Complete examples for all AG-UI features are available:
 
-- `simple_agent(chat_client)` - Basic agentic chat (Feature 1)
-- `weather_agent(chat_client)` - Backend tool rendering (Feature 2)
-- `human_in_the_loop_agent(chat_client)` - Human-in-the-loop with step customization (Feature 3)
-- `task_steps_agent_wrapped(chat_client)` - Agentic generative UI with step execution (Feature 4)
-- `ui_generator_agent(chat_client)` - Tool-based generative UI (Feature 5)
-- `recipe_agent(chat_client)` - Shared state management (Feature 6)
-- `document_writer_agent(chat_client)` - Predictive state updates (Feature 7)
-- `research_assistant_agent(chat_client)` - Research with progress events
-- `task_planner_agent(chat_client)` - Task planning with approvals
+- `simple_agent(client)` - Basic agentic chat (Feature 1)
+- `weather_agent(client)` - Backend tool rendering (Feature 2)
+- `human_in_the_loop_agent(client)` - Human-in-the-loop with step customization (Feature 3)
+- `task_steps_agent_wrapped(client)` - Agentic generative UI with step execution (Feature 4)
+- `ui_generator_agent(client)` - Tool-based generative UI (Feature 5)
+- `recipe_agent(client)` - Shared state management (Feature 6)
+- `document_writer_agent(client)` - Predictive state updates (Feature 7)
+- `research_assistant_agent(client)` - Research with progress events
+- `task_planner_agent(client)` - Task planning with approvals
 
 ### Using Example Agents
 
@@ -97,7 +97,7 @@ from agent_framework_ag_ui_examples.agents import (
     recipe_agent,
 )
 
-# Create a chat client (use any ChatClientProtocol implementation)
+# Create a chat client (use any SupportsChatGetResponse implementation)
 azure_client = AzureOpenAIChatClient(model_id="gpt-4")
 openai_client = OpenAIChatClient(model_id="gpt-4o")
 
@@ -150,16 +150,16 @@ from agent_framework_ag_ui_examples.agents import (
 app = FastAPI(title="AG-UI Examples")
 
 # Create a chat client (shared across all agents, or create individual ones)
-chat_client = AzureOpenAIChatClient(model_id="gpt-4")
+client = AzureOpenAIChatClient(model_id="gpt-4")
 
 # Add all example endpoints
-add_agent_framework_fastapi_endpoint(app, simple_agent(chat_client), "/agentic_chat")
-add_agent_framework_fastapi_endpoint(app, weather_agent(chat_client), "/backend_tool_rendering")
-add_agent_framework_fastapi_endpoint(app, human_in_the_loop_agent(chat_client), "/human_in_the_loop")
-add_agent_framework_fastapi_endpoint(app, task_steps_agent_wrapped(chat_client), "/agentic_generative_ui")  # type: ignore[arg-type]
-add_agent_framework_fastapi_endpoint(app, ui_generator_agent(chat_client), "/tool_based_generative_ui")
-add_agent_framework_fastapi_endpoint(app, recipe_agent(chat_client), "/shared_state")
-add_agent_framework_fastapi_endpoint(app, document_writer_agent(chat_client), "/predictive_state_updates")
+add_agent_framework_fastapi_endpoint(app, simple_agent(client), "/agentic_chat")
+add_agent_framework_fastapi_endpoint(app, weather_agent(client), "/backend_tool_rendering")
+add_agent_framework_fastapi_endpoint(app, human_in_the_loop_agent(client), "/human_in_the_loop")
+add_agent_framework_fastapi_endpoint(app, task_steps_agent_wrapped(client), "/agentic_generative_ui")  # type: ignore[arg-type]
+add_agent_framework_fastapi_endpoint(app, ui_generator_agent(client), "/tool_based_generative_ui")
+add_agent_framework_fastapi_endpoint(app, recipe_agent(client), "/shared_state")
+add_agent_framework_fastapi_endpoint(app, document_writer_agent(client), "/predictive_state_updates")
 ```
 
 ## Architecture
@@ -187,8 +187,8 @@ The package uses a clean, orchestrator-based architecture:
 You can create your own agent factories following the same pattern as the examples:
 
 ```python
-from agent_framework import ChatAgent, tool
-from agent_framework import ChatClientProtocol
+from agent_framework import Agent, tool
+from agent_framework import SupportsChatGetResponse
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 @tool
@@ -196,19 +196,19 @@ def my_tool(param: str) -> str:
     """My custom tool."""
     return f"Result: {param}"
 
-def my_custom_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
+def my_custom_agent(client: SupportsChatGetResponse) -> AgentFrameworkAgent:
     """Create a custom agent with the specified chat client.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A configured AgentFrameworkAgent instance
     """
-    agent = ChatAgent(
+    agent = Agent(
         name="my_custom_agent",
         instructions="Custom instructions here",
-        chat_client=chat_client,
+        client=client,
         tools=[my_tool],
     )
 
@@ -220,8 +220,8 @@ def my_custom_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
 
 # Use it
 from agent_framework.azure import AzureOpenAIChatClient
-chat_client = AzureOpenAIChatClient()
-agent = my_custom_agent(chat_client)
+client = AzureOpenAIChatClient()
+agent = my_custom_agent(client)
 ```
 
 ### Shared State
@@ -229,14 +229,14 @@ agent = my_custom_agent(chat_client)
 State is injected as system messages and updated via predictive state updates:
 
 ```python
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 # Create your agent
-agent = ChatAgent(
+agent = Agent(
     name="recipe_agent",
-    chat_client=AzureOpenAIChatClient(model_id="gpt-4o"),
+    client=AzureOpenAIChatClient(model_id="gpt-4o"),
 )
 
 state_schema = {
@@ -266,14 +266,14 @@ wrapped_agent = AgentFrameworkAgent(
 Predictive state updates automatically stream tool arguments as optimistic state updates:
 
 ```python
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 # Create your agent
-agent = ChatAgent(
+agent = Agent(
     name="document_writer",
-    chat_client=AzureOpenAIChatClient(model_id="gpt-4o"),
+    client=AzureOpenAIChatClient(model_id="gpt-4o"),
 )
 
 predict_state_config = {

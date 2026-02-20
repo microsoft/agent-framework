@@ -4,8 +4,8 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, AgentThread, ChatMessage, Content
-from agent_framework.exceptions import ServiceException, ServiceInitializationError
+from agent_framework import AgentResponse, AgentResponseUpdate, AgentSession, Content, Message
+from agent_framework.exceptions import AgentException
 from microsoft_agents.copilotstudio.client import CopilotClient
 
 from agent_framework_copilotstudio import CopilotStudioAgent
@@ -38,51 +38,59 @@ class TestCopilotStudioAgent:
         return MagicMock(spec=CopilotClient)
 
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
-    @patch("agent_framework_copilotstudio._agent.CopilotStudioSettings")
-    def test_init_missing_environment_id(self, mock_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
+    @patch("agent_framework_copilotstudio._agent.load_settings")
+    def test_init_missing_environment_id(self, mock_load_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
         mock_acquire_token.return_value = "fake-token"
-        mock_settings.return_value.environmentid = None
-        mock_settings.return_value.schemaname = "test-bot"
-        mock_settings.return_value.tenantid = "test-tenant"
-        mock_settings.return_value.agentappid = "test-client"
+        mock_load_settings.return_value = {
+            "environmentid": None,
+            "schemaname": "test-bot",
+            "tenantid": "test-tenant",
+            "agentappid": "test-client",
+        }
 
-        with pytest.raises(ServiceInitializationError, match="environment ID is required"):
+        with pytest.raises(ValueError, match="environment ID is required"):
             CopilotStudioAgent()
 
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
-    @patch("agent_framework_copilotstudio._agent.CopilotStudioSettings")
-    def test_init_missing_bot_id(self, mock_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
+    @patch("agent_framework_copilotstudio._agent.load_settings")
+    def test_init_missing_bot_id(self, mock_load_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
         mock_acquire_token.return_value = "fake-token"
-        mock_settings.return_value.environmentid = "test-env"
-        mock_settings.return_value.schemaname = None
-        mock_settings.return_value.tenantid = "test-tenant"
-        mock_settings.return_value.agentappid = "test-client"
+        mock_load_settings.return_value = {
+            "environmentid": "test-env",
+            "schemaname": None,
+            "tenantid": "test-tenant",
+            "agentappid": "test-client",
+        }
 
-        with pytest.raises(ServiceInitializationError, match="agent identifier"):
+        with pytest.raises(ValueError, match="agent identifier"):
             CopilotStudioAgent()
 
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
-    @patch("agent_framework_copilotstudio._agent.CopilotStudioSettings")
-    def test_init_missing_tenant_id(self, mock_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
+    @patch("agent_framework_copilotstudio._agent.load_settings")
+    def test_init_missing_tenant_id(self, mock_load_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
         mock_acquire_token.return_value = "fake-token"
-        mock_settings.return_value.environmentid = "test-env"
-        mock_settings.return_value.schemaname = "test-bot"
-        mock_settings.return_value.tenantid = None
-        mock_settings.return_value.agentappid = "test-client"
+        mock_load_settings.return_value = {
+            "environmentid": "test-env",
+            "schemaname": "test-bot",
+            "tenantid": None,
+            "agentappid": "test-client",
+        }
 
-        with pytest.raises(ServiceInitializationError, match="tenant ID is required"):
+        with pytest.raises(ValueError, match="tenant ID is required"):
             CopilotStudioAgent()
 
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
-    @patch("agent_framework_copilotstudio._agent.CopilotStudioSettings")
-    def test_init_missing_client_id(self, mock_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
+    @patch("agent_framework_copilotstudio._agent.load_settings")
+    def test_init_missing_client_id(self, mock_load_settings: MagicMock, mock_acquire_token: MagicMock) -> None:
         mock_acquire_token.return_value = "fake-token"
-        mock_settings.return_value.environmentid = "test-env"
-        mock_settings.return_value.schemaname = "test-bot"
-        mock_settings.return_value.tenantid = "test-tenant"
-        mock_settings.return_value.agentappid = None
+        mock_load_settings.return_value = {
+            "environmentid": "test-env",
+            "schemaname": "test-bot",
+            "tenantid": "test-tenant",
+            "agentappid": None,
+        }
 
-        with pytest.raises(ServiceInitializationError, match="client ID is required"):
+        with pytest.raises(ValueError, match="client ID is required"):
             CopilotStudioAgent()
 
     def test_init_with_client(self, mock_copilot_client: MagicMock) -> None:
@@ -93,25 +101,29 @@ class TestCopilotStudioAgent:
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
     def test_init_empty_environment_id(self, mock_acquire_token: MagicMock) -> None:
         mock_acquire_token.return_value = "fake-token"
-        with patch("agent_framework_copilotstudio._agent.CopilotStudioSettings") as mock_settings:
-            mock_settings.return_value.environmentid = ""
-            mock_settings.return_value.schemaname = "test-bot"
-            mock_settings.return_value.tenantid = "test-tenant"
-            mock_settings.return_value.agentappid = "test-client"
+        with patch("agent_framework_copilotstudio._agent.load_settings") as mock_load_settings:
+            mock_load_settings.return_value = {
+                "environmentid": "",
+                "schemaname": "test-bot",
+                "tenantid": "test-tenant",
+                "agentappid": "test-client",
+            }
 
-            with pytest.raises(ServiceInitializationError, match="environment ID is required"):
+            with pytest.raises(ValueError, match="environment ID is required"):
                 CopilotStudioAgent()
 
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
     def test_init_empty_schema_name(self, mock_acquire_token: MagicMock) -> None:
         mock_acquire_token.return_value = "fake-token"
-        with patch("agent_framework_copilotstudio._agent.CopilotStudioSettings") as mock_settings:
-            mock_settings.return_value.environmentid = "test-env"
-            mock_settings.return_value.schemaname = ""
-            mock_settings.return_value.tenantid = "test-tenant"
-            mock_settings.return_value.agentappid = "test-client"
+        with patch("agent_framework_copilotstudio._agent.load_settings") as mock_load_settings:
+            mock_load_settings.return_value = {
+                "environmentid": "test-env",
+                "schemaname": "",
+                "tenantid": "test-tenant",
+                "agentappid": "test-client",
+            }
 
-            with pytest.raises(ServiceInitializationError, match="agent identifier"):
+            with pytest.raises(ValueError, match="agent identifier"):
                 CopilotStudioAgent()
 
     async def test_run_with_string_message(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
@@ -134,7 +146,7 @@ class TestCopilotStudioAgent:
         assert response.messages[0].role == "assistant"
 
     async def test_run_with_chat_message(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
-        """Test run method with ChatMessage."""
+        """Test run method with Message."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
 
         conversation_activity = MagicMock()
@@ -143,7 +155,7 @@ class TestCopilotStudioAgent:
         mock_copilot_client.start_conversation.return_value = create_async_generator([conversation_activity])
         mock_copilot_client.ask_question.return_value = create_async_generator([mock_activity])
 
-        chat_message = ChatMessage("user", [Content.from_text("test message")])
+        chat_message = Message(role="user", contents=[Content.from_text("test message")])
         response = await agent.run(chat_message)
 
         assert isinstance(response, AgentResponse)
@@ -153,10 +165,10 @@ class TestCopilotStudioAgent:
         assert content.text == "Test response"
         assert response.messages[0].role == "assistant"
 
-    async def test_run_with_thread(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
-        """Test run method with existing thread."""
+    async def test_run_with_session(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
+        """Test run method with existing session."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
-        thread = AgentThread()
+        session = AgentSession()
 
         conversation_activity = MagicMock()
         conversation_activity.conversation.id = "test-conversation-id"
@@ -164,11 +176,11 @@ class TestCopilotStudioAgent:
         mock_copilot_client.start_conversation.return_value = create_async_generator([conversation_activity])
         mock_copilot_client.ask_question.return_value = create_async_generator([mock_activity])
 
-        response = await agent.run("test message", thread=thread)
+        response = await agent.run("test message", session=session)
 
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
-        assert thread.service_thread_id == "test-conversation-id"
+        assert session.service_session_id == "test-conversation-id"
 
     async def test_run_start_conversation_failure(self, mock_copilot_client: MagicMock) -> None:
         """Test run method when conversation start fails."""
@@ -176,11 +188,11 @@ class TestCopilotStudioAgent:
 
         mock_copilot_client.start_conversation.return_value = create_async_generator([])
 
-        with pytest.raises(ServiceException, match="Failed to start a new conversation"):
+        with pytest.raises(AgentException, match="Failed to start a new conversation"):
             await agent.run("test message")
 
-    async def test_run_stream_with_string_message(self, mock_copilot_client: MagicMock) -> None:
-        """Test run_stream method with string message."""
+    async def test_run_streaming_with_string_message(self, mock_copilot_client: MagicMock) -> None:
+        """Test run(stream=True) method with string message."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
 
         conversation_activity = MagicMock()
@@ -196,7 +208,7 @@ class TestCopilotStudioAgent:
         mock_copilot_client.ask_question.return_value = create_async_generator([typing_activity])
 
         response_count = 0
-        async for response in agent.run_stream("test message"):
+        async for response in agent.run("test message", stream=True):
             assert isinstance(response, AgentResponseUpdate)
             content = response.contents[0]
             assert content.type == "text"
@@ -205,10 +217,10 @@ class TestCopilotStudioAgent:
 
         assert response_count == 1
 
-    async def test_run_stream_with_thread(self, mock_copilot_client: MagicMock) -> None:
-        """Test run_stream method with existing thread."""
+    async def test_run_streaming_with_session(self, mock_copilot_client: MagicMock) -> None:
+        """Test run(stream=True) method with existing session."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
-        thread = AgentThread()
+        session = AgentSession()
 
         conversation_activity = MagicMock()
         conversation_activity.conversation.id = "test-conversation-id"
@@ -223,7 +235,7 @@ class TestCopilotStudioAgent:
         mock_copilot_client.ask_question.return_value = create_async_generator([typing_activity])
 
         response_count = 0
-        async for response in agent.run_stream("test message", thread=thread):
+        async for response in agent.run("test message", session=session, stream=True):
             assert isinstance(response, AgentResponseUpdate)
             content = response.contents[0]
             assert content.type == "text"
@@ -231,10 +243,10 @@ class TestCopilotStudioAgent:
             response_count += 1
 
         assert response_count == 1
-        assert thread.service_thread_id == "test-conversation-id"
+        assert session.service_session_id == "test-conversation-id"
 
-    async def test_run_stream_no_typing_activity(self, mock_copilot_client: MagicMock) -> None:
-        """Test run_stream method with non-typing activity."""
+    async def test_run_streaming_no_typing_activity(self, mock_copilot_client: MagicMock) -> None:
+        """Test run(stream=True) method with non-typing activity."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
 
         conversation_activity = MagicMock()
@@ -249,7 +261,7 @@ class TestCopilotStudioAgent:
         mock_copilot_client.ask_question.return_value = create_async_generator([message_activity])
 
         response_count = 0
-        async for _response in agent.run_stream("test message"):
+        async for _response in agent.run("test message", stream=True):
             response_count += 1
 
         assert response_count == 0
@@ -297,12 +309,12 @@ class TestCopilotStudioAgent:
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
 
-    async def test_run_stream_start_conversation_failure(self, mock_copilot_client: MagicMock) -> None:
-        """Test run_stream method when conversation start fails."""
+    async def test_run_streaming_start_conversation_failure(self, mock_copilot_client: MagicMock) -> None:
+        """Test run(stream=True) method when conversation start fails."""
         agent = CopilotStudioAgent(client=mock_copilot_client)
 
         mock_copilot_client.start_conversation.return_value = create_async_generator([])
 
-        with pytest.raises(ServiceException, match="Failed to start a new conversation"):
-            async for _ in agent.run_stream("test message"):
+        with pytest.raises(AgentException, match="Failed to start a new conversation"):
+            async for _ in agent.run("test message", stream=True):
                 pass

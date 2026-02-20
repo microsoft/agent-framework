@@ -53,7 +53,7 @@ Still have questions? Join our [weekly office hours](./COMMUNITY.md#public-commu
 ### ✨ **Highlights**
 
 - **Graph-based Workflows**: Connect agents and deterministic functions using data flows with streaming, checkpointing, human-in-the-loop, and time-travel capabilities
-  - [Python workflows](./python/samples/getting_started/workflows/) | [.NET workflows](./dotnet/samples/GettingStarted/Workflows/)
+  - [Python workflows](./python/samples/03-workflows/) | [.NET workflows](./dotnet/samples/GettingStarted/Workflows/)
 - **AF Labs**: Experimental packages for cutting-edge features including benchmarking, reinforcement learning, and research initiatives
   - [Labs directory](./python/packages/lab/)
 - **DevUI**: Interactive developer UI for agent development, testing, and debugging workflows
@@ -73,11 +73,11 @@ Still have questions? Join our [weekly office hours](./COMMUNITY.md#public-commu
 - **Python and C#/.NET Support**: Full framework support for both Python and C#/.NET implementations with consistent APIs
   - [Python packages](./python/packages/) | [.NET source](./dotnet/src/)
 - **Observability**: Built-in OpenTelemetry integration for distributed tracing, monitoring, and debugging
-  - [Python observability](./python/samples/getting_started/observability/) | [.NET telemetry](./dotnet/samples/GettingStarted/AgentOpenTelemetry/)
+  - [Python observability](./python/samples/02-agents/observability/) | [.NET telemetry](./dotnet/samples/GettingStarted/AgentOpenTelemetry/)
 - **Multiple Agent Provider Support**: Support for various LLM providers with more being added continuously
-  - [Python examples](./python/samples/getting_started/agents/) | [.NET examples](./dotnet/samples/GettingStarted/AgentProviders/)
+  - [Python examples](./python/samples/02-agents/providers/) | [.NET examples](./dotnet/samples/GettingStarted/AgentProviders/)
 - **Middleware**: Flexible middleware system for request/response processing, exception handling, and custom pipelines
-  - [Python middleware](./python/samples/getting_started/middleware/) | [.NET middleware](./dotnet/samples/GettingStarted/Agents/Agent_Step14_Middleware/)
+  - [Python middleware](./python/samples/02-agents/middleware/) | [.NET middleware](./dotnet/samples/GettingStarted/Agents/Agent_Step14_Middleware/)
 
 ### 💬 **We want your feedback!**
 
@@ -125,12 +125,13 @@ Create a simple Agent, using OpenAI Responses, that writes a haiku about the Mic
 
 ```c#
 // dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
-using System;
+using Microsoft.Agents.AI;
 using OpenAI;
+using OpenAI.Responses;
 
 // Replace the <apikey> with your OpenAI API key.
 var agent = new OpenAIClient("<apikey>")
-    .GetOpenAIResponseClient("gpt-4o-mini")
+    .GetResponsesClient("gpt-4o-mini")
     .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
@@ -142,14 +143,17 @@ Create a simple Agent, using Azure OpenAI Responses with token based auth, that 
 // dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
 // dotnet add package Azure.Identity
 // Use `az login` to authenticate with Azure CLI
-using System;
+using System.ClientModel.Primitives;
+using Azure.Identity;
+using Microsoft.Agents.AI;
 using OpenAI;
+using OpenAI.Responses;
 
 // Replace <resource> and gpt-4o-mini with your Azure OpenAI resource name and deployment name.
 var agent = new OpenAIClient(
     new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri("https://<resource>.openai.azure.com/openai/v1") })
-    .GetOpenAIResponseClient("gpt-4o-mini")
+    .GetResponsesClient("gpt-4o-mini")
     .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
@@ -159,9 +163,9 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 
 ### Python
 
-- [Getting Started with Agents](./python/samples/getting_started/agents): basic agent creation and tool usage
-- [Chat Client Examples](./python/samples/getting_started/chat_client): direct chat client usage patterns
-- [Getting Started with Workflows](./python/samples/getting_started/workflows): basic workflow creation and integration with agents
+- [Getting Started with Agents](./python/samples/01-get-started): progressive tutorial from hello-world to hosting
+- [Agent Concepts](./python/samples/02-agents): deep-dive samples by topic (tools, middleware, providers, etc.)
+- [Getting Started with Workflows](./python/samples/03-workflows): workflow creation and integration with agents
 
 ### .NET
 

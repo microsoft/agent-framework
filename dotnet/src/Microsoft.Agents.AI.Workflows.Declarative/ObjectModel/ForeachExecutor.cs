@@ -37,27 +37,21 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
 
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
+        Throw.IfNull(this.Model.Items, $"{nameof(this.Model)}.{nameof(this.Model.Items)}");
+
         this._index = 0;
 
-        if (this.Model.Items is null)
+        EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.Model.Items);
+        if (expressionResult.Value is TableDataValue tableValue)
         {
-            this._values = [];
-            this.HasValue = false;
+            this._values = [.. tableValue.Values.Select(value => value.Properties.Values.First().ToFormula())];
         }
         else
         {
-            EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.Model.Items);
-            if (expressionResult.Value is TableDataValue tableValue)
-            {
-                this._values = [.. tableValue.Values.Select(value => value.Properties.Values.First().ToFormula())];
-            }
-            else
-            {
-                this._values = [expressionResult.Value.ToFormula()];
-            }
+            this._values = [expressionResult.Value.ToFormula()];
         }
 
-        await this.ResetAsync(context, null, cancellationToken).ConfigureAwait(false);
+        await this.ResetStateAsync(context, cancellationToken).ConfigureAwait(false);
 
         return default;
     }
@@ -79,19 +73,24 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         }
     }
 
-    public async ValueTask ResetAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
+    public async ValueTask CompleteAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
     {
         try
         {
-            await context.QueueStateResetAsync(Throw.IfNull(this.Model.Value), cancellationToken).ConfigureAwait(false);
-            if (this.Model.Index is not null)
-            {
-                await context.QueueStateResetAsync(this.Model.Index, cancellationToken).ConfigureAwait(false);
-            }
+            await this.ResetStateAsync(context, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ResetStateAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        await context.QueueStateResetAsync(Throw.IfNull(this.Model.Value), cancellationToken).ConfigureAwait(false);
+        if (this.Model.Index is not null)
+        {
+            await context.QueueStateResetAsync(this.Model.Index, cancellationToken).ConfigureAwait(false);
         }
     }
 }

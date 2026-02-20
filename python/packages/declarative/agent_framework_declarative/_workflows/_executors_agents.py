@@ -20,12 +20,13 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from agent_framework import (
-    ChatMessage,
     Content,
+    Message,
     WorkflowContext,
     handler,
     response_handler,
 )
+from agent_framework.exceptions import AgentInvalidRequestException, AgentInvalidResponseException
 
 from ._declarative_base import (
     ActionComplete,
@@ -170,7 +171,7 @@ def _extract_json_from_response(text: str) -> Any:
     raise json.JSONDecodeError("No valid JSON found in response", text, 0)
 
 
-def _validate_conversation_history(messages: list[ChatMessage], agent_name: str) -> None:
+def _validate_conversation_history(messages: list[Message], agent_name: str) -> None:
     """Validate that conversation history has matching tool calls and results.
 
     This helps catch issues where tool call messages are stored without their
@@ -243,19 +244,6 @@ TOOL_REGISTRY_KEY = "_tool_registry"
 EXTERNAL_LOOP_STATE_KEY = "_external_loop_state"
 
 
-class AgentInvocationError(Exception):
-    """Raised when an agent invocation fails.
-
-    Attributes:
-        agent_name: Name of the agent that failed
-        message: Error description
-    """
-
-    def __init__(self, agent_name: str, message: str) -> None:
-        self.agent_name = agent_name
-        super().__init__(f"Agent '{agent_name}' invocation failed: {message}")
-
-
 @dataclass
 class AgentResult:
     """Result from an agent invocation."""
@@ -263,7 +251,7 @@ class AgentResult:
     success: bool
     response: str
     agent_name: str
-    messages: list[ChatMessage] = field(default_factory=lambda: cast(list[ChatMessage], []))
+    messages: list[Message] = field(default_factory=lambda: cast(list[Message], []))
     tool_calls: list[Content] = field(default_factory=lambda: cast(list[Content], []))
     error: str | None = None
 
@@ -301,7 +289,7 @@ class AgentExternalInputRequest:
                     return AgentExternalInputResponse(user_input=user_input)
 
                 async with run_context(request_handler=on_request) as ctx:
-                    async for event in workflow.run_stream(ctx=ctx):
+                    async for event in workflow.run(ctx=ctx, stream=True):
                         print(event)
     """
 
@@ -309,7 +297,7 @@ class AgentExternalInputRequest:
     agent_name: str
     agent_response: str
     iteration: int = 0
-    messages: list[ChatMessage] = field(default_factory=lambda: cast(list[ChatMessage], []))
+    messages: list[Message] = field(default_factory=lambda: cast(list[Message], []))
     function_calls: list[Content] = field(default_factory=lambda: cast(list[Content], []))
 
 
@@ -340,7 +328,7 @@ class AgentExternalInputResponse:
     """
 
     user_input: str
-    messages: list[ChatMessage] = field(default_factory=lambda: cast(list[ChatMessage], []))
+    messages: list[Message] = field(default_factory=lambda: cast(list[Message], []))
     function_results: dict[str, Content] = field(default_factory=lambda: cast(dict[str, Content], {}))
 
 
@@ -637,49 +625,57 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             Tuple of (accumulated_response, all_messages, tool_calls)
         """
         accumulated_response = ""
-        all_messages: list[ChatMessage] = []
+        all_messages: list[Message] = []
         tool_calls: list[Content] = []
 
         # Add user input to conversation history first (via state.append only)
         if input_text:
-            user_message = ChatMessage(role="user", text=input_text)
+            user_message = Message(role="user", text=input_text)
             state.append(messages_path, user_message)
 
         # Get conversation history from state AFTER adding user message
         # Note: We get a fresh copy to avoid mutation issues
-        conversation_history: list[ChatMessage] = state.get(messages_path) or []
+        conversation_history: list[Message] = state.get(messages_path) or []
 
         # Build messages list for agent (use history if available, otherwise just input)
-        messages_for_agent: list[ChatMessage] | str = conversation_history if conversation_history else input_text
+        messages_for_agent: list[Message] | str = conversation_history if conversation_history else input_text
 
         # Validate conversation history before invoking agent
         if isinstance(messages_for_agent, list) and messages_for_agent:
             _validate_conversation_history(messages_for_agent, agent_name)
 
+        # Retrieve kwargs passed to workflow.run() so they propagate to agent tools
+        from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
+
+        run_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+        options: dict[str, Any] | None = None
+        if run_kwargs:
+            # Merge caller-provided options to avoid duplicate keyword argument
+            options = dict(run_kwargs.get("options") or {})
+            options["additional_function_arguments"] = run_kwargs
+            # Exclude 'options' from splat to avoid TypeError on duplicate keyword
+            run_kwargs = {k: v for k, v in run_kwargs.items() if k != "options"}
+
         # Use run() method to get properly structured messages (including tool calls and results)
         # This is critical for multi-turn conversations where tool calls must be followed
         # by their results in the message history
-        if hasattr(agent, "run"):
-            result: Any = await agent.run(messages_for_agent)
-            if hasattr(result, "text") and result.text:
-                accumulated_response = str(result.text)
-                if auto_send:
-                    await ctx.yield_output(str(result.text))
-            elif isinstance(result, str):
-                accumulated_response = result
-                if auto_send:
-                    await ctx.yield_output(result)
+        result: Any = await agent.run(messages_for_agent, options=options, **run_kwargs)
+        if hasattr(result, "text") and result.text:
+            accumulated_response = str(result.text)
+            if auto_send:
+                await ctx.yield_output(str(result.text))
+        elif isinstance(result, str):
+            accumulated_response = result
+            if auto_send:
+                await ctx.yield_output(result)
 
-            if not isinstance(result, str):
-                result_messages: Any = getattr(result, "messages", None)
-                if result_messages is not None:
-                    all_messages = list(cast(list[ChatMessage], result_messages))
-                result_tool_calls: Any = getattr(result, "tool_calls", None)
-                if result_tool_calls is not None:
-                    tool_calls = list(cast(list[Content], result_tool_calls))
-
-        else:
-            raise RuntimeError(f"Agent '{agent_name}' has no run or run_stream method")
+        if not isinstance(result, str):
+            result_messages: Any = getattr(result, "messages", None)
+            if result_messages is not None:
+                all_messages = list(cast(list[Message], result_messages))
+            result_tool_calls: Any = getattr(result, "tool_calls", None)
+            if result_tool_calls is not None:
+                tool_calls = list(cast(list[Content], result_tool_calls))
 
         # Add messages to conversation history
         # We need to include ALL messages from the agent run (including tool calls and tool results)
@@ -711,7 +707,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 "Agent '%s': No messages in response, creating simple assistant message",
                 agent_name,
             )
-            assistant_message = ChatMessage(role="assistant", text=accumulated_response)
+            assistant_message = Message(role="assistant", text=accumulated_response)
             state.append(messages_path, assistant_message)
 
         # Store results in state - support both schema formats:
@@ -759,7 +755,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         When externalLoop.when is configured and evaluates to true after agent response,
         this method emits an ExternalInputRequest via ctx.request_info() and returns.
         The workflow will yield, and when the caller provides a response via
-        send_responses_streaming(), the handle_external_input_response handler
+        run(responses=..., stream=True), the handle_external_input_response handler
         will continue the loop.
         """
         state = await self._ensure_state_initialized(ctx, trigger)
@@ -799,7 +795,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             state.set("Agent.error", error_msg)
             if result_property:
                 state.set(result_property, {"error": error_msg})
-            raise AgentInvocationError(agent_name, "not found in registry")
+            raise AgentInvalidRequestException(f"Agent '{agent_name}' invocation failed: not found in registry")
 
         iteration = 0
 
@@ -816,14 +812,14 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 auto_send=auto_send,
                 messages_path=messages_path,
             )
-        except AgentInvocationError:
+        except (AgentInvalidRequestException, AgentInvalidResponseException):
             raise  # Re-raise our own errors
         except Exception as e:
             logger.error(f"InvokeAzureAgent: error invoking agent '{agent_name}': {e}")
             state.set("Agent.error", str(e))
             if result_property:
                 state.set(result_property, {"error": str(e)})
-            raise AgentInvocationError(agent_name, str(e)) from e
+            raise AgentInvalidResponseException(f"Agent '{agent_name}' invocation failed: {e}") from e
 
         # Check external loop condition
         if external_loop_when:
@@ -940,7 +936,9 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
 
         if agent is None:
             logger.error(f"InvokeAzureAgent: agent '{agent_name}' not found during loop resumption")
-            raise AgentInvocationError(agent_name, "not found during loop resumption")
+            raise AgentInvalidRequestException(
+                f"Agent '{agent_name}' invocation failed: not found during loop resumption"
+            )
 
         try:
             accumulated_response, all_messages, tool_calls = await self._invoke_agent_and_store_results(
@@ -955,12 +953,12 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 auto_send=loop_state.auto_send,
                 messages_path=loop_state.messages_path,
             )
-        except AgentInvocationError:
+        except (AgentInvalidRequestException, AgentInvalidResponseException):
             raise  # Re-raise our own errors
         except Exception as e:
             logger.error(f"InvokeAzureAgent: error invoking agent '{agent_name}' during loop: {e}")
             state.set("Agent.error", str(e))
-            raise AgentInvocationError(agent_name, str(e)) from e
+            raise AgentInvalidResponseException(f"Agent '{agent_name}' invocation failed: {e}") from e
 
         # Re-evaluate the condition AFTER the agent responds
         # This is critical: the agent's response may have set NeedsTicket=true or IsResolved=true

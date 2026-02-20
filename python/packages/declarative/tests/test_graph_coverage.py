@@ -1835,8 +1835,8 @@ class TestAgentExternalLoopCoverage:
         }
         executor = InvokeAzureAgentExecutor(action_def, agents={"TestAgent": mock_agent})
 
-        # Mock the internal method to avoid storing ChatMessage objects in state
-        # (PowerFx cannot serialize ChatMessage)
+        # Mock the internal method to avoid storing Message objects in state
+        # (PowerFx cannot serialize Message)
         with patch.object(
             executor,
             "_invoke_agent_and_store_results",
@@ -1851,9 +1851,10 @@ class TestAgentExternalLoopCoverage:
         assert request.agent_name == "TestAgent"
 
     async def test_agent_executor_agent_error_handling(self, mock_context, mock_state):
-        """Test agent executor raises AgentInvocationError on failure."""
+        """Test agent executor raises AgentInvalidResponseException on failure."""
+        from agent_framework.exceptions import AgentInvalidResponseException
+
         from agent_framework_declarative._workflows._executors_agents import (
-            AgentInvocationError,
             InvokeAzureAgentExecutor,
         )
 
@@ -1871,7 +1872,7 @@ class TestAgentExternalLoopCoverage:
         }
         executor = InvokeAzureAgentExecutor(action_def, agents={"TestAgent": mock_agent})
 
-        with pytest.raises(AgentInvocationError) as exc_info:
+        with pytest.raises(AgentInvalidResponseException) as exc_info:
             await executor.handle_action(ActionTrigger(), mock_context)
 
         assert "TestAgent" in str(exc_info.value)
@@ -2012,7 +2013,9 @@ class TestBuilderControlFlowCreation:
         # Create builder with minimal yaml definition
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        wb = WorkflowBuilder(start_executor=JoinExecutor({"kind": "Dummy"}, id="dummy"))
 
         action_def = {
             "kind": "GotoAction",
@@ -2036,7 +2039,9 @@ class TestBuilderControlFlowCreation:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        wb = WorkflowBuilder(start_executor=JoinExecutor({"kind": "Dummy"}, id="dummy"))
 
         action_def = {
             "kind": "GotoAction",
@@ -2056,7 +2061,9 @@ class TestBuilderControlFlowCreation:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        wb = WorkflowBuilder(start_executor=JoinExecutor({"kind": "Dummy"}, id="dummy"))
 
         action_def = {
             "kind": "GotoAction",
@@ -2094,7 +2101,9 @@ class TestBuilderControlFlowCreation:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        wb = WorkflowBuilder(start_executor=JoinExecutor({"kind": "Dummy"}, id="dummy"))
 
         # Create a mock loop_next executor
         loop_next = ForeachNextExecutor(
@@ -2124,7 +2133,9 @@ class TestBuilderControlFlowCreation:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        wb = WorkflowBuilder(start_executor=JoinExecutor({"kind": "Dummy"}, id="dummy"))
 
         action_def = {
             "kind": "BreakLoop",
@@ -2149,7 +2160,9 @@ class TestBuilderControlFlowCreation:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        wb = WorkflowBuilder(start_executor=JoinExecutor({"kind": "Dummy"}, id="dummy"))
 
         # Create a mock loop_next executor
         loop_next = ForeachNextExecutor(
@@ -2179,7 +2192,9 @@ class TestBuilderControlFlowCreation:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        wb = WorkflowBuilder(start_executor=JoinExecutor({"kind": "Dummy"}, id="dummy"))
 
         action_def = {
             "kind": "ContinueLoop",
@@ -2203,7 +2218,9 @@ class TestBuilderEdgeWiring:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        wb = WorkflowBuilder(start_executor=JoinExecutor({"kind": "Dummy"}, id="dummy"))
 
         # Create a mock source executor
         source = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "test"}}, id="source")
@@ -2236,7 +2253,9 @@ class TestBuilderEdgeWiring:
 
         yaml_def = {"name": "test_workflow", "actions": []}
         graph_builder = DeclarativeWorkflowBuilder(yaml_def)
-        wb = WorkflowBuilder()
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        wb = WorkflowBuilder(start_executor=JoinExecutor({"kind": "Dummy"}, id="dummy"))
 
         source = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "source"}}, id="source")
         target = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "target"}}, id="target")
@@ -2357,11 +2376,12 @@ class TestAgentExecutorExternalLoop:
 
     async def test_handle_external_input_response_agent_not_found(self, mock_context, mock_state):
         """Test handling external input raises error when agent not found during resumption."""
+        from agent_framework.exceptions import AgentInvalidRequestException
+
         from agent_framework_declarative._workflows._executors_agents import (
             EXTERNAL_LOOP_STATE_KEY,
             AgentExternalInputRequest,
             AgentExternalInputResponse,
-            AgentInvocationError,
             ExternalLoopState,
             InvokeAzureAgentExecutor,
         )
@@ -2393,7 +2413,7 @@ class TestAgentExecutorExternalLoop:
         )
         response = AgentExternalInputResponse(user_input="continue")
 
-        with pytest.raises(AgentInvocationError) as exc_info:
+        with pytest.raises(AgentInvalidRequestException) as exc_info:
             await executor.handle_external_input_response(original_request, response, mock_context)
 
         assert "NonExistentAgent" in str(exc_info.value)
