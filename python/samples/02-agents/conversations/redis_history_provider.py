@@ -20,7 +20,6 @@ management, enabling persistent conversation history storage across sessions
 with Redis as the backend data store.
 """
 
-
 # Default Redis URL for local Redis Stack.
 # Override via the REDIS_URL environment variable for remote or authenticated instances.
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")

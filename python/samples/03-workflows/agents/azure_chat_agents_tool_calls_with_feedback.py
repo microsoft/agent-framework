@@ -153,7 +153,7 @@ class Coordinator(Executor):
             # Human approved the draft as-is; forward it unchanged.
             await ctx.send_message(
                 AgentExecutorRequest(
-                    messages=original_request.conversation + [Message("user", text="The draft is approved as-is.")],
+                    messages=[*original_request.conversation, *[Message("user", text="The draft is approved as-is.")]],
                     should_respond=True,
                 ),
                 target_id=self.final_editor_id,
@@ -161,16 +161,15 @@ class Coordinator(Executor):
             return
 
         # Human provided feedback; prompt the writer to revise.
-        conversation: list[Message] = list(original_request.conversation)
         instruction = (
             "A human reviewer shared the following guidance:\n"
             f"{note or 'No specific guidance provided.'}\n\n"
             "Rewrite the draft from the previous assistant message into a polished final version. "
             "Keep the response under 120 words and reflect any requested tone adjustments."
         )
-        conversation.append(Message("user", text=instruction))
         await ctx.send_message(
-            AgentExecutorRequest(messages=conversation, should_respond=True), target_id=self.writer_id
+            AgentExecutorRequest(messages=[Message("user", text=instruction)], should_respond=True),
+            target_id=self.writer_id,
         )
 
 
