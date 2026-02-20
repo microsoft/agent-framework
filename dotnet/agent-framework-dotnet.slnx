@@ -58,6 +58,7 @@
   <Folder Name="/Samples/GettingStarted/AgentProviders/">
     <File Path="samples/GettingStarted/AgentProviders/README.md" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_A2A/Agent_With_A2A.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_Agentforce/Agent_With_Agentforce.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_Anthropic/Agent_With_Anthropic.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgentsPersistent/Agent_With_AzureAIAgentsPersistent.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIProject/Agent_With_AzureAIProject.csproj" />
@@ -413,6 +414,7 @@
     <Project Path="src/Microsoft.Agents.AI.Anthropic/Microsoft.Agents.AI.Anthropic.csproj" />
     <Project Path="src/Microsoft.Agents.AI.AzureAI.Persistent/Microsoft.Agents.AI.AzureAI.Persistent.csproj" />
     <Project Path="src/Microsoft.Agents.AI.AzureAI/Microsoft.Agents.AI.AzureAI.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Agentforce/Microsoft.Agents.AI.Agentforce.csproj" />
     <Project Path="src/Microsoft.Agents.AI.CopilotStudio/Microsoft.Agents.AI.CopilotStudio.csproj" />
     <Project Path="src/Microsoft.Agents.AI.CosmosNoSql/Microsoft.Agents.AI.CosmosNoSql.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Declarative/Microsoft.Agents.AI.Declarative.csproj" />
@@ -456,6 +458,7 @@
   <Folder Name="/Tests/UnitTests/">
     <Project Path="tests/Microsoft.Agents.AI.A2A.UnitTests/Microsoft.Agents.AI.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Abstractions.UnitTests/Microsoft.Agents.AI.Abstractions.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.Agentforce.UnitTests/Microsoft.Agents.AI.Agentforce.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AGUI.UnitTests/Microsoft.Agents.AI.AGUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Anthropic.UnitTests/Microsoft.Agents.AI.Anthropic.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests.csproj" />
