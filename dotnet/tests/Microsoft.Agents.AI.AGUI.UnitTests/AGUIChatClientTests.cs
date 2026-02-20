@@ -228,7 +228,7 @@ public sealed class AGUIAgentTests
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
 
         // Act
@@ -250,8 +250,8 @@ public sealed class AGUIAgentTests
         using var httpClient = new HttpClient();
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
-        AgentSession originalSession = await agent.GetNewSessionAsync();
-        JsonElement serialized = originalSession.Serialize();
+        AgentSession originalSession = await agent.CreateSessionAsync();
+        JsonElement serialized = await agent.SerializeSessionAsync(originalSession);
 
         // Act
         AgentSession deserialized = await agent.DeserializeSessionAsync(serialized);
@@ -487,7 +487,7 @@ public sealed class AGUIAgentTests
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: [testTool]);
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act

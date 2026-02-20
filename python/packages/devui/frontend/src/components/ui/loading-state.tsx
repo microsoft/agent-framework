@@ -9,8 +9,8 @@ interface LoadingStateProps {
   fullPage?: boolean
 }
 
-export function LoadingState({ 
-  message = "Loading...", 
+export function LoadingState({
+  message = "Loading...",
   description,
   size = "md",
   className,

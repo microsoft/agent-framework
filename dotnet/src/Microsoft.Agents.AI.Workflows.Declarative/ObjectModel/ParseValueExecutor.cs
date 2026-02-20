@@ -19,24 +19,18 @@ internal sealed class ParseValueExecutor(ParseValue model, WorkflowFormulaState 
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        PropertyPath variablePath = Throw.IfNull(this.Model.Variable?.Path, $"{nameof(this.Model)}.{nameof(model.Variable)}");
+        Throw.IfNull(this.Model.ValueType, $"{nameof(this.Model)}.{nameof(model.ValueType)}");
+        Throw.IfNull(this.Model.Variable, $"{nameof(this.Model)}.{nameof(model.Variable)}");
         ValueExpression valueExpression = Throw.IfNull(this.Model.Value, $"{nameof(this.Model)}.{nameof(this.Model.Value)}");
 
         EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(valueExpression);
 
         FormulaValue parsedValue;
-        if (this.Model.ValueType is not null)
-        {
-            VariableType targetType = new(this.Model.ValueType);
-            object? parsedResult = expressionResult.Value.ToObject().ConvertType(targetType);
-            parsedValue = parsedResult.ToFormula();
-        }
-        else
-        {
-            parsedValue = expressionResult.Value.ToFormula();
-        }
+        VariableType targetType = new(this.Model.ValueType);
+        object? parsedResult = expressionResult.Value.ToObject().ConvertType(targetType);
+        parsedValue = parsedResult.ToFormula();
 
-        await this.AssignAsync(variablePath, parsedValue, context).ConfigureAwait(false);
+        await this.AssignAsync(this.Model.Variable.Path, parsedValue, context).ConfigureAwait(false);
 
         return default;
     }

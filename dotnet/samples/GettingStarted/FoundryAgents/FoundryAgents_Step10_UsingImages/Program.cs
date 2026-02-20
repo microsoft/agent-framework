@@ -14,17 +14,20 @@ const string VisionInstructions = "You are a helpful agent that can analyze imag
 const string VisionName = "VisionAgent";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Define the agent you want to create. (Prompt Agent in this case)
 AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: VisionName, model: deploymentName, instructions: VisionInstructions);
 
 ChatMessage message = new(ChatRole.User, [
     new TextContent("What do you see in this image?"),
-    new DataContent(File.ReadAllBytes("assets/walkway.jpg"), "image/jpeg")
+    await DataContent.LoadFromAsync("assets/walkway.jpg"),
 ]);
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(message, session))
 {

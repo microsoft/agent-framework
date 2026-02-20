@@ -15,7 +15,10 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJEC
 const string JokerInstructions = "You are good at telling jokes.";
 const string JokerName = "JokerAgent";
 
-AIProjectClient aIProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient aIProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create a new agent if one doesn't exist already.
 ChatClientAgent agent;
@@ -54,7 +57,7 @@ internal sealed class SampleService(AIProjectClient client, AIAgent agent, IHost
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         // Create a session that will be used for the entirety of the service lifetime so that the user can ask follow up questions.
-        this._session = await agent.GetNewSessionAsync(cancellationToken);
+        this._session = await agent.CreateSessionAsync(cancellationToken);
         _ = this.RunAsync(appLifetime.ApplicationStopping);
     }
 

@@ -44,7 +44,7 @@ internal sealed class AFAgentApplication : AgentApplication
         // Deserialize the conversation history into an AgentSession, or create a new one if none exists.
         AgentSession agentSession = sessionElementStart.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null
             ? await this._agent.DeserializeSessionAsync(sessionElementStart, JsonUtilities.DefaultOptions, cancellationToken)
-            : await this._agent.GetNewSessionAsync(cancellationToken);
+            : await this._agent.CreateSessionAsync(cancellationToken);
 
         ChatMessage chatMessage = HandleUserInput(turnContext);
 
@@ -80,7 +80,7 @@ internal sealed class AFAgentApplication : AgentApplication
         }
 
         // Serialize and save the updated conversation history back to turn state.
-        JsonElement sessionElementEnd = agentSession.Serialize(JsonUtilities.DefaultOptions);
+        JsonElement sessionElementEnd = await this._agent.SerializeSessionAsync(agentSession, JsonUtilities.DefaultOptions, cancellationToken);
         turnState.SetValue("conversation.chatHistory", sessionElementEnd);
 
         // End the streaming response
@@ -131,58 +131,54 @@ internal sealed class AFAgentApplication : AgentApplication
     }
 
     /// <summary>
-    /// When the agent returns any user input requests, this method converts them into adaptive cards that
+    /// When the agent returns any function approval requests, this method converts them into adaptive cards that
     /// asks the user to approve or deny the requests.
     /// </summary>
-    /// <param name="response">The <see cref="AgentResponse"/> that may contain the user input requests.</param>
+    /// <param name="response">The <see cref="AgentResponse"/> that may contain the function approval requests.</param>
     /// <param name="attachments">The list of <see cref="Attachment"/> to which the adaptive cards will be added.</param>
     private static void HandleUserInputRequests(AgentResponse response, ref List<Attachment>? attachments)
     {
-        var userInputRequests = response.UserInputRequests.ToList();
-        if (userInputRequests.Count > 0)
+        foreach (FunctionApprovalRequestContent functionApprovalRequest in response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>())
         {
-            foreach (var functionApprovalRequest in userInputRequests.OfType<FunctionApprovalRequestContent>())
+            var functionApprovalRequestJson = JsonSerializer.Serialize(functionApprovalRequest, JsonUtilities.DefaultOptions);
+
+            var card = new AdaptiveCard("1.5");
+            card.Body.Add(new AdaptiveTextBlock
             {
-                var functionApprovalRequestJson = JsonSerializer.Serialize(functionApprovalRequest, JsonUtilities.DefaultOptions);
+                Text = "Function Call Approval Required",
+                Size = AdaptiveTextSize.Large,
+                Weight = AdaptiveTextWeight.Bolder,
+                HorizontalAlignment = AdaptiveHorizontalAlignment.Center
+            });
+            card.Body.Add(new AdaptiveTextBlock
+            {
+                Text = $"Function: {functionApprovalRequest.FunctionCall.Name}"
+            });
+            card.Body.Add(new AdaptiveActionSet()
+            {
+                Actions =
+                [
+                    new AdaptiveSubmitAction
+                    {
+                        Id = "Approve",
+                        Title = "Approve",
+                        Data = new { type = "functionApproval", approved = true, requestJson = functionApprovalRequestJson }
+                    },
+                    new AdaptiveSubmitAction
+                    {
+                        Id = "Deny",
+                        Title = "Deny",
+                        Data = new { type = "functionApproval", approved = false, requestJson = functionApprovalRequestJson }
+                    }
+                ]
+            });
 
-                var card = new AdaptiveCard("1.5");
-                card.Body.Add(new AdaptiveTextBlock
-                {
-                    Text = "Function Call Approval Required",
-                    Size = AdaptiveTextSize.Large,
-                    Weight = AdaptiveTextWeight.Bolder,
-                    HorizontalAlignment = AdaptiveHorizontalAlignment.Center
-                });
-                card.Body.Add(new AdaptiveTextBlock
-                {
-                    Text = $"Function: {functionApprovalRequest.FunctionCall.Name}"
-                });
-                card.Body.Add(new AdaptiveActionSet()
-                {
-                    Actions =
-                    [
-                        new AdaptiveSubmitAction
-                        {
-                            Id = "Approve",
-                            Title = "Approve",
-                            Data = new { type = "functionApproval", approved = true, requestJson = functionApprovalRequestJson }
-                        },
-                        new AdaptiveSubmitAction
-                        {
-                            Id = "Deny",
-                            Title = "Deny",
-                            Data = new { type = "functionApproval", approved = false, requestJson = functionApprovalRequestJson }
-                        }
-                    ]
-                });
-
-                attachments ??= [];
-                attachments.Add(new Attachment()
-                {
-                    ContentType = "application/vnd.microsoft.card.adaptive",
-                    Content = card.ToJson(),
-                });
-            }
+            attachments ??= [];
+            attachments.Add(new Attachment()
+            {
+                ContentType = "application/vnd.microsoft.card.adaptive",
+                Content = card.ToJson(),
+            });
         }
     }
 }

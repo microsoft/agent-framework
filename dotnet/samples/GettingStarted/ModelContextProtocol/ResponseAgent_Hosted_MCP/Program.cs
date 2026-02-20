@@ -27,9 +27,12 @@ var mcpTool = new HostedMcpServerTool(
 };
 
 // Create an agent based on Azure OpenAI Responses as the backend.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
      .GetResponsesClient(deploymentName)
      .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",
@@ -37,7 +40,7 @@ AIAgent agent = new AzureOpenAIClient(
         tools: [mcpTool]);
 
 // You can then invoke the agent like any other AIAgent.
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", session));
 
 // **** MCP Tool with Approval Required ****
@@ -56,7 +59,7 @@ var mcpToolWithApproval = new HostedMcpServerTool(
 // Create an agent based on Azure OpenAI Responses as the backend.
 AIAgent agentWithRequiredApproval = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetResponsesClient(deploymentName)
     .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",
@@ -64,17 +67,16 @@ AIAgent agentWithRequiredApproval = new AzureOpenAIClient(
         tools: [mcpToolWithApproval]);
 
 // You can then invoke the agent like any other AIAgent.
-var sessionWithRequiredApproval = await agentWithRequiredApproval.GetNewSessionAsync();
-var response = await agentWithRequiredApproval.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", sessionWithRequiredApproval);
-var userInputRequests = response.UserInputRequests.ToList();
+// For simplicity, we are assuming here that only mcp tool approvals are pending.
+AgentSession sessionWithRequiredApproval = await agentWithRequiredApproval.CreateSessionAsync();
+AgentResponse response = await agentWithRequiredApproval.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", sessionWithRequiredApproval);
+List<McpServerToolApprovalRequestContent> approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<McpServerToolApprovalRequestContent>().ToList();
 
-while (userInputRequests.Count > 0)
+while (approvalRequests.Count > 0)
 {
     // Ask the user to approve each MCP call request.
-    // For simplicity, we are assuming here that only MCP approval requests are being made.
-    var userInputResponses = userInputRequests
-        .OfType<McpServerToolApprovalRequestContent>()
-        .Select(approvalRequest =>
+    List<ChatMessage> userInputResponses = approvalRequests
+        .ConvertAll(approvalRequest =>
         {
             Console.WriteLine($"""
                 The agent would like to invoke the following MCP Tool, please reply Y to approve.
@@ -83,13 +85,12 @@ while (userInputRequests.Count > 0)
                 Arguments: {string.Join(", ", approvalRequest.ToolCall.Arguments?.Select(x => $"{x.Key}: {x.Value}") ?? [])}
                 """);
             return new ChatMessage(ChatRole.User, [approvalRequest.CreateResponse(Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false)]);
-        })
-        .ToList();
+        });
 
     // Pass the user input responses back to the agent for further processing.
     response = await agentWithRequiredApproval.RunAsync(userInputResponses, sessionWithRequiredApproval);
 
-    userInputRequests = response.UserInputRequests.ToList();
+    approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<McpServerToolApprovalRequestContent>().ToList();
 }
 
 Console.WriteLine($"\nAgent: {response}");

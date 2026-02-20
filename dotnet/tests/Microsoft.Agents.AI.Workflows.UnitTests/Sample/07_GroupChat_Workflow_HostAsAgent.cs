@@ -15,11 +15,11 @@ internal static class Step7EntryPoint
     {
         Workflow workflow = Step6EntryPoint.CreateWorkflow(maxSteps);
 
-        AIAgent agent = workflow.AsAgent("group-chat-agent", "Group Chat Agent");
+        AIAgent agent = workflow.AsAIAgent("group-chat-agent", "Group Chat Agent");
 
         for (int i = 0; i < numIterations; i++)
         {
-            AgentSession session = await agent.GetNewSessionAsync();
+            AgentSession session = await agent.CreateSessionAsync();
             await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(session).ConfigureAwait(false))
             {
                 if (update.RawRepresentation is WorkflowEvent)

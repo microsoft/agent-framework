@@ -30,7 +30,10 @@ services.AddSingleton<AgentPlugin>(); // The plugin depends on WeatherProvider a
 IServiceProvider serviceProvider = services.BuildServiceProvider();
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Define the agent with plugin tools
 // Define the agent you want to create. (Prompt Agent in this case)
@@ -42,7 +45,7 @@ AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
     services: serviceProvider);
 
 // Invoke the agent and output the text result.
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Tell me current time and weather in Seattle.", session));
 
 // Cleanup by agent name removes the agent version created.

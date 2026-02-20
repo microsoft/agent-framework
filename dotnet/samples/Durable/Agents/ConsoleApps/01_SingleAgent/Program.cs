@@ -25,9 +25,12 @@ string dtsConnectionString = Environment.GetEnvironmentVariable("DURABLE_TASK_SC
 
 // Use Azure Key Credential if provided, otherwise use Azure CLI Credential.
 string? azureOpenAiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY");
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
     ? new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(azureOpenAiKey))
-    : new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential());
+    : new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential());
 
 // Set up an AI agent following the standard Microsoft Agent Framework pattern.
 const string JokerName = "Joker";
@@ -61,7 +64,7 @@ Console.WriteLine("Enter a message for the Joker agent (or 'exit' to quit):");
 Console.WriteLine();
 
 // Create a session for the conversation
-AgentSession session = await agentProxy.GetNewSessionAsync();
+AgentSession session = await agentProxy.CreateSessionAsync();
 
 while (true)
 {

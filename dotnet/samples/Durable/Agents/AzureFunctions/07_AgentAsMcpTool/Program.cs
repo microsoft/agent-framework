@@ -5,6 +5,8 @@
 // generate a remote MCP endpoint for the app at /runtime/webhooks/mcp with a agent-specific
 // query tool name.
 
+#pragma warning disable IDE0002 // Simplify Member Access
+
 using Azure;
 using Azure.AI.OpenAI;
 using Azure.Identity;
@@ -23,9 +25,12 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYM
 
 // Use Azure Key Credential if provided, otherwise use Azure CLI Credential.
 string? azureOpenAiKey = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY");
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
     ? new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(azureOpenAiKey))
-    : new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential());
+    : new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential());
 
 // Define three AI agents we are going to use in this application.
 AIAgent agent1 = client.GetChatClient(deploymentName).AsAIAgent("You are good at telling jokes.", "Joker");

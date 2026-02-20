@@ -37,7 +37,7 @@ internal static class Step4EntryPoint
         string? prompt = UpdatePrompt(null, signal);
 
         Workflow workflow = WorkflowInstance;
-        StreamingRun handle = await environment.StreamAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
+        StreamingRun handle = await environment.RunStreamingAsync(workflow, NumberSignal.Init).ConfigureAwait(false);
 
         List<ExternalRequest> requests = [];
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
@@ -45,7 +45,7 @@ internal static class Step4EntryPoint
             switch (evt)
             {
                 case WorkflowOutputEvent outputEvent:
-                    switch (outputEvent.SourceId)
+                    switch (outputEvent.ExecutorId)
                     {
                         case JudgeId:
                             if (outputEvent.Is(out NumberSignal newSignal))

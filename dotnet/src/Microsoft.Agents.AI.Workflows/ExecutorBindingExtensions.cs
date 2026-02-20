@@ -40,7 +40,7 @@ public static class ExecutorBindingExtensions
     /// <returns>An <see cref="ExecutorBinding"/> instance that resolves to the result of the factory call when messages get sent to it.</returns>
     public static ExecutorBinding BindExecutor<TExecutor>(this Func<string, string, ValueTask<TExecutor>> factoryAsync)
         where TExecutor : Executor
-        => BindExecutor<TExecutor, ExecutorOptions>((config, runId) => factoryAsync(config.Id, runId), id: typeof(TExecutor).Name, options: null);
+        => BindExecutor<TExecutor, ExecutorOptions>((config, sessionId) => factoryAsync(config.Id, sessionId), id: typeof(TExecutor).Name, options: null);
 
     /// <summary>
     /// Configures a factory method for creating an <see cref="Executor"/> of type <typeparamref name="TExecutor"/>, using the
@@ -77,7 +77,7 @@ public static class ExecutorBindingExtensions
     /// <returns>An <see cref="ExecutorBinding"/> instance that resolves to the result of the factory call when messages get sent to it.</returns>
     public static ExecutorBinding BindExecutor<TExecutor>(this Func<string, string, ValueTask<TExecutor>> factoryAsync, string id)
         where TExecutor : Executor
-        => BindExecutor<TExecutor, ExecutorOptions>((_, runId) => factoryAsync(id, runId), id, options: null);
+        => BindExecutor<TExecutor, ExecutorOptions>((_, sessionId) => factoryAsync(id, sessionId), id, options: null);
 
     /// <summary>
     /// Configures a factory method for creating an <see cref="Executor"/> of type <typeparamref name="TExecutor"/>, with

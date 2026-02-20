@@ -10,16 +10,19 @@ using OpenAI.Responses;
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
      .GetResponsesClient(deploymentName)
      .AsAIAgent();
 
 // Enable background responses (only supported by OpenAI Responses at this time).
 AgentRunOptions options = new() { AllowBackgroundResponses = true };
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Start the initial run.
 AgentResponse response = await agent.RunAsync("Write a very long novel about otters in space.", session, options);
@@ -41,7 +44,7 @@ Console.WriteLine(response.Text);
 
 // Reset options and session for streaming.
 options = new() { AllowBackgroundResponses = true };
-session = await agent.GetNewSessionAsync();
+session = await agent.CreateSessionAsync();
 
 AgentResponseUpdate? lastReceivedUpdate = null;
 // Start streaming.

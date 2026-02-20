@@ -2,15 +2,15 @@
 
 """Message format conversion between AG-UI and Agent Framework."""
 
+from __future__ import annotations
+
 import json
 import logging
 from typing import Any, cast
 
 from agent_framework import (
-    ChatMessage,
     Content,
-    Role,
-    prepare_function_call_results,
+    Message,
 )
 
 from ._utils import (
@@ -24,9 +24,9 @@ from ._utils import (
 logger = logging.getLogger(__name__)
 
 
-def _sanitize_tool_history(messages: list[ChatMessage]) -> list[ChatMessage]:
+def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
     """Normalize tool ordering and inject synthetic results for AG-UI edge cases."""
-    sanitized: list[ChatMessage] = []
+    sanitized: list[Message] = []
     pending_tool_call_ids: set[str] | None = None
     pending_confirm_changes_id: str | None = None
 
@@ -45,7 +45,32 @@ def _sanitize_tool_history(messages: list[ChatMessage]) -> list[ChatMessage]:
                     confirm_changes_call = content
                     break
 
-            sanitized.append(msg)
+            # Filter out confirm_changes from assistant messages before sending to LLM.
+            # confirm_changes is a synthetic tool for the approval UI flow - the LLM shouldn't
+            # see it because it may contain stale function_arguments that confuse the model
+            # (e.g., showing 5 steps when only 2 were approved).
+            # When we filter out confirm_changes, we also remove it from tool_ids and don't
+            # set pending_confirm_changes_id, so no synthetic result is injected for it.
+            # This is required because OpenAI validates that every tool result has a matching
+            # tool call in the previous assistant message.
+            if confirm_changes_call:
+                filtered_contents = [
+                    c for c in (msg.contents or []) if not (c.type == "function_call" and c.name == "confirm_changes")
+                ]
+                if filtered_contents:
+                    # Create a new message without confirm_changes to avoid mutating the input
+                    filtered_msg = Message(role=msg.role, contents=filtered_contents)
+                    sanitized.append(filtered_msg)
+                # If no contents left after filtering, don't append anything
+
+                # Remove confirm_changes from tool_ids since we filtered it from the message
+                if confirm_changes_call.call_id:
+                    tool_ids.discard(str(confirm_changes_call.call_id))
+                # Don't set pending_confirm_changes_id - we don't want a synthetic result
+                confirm_changes_call = None
+            else:
+                sanitized.append(msg)
+
             pending_tool_call_ids = tool_ids if tool_ids else None
             pending_confirm_changes_id = (
                 str(confirm_changes_call.call_id) if confirm_changes_call and confirm_changes_call.call_id else None
@@ -67,13 +92,13 @@ def _sanitize_tool_history(messages: list[ChatMessage]) -> list[ChatMessage]:
             if approval_call_ids and pending_tool_call_ids:
                 pending_tool_call_ids -= approval_call_ids
                 logger.info(
-                    f"FunctionApprovalResponseContent found for call_ids={sorted(approval_call_ids)} - "
+                    f"function_approval_response content found for call_ids={sorted(approval_call_ids)} - "
                     "framework will handle execution"
                 )
 
             if pending_confirm_changes_id and approval_accepted is not None:
                 logger.info(f"Injecting synthetic tool result for confirm_changes call_id={pending_confirm_changes_id}")
-                synthetic_result = ChatMessage(
+                synthetic_result = Message(
                     role="tool",
                     contents=[
                         Content.from_function_result(
@@ -94,13 +119,15 @@ def _sanitize_tool_history(messages: list[ChatMessage]) -> list[ChatMessage]:
                         user_text = content.text  # type: ignore[assignment]
                         break
 
+                if not user_text:
+                    continue
                 try:
                     parsed = json.loads(user_text)  # type: ignore[arg-type]
                     if "accepted" in parsed:
                         logger.info(
                             f"Injecting synthetic tool result for confirm_changes call_id={pending_confirm_changes_id}"
                         )
-                        synthetic_result = ChatMessage(
+                        synthetic_result = Message(
                             role="tool",
                             contents=[
                                 Content.from_function_result(
@@ -124,7 +151,7 @@ def _sanitize_tool_history(messages: list[ChatMessage]) -> list[ChatMessage]:
                 )
                 for pending_call_id in pending_tool_call_ids:
                     logger.info(f"Injecting synthetic tool result for pending call_id={pending_call_id}")
-                    synthetic_result = ChatMessage(
+                    synthetic_result = Message(
                         role="tool",
                         contents=[
                             Content.from_function_result(
@@ -150,6 +177,10 @@ def _sanitize_tool_history(messages: list[ChatMessage]) -> list[ChatMessage]:
                     call_id = str(content.call_id)
                     if call_id in pending_tool_call_ids:
                         keep = True
+                        # Remove the call_id from pending since we now have its result.
+                        # This prevents duplicate synthetic "skipped" results from being
+                        # injected when a user message arrives later.
+                        pending_tool_call_ids.discard(call_id)
                         if call_id == pending_confirm_changes_id:
                             pending_confirm_changes_id = None
                         break
@@ -164,10 +195,10 @@ def _sanitize_tool_history(messages: list[ChatMessage]) -> list[ChatMessage]:
     return sanitized
 
 
-def _deduplicate_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
+def _deduplicate_messages(messages: list[Message]) -> list[Message]:
     """Remove duplicate messages while preserving order."""
     seen_keys: dict[Any, int] = {}
-    unique_messages: list[ChatMessage] = []
+    unique_messages: list[Message] = []
 
     for idx, msg in enumerate(messages):
         role_value = get_role_value(msg)
@@ -224,7 +255,7 @@ def _deduplicate_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
 
 def normalize_agui_input_messages(
     messages: list[dict[str, Any]],
-) -> tuple[list[ChatMessage], list[dict[str, Any]]]:
+) -> tuple[list[Message], list[dict[str, Any]]]:
     """Normalize raw AG-UI messages into provider and snapshot formats."""
     provider_messages = agui_messages_to_agent_framework(messages)
     provider_messages = _sanitize_tool_history(provider_messages)
@@ -233,14 +264,14 @@ def normalize_agui_input_messages(
     return provider_messages, snapshot_messages
 
 
-def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[ChatMessage]:
+def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Message]:
     """Convert AG-UI messages to Agent Framework format.
 
     Args:
         messages: List of AG-UI messages
 
     Returns:
-        List of Agent Framework ChatMessage objects
+        List of Agent Framework Message objects
     """
 
     def _update_tool_call_arguments(
@@ -269,7 +300,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
 
     def _find_matching_func_call(call_id: str) -> Content | None:
         for prev_msg in result:
-            role_val = prev_msg.role.value if hasattr(prev_msg.role, "value") else str(prev_msg.role)
+            role_val = prev_msg.role if hasattr(prev_msg.role, "value") else str(prev_msg.role)
             if role_val != "assistant":
                 continue
             for content in prev_msg.contents or []:
@@ -287,7 +318,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 return str(explicit_call_id)
 
         for prev_msg in result:
-            role_val = prev_msg.role.value if hasattr(prev_msg.role, "value") else str(prev_msg.role)
+            role_val = prev_msg.role if hasattr(prev_msg.role, "value") else str(prev_msg.role)
             if role_val != "assistant":
                 continue
             direct_call = None
@@ -335,10 +366,10 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
         allowed_keys = set(original_args.keys())
         return {key: value for key, value in modified_args.items() if key in allowed_keys}
 
-    result: list[ChatMessage] = []
+    result: list[Message] = []
     for msg in messages:
         # Handle standard tool result messages early (role="tool") to preserve provider invariants
-        # This path maps AG‑UI tool messages to FunctionResultContent with the correct tool_call_id
+        # This path maps AG‑UI tool messages to function_result content with the correct tool_call_id
         role_str = normalize_agui_role(msg.get("role", "user"))
         if role_str == "tool":
             # Prefer explicit tool_call_id fields; fall back to backend fields only if necessary
@@ -371,15 +402,12 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
 
             if is_approval:
                 # Look for the matching function call in previous messages to create
-                # a proper FunctionApprovalResponseContent. This enables the agent framework
+                # proper function_approval_response content. This enables the agent framework
                 # to execute the approved tool (fix for GitHub issue #3034).
                 accepted = parsed.get("accepted", False) if parsed is not None else False
                 approval_payload_text = result_content if isinstance(result_content, str) else json.dumps(parsed)
 
                 # Log the full approval payload to debug modified arguments
-                import logging
-
-                logger = logging.getLogger(__name__)
                 logger.info(f"Approval payload received: {parsed}")
 
                 approval_call_id = tool_call_id
@@ -396,7 +424,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                         m
                         for m in result
                         if not (
-                            (m.role.value if hasattr(m.role, "value") else str(m.role)) == "tool"
+                            (m.role if hasattr(m.role, "value") else str(m.role)) == "tool"
                             and any(
                                 c.type == "function_result" and c.call_id == approval_call_id
                                 for c in (m.contents or [])
@@ -448,11 +476,17 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                                 merged_args["steps"] = merged_steps
                         state_args = merged_args
 
-                        # Keep the original tool call and AG-UI snapshot in sync with approved args.
-                        updated_args = (
-                            json.dumps(merged_args) if isinstance(matching_func_call.arguments, str) else merged_args
+                        # Update the Message tool call with only enabled steps (for LLM context).
+                        # The LLM should only see the steps that were actually approved/executed.
+                        updated_args_for_llm = (
+                            json.dumps(filtered_args)
+                            if isinstance(matching_func_call.arguments, str)
+                            else filtered_args
                         )
-                        matching_func_call.arguments = updated_args
+                        matching_func_call.arguments = updated_args_for_llm
+
+                        # Update raw messages with all steps + status (for MESSAGES_SNAPSHOT display).
+                        # This allows the UI to show which steps were enabled/disabled.
                         _update_tool_call_arguments(messages, str(approval_call_id), merged_args)
                         # Create a new FunctionCallContent with the modified arguments
                         func_call_for_approval = Content.from_function_call(
@@ -465,22 +499,22 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                         # No modified arguments - use the original function call
                         func_call_for_approval = matching_func_call
 
-                    # Create FunctionApprovalResponseContent for the agent framework
+                    # Create function_approval_response content for the agent framework
                     approval_response = Content.from_function_approval_response(
                         approved=accepted,
                         id=str(approval_call_id),
                         function_call=func_call_for_approval,
                         additional_properties={"ag_ui_state_args": state_args} if state_args else None,
                     )
-                    chat_msg = ChatMessage(
-                        role=Role.USER,
+                    chat_msg = Message(
+                        role="user",
                         contents=[approval_response],
                     )
                 else:
                     # No matching function call found - this is likely a confirm_changes approval
                     # Keep the old behavior for backwards compatibility
-                    chat_msg = ChatMessage(
-                        role=Role.USER,
+                    chat_msg = Message(
+                        role="user",
                         contents=[Content.from_text(text=approval_payload_text)],
                         additional_properties={"is_tool_result": True, "tool_call_id": str(tool_call_id or "")},
                     )
@@ -489,7 +523,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 result.append(chat_msg)
                 continue
 
-            # Cast result_content to acceptable type for FunctionResultContent
+            # Cast result_content to acceptable type for function_result content
             func_result: str | dict[str, Any] | list[Any]
             if isinstance(result_content, str):
                 func_result = result_content
@@ -499,8 +533,8 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 func_result = result_content
             else:
                 func_result = str(result_content)
-            chat_msg = ChatMessage(
-                role=Role.TOOL,
+            chat_msg = Message(
+                role="tool",
                 contents=[Content.from_function_result(call_id=str(tool_call_id), result=func_result)],
             )
             if "id" in msg:
@@ -515,8 +549,8 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
             tool_call_id = msg.get("toolCallId") or msg.get("tool_call_id") or msg.get("actionExecutionId", "")
             result_content = msg.get("result", msg.get("content", ""))
 
-            chat_msg = ChatMessage(
-                role=Role.TOOL,
+            chat_msg = Message(
+                role="tool",
                 contents=[Content.from_function_result(call_id=str(tool_call_id), result=result_content)],
             )
             if "id" in msg:
@@ -554,7 +588,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                             arguments=arguments,
                         )
                     )
-            chat_msg = ChatMessage(role=Role.ASSISTANT, contents=contents)
+            chat_msg = Message(role="assistant", contents=contents)
             if "id" in msg:
                 chat_msg.message_id = msg["id"]
             result.append(chat_msg)
@@ -562,11 +596,11 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
 
         # No special handling required for assistant/plain messages here
 
-        role = AGUI_TO_FRAMEWORK_ROLE.get(role_str, Role.USER)
+        role = AGUI_TO_FRAMEWORK_ROLE.get(role_str, "user")
 
         # Check if this message contains function approvals
         if "function_approvals" in msg and msg["function_approvals"]:
-            # Convert function approvals to FunctionApprovalResponseContent
+            # Convert function approvals to function_approval_response content
             approval_contents: list[Any] = []
             for approval in msg["function_approvals"]:
                 # Create FunctionCallContent with the modified arguments
@@ -584,14 +618,14 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
                 )
                 approval_contents.append(approval_response)
 
-            chat_msg = ChatMessage(role=role, contents=approval_contents)  # type: ignore[arg-type]
+            chat_msg = Message(role=role, contents=approval_contents)  # type: ignore[call-overload]
         else:
             # Regular text message
             content = msg.get("content", "")
             if isinstance(content, str):
-                chat_msg = ChatMessage(role=role, contents=[Content.from_text(text=content)])
+                chat_msg = Message(role=role, contents=[Content.from_text(text=content)])  # type: ignore[call-overload]
             else:
-                chat_msg = ChatMessage(role=role, contents=[Content.from_text(text=str(content))])
+                chat_msg = Message(role=role, contents=[Content.from_text(text=str(content))])  # type: ignore[call-overload]
 
         if "id" in msg:
             chat_msg.message_id = msg["id"]
@@ -601,11 +635,11 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
     return result
 
 
-def agent_framework_messages_to_agui(messages: list[ChatMessage] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert Agent Framework messages to AG-UI format.
 
     Args:
-        messages: List of Agent Framework ChatMessage objects or AG-UI dicts (already converted)
+        messages: List of Agent Framework Message objects or AG-UI dicts (already converted)
 
     Returns:
         List of AG-UI message dictionaries
@@ -634,8 +668,9 @@ def agent_framework_messages_to_agui(messages: list[ChatMessage] | list[dict[str
             result.append(normalized_msg)
             continue
 
-        # Convert ChatMessage to AG-UI format
-        role = FRAMEWORK_TO_AGUI_ROLE.get(msg.role, "user")
+        # Convert Message to AG-UI format
+        role_value: str = msg.role if hasattr(msg.role, "value") else msg.role  # type: ignore[assignment]
+        role = FRAMEWORK_TO_AGUI_ROLE.get(role_value, "user")
 
         content_text = ""
         tool_calls: list[dict[str, Any]] = []
@@ -658,8 +693,7 @@ def agent_framework_messages_to_agui(messages: list[ChatMessage] | list[dict[str
             elif content.type == "function_result":
                 # Tool result content - extract call_id and result
                 tool_result_call_id = content.call_id
-                # Serialize result to string using core utility
-                content_text = prepare_function_call_results(content.result)
+                content_text = content.result if content.result is not None else ""
 
         agui_msg: dict[str, Any] = {
             "id": msg.message_id if msg.message_id else generate_event_id(),  # Always include id

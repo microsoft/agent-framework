@@ -29,6 +29,7 @@ To use Anthropic with Azure Foundry, you can check the sample [AgentProviders/Ag
 |[Running a simple agent](./Agent_Anthropic_Step01_Running/)|This sample demonstrates how to create and run a basic agent with Anthropic Claude|
 |[Using reasoning with an agent](./Agent_Anthropic_Step02_Reasoning/)|This sample demonstrates how to use extended thinking/reasoning capabilities with Anthropic Claude agents|
 |[Using function tools with an agent](./Agent_Anthropic_Step03_UsingFunctionTools/)|This sample demonstrates how to use function tools with an Anthropic Claude agent|
+|[Using Skills with an agent](./Agent_Anthropic_Step04_UsingSkills/)|This sample demonstrates how to use Anthropic-managed Skills (e.g., pptx) with an Anthropic Claude agent|
 
 ## Running the samples from the console
 

@@ -29,9 +29,12 @@ string dtsConnectionString = Environment.GetEnvironmentVariable("DURABLE_TASK_SC
 
 // Use Azure Key Credential if provided, otherwise use Azure CLI Credential.
 string? azureOpenAiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY");
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
     ? new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(azureOpenAiKey))
-    : new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential());
+    : new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential());
 
 // Single agent used by the orchestration to demonstrate human-in-the-loop workflow.
 const string WriterName = "WriterAgent";
@@ -48,7 +51,7 @@ static async Task<object> RunOrchestratorAsync(TaskOrchestrationContext context,
 {
     // Get the writer agent
     DurableAIAgent writerAgent = context.GetAgent("WriterAgent");
-    AgentSession writerSession = await writerAgent.GetNewSessionAsync();
+    AgentSession writerSession = await writerAgent.CreateSessionAsync();
 
     // Set initial status
     context.SetCustomStatus($"Starting content generation for topic: {input.Topic}");

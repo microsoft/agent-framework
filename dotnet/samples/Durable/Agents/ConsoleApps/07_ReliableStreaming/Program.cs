@@ -38,9 +38,12 @@ string dtsConnectionString = Environment.GetEnvironmentVariable("DURABLE_TASK_SC
 
 // Use Azure Key Credential if provided, otherwise use Azure CLI Credential.
 string? azureOpenAiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY");
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
     ? new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(azureOpenAiKey))
-    : new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential());
+    : new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential());
 
 // Travel Planner agent instructions - designed to produce longer responses for demonstrating streaming.
 const string TravelPlannerName = "TravelPlanner";
@@ -305,7 +308,7 @@ if (string.IsNullOrWhiteSpace(prompt) || prompt.Equals("exit", StringComparison.
 }
 
 // Create a new agent session
-AgentSession session = await agentProxy.GetNewSessionAsync();
+AgentSession session = await agentProxy.CreateSessionAsync();
 AgentSessionId sessionId = session.GetService<AgentSessionId>();
 string conversationId = sessionId.ToString();
 

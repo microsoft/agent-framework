@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/azure_ai_agent/01_basic_azure_ai_agent.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Create an Azure AI agent using both Semantic Kernel and Agent Framework.
 
@@ -8,6 +17,11 @@ Prerequisites:
 
 import asyncio
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 
 async def run_semantic_kernel() -> None:
     from azure.identity.aio import AzureCliCredential
@@ -16,7 +30,7 @@ async def run_semantic_kernel() -> None:
     async with AzureCliCredential() as credential, AzureAIAgent.create_client(credential=credential) as client:
         settings = AzureAIAgentSettings()  # Reads env vars for region/deployment.
         # SK builds the remote agent definition then wraps it with AzureAIAgent.
-        definition = await client.agents.as_agent(
+        definition = await client.agents.create_agent(
             model=settings.model_deployment_name,
             name="Support",
             instructions="Answer customer questions in one paragraph.",

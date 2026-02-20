@@ -28,9 +28,12 @@ string dtsConnectionString = Environment.GetEnvironmentVariable("DURABLE_TASK_SC
 
 // Use Azure Key Credential if provided, otherwise use Azure CLI Credential.
 string? azureOpenAiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY");
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
     ? new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(azureOpenAiKey))
-    : new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential());
+    : new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential());
 
 // Spam detection agent
 const string SpamDetectionAgentName = "SpamDetectionAgent";
@@ -56,7 +59,7 @@ static async Task<string> RunOrchestratorAsync(TaskOrchestrationContext context,
 {
     // Get the spam detection agent
     DurableAIAgent spamDetectionAgent = context.GetAgent(SpamDetectionAgentName);
-    AgentSession spamSession = await spamDetectionAgent.GetNewSessionAsync();
+    AgentSession spamSession = await spamDetectionAgent.CreateSessionAsync();
 
     // Step 1: Check if the email is spam
     AgentResponse<DetectionResult> spamDetectionResponse = await spamDetectionAgent.RunAsync<DetectionResult>(
@@ -78,7 +81,7 @@ static async Task<string> RunOrchestratorAsync(TaskOrchestrationContext context,
 
     // Generate and send response for legitimate email
     DurableAIAgent emailAssistantAgent = context.GetAgent(EmailAssistantAgentName);
-    AgentSession emailSession = await emailAssistantAgent.GetNewSessionAsync();
+    AgentSession emailSession = await emailAssistantAgent.CreateSessionAsync();
 
     AgentResponse<EmailResponse> emailAssistantResponse = await emailAssistantAgent.RunAsync<EmailResponse>(
         message:

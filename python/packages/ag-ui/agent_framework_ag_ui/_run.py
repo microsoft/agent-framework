@@ -2,11 +2,14 @@
 
 """Simplified AG-UI orchestration - single linear flow."""
 
+from __future__ import annotations
+
 import json
 import logging
 import uuid
+from collections.abc import AsyncIterable, Awaitable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ag_ui.core import (
     BaseEvent,
@@ -24,19 +27,20 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from agent_framework import (
-    AgentProtocol,
-    AgentThread,
-    ChatMessage,
+    AgentSession,
     Content,
-    prepare_function_call_results,
+    Message,
+    SupportsAgentRun,
 )
-from agent_framework._middleware import extract_and_merge_function_middleware
+from agent_framework._middleware import FunctionMiddlewarePipeline
 from agent_framework._tools import (
-    FunctionInvocationConfiguration,
     _collect_approval_responses,  # type: ignore
     _replace_approval_contents_with_results,  # type: ignore
     _try_execute_function_calls,  # type: ignore
+    normalize_function_invocation_configuration,
 )
+from agent_framework._types import ResponseStream
+from agent_framework.exceptions import AgentInvalidResponseException
 
 from ._message_adapters import normalize_agui_input_messages
 from ._orchestration._predictive_state import PredictiveStateHandler
@@ -45,6 +49,7 @@ from ._utils import (
     convert_agui_tools_to_agent_framework,
     generate_event_id,
     get_conversation_id_from_update,
+    get_role_value,
     make_json_safe,
 )
 
@@ -167,12 +172,12 @@ class FlowState:
     tool_call_id: str | None = None  # Current tool call being streamed
     tool_call_name: str | None = None  # Name of current tool call
     waiting_for_approval: bool = False  # Stop after approval request
-    current_state: dict[str, Any] = field(default_factory=dict)  # Shared state
+    current_state: dict[str, Any] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     accumulated_text: str = ""  # For MessagesSnapshotEvent
-    pending_tool_calls: list[dict[str, Any]] = field(default_factory=list)  # For MessagesSnapshotEvent
-    tool_calls_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
-    tool_results: list[dict[str, Any]] = field(default_factory=list)
-    tool_calls_ended: set[str] = field(default_factory=set)  # Track which tool calls have been ended
+    pending_tool_calls: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
+    tool_calls_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
+    tool_results: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
+    tool_calls_ended: set[str] = field(default_factory=set)  # pyright: ignore[reportUnknownVariableType]
 
     def get_tool_name(self, call_id: str | None) -> str | None:
         """Get tool name by call ID."""
@@ -186,10 +191,44 @@ class FlowState:
         return [tc for tc in self.pending_tool_calls if tc.get("id") not in self.tool_calls_ended]
 
 
+async def _normalize_response_stream(response_stream: Any) -> AsyncIterable[Any]:
+    """Normalize agent streaming return types to an async iterable.
+
+    Supports:
+      - ResponseStream (standard agent stream type)
+      - AsyncIterable[AgentResponseUpdate] (workflow-style stream)
+      - Awaitable that resolves to either of the above
+    """
+    if isinstance(response_stream, Awaitable):
+        resolved_stream = await cast(Awaitable[Any], response_stream)
+        if isinstance(resolved_stream, ResponseStream):
+            # AG-UI consumes update iteration only; ResponseStream finalizers are not used here.
+            return cast(AsyncIterable[Any], resolved_stream)
+        if isinstance(resolved_stream, AsyncIterable):
+            return cast(AsyncIterable[Any], resolved_stream)
+        resolved_type = f"{type(resolved_stream).__module__}.{type(resolved_stream).__name__}"
+        raise AgentInvalidResponseException(
+            "Agent did not return a streaming AsyncIterable response. "
+            f"Awaitable resolved to unsupported type: {resolved_type}."
+        )
+
+    if isinstance(response_stream, ResponseStream):
+        # AG-UI consumes update iteration only; ResponseStream finalizers are not used here.
+        return cast(AsyncIterable[Any], response_stream)
+
+    if isinstance(response_stream, AsyncIterable):
+        return cast(AsyncIterable[Any], response_stream)
+
+    stream_type = f"{type(response_stream).__module__}.{type(response_stream).__name__}"
+    raise AgentInvalidResponseException(
+        f"Agent did not return a streaming AsyncIterable response. Received unsupported type: {stream_type}."
+    )
+
+
 def _create_state_context_message(
     current_state: dict[str, Any],
     state_schema: dict[str, Any],
-) -> ChatMessage | None:
+) -> Message | None:
     """Create a system message with current state context.
 
     This injects the current state into the conversation so the model
@@ -200,13 +239,13 @@ def _create_state_context_message(
         state_schema: The state schema (used to determine if injection is needed)
 
     Returns:
-        ChatMessage with state context, or None if not needed
+        Message with state context, or None if not needed
     """
     if not current_state or not state_schema:
         return None
 
     state_json = json.dumps(current_state, indent=2)
-    return ChatMessage(
+    return Message(
         role="system",
         contents=[
             Content.from_text(
@@ -223,10 +262,10 @@ def _create_state_context_message(
 
 
 def _inject_state_context(
-    messages: list[ChatMessage],
+    messages: list[Message],
     current_state: dict[str, Any],
     state_schema: dict[str, Any],
-) -> list[ChatMessage]:
+) -> list[Message]:
     """Inject state context message into messages if appropriate.
 
     The state context is injected before the last user message to give
@@ -344,7 +383,7 @@ def _emit_tool_result(
     flow: FlowState,
     predictive_handler: PredictiveStateHandler | None = None,
 ) -> list[BaseEvent]:
-    """Emit ToolCallResult events for FunctionResultContent."""
+    """Emit ToolCallResult events for function_result content."""
     events: list[BaseEvent] = []
 
     # Cannot emit tool result without a call_id to associate it with
@@ -354,7 +393,7 @@ def _emit_tool_result(
     events.append(ToolCallEndEvent(tool_call_id=content.call_id))
     flow.tool_calls_ended.add(content.call_id)  # Track ended tool calls
 
-    result_content = prepare_function_call_results(content.result)
+    result_content = content.result if content.result is not None else ""
     message_id = generate_event_id()
     events.append(
         ToolCallResultEvent(
@@ -385,6 +424,13 @@ def _emit_tool_result(
     # After tool result, any subsequent text should start a new message
     flow.tool_call_id = None
     flow.tool_call_name = None
+
+    # Close any open text message before resetting message_id (issue #3568)
+    # This handles the case where a TextMessageStartEvent was emitted for tool-only
+    # messages (Feature #4) but needs to be closed before starting a new message
+    if flow.message_id:
+        logger.debug("Closing text message (issue #3568 fix): message_id=%s", flow.message_id)
+        events.append(TextMessageEndEvent(message_id=flow.message_id))
     flow.message_id = None  # Reset so next text content starts a new message
 
     return events
@@ -448,14 +494,26 @@ def _emit_approval_request(
                 parent_message_id=flow.message_id,
             )
         )
-        args = {
+        args: dict[str, Any] = {
             "function_name": func_name,
             "function_call_id": func_call_id,
             "function_arguments": make_json_safe(func_call.parse_arguments()) or {},
             "steps": [{"description": f"Execute {func_name}", "status": "enabled"}],
         }
-        events.append(ToolCallArgsEvent(tool_call_id=confirm_id, delta=json.dumps(args)))
+        args_json = json.dumps(args)
+        events.append(ToolCallArgsEvent(tool_call_id=confirm_id, delta=args_json))
         events.append(ToolCallEndEvent(tool_call_id=confirm_id))
+
+        # Track confirm_changes in pending_tool_calls for MessagesSnapshotEvent
+        # The frontend needs to see this in the snapshot to render the confirmation dialog
+        confirm_entry = {
+            "id": confirm_id,
+            "type": "function",
+            "function": {"name": "confirm_changes", "arguments": args_json},
+        }
+        flow.pending_tool_calls.append(confirm_entry)
+        flow.tool_calls_by_id[confirm_id] = confirm_entry
+        flow.tool_calls_ended.add(confirm_id)  # Mark as ended since we emit End event
 
     flow.waiting_for_approval = True
     return events
@@ -491,14 +549,17 @@ def _is_confirm_changes_response(messages: list[Any]) -> bool:
     if not messages:
         return False
     last = messages[-1]
-    if not last.additional_properties.get("is_tool_result", False):
+    additional_properties = cast(dict[str, Any], getattr(last, "additional_properties", {}) or {})
+    if not additional_properties.get("is_tool_result", False):
         return False
 
     # Parse the content to check if it has the confirm_changes structure
     for content in last.contents:
-        if getattr(content, "type", None) == "text":
+        if getattr(content, "type", None) == "text" and content.text:
             try:
                 result = json.loads(content.text)
+                if not isinstance(result, dict):
+                    continue
                 # confirm_changes results have 'accepted' and 'steps' keys
                 if "accepted" in result and "steps" in result:
                     return True
@@ -516,31 +577,40 @@ def _handle_step_based_approval(messages: list[Any]) -> list[BaseEvent]:
     # Parse the approval content
     approval_text = ""
     for content in last.contents:
-        if getattr(content, "type", None) == "text":
+        if getattr(content, "type", None) == "text" and content.text:
             approval_text = content.text
             break
 
-    try:
-        result = json.loads(approval_text)
-        accepted = result.get("accepted", False)
-        steps = result.get("steps", [])
-
-        if accepted:
-            # Generate acceptance message with step descriptions
-            enabled_steps = [s for s in steps if s.get("status") == "enabled"]
-            if enabled_steps:
-                message_parts = [f"Executing {len(enabled_steps)} approved steps:\n\n"]
-                for i, step in enumerate(enabled_steps, 1):
-                    message_parts.append(f"{i}. {step.get('description', 'Step')}\n")
-                message_parts.append("\nAll steps completed successfully!")
-                message = "".join(message_parts)
-            else:
-                message = "Changes confirmed and applied successfully!"
-        else:
-            # Rejection message
-            message = "No problem! What would you like me to change about the plan?"
-    except json.JSONDecodeError:
+    if not approval_text:
         message = "Acknowledged."
+    else:
+        try:
+            parsed_result = json.loads(approval_text)
+            result: dict[str, Any] = cast(dict[str, Any], parsed_result) if isinstance(parsed_result, dict) else {}
+            accepted = bool(result.get("accepted", False))
+            steps_raw = result.get("steps", [])
+            steps: list[dict[str, Any]] = []
+            if isinstance(steps_raw, list):
+                for step_raw in cast(list[Any], steps_raw):
+                    if isinstance(step_raw, dict):
+                        steps.append(cast(dict[str, Any], step_raw))
+
+            if accepted:
+                # Generate acceptance message with step descriptions
+                enabled_steps: list[dict[str, Any]] = [step for step in steps if step.get("status") == "enabled"]
+                if enabled_steps:
+                    message_parts = [f"Executing {len(enabled_steps)} approved steps:\n\n"]
+                    for i, step in enumerate(enabled_steps, 1):
+                        message_parts.append(f"{i}. {step.get('description', 'Step')}\n")
+                    message_parts.append("\nAll steps completed successfully!")
+                    message = "".join(message_parts)
+                else:
+                    message = "Changes confirmed and applied successfully!"
+            else:
+                # Rejection message
+                message = "No problem! What would you like me to change about the plan?"
+        except json.JSONDecodeError:
+            message = "Acknowledged."
 
     message_id = generate_event_id()
     events.append(TextMessageStartEvent(message_id=message_id, role="assistant"))
@@ -553,18 +623,18 @@ def _handle_step_based_approval(messages: list[Any]) -> list[BaseEvent]:
 async def _resolve_approval_responses(
     messages: list[Any],
     tools: list[Any],
-    agent: AgentProtocol,
+    agent: SupportsAgentRun,
     run_kwargs: dict[str, Any],
 ) -> None:
     """Execute approved function calls and replace approval content with results.
 
-    This modifies the messages list in place, replacing FunctionApprovalResponseContent
-    with FunctionResultContent containing the actual tool execution result.
+    This modifies the messages list in place, replacing function_approval_response
+    content with function_result content containing the actual tool execution result.
 
     Args:
         messages: List of messages (will be modified in place)
         tools: List of available tools
-        agent: The agent instance (to get chat_client and config)
+        agent: The agent instance (to get client and config)
         run_kwargs: Kwargs for tool execution
     """
     fcc_todo = _collect_approval_responses(messages)
@@ -577,9 +647,12 @@ async def _resolve_approval_responses(
 
     # Execute approved tool calls
     if approved_responses and tools:
-        chat_client = getattr(agent, "chat_client", None)
-        config = getattr(chat_client, "function_invocation_configuration", None) or FunctionInvocationConfiguration()
-        middleware_pipeline = extract_and_merge_function_middleware(chat_client, run_kwargs)
+        client = getattr(agent, "client", None)
+        config = normalize_function_invocation_configuration(getattr(client, "function_invocation_configuration", None))
+        middleware_pipeline = FunctionMiddlewarePipeline(
+            *getattr(client, "function_middleware", ()),
+            *run_kwargs.get("middleware", ()),
+        )
         # Filter out AG-UI-specific kwargs that should not be passed to tool execution
         tool_kwargs = {k: v for k, v in run_kwargs.items() if k != "options"}
         try:
@@ -622,6 +695,54 @@ async def _resolve_approval_responses(
 
     _replace_approval_contents_with_results(messages, fcc_todo, normalized_results)  # type: ignore
 
+    # Post-process: Convert user messages with function_result content to proper tool messages.
+    # After _replace_approval_contents_with_results, approved tool calls have their results
+    # placed in user messages. OpenAI requires tool results to be in role="tool" messages.
+    # This transformation ensures the message history is valid for the LLM provider.
+    _convert_approval_results_to_tool_messages(messages)
+
+
+def _convert_approval_results_to_tool_messages(messages: list[Any]) -> None:
+    """Convert function_result content in user messages to proper tool messages.
+
+    After approval processing, tool results end up in user messages. OpenAI and other
+    providers require tool results to be in role="tool" messages. This function
+    extracts function_result content from user messages and creates proper tool messages.
+
+    This modifies the messages list in place.
+
+    Args:
+        messages: List of Message objects to process
+    """
+    result: list[Any] = []
+
+    for msg in messages:
+        if get_role_value(msg) != "user":
+            result.append(msg)
+            continue
+
+        msg_contents = cast(list[Content], getattr(msg, "contents", None) or [])
+        function_results: list[Content] = [content for content in msg_contents if content.type == "function_result"]
+        other_contents: list[Content] = [content for content in msg_contents if content.type != "function_result"]
+
+        if not function_results:
+            result.append(msg)
+            continue
+
+        logger.info(
+            f"Converting {len(function_results)} function_result content(s) from user message to tool message(s)"
+        )
+
+        # Tool messages first (right after the preceding assistant message per OpenAI requirements)
+        for func_result in function_results:
+            result.append(Message(role="tool", contents=[func_result]))
+
+        # Then user message with remaining content (if any)
+        if other_contents:
+            result.append(Message(role="user", contents=other_contents))
+
+    messages[:] = result
+
 
 def _build_messages_snapshot(
     flow: FlowState,
@@ -630,25 +751,29 @@ def _build_messages_snapshot(
     """Build MessagesSnapshotEvent from current flow state."""
     all_messages = list(snapshot_messages)
 
-    # Add assistant message with tool calls
+    # Add assistant message with tool calls only (no content)
     if flow.pending_tool_calls:
         tool_call_message = {
             "id": flow.message_id or generate_event_id(),
             "role": "assistant",
             "tool_calls": flow.pending_tool_calls.copy(),
         }
-        if flow.accumulated_text:
-            tool_call_message["content"] = flow.accumulated_text
         all_messages.append(tool_call_message)
 
     # Add tool results
     all_messages.extend(flow.tool_results)
 
-    # Add text-only assistant message if no tool calls
-    if flow.accumulated_text and not flow.pending_tool_calls:
+    # Add text-only assistant message if there is accumulated text
+    # This is a separate message from the tool calls message to maintain
+    # the expected AG-UI protocol format (see issue #3619)
+    if flow.accumulated_text:
+        # Use a new ID for the content message if we had tool calls (separate message)
+        content_message_id = (
+            generate_event_id() if flow.pending_tool_calls else (flow.message_id or generate_event_id())
+        )
         all_messages.append(
             {
-                "id": flow.message_id or generate_event_id(),
+                "id": content_message_id,
                 "role": "assistant",
                 "content": flow.accumulated_text,
             }
@@ -659,9 +784,9 @@ def _build_messages_snapshot(
 
 async def run_agent_stream(
     input_data: dict[str, Any],
-    agent: AgentProtocol,
-    config: "AgentConfig",
-) -> "AsyncGenerator[BaseEvent, None]":
+    agent: SupportsAgentRun,
+    config: AgentConfig,
+) -> AsyncGenerator[BaseEvent]:
     """Run agent and yield AG-UI events.
 
     This is the single entry point for all AG-UI agent runs. It follows a simple
@@ -684,21 +809,24 @@ async def run_agent_stream(
     if input_data.get("state"):
         flow.current_state = dict(input_data["state"])
 
+    state_schema = cast(dict[str, Any], getattr(config, "state_schema", {}) or {})
+    predict_state_config = cast(dict[str, dict[str, str]], getattr(config, "predict_state_config", {}) or {})
+
     # Apply schema defaults for missing state keys
-    if config.state_schema:
-        for key, schema in config.state_schema.items():
+    if state_schema:
+        for key, schema in state_schema.items():
             if key in flow.current_state:
                 continue
-            if isinstance(schema, dict) and schema.get("type") == "array":
+            if isinstance(schema, dict) and cast(dict[str, Any], schema).get("type") == "array":
                 flow.current_state[key] = []
             else:
                 flow.current_state[key] = {}
 
     # Initialize predictive state handler if configured
     predictive_handler: PredictiveStateHandler | None = None
-    if config.predict_state_config:
+    if predict_state_config:
         predictive_handler = PredictiveStateHandler(
-            predict_state_config=config.predict_state_config,
+            predict_state_config=predict_state_config,
             current_state=flow.current_state,
         )
 
@@ -708,11 +836,11 @@ async def run_agent_stream(
 
     # Check for structured output mode (skip text content)
     skip_text = False
-    response_format = None
-    from agent_framework import ChatAgent
-
-    if isinstance(agent, ChatAgent):
-        response_format = agent.default_options.get("response_format")
+    response_format: type[Any] | None = None
+    default_options = getattr(agent, "default_options", None)
+    if isinstance(default_options, dict):
+        typed_default_options = cast(dict[str, Any], default_options)
+        response_format = cast(type[Any] | None, typed_default_options.get("response_format"))
         skip_text = response_format is not None
 
     # Handle empty messages (emit RunStarted immediately since no agent response)
@@ -728,12 +856,12 @@ async def run_agent_stream(
     register_additional_client_tools(agent, client_tools)
     tools = merge_tools(server_tools, client_tools)
 
-    # Create thread (with service thread support)
-    if config.use_service_thread:
+    # Create session (with service session support)
+    if config.use_service_session:
         supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
-        thread = AgentThread(service_thread_id=supplied_thread_id)
+        session = AgentSession(service_session_id=supplied_thread_id)
     else:
-        thread = AgentThread()
+        session = AgentSession()
 
     # Inject metadata for AG-UI orchestration (Feature #2: Azure-safe truncation)
     base_metadata: dict[str, Any] = {
@@ -742,16 +870,17 @@ async def run_agent_stream(
     }
     if flow.current_state:
         base_metadata["current_state"] = flow.current_state
-    thread.metadata = _build_safe_metadata(base_metadata)  # type: ignore[attr-defined]
+    session.metadata = _build_safe_metadata(base_metadata)  # type: ignore[attr-defined]
 
     # Build run kwargs (Feature #6: Azure store flag when metadata present)
-    run_kwargs: dict[str, Any] = {"thread": thread}
+    run_kwargs: dict[str, Any] = {"session": session}
     if tools:
         run_kwargs["tools"] = tools
     # Filter out AG-UI internal metadata keys before passing to chat client
     # These are used internally for orchestration and should not be sent to the LLM provider
-    client_metadata = {
-        k: v for k, v in (getattr(thread, "metadata", None) or {}).items() if k not in AG_UI_INTERNAL_METADATA_KEYS
+    session_metadata = cast(dict[str, Any], getattr(session, "metadata", None) or {})
+    client_metadata: dict[str, Any] = {
+        k: v for k, v in session_metadata.items() if k not in AG_UI_INTERNAL_METADATA_KEYS
     }
     safe_metadata = _build_safe_metadata(client_metadata) if client_metadata else {}
     if safe_metadata:
@@ -782,13 +911,15 @@ async def run_agent_stream(
 
     # Inject state context message so the model knows current application state
     # This is critical for shared state scenarios where the UI state needs to be visible
-    if config.state_schema and flow.current_state:
-        messages = _inject_state_context(messages, flow.current_state, config.state_schema)
+    if state_schema and flow.current_state:
+        messages = _inject_state_context(messages, flow.current_state, state_schema)
 
     # Stream from agent - emit RunStarted after first update to get service IDs
     run_started_emitted = False
     all_updates: list[Any] = []  # Collect for structured output processing
-    async for update in agent.run_stream(messages, **run_kwargs):
+    response_stream = agent.run(messages, stream=True, **run_kwargs)
+    stream = await _normalize_response_stream(response_stream)
+    async for update in stream:
         # Collect updates for structured output processing
         if response_format is not None:
             all_updates.append(update)
@@ -803,18 +934,18 @@ async def run_agent_stream(
             # NOW emit RunStarted with proper IDs
             yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
             # Emit PredictState custom event if configured
-            if config.predict_state_config:
+            if predict_state_config:
                 predict_state_value = [
                     {
                         "state_key": state_key,
                         "tool": cfg["tool"],
                         "tool_argument": cfg["tool_argument"],
                     }
-                    for state_key, cfg in config.predict_state_config.items()
+                    for state_key, cfg in predict_state_config.items()
                 ]
                 yield CustomEvent(name="PredictState", value=predict_state_value)
             # Emit initial state snapshot only if we have both state_schema and state
-            if config.state_schema and flow.current_state:
+            if state_schema and flow.current_state:
                 yield StateSnapshotEvent(snapshot=flow.current_state)
             run_started_emitted = True
 
@@ -827,6 +958,8 @@ async def run_agent_stream(
 
         # Emit events for each content item
         for content in update.contents:
+            content_type = getattr(content, "type", None)
+            logger.debug(f"Processing content type={content_type}, message_id={flow.message_id}")
             for event in _emit_content(
                 content,
                 flow,
@@ -843,17 +976,17 @@ async def run_agent_stream(
     # If no updates at all, still emit RunStarted
     if not run_started_emitted:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-        if config.predict_state_config:
+        if predict_state_config:
             predict_state_value = [
                 {
                     "state_key": state_key,
                     "tool": cfg["tool"],
                     "tool_argument": cfg["tool_argument"],
                 }
-                for state_key, cfg in config.predict_state_config.items()
+                for state_key, cfg in predict_state_config.items()
             ]
             yield CustomEvent(name="PredictState", value=predict_state_value)
-        if config.state_schema and flow.current_state:
+        if state_schema and flow.current_state:
             yield StateSnapshotEvent(snapshot=flow.current_state)
 
     # Process structured output if response_format is set
@@ -861,31 +994,33 @@ async def run_agent_stream(
         from agent_framework import AgentResponse
         from pydantic import BaseModel
 
-        logger.info(f"Processing structured output, update count: {len(all_updates)}")
-        final_response = AgentResponse.from_agent_run_response_updates(all_updates, output_format_type=response_format)
+        if not (isinstance(response_format, type) and issubclass(response_format, BaseModel)):
+            logger.warning("Skipping structured output parsing: response_format is not a Pydantic model type.")
+        else:
+            logger.info(f"Processing structured output, update count: {len(all_updates)}")
+            final_response = AgentResponse.from_updates(all_updates, output_format_type=response_format)
 
-        if final_response.value and isinstance(final_response.value, BaseModel):
-            response_dict = final_response.value.model_dump(mode="json", exclude_none=True)
-            logger.info(f"Received structured output keys: {list(response_dict.keys())}")
+            if final_response.value and isinstance(final_response.value, BaseModel):
+                response_dict = final_response.value.model_dump(mode="json", exclude_none=True)
+                logger.info(f"Received structured output keys: {list(response_dict.keys())}")
 
-            # Extract state updates - if no state_schema, all non-message fields are state
-            state_keys = (
-                set(config.state_schema.keys()) if config.state_schema else set(response_dict.keys()) - {"message"}
-            )
-            state_updates = {k: v for k, v in response_dict.items() if k in state_keys}
+                # Extract state updates - if no state_schema, all non-message fields are state
+                state_keys = set(state_schema.keys()) if state_schema else set(response_dict.keys()) - {"message"}
+                state_updates = {k: v for k, v in response_dict.items() if k in state_keys}
 
-            if state_updates:
-                flow.current_state.update(state_updates)
-                yield StateSnapshotEvent(snapshot=flow.current_state)
-                logger.info(f"Emitted StateSnapshotEvent with updates: {list(state_updates.keys())}")
+                if state_updates:
+                    flow.current_state.update(state_updates)
+                    yield StateSnapshotEvent(snapshot=flow.current_state)
+                    logger.info(f"Emitted StateSnapshotEvent with updates: {list(state_updates.keys())}")
 
-            # Emit message field as text if present
-            if "message" in response_dict and response_dict["message"]:
-                message_id = generate_event_id()
-                yield TextMessageStartEvent(message_id=message_id, role="assistant")
-                yield TextMessageContentEvent(message_id=message_id, delta=response_dict["message"])
-                yield TextMessageEndEvent(message_id=message_id)
-                logger.info(f"Emitted conversational message with length={len(response_dict['message'])}")
+                # Emit message field as text if present
+                message_text = response_dict.get("message")
+                if isinstance(message_text, str) and message_text:
+                    message_id = generate_event_id()
+                    yield TextMessageStartEvent(message_id=message_id, role="assistant")
+                    yield TextMessageContentEvent(message_id=message_id, delta=message_text)
+                    yield TextMessageEndEvent(message_id=message_id)
+                    logger.info(f"Emitted conversational message with length={len(message_text)}")
 
     # Feature #1: Emit ToolCallEndEvent for declaration-only tools (tools without results)
     pending_without_end = flow.get_pending_without_end()
@@ -899,8 +1034,8 @@ async def run_agent_stream(
                 yield ToolCallEndEvent(tool_call_id=tool_call_id)
 
                 # For predictive tools with require_confirmation, emit confirm_changes
-                if config.require_confirmation and config.predict_state_config and tool_name:
-                    is_predictive_tool = any(cfg["tool"] == tool_name for cfg in config.predict_state_config.values())
+                if config.require_confirmation and predict_state_config and tool_name:
+                    is_predictive_tool = any(cfg["tool"] == tool_name for cfg in predict_state_config.values())
                     if is_predictive_tool:
                         logger.info(f"Emitting confirm_changes for predictive tool '{tool_name}'")
                         # Extract state value from tool arguments for StateSnapshot
@@ -922,6 +1057,20 @@ async def run_agent_stream(
                                     tool_call_id,
                                 )
 
+                        # Parse function arguments - skip confirm_changes if we can't parse
+                        # (we can't ask user to confirm something we can't properly display)
+                        try:
+                            function_arguments = json.loads(tool_call.get("function", {}).get("arguments", "{}"))
+                        except json.JSONDecodeError:
+                            logger.warning(
+                                "Failed to decode JSON arguments for confirm_changes tool '%s' "
+                                "(tool_call_id=%s). Skipping confirmation flow - cannot display "
+                                "malformed arguments to user for approval.",
+                                tool_name,
+                                tool_call_id,
+                            )
+                            continue  # Skip to next tool call without emitting confirm_changes
+
                         # Emit confirm_changes tool call
                         confirm_id = generate_event_id()
                         yield ToolCallStartEvent(
@@ -932,15 +1081,28 @@ async def run_agent_stream(
                         confirm_args = {
                             "function_name": tool_name,
                             "function_call_id": tool_call_id,
-                            "function_arguments": json.loads(tool_call.get("function", {}).get("arguments", "{}")),
+                            "function_arguments": function_arguments,
                             "steps": [{"description": f"Execute {tool_name}", "status": "enabled"}],
                         }
-                        yield ToolCallArgsEvent(tool_call_id=confirm_id, delta=json.dumps(confirm_args))
+                        confirm_args_json = json.dumps(confirm_args)
+                        yield ToolCallArgsEvent(tool_call_id=confirm_id, delta=confirm_args_json)
                         yield ToolCallEndEvent(tool_call_id=confirm_id)
+
+                        # Track confirm_changes in pending_tool_calls for MessagesSnapshotEvent
+                        # The frontend needs to see this in the snapshot to render the confirmation dialog
+                        confirm_entry = {
+                            "id": confirm_id,
+                            "type": "function",
+                            "function": {"name": "confirm_changes", "arguments": confirm_args_json},
+                        }
+                        flow.pending_tool_calls.append(confirm_entry)
+                        flow.tool_calls_by_id[confirm_id] = confirm_entry
+                        flow.tool_calls_ended.add(confirm_id)  # Mark as ended since we emit End event
                         flow.waiting_for_approval = True
 
     # Close any open message
     if flow.message_id:
+        logger.debug(f"End of run: closing text message message_id={flow.message_id}")
         yield TextMessageEndEvent(message_id=flow.message_id)
 
     # Emit MessagesSnapshotEvent if we have tool calls or results
@@ -954,7 +1116,7 @@ async def run_agent_stream(
             last_call_id = last_result.get("toolCallId")
             last_tool_name = flow.get_tool_name(last_call_id)
         if not _should_suppress_intermediate_snapshot(
-            last_tool_name, config.predict_state_config, config.require_confirmation
+            last_tool_name, predict_state_config, config.require_confirmation
         ):
             yield _build_messages_snapshot(flow, snapshot_messages)
 

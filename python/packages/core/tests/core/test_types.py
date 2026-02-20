@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import base64
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -14,20 +14,18 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     Annotation,
-    ChatMessage,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FinishReason,
-    Role,
+    FunctionTool,
+    Message,
+    ResponseStream,
     TextSpanRegion,
     ToolMode,
-    ToolProtocol,
     UsageDetails,
     detect_media_type_from_base64,
     merge_chat_options,
-    prepare_function_call_results,
     tool,
 )
 from agent_framework._types import (
@@ -42,26 +40,20 @@ from agent_framework.exceptions import ContentError
 
 
 @fixture
-def ai_tool() -> ToolProtocol:
-    """Returns a generic ToolProtocol."""
+def ai_tool() -> FunctionTool:
+    """Returns a generic FunctionTool."""
 
-    class GenericTool(BaseModel):
-        name: str
-        description: str | None = None
-        additional_properties: dict[str, Any] | None = None
+    @tool
+    def generic_tool(name: str) -> str:
+        """A generic tool that echoes the name."""
+        return f"Hello, {name}"
 
-        def parameters(self) -> dict[str, Any]:
-            """Return the parameters of the tool as a JSON schema."""
-            return {
-                "name": {"type": "string"},
-            }
-
-    return GenericTool(name="generic_tool", description="A generic tool")
+    return generic_tool
 
 
 @fixture
-def tool_tool() -> ToolProtocol:
-    """Returns a executable ToolProtocol."""
+def tool_tool() -> FunctionTool:
+    """Returns a executable FunctionTool."""
 
     @tool
     def simple_function(x: int, y: int) -> int:
@@ -567,16 +559,16 @@ def test_ai_content_serialization(args: dict):
     assert content == deserialized
 
 
-# region ChatMessage
+# region Message
 
 
 def test_chat_message_text():
-    """Test the ChatMessage class to ensure it initializes correctly with text content."""
-    # Create a ChatMessage with a role and text content
-    message = ChatMessage(role="user", text="Hello, how are you?")
+    """Test the Message class to ensure it initializes correctly with text content."""
+    # Create a Message with a role and text content
+    message = Message(role="user", text="Hello, how are you?")
 
     # Check the type and content
-    assert message.role == Role.USER
+    assert message.role == "user"
     assert len(message.contents) == 1
     assert message.contents[0].type == "text"
     assert message.contents[0].text == "Hello, how are you?"
@@ -587,14 +579,14 @@ def test_chat_message_text():
 
 
 def test_chat_message_contents():
-    """Test the ChatMessage class to ensure it initializes correctly with contents."""
-    # Create a ChatMessage with a role and multiple contents
+    """Test the Message class to ensure it initializes correctly with contents."""
+    # Create a Message with a role and multiple contents
     content1 = Content.from_text("Hello, how are you?")
     content2 = Content.from_text("I'm fine, thank you!")
-    message = ChatMessage(role="user", contents=[content1, content2])
+    message = Message(role="user", contents=[content1, content2])
 
     # Check the type and content
-    assert message.role == Role.USER
+    assert message.role == "user"
     assert len(message.contents) == 2
     assert message.contents[0].type == "text"
     assert message.contents[1].type == "text"
@@ -604,8 +596,8 @@ def test_chat_message_contents():
 
 
 def test_chat_message_with_chatrole_instance():
-    m = ChatMessage(role=Role.USER, text="hi")
-    assert m.role == Role.USER
+    m = Message(role="user", text="hi")
+    assert m.role == "user"
     assert m.text == "hi"
 
 
@@ -614,16 +606,16 @@ def test_chat_message_with_chatrole_instance():
 
 def test_chat_response():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
-    # Create a ChatMessage
-    message = ChatMessage(role="assistant", text="I'm doing well, thank you!")
+    # Create a Message
+    message = Message(role="assistant", text="I'm doing well, thank you!")
 
     # Create a ChatResponse with the message
     response = ChatResponse(messages=message)
 
     # Check the type and content
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].text == "I'm doing well, thank you!"
-    assert isinstance(response.messages[0], ChatMessage)
+    assert isinstance(response.messages[0], Message)
     # __str__ returns text
     assert str(response) == response.text
 
@@ -634,35 +626,33 @@ class OutputModel(BaseModel):
 
 def test_chat_response_with_format():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
-    # Create a ChatMessage
-    message = ChatMessage(role="assistant", text='{"response": "Hello"}')
+    # Create a Message
+    message = Message(role="assistant", text='{"response": "Hello"}')
 
     # Create a ChatResponse with the message
-    response = ChatResponse(messages=message)
+    response = ChatResponse(messages=message, response_format=OutputModel)
 
     # Check the type and content
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].text == '{"response": "Hello"}'
-    assert isinstance(response.messages[0], ChatMessage)
+    assert isinstance(response.messages[0], Message)
     assert response.text == '{"response": "Hello"}'
-    assert response.value is None
-    response.try_parse_value(OutputModel)
     assert response.value is not None
     assert response.value.response == "Hello"
 
 
 def test_chat_response_with_format_init():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
-    # Create a ChatMessage
-    message = ChatMessage(role="assistant", text='{"response": "Hello"}')
+    # Create a Message
+    message = Message(role="assistant", text='{"response": "Hello"}')
 
     # Create a ChatResponse with the message
     response = ChatResponse(messages=message, response_format=OutputModel)
 
     # Check the type and content
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].text == '{"response": "Hello"}'
-    assert isinstance(response.messages[0], ChatMessage)
+    assert isinstance(response.messages[0], Message)
     assert response.text == '{"response": "Hello"}'
     assert response.value is not None
     assert response.value.response == "Hello"
@@ -676,7 +666,7 @@ def test_chat_response_value_raises_on_invalid_schema():
         name: str = Field(min_length=10)
         score: int = Field(gt=0, le=100)
 
-    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    message = Message(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
     response = ChatResponse(messages=message, response_format=StrictSchema)
 
     with raises(ValidationError) as exc_info:
@@ -689,37 +679,6 @@ def test_chat_response_value_raises_on_invalid_schema():
     assert "score" in error_fields, "Expected 'score' gt constraint error"
 
 
-def test_chat_response_try_parse_value_returns_none_on_invalid():
-    """Test that try_parse_value returns None on validation failure with Field constraints."""
-
-    class StrictSchema(BaseModel):
-        id: Literal[5]
-        name: str = Field(min_length=10)
-        score: int = Field(gt=0, le=100)
-
-    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
-    response = ChatResponse(messages=message)
-
-    result = response.try_parse_value(StrictSchema)
-    assert result is None
-
-
-def test_chat_response_try_parse_value_returns_value_on_success():
-    """Test that try_parse_value returns parsed value when all constraints pass."""
-
-    class MySchema(BaseModel):
-        name: str = Field(min_length=3)
-        score: int = Field(ge=0, le=100)
-
-    message = ChatMessage(role="assistant", text='{"name": "test", "score": 85}')
-    response = ChatResponse(messages=message)
-
-    result = response.try_parse_value(MySchema)
-    assert result is not None
-    assert result.name == "test"
-    assert result.score == 85
-
-
 def test_agent_response_value_raises_on_invalid_schema():
     """Test that AgentResponse.value property raises ValidationError with field constraint details."""
 
@@ -728,7 +687,7 @@ def test_agent_response_value_raises_on_invalid_schema():
         name: str = Field(min_length=10)
         score: int = Field(gt=0, le=100)
 
-    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    message = Message(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
     response = AgentResponse(messages=message, response_format=StrictSchema)
 
     with raises(ValidationError) as exc_info:
@@ -741,43 +700,12 @@ def test_agent_response_value_raises_on_invalid_schema():
     assert "score" in error_fields, "Expected 'score' gt constraint error"
 
 
-def test_agent_response_try_parse_value_returns_none_on_invalid():
-    """Test that AgentResponse.try_parse_value returns None on Field constraint failure."""
-
-    class StrictSchema(BaseModel):
-        id: Literal[5]
-        name: str = Field(min_length=10)
-        score: int = Field(gt=0, le=100)
-
-    message = ChatMessage(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
-    response = AgentResponse(messages=message)
-
-    result = response.try_parse_value(StrictSchema)
-    assert result is None
-
-
-def test_agent_response_try_parse_value_returns_value_on_success():
-    """Test that AgentResponse.try_parse_value returns parsed value when all constraints pass."""
-
-    class MySchema(BaseModel):
-        name: str = Field(min_length=3)
-        score: int = Field(ge=0, le=100)
-
-    message = ChatMessage(role="assistant", text='{"name": "test", "score": 85}')
-    response = AgentResponse(messages=message)
-
-    result = response.try_parse_value(MySchema)
-    assert result is not None
-    assert result.name == "test"
-    assert result.score == 85
-
-
 # region ChatResponseUpdate
 
 
 def test_chat_response_update():
     """Test the ChatResponseUpdate class to ensure it initializes correctly with a message."""
-    # Create a ChatMessage
+    # Create a Message
     message = Content.from_text(text="I'm doing well, thank you!")
 
     # Create a ChatResponseUpdate with the message
@@ -791,96 +719,96 @@ def test_chat_response_update():
 
 def test_chat_response_updates_to_chat_response_one():
     """Test converting ChatResponseUpdate to ChatResponse."""
-    # Create a ChatMessage
+    # Create a Message
     message1 = Content.from_text("I'm doing well, ")
     message2 = Content.from_text("thank you!")
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
-        ChatResponseUpdate(text=message1, message_id="1"),
-        ChatResponseUpdate(text=message2, message_id="1"),
+        ChatResponseUpdate(contents=[message1], message_id="1"),
+        ChatResponseUpdate(contents=[message2], message_id="1"),
     ]
 
     # Convert to ChatResponse
-    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+    chat_response = ChatResponse.from_updates(response_updates)
 
     # Check the type and content
     assert len(chat_response.messages) == 1
     assert chat_response.text == "I'm doing well, thank you!"
-    assert isinstance(chat_response.messages[0], ChatMessage)
+    assert isinstance(chat_response.messages[0], Message)
     assert len(chat_response.messages[0].contents) == 1
     assert chat_response.messages[0].message_id == "1"
 
 
 def test_chat_response_updates_to_chat_response_two():
     """Test converting ChatResponseUpdate to ChatResponse."""
-    # Create a ChatMessage
+    # Create a Message
     message1 = Content.from_text("I'm doing well, ")
     message2 = Content.from_text("thank you!")
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
-        ChatResponseUpdate(text=message1, message_id="1"),
-        ChatResponseUpdate(text=message2, message_id="2"),
+        ChatResponseUpdate(contents=[message1], message_id="1"),
+        ChatResponseUpdate(contents=[message2], message_id="2"),
     ]
 
     # Convert to ChatResponse
-    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+    chat_response = ChatResponse.from_updates(response_updates)
 
     # Check the type and content
     assert len(chat_response.messages) == 2
     assert chat_response.text == "I'm doing well, \nthank you!"
-    assert isinstance(chat_response.messages[0], ChatMessage)
+    assert isinstance(chat_response.messages[0], Message)
     assert chat_response.messages[0].message_id == "1"
-    assert isinstance(chat_response.messages[1], ChatMessage)
+    assert isinstance(chat_response.messages[1], Message)
     assert chat_response.messages[1].message_id == "2"
 
 
 def test_chat_response_updates_to_chat_response_multiple():
     """Test converting ChatResponseUpdate to ChatResponse."""
-    # Create a ChatMessage
+    # Create a Message
     message1 = Content.from_text("I'm doing well, ")
     message2 = Content.from_text("thank you!")
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
-        ChatResponseUpdate(text=message1, message_id="1"),
+        ChatResponseUpdate(contents=[message1], message_id="1"),
         ChatResponseUpdate(contents=[Content.from_text_reasoning(text="Additional context")], message_id="1"),
-        ChatResponseUpdate(text=message2, message_id="1"),
+        ChatResponseUpdate(contents=[message2], message_id="1"),
     ]
 
     # Convert to ChatResponse
-    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+    chat_response = ChatResponse.from_updates(response_updates)
 
     # Check the type and content
     assert len(chat_response.messages) == 1
     assert chat_response.text == "I'm doing well,  thank you!"
-    assert isinstance(chat_response.messages[0], ChatMessage)
+    assert isinstance(chat_response.messages[0], Message)
     assert len(chat_response.messages[0].contents) == 3
     assert chat_response.messages[0].message_id == "1"
 
 
 def test_chat_response_updates_to_chat_response_multiple_multiple():
     """Test converting ChatResponseUpdate to ChatResponse."""
-    # Create a ChatMessage
+    # Create a Message
     message1 = Content.from_text("I'm doing well, ", raw_representation="I'm doing well, ")
     message2 = Content.from_text("thank you!")
 
     # Create a ChatResponseUpdate with the message
     response_updates = [
-        ChatResponseUpdate(text=message1, message_id="1"),
-        ChatResponseUpdate(text=message2, message_id="1"),
+        ChatResponseUpdate(contents=[message1], message_id="1"),
+        ChatResponseUpdate(contents=[message2], message_id="1"),
         ChatResponseUpdate(contents=[Content.from_text_reasoning(text="Additional context")], message_id="1"),
         ChatResponseUpdate(contents=[Content.from_text(text="More context")], message_id="1"),
-        ChatResponseUpdate(text="Final part", message_id="1"),
+        ChatResponseUpdate(contents=[Content.from_text("Final part")], message_id="1"),
     ]
 
     # Convert to ChatResponse
-    chat_response = ChatResponse.from_chat_response_updates(response_updates)
+    chat_response = ChatResponse.from_updates(response_updates)
 
     # Check the type and content
     assert len(chat_response.messages) == 1
-    assert isinstance(chat_response.messages[0], ChatMessage)
+    assert isinstance(chat_response.messages[0], Message)
     assert chat_response.messages[0].message_id == "1"
     assert chat_response.messages[0].contents[0].raw_representation is not None
 
@@ -897,32 +825,30 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
 
 async def test_chat_response_from_async_generator():
     async def gen() -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(text="Hello", message_id="1")
-        yield ChatResponseUpdate(text=" world", message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text("Hello")], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text(" world")], message_id="1")
 
-    resp = await ChatResponse.from_chat_response_generator(gen())
+    resp = await ChatResponse.from_update_generator(gen())
     assert resp.text == "Hello world"
 
 
 async def test_chat_response_from_async_generator_output_format():
     async def gen() -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(text='{ "respon', message_id="1")
-        yield ChatResponseUpdate(text='se": "Hello" }', message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text('{ "respon')], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text('se": "Hello" }')], message_id="1")
 
-    resp = await ChatResponse.from_chat_response_generator(gen())
+    resp = await ChatResponse.from_update_generator(gen(), output_format_type=OutputModel)
     assert resp.text == '{ "response": "Hello" }'
-    assert resp.value is None
-    resp.try_parse_value(OutputModel)
     assert resp.value is not None
     assert resp.value.response == "Hello"
 
 
 async def test_chat_response_from_async_generator_output_format_in_method():
     async def gen() -> AsyncIterable[ChatResponseUpdate]:
-        yield ChatResponseUpdate(text='{ "respon', message_id="1")
-        yield ChatResponseUpdate(text='se": "Hello" }', message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text('{ "respon')], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text('se": "Hello" }')], message_id="1")
 
-    resp = await ChatResponse.from_chat_response_generator(gen(), output_format_type=OutputModel)
+    resp = await ChatResponse.from_update_generator(gen(), output_format_type=OutputModel)
     assert resp.text == '{ "response": "Hello" }'
     assert resp.value is not None
     assert resp.value.response == "Hello"
@@ -995,8 +921,8 @@ def test_chat_options_tool_choice_validation():
     }
     assert validate_tool_mode({"mode": "none"}) == {"mode": "none"}
 
-    # None should return mode==none
-    assert validate_tool_mode(None) == {"mode": "none"}
+    # None should remain unset
+    assert validate_tool_mode(None) is None
 
     with raises(ContentError):
         validate_tool_mode("invalid_mode")
@@ -1079,8 +1005,8 @@ def test_chat_options_and_tool_choice_required_specific_function() -> None:
 
 
 @fixture
-def chat_message() -> ChatMessage:
-    return ChatMessage(role=Role.USER, text="Hello")
+def chat_message() -> Message:
+    return Message(role="user", text="Hello")
 
 
 @fixture
@@ -1089,24 +1015,24 @@ def text_content() -> Content:
 
 
 @fixture
-def agent_response(chat_message: ChatMessage) -> AgentResponse:
+def agent_response(chat_message: Message) -> AgentResponse:
     return AgentResponse(messages=chat_message)
 
 
 @fixture
 def agent_response_update(text_content: Content) -> AgentResponseUpdate:
-    return AgentResponseUpdate(role=Role.ASSISTANT, contents=[text_content])
+    return AgentResponseUpdate(role="assistant", contents=[text_content])
 
 
 # region AgentResponse
 
 
-def test_agent_run_response_init_single_message(chat_message: ChatMessage) -> None:
+def test_agent_run_response_init_single_message(chat_message: Message) -> None:
     response = AgentResponse(messages=chat_message)
     assert response.messages == [chat_message]
 
 
-def test_agent_run_response_init_list_messages(chat_message: ChatMessage) -> None:
+def test_agent_run_response_init_list_messages(chat_message: Message) -> None:
     response = AgentResponse(messages=[chat_message, chat_message])
     assert len(response.messages) == 2
     assert response.messages[0] == chat_message
@@ -1117,7 +1043,7 @@ def test_agent_run_response_init_none_messages() -> None:
     assert response.messages == []
 
 
-def test_agent_run_response_text_property(chat_message: ChatMessage) -> None:
+def test_agent_run_response_text_property(chat_message: Message) -> None:
     response = AgentResponse(messages=[chat_message, chat_message])
     assert response.text == "HelloHello"
 
@@ -1129,12 +1055,12 @@ def test_agent_run_response_text_property_empty() -> None:
 
 def test_agent_run_response_from_updates(agent_response_update: AgentResponseUpdate) -> None:
     updates = [agent_response_update, agent_response_update]
-    response = AgentResponse.from_agent_run_response_updates(updates)
+    response = AgentResponse.from_updates(updates)
     assert len(response.messages) > 0
     assert response.text == "Test contentTest content"
 
 
-def test_agent_run_response_str_method(chat_message: ChatMessage) -> None:
+def test_agent_run_response_str_method(chat_message: Message) -> None:
     response = AgentResponse(messages=chat_message)
     assert str(response) == "Hello"
 
@@ -1174,7 +1100,7 @@ def test_agent_run_response_update_created_at() -> None:
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
     update = AgentResponseUpdate(
         contents=[Content.from_text(text="test")],
-        role=Role.ASSISTANT,
+        role="assistant",
         created_at=utc_timestamp,
     )
     assert update.created_at == utc_timestamp
@@ -1185,7 +1111,7 @@ def test_agent_run_response_update_created_at() -> None:
     formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     update_with_now = AgentResponseUpdate(
         contents=[Content.from_text(text="test")],
-        role=Role.ASSISTANT,
+        role="assistant",
         created_at=formatted_utc,
     )
     assert update_with_now.created_at == formatted_utc
@@ -1197,7 +1123,7 @@ def test_agent_run_response_created_at() -> None:
     # Test with a properly formatted UTC timestamp
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
     response = AgentResponse(
-        messages=[ChatMessage(role=Role.ASSISTANT, text="Hello")],
+        messages=[Message(role="assistant", text="Hello")],
         created_at=utc_timestamp,
     )
     assert response.created_at == utc_timestamp
@@ -1207,7 +1133,7 @@ def test_agent_run_response_created_at() -> None:
     now_utc = datetime.now(tz=timezone.utc)
     formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     response_with_now = AgentResponse(
-        messages=[ChatMessage(role=Role.ASSISTANT, text="Hello")],
+        messages=[Message(role="assistant", text="Hello")],
         created_at=formatted_utc,
     )
     assert response_with_now.created_at == formatted_utc
@@ -1271,7 +1197,7 @@ def test_function_call_merge_in_process_update_and_usage_aggregation():
     # plus usage
     u3 = ChatResponseUpdate(contents=[Content.from_usage(UsageDetails(input_token_count=1, output_token_count=2))])
 
-    resp = ChatResponse.from_chat_response_updates([u1, u2, u3])
+    resp = ChatResponse.from_updates([u1, u2, u3])
     assert len(resp.messages) == 1
     last_contents = resp.messages[0].contents
     assert any(c.type == "function_call" for c in last_contents)
@@ -1287,7 +1213,7 @@ def test_function_call_incompatible_ids_are_not_merged():
     u1 = ChatResponseUpdate(contents=[Content.from_function_call(call_id="a", name="f", arguments="x")], message_id="m")
     u2 = ChatResponseUpdate(contents=[Content.from_function_call(call_id="b", name="f", arguments="y")], message_id="m")
 
-    resp = ChatResponse.from_chat_response_updates([u1, u2])
+    resp = ChatResponse.from_updates([u1, u2])
     fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
     assert len(fcs) == 2
 
@@ -1296,17 +1222,19 @@ def test_function_call_incompatible_ids_are_not_merged():
 
 
 def test_chat_role_str_and_repr():
-    assert str(Role.USER) == "user"
-    assert "Role(value=" in repr(Role.USER)
+    # Role is now a NewType of str, so it's just a plain string
+    assert "user" == "user"
+    assert repr("user") == "'user'"
 
 
 def test_chat_finish_reason_constants():
-    assert FinishReason.STOP.value == "stop"
+    # FinishReason is now a NewType of str, so it's just a plain string
+    assert "stop" == "stop"
 
 
 def test_response_update_propagates_fields_and_metadata():
     upd = ChatResponseUpdate(
-        text="hello",
+        contents=[Content.from_text("hello")],
         role="assistant",
         author_name="bot",
         response_id="rid",
@@ -1314,17 +1242,17 @@ def test_response_update_propagates_fields_and_metadata():
         conversation_id="cid",
         model_id="model-x",
         created_at="t0",
-        finish_reason=FinishReason.STOP,
+        finish_reason="stop",
         additional_properties={"k": "v"},
     )
-    resp = ChatResponse.from_chat_response_updates([upd])
+    resp = ChatResponse.from_updates([upd])
     assert resp.response_id == "rid"
     assert resp.created_at == "t0"
     assert resp.conversation_id == "cid"
     assert resp.model_id == "model-x"
-    assert resp.finish_reason == FinishReason.STOP
+    assert resp.finish_reason == "stop"
     assert resp.additional_properties and resp.additional_properties["k"] == "v"
-    assert resp.messages[0].role == Role.ASSISTANT
+    assert resp.messages[0].role == "assistant"
     assert resp.messages[0].author_name == "bot"
     assert resp.messages[0].message_id == "mid"
 
@@ -1332,9 +1260,9 @@ def test_response_update_propagates_fields_and_metadata():
 def test_text_coalescing_preserves_first_properties():
     t1 = Content.from_text("A", raw_representation={"r": 1}, additional_properties={"p": 1})
     t2 = Content.from_text("B")
-    upd1 = ChatResponseUpdate(text=t1, message_id="x")
-    upd2 = ChatResponseUpdate(text=t2, message_id="x")
-    resp = ChatResponse.from_chat_response_updates([upd1, upd2])
+    upd1 = ChatResponseUpdate(contents=[t1], message_id="x")
+    upd2 = ChatResponseUpdate(contents=[t2], message_id="x")
+    resp = ChatResponse.from_updates([upd1, upd2])
     # After coalescing there should be a single TextContent with merged text and preserved props from first
     items = [c for c in resp.messages[0].contents if c.type == "text"]
     assert len(items) >= 1
@@ -1359,7 +1287,7 @@ def test_chat_tool_mode_eq_with_string():
 
 @fixture
 def agent_run_response_async() -> AgentResponse:
-    return AgentResponse(messages=[ChatMessage(role="user", text="Hello")])
+    return AgentResponse(messages=[Message(role="user", text="Hello")])
 
 
 async def test_agent_run_response_from_async_generator():
@@ -1367,7 +1295,7 @@ async def test_agent_run_response_from_async_generator():
         yield AgentResponseUpdate(contents=[Content.from_text("A")])
         yield AgentResponseUpdate(contents=[Content.from_text("B")])
 
-    r = await AgentResponse.from_agent_response_generator(gen())
+    r = await AgentResponse.from_update_generator(gen())
     assert r.text == "AB"
 
 
@@ -1509,7 +1437,7 @@ def test_usage_details_iadd_edge_cases():
 
 
 def test_chat_message_from_dict_with_mixed_content():
-    """Test ChatMessage from_dict with mixed content types for better coverage."""
+    """Test Message from_dict with mixed content types for better coverage."""
 
     message_data = {
         "role": "assistant",
@@ -1520,7 +1448,7 @@ def test_chat_message_from_dict_with_mixed_content():
         ],
     }
 
-    message = ChatMessage.from_dict(message_data)
+    message = Message.from_dict(message_data)
     assert len(message.contents) == 3  # Unknown type is ignored
     assert message.contents[0].type == "text"
     assert message.contents[1].type == "function_call"
@@ -1578,7 +1506,7 @@ def test_comprehensive_serialization_methods():
 
 
 def test_chat_message_complex_content_serialization():
-    """Test ChatMessage serialization with various content types."""
+    """Test Message serialization with various content types."""
 
     # Create a message with multiple content types
     contents = [
@@ -1587,7 +1515,7 @@ def test_chat_message_complex_content_serialization():
         Content.from_function_result(call_id="call1", result="success"),
     ]
 
-    message = ChatMessage(role=Role.ASSISTANT, contents=contents)
+    message = Message(role="assistant", contents=contents)
 
     # Test to_dict
     message_dict = message.to_dict()
@@ -1597,7 +1525,7 @@ def test_chat_message_complex_content_serialization():
     assert message_dict["contents"][2]["type"] == "function_result"
 
     # Test from_dict round-trip
-    reconstructed = ChatMessage.from_dict(message_dict)
+    reconstructed = Message.from_dict(message_dict)
     assert len(reconstructed.contents) == 3
     assert reconstructed.contents[0].type == "text"
     assert reconstructed.contents[1].type == "function_call"
@@ -1675,8 +1603,8 @@ def test_chat_response_complex_serialization():
 
     response = ChatResponse.from_dict(response_data)
     assert len(response.messages) == 2
-    assert isinstance(response.messages[0], ChatMessage)
-    assert isinstance(response.finish_reason, FinishReason)
+    assert isinstance(response.messages[0], Message)
+    assert isinstance(response.finish_reason, str)  # FinishReason is now a NewType of str
     assert isinstance(response.usage_details, dict)
     assert response.model_id == "gpt-4"  # Should be stored as model_id
 
@@ -1684,7 +1612,7 @@ def test_chat_response_complex_serialization():
     response_dict = response.to_dict()
     assert len(response_dict["messages"]) == 2
     assert isinstance(response_dict["messages"][0], dict)
-    assert isinstance(response_dict["finish_reason"], dict)
+    assert isinstance(response_dict["finish_reason"], str)  # FinishReason serializes to string
     assert isinstance(response_dict["usage_details"], dict)
     assert response_dict["model_id"] == "gpt-4"  # Should serialize as model_id
 
@@ -1752,7 +1680,7 @@ def test_agent_run_response_complex_serialization():
 
     response = AgentResponse.from_dict(response_data)
     assert len(response.messages) == 2
-    assert isinstance(response.messages[0], ChatMessage)
+    assert isinstance(response.messages[0], Message)
     assert isinstance(response.usage_details, dict)
 
     # Test to_dict
@@ -1794,20 +1722,20 @@ def test_agent_run_response_update_all_content_types():
 
     update = AgentResponseUpdate.from_dict(update_data)
     assert len(update.contents) == 12  # unknown_type is logged and ignored
-    assert isinstance(update.role, Role)
-    assert update.role.value == "assistant"
+    assert isinstance(update.role, str)  # Role is now a NewType of str
+    assert update.role == "assistant"
 
     # Test to_dict with role conversion
     update_dict = update.to_dict()
     assert len(update_dict["contents"]) == 12  # unknown_type was ignored during from_dict
-    assert isinstance(update_dict["role"], dict)
+    assert isinstance(update_dict["role"], str)  # Role serializes to string
 
     # Test role as string conversion
     update_data_str_role = update_data.copy()
     update_data_str_role["role"] = "user"
     update_str = AgentResponseUpdate.from_dict(update_data_str_role)
-    assert isinstance(update_str.role, Role)
-    assert update_str.role.value == "user"
+    assert isinstance(update_str.role, str)  # Role is now a NewType of str
+    assert update_str.role == "user"
 
 
 # region Serialization
@@ -1934,9 +1862,9 @@ def test_agent_run_response_update_all_content_types():
             id="function_approval_response",
         ),
         pytest.param(
-            ChatMessage,
+            Message,
             {
-                "role": {"type": "role", "value": "user"},
+                "role": "\1",
                 "contents": [
                     {"type": "text", "text": "Hello"},
                     {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
@@ -1952,17 +1880,17 @@ def test_agent_run_response_update_all_content_types():
                 "type": "chat_response",
                 "messages": [
                     {
-                        "type": "chat_message",
-                        "role": {"type": "role", "value": "user"},
+                        "type": "message",
+                        "role": "\1",
                         "contents": [{"type": "text", "text": "Hello"}],
                     },
                     {
-                        "type": "chat_message",
-                        "role": {"type": "role", "value": "assistant"},
+                        "type": "message",
+                        "role": "\1",
                         "contents": [{"type": "text", "text": "Hi there"}],
                     },
                 ],
-                "finish_reason": {"type": "finish_reason", "value": "stop"},
+                "finish_reason": "\1",
                 "usage_details": {
                     "type": "usage_details",
                     "input_token_count": 10,
@@ -1981,8 +1909,8 @@ def test_agent_run_response_update_all_content_types():
                     {"type": "text", "text": "Hello"},
                     {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
                 ],
-                "role": {"type": "role", "value": "assistant"},
-                "finish_reason": {"type": "finish_reason", "value": "stop"},
+                "role": "\1",
+                "finish_reason": "\1",
                 "message_id": "msg-123",
                 "response_id": "resp-123",
             },
@@ -1993,11 +1921,11 @@ def test_agent_run_response_update_all_content_types():
             {
                 "messages": [
                     {
-                        "role": {"type": "role", "value": "user"},
+                        "role": "\1",
                         "contents": [{"type": "text", "text": "Question"}],
                     },
                     {
-                        "role": {"type": "role", "value": "assistant"},
+                        "role": "\1",
                         "contents": [{"type": "text", "text": "Answer"}],
                     },
                 ],
@@ -2018,7 +1946,7 @@ def test_agent_run_response_update_all_content_types():
                     {"type": "text", "text": "Streaming"},
                     {"type": "function_call", "call_id": "call-1", "name": "test_func", "arguments": {}},
                 ],
-                "role": {"type": "role", "value": "assistant"},
+                "role": "\1",
                 "message_id": "msg-123",
                 "response_id": "run-123",
                 "author_name": "Agent",
@@ -2143,7 +2071,7 @@ def test_text_content_with_annotations_serialization():
     assert all(isinstance(ann["annotated_regions"][0], dict) for ann in reconstructed.annotations)
 
 
-# region prepare_function_call_results with Pydantic models
+# region FunctionTool.parse_result with Pydantic models
 
 
 class WeatherResult(BaseModel):
@@ -2160,10 +2088,10 @@ class NestedModel(BaseModel):
     weather: WeatherResult
 
 
-def test_prepare_function_call_results_pydantic_model():
+def test_parse_result_pydantic_model():
     """Test that Pydantic BaseModel subclasses are properly serialized using model_dump()."""
     result = WeatherResult(temperature=22.5, condition="sunny")
-    json_result = prepare_function_call_results(result)
+    json_result = FunctionTool.parse_result(result)
 
     # The result should be a valid JSON string
     assert isinstance(json_result, str)
@@ -2171,13 +2099,13 @@ def test_prepare_function_call_results_pydantic_model():
     assert '"condition": "sunny"' in json_result or '"condition":"sunny"' in json_result
 
 
-def test_prepare_function_call_results_pydantic_model_in_list():
+def test_parse_result_pydantic_model_in_list():
     """Test that lists containing Pydantic models are properly serialized."""
     results = [
         WeatherResult(temperature=20.0, condition="cloudy"),
         WeatherResult(temperature=25.0, condition="sunny"),
     ]
-    json_result = prepare_function_call_results(results)
+    json_result = FunctionTool.parse_result(results)
 
     # The result should be a valid JSON string representing a list
     assert isinstance(json_result, str)
@@ -2187,13 +2115,13 @@ def test_prepare_function_call_results_pydantic_model_in_list():
     assert "sunny" in json_result
 
 
-def test_prepare_function_call_results_pydantic_model_in_dict():
+def test_parse_result_pydantic_model_in_dict():
     """Test that dicts containing Pydantic models are properly serialized."""
     results = {
         "current": WeatherResult(temperature=22.0, condition="partly cloudy"),
         "forecast": WeatherResult(temperature=24.0, condition="sunny"),
     }
-    json_result = prepare_function_call_results(results)
+    json_result = FunctionTool.parse_result(results)
 
     # The result should be a valid JSON string representing a dict
     assert isinstance(json_result, str)
@@ -2203,10 +2131,10 @@ def test_prepare_function_call_results_pydantic_model_in_dict():
     assert "sunny" in json_result
 
 
-def test_prepare_function_call_results_nested_pydantic_model():
+def test_parse_result_nested_pydantic_model():
     """Test that nested Pydantic models are properly serialized."""
     result = NestedModel(name="Seattle", weather=WeatherResult(temperature=18.0, condition="rainy"))
-    json_result = prepare_function_call_results(result)
+    json_result = FunctionTool.parse_result(result)
 
     # The result should be a valid JSON string
     assert isinstance(json_result, str)
@@ -2215,10 +2143,10 @@ def test_prepare_function_call_results_nested_pydantic_model():
     assert "18.0" in json_result or "18" in json_result
 
 
-# region prepare_function_call_results with MCP TextContent-like objects
+# region FunctionTool.parse_result with MCP TextContent-like objects
 
 
-def test_prepare_function_call_results_text_content_single():
+def test_parse_result_text_content_single():
     """Test that objects with text attribute (like MCP TextContent) are properly handled."""
 
     @dataclass
@@ -2226,14 +2154,14 @@ def test_prepare_function_call_results_text_content_single():
         text: str
 
     result = [MockTextContent("Hello from MCP tool!")]
-    json_result = prepare_function_call_results(result)
+    json_result = FunctionTool.parse_result(result)
 
     # Should extract text and serialize as JSON array of strings
     assert isinstance(json_result, str)
     assert json_result == '["Hello from MCP tool!"]'
 
 
-def test_prepare_function_call_results_text_content_multiple():
+def test_parse_result_text_content_multiple():
     """Test that multiple TextContent-like objects are serialized correctly."""
 
     @dataclass
@@ -2241,14 +2169,14 @@ def test_prepare_function_call_results_text_content_multiple():
         text: str
 
     result = [MockTextContent("First result"), MockTextContent("Second result")]
-    json_result = prepare_function_call_results(result)
+    json_result = FunctionTool.parse_result(result)
 
     # Should extract text from each and serialize as JSON array
     assert isinstance(json_result, str)
     assert json_result == '["First result", "Second result"]'
 
 
-def test_prepare_function_call_results_text_content_with_non_string_text():
+def test_parse_result_text_content_with_non_string_text():
     """Test that objects with non-string text attribute are not treated as TextContent."""
 
     class BadTextContent:
@@ -2256,10 +2184,38 @@ def test_prepare_function_call_results_text_content_with_non_string_text():
             self.text = 12345  # Not a string!
 
     result = [BadTextContent()]
-    json_result = prepare_function_call_results(result)
+    json_result = FunctionTool.parse_result(result)
 
     # Should not extract text since it's not a string, will serialize the object
     assert isinstance(json_result, str)
+
+
+def test_parse_result_none_returns_empty_string():
+    """Test that None returns an empty string."""
+    assert FunctionTool.parse_result(None) == ""
+
+
+def test_parse_result_string_passthrough():
+    """Test that strings are returned as-is."""
+    assert FunctionTool.parse_result("hello world") == "hello world"
+    assert FunctionTool.parse_result('{"key": "value"}') == '{"key": "value"}'
+
+
+def test_parse_result_content_object():
+    """Test that Content objects are serialized via to_dict."""
+    content = Content.from_text("hello")
+    result = FunctionTool.parse_result(content)
+    assert isinstance(result, str)
+    assert "hello" in result
+
+
+def test_parse_result_list_of_content():
+    """Test that list[Content] is serialized to JSON."""
+    contents = [Content.from_text("hello"), Content.from_text("world")]
+    result = FunctionTool.parse_result(contents)
+    assert isinstance(result, str)
+    assert "hello" in result
+    assert "world" in result
 
 
 # endregion
@@ -2516,6 +2472,841 @@ def test_validate_uri_data_uri():
     uri = f"data:text/plain;base64,{data}"
     result = _validate_uri(uri, None)
     assert "uri" in result
+
+
+# endregion
+
+
+# region ResponseStream
+
+
+async def _generate_updates(count: int = 5) -> AsyncIterable[ChatResponseUpdate]:
+    """Helper to generate test updates."""
+    for i in range(count):
+        yield ChatResponseUpdate(contents=[Content.from_text(f"update_{i}")], role="assistant")
+
+
+def _combine_updates(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+    """Helper finalizer that combines updates into a response."""
+    return ChatResponse.from_updates(updates)
+
+
+class TestResponseStreamBasicIteration:
+    """Tests for basic ResponseStream iteration."""
+
+    async def test_iterate_collects_updates(self) -> None:
+        """Iterating through stream collects all updates."""
+        stream = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1", "update_2"]
+        assert len(stream.updates) == 3
+
+    async def test_stream_consumed_after_iteration(self) -> None:
+        """Stream is marked consumed after full iteration."""
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        async for _ in stream:
+            pass
+
+        assert stream._consumed is True
+
+    async def test_get_final_response_after_iteration(self) -> None:
+        """Can get final response after iterating."""
+        stream = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        async for _ in stream:
+            pass
+
+        final = await stream.get_final_response()
+        assert final.text == "update_0update_1update_2"
+
+    async def test_get_final_response_without_iteration(self) -> None:
+        """get_final_response auto-iterates if not consumed."""
+        stream = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        final = await stream.get_final_response()
+
+        assert final.text == "update_0update_1update_2"
+        assert stream._consumed is True
+
+    async def test_updates_property_returns_collected(self) -> None:
+        """updates property returns collected updates."""
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        async for _ in stream:
+            pass
+
+        assert len(stream.updates) == 2
+        assert stream.updates[0].text == "update_0"
+        assert stream.updates[1].text == "update_1"
+
+
+class TestResponseStreamTransformHooks:
+    """Tests for transform hooks (per-update processing)."""
+
+    async def test_transform_hook_called_for_each_update(self) -> None:
+        """Transform hook is called for each update during iteration."""
+        call_count = {"value": 0}
+
+        def counting_hook(update: ChatResponseUpdate) -> None:
+            call_count["value"] += 1
+
+        stream = ResponseStream(
+            _generate_updates(3),
+            finalizer=_combine_updates,
+            transform_hooks=[counting_hook],
+        )
+
+        await stream.get_final_response()
+
+        assert call_count["value"] == 3
+
+    async def test_transform_hook_can_modify_update(self) -> None:
+        """Transform hook can modify the update."""
+
+        def uppercase_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text((update.text or "").upper())],
+                role=update.role,
+            )
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[uppercase_hook],
+        )
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["UPDATE_0", "UPDATE_1"]
+
+    async def test_multiple_transform_hooks_chained(self) -> None:
+        """Multiple transform hooks are called in order."""
+        order: list[str] = []
+
+        def hook_a(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            order.append("a")
+            return update
+
+        def hook_b(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            order.append("b")
+            return update
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[hook_a, hook_b],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert order == ["a", "b", "a", "b"]
+
+    async def test_transform_hook_returning_none_keeps_previous(self) -> None:
+        """Transform hook returning None keeps the previous value."""
+
+        def none_hook(update: ChatResponseUpdate) -> None:
+            return None
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[none_hook],
+        )
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1"]
+
+    async def test_with_transform_hook_fluent_api(self) -> None:
+        """with_transform_hook adds hook via fluent API."""
+        call_count = {"value": 0}
+
+        def counting_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            call_count["value"] += 1
+            return update
+
+        stream = ResponseStream(_generate_updates(3), finalizer=_combine_updates).with_transform_hook(counting_hook)
+
+        async for _ in stream:
+            pass
+
+        assert call_count["value"] == 3
+
+    async def test_async_transform_hook(self) -> None:
+        """Async transform hooks are awaited."""
+
+        async def async_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text(f"async_{update.text}")],
+                role=update.role,
+            )
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[async_hook],
+        )
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["async_update_0", "async_update_1"]
+
+
+class TestResponseStreamCleanupHooks:
+    """Tests for cleanup hooks (after stream consumption, before finalizer)."""
+
+    async def test_cleanup_hook_called_after_iteration(self) -> None:
+        """Cleanup hook is called after iteration completes."""
+        cleanup_called = {"value": False}
+
+        def cleanup_hook() -> None:
+            cleanup_called["value"] = True
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            cleanup_hooks=[cleanup_hook],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert cleanup_called["value"] is True
+
+    async def test_cleanup_hook_called_only_once(self) -> None:
+        """Cleanup hook is called only once even if get_final_response called."""
+        call_count = {"value": 0}
+
+        def cleanup_hook() -> None:
+            call_count["value"] += 1
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            cleanup_hooks=[cleanup_hook],
+        )
+
+        async for _ in stream:
+            pass
+        await stream.get_final_response()
+
+        assert call_count["value"] == 1
+
+    async def test_multiple_cleanup_hooks(self) -> None:
+        """Multiple cleanup hooks are called in order."""
+        order: list[str] = []
+
+        def hook_a() -> None:
+            order.append("a")
+
+        def hook_b() -> None:
+            order.append("b")
+
+        stream = ResponseStream(
+            _generate_updates(1),
+            finalizer=_combine_updates,
+            cleanup_hooks=[hook_a, hook_b],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert order == ["a", "b"]
+
+    async def test_with_cleanup_hook_fluent_api(self) -> None:
+        """with_cleanup_hook adds hook via fluent API."""
+        cleanup_called = {"value": False}
+
+        def cleanup_hook() -> None:
+            cleanup_called["value"] = True
+
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates).with_cleanup_hook(cleanup_hook)
+
+        async for _ in stream:
+            pass
+
+        assert cleanup_called["value"] is True
+
+    async def test_async_cleanup_hook(self) -> None:
+        """Async cleanup hooks are awaited."""
+        cleanup_called = {"value": False}
+
+        async def async_cleanup() -> None:
+            cleanup_called["value"] = True
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            cleanup_hooks=[async_cleanup],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert cleanup_called["value"] is True
+
+
+class TestResponseStreamResultHooks:
+    """Tests for result hooks (after finalizer)."""
+
+    async def test_result_hook_called_after_finalizer(self) -> None:
+        """Result hook is called after finalizer produces result."""
+
+        def add_metadata(response: ChatResponse) -> ChatResponse:
+            response.additional_properties["processed"] = True
+            return response
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[add_metadata],
+        )
+
+        final = await stream.get_final_response()
+
+        assert final.additional_properties["processed"] is True
+
+    async def test_result_hook_can_transform_result(self) -> None:
+        """Result hook can transform the final result."""
+
+        def wrap_text(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(messages=Message("assistant", [f"[{response.text}]"]))
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[wrap_text],
+        )
+
+        final = await stream.get_final_response()
+
+        assert final.text == "[update_0update_1]"
+
+    async def test_multiple_result_hooks_chained(self) -> None:
+        """Multiple result hooks are called in order."""
+
+        def add_prefix(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(messages=Message("assistant", [f"prefix_{response.text}"]))
+
+        def add_suffix(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(messages=Message("assistant", [f"{response.text}_suffix"]))
+
+        stream = ResponseStream(
+            _generate_updates(1),
+            finalizer=_combine_updates,
+            result_hooks=[add_prefix, add_suffix],
+        )
+
+        final = await stream.get_final_response()
+
+        assert final.text == "prefix_update_0_suffix"
+
+    async def test_result_hook_returning_none_keeps_previous(self) -> None:
+        """Result hook returning None keeps the previous value."""
+        hook_called = {"value": False}
+
+        def none_hook(response: ChatResponse) -> None:
+            hook_called["value"] = True
+            return
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[none_hook],
+        )
+
+        final = await stream.get_final_response()
+
+        assert hook_called["value"] is True
+        assert final.text == "update_0update_1"
+
+    async def test_with_result_hook_fluent_api(self) -> None:
+        """with_result_hook adds hook via fluent API."""
+
+        def add_metadata(response: ChatResponse) -> ChatResponse:
+            response.additional_properties["via_fluent"] = True
+            return response
+
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates).with_result_hook(add_metadata)
+
+        final = await stream.get_final_response()
+
+        assert final.additional_properties["via_fluent"] is True
+
+    async def test_async_result_hook(self) -> None:
+        """Async result hooks are awaited."""
+
+        async def async_hook(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(messages=Message("assistant", [f"async_{response.text}"]))
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[async_hook],
+        )
+
+        final = await stream.get_final_response()
+
+        assert final.text == "async_update_0update_1"
+
+
+class TestResponseStreamFinalizer:
+    """Tests for the finalizer."""
+
+    async def test_finalizer_receives_all_updates(self) -> None:
+        """Finalizer receives all collected updates."""
+        received_updates: list[ChatResponseUpdate] = []
+
+        def capturing_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            received_updates.extend(updates)
+            return ChatResponse(messages=Message("assistant", ["done"]))
+
+        stream = ResponseStream(_generate_updates(3), finalizer=capturing_finalizer)
+
+        await stream.get_final_response()
+
+        assert len(received_updates) == 3
+        assert received_updates[0].text == "update_0"
+        assert received_updates[2].text == "update_2"
+
+    async def test_no_finalizer_returns_updates(self) -> None:
+        """get_final_response returns collected updates if no finalizer configured."""
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(_generate_updates(2))
+
+        final = await stream.get_final_response()
+
+        assert len(final) == 2
+        assert final[0].text == "update_0"
+        assert final[1].text == "update_1"
+
+    async def test_async_finalizer(self) -> None:
+        """Async finalizer is awaited."""
+
+        async def async_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            text = "".join(u.text or "" for u in updates)
+            return ChatResponse(messages=Message("assistant", [f"async_{text}"]))
+
+        stream = ResponseStream(_generate_updates(2), finalizer=async_finalizer)
+
+        final = await stream.get_final_response()
+
+        assert final.text == "async_update_0update_1"
+
+    async def test_finalized_only_once(self) -> None:
+        """Finalizer is only called once even with multiple get_final_response calls."""
+        call_count = {"value": 0}
+
+        def counting_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            call_count["value"] += 1
+            return ChatResponse(messages=Message("assistant", ["done"]))
+
+        stream = ResponseStream(_generate_updates(2), finalizer=counting_finalizer)
+
+        await stream.get_final_response()
+        await stream.get_final_response()
+
+        assert call_count["value"] == 1
+
+
+class TestResponseStreamMapAndWithFinalizer:
+    """Tests for ResponseStream.map() and .with_finalizer() functionality."""
+
+    async def test_map_delegates_iteration(self) -> None:
+        """Mapped stream delegates iteration to inner stream."""
+        inner = ResponseStream(_generate_updates(3), finalizer=_combine_updates)
+
+        outer = inner.map(lambda u: u, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1", "update_2"]
+        assert inner._consumed is True
+
+    async def test_map_transforms_updates(self) -> None:
+        """map() transforms each update."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        def add_prefix(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text(f"mapped_{update.text}")],
+                role=update.role,
+            )
+
+        outer = inner.map(add_prefix, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["mapped_update_0", "mapped_update_1"]
+
+    async def test_map_requires_finalizer(self) -> None:
+        """map() requires a finalizer since inner's won't work with new type."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        # map() now requires a finalizer parameter
+        outer = inner.map(lambda u: u, _combine_updates)
+
+        final = await outer.get_final_response()
+        assert final.text == "update_0update_1"
+
+    async def test_map_calls_inner_result_hooks(self) -> None:
+        """map() calls inner's result hooks when get_final_response() is called."""
+        inner_result_hook_called = {"value": False}
+
+        def inner_result_hook(response: ChatResponse) -> ChatResponse:
+            inner_result_hook_called["value"] = True
+            return ChatResponse(messages=Message("assistant", [f"hooked_{response.text}"]))
+
+        inner = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[inner_result_hook],
+        )
+        outer = inner.map(lambda u: u, _combine_updates)
+
+        await outer.get_final_response()
+
+        # Inner's result_hooks ARE called when get_final_response() is invoked
+        assert inner_result_hook_called["value"] is True
+
+    async def test_with_finalizer_calls_inner_finalizer(self) -> None:
+        """with_finalizer() still calls inner's finalizer first."""
+        inner_finalizer_called = {"value": False}
+
+        def inner_finalizer(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            inner_finalizer_called["value"] = True
+            return ChatResponse(messages=Message("assistant", ["inner_result"]))
+
+        inner = ResponseStream(
+            _generate_updates(2),
+            finalizer=inner_finalizer,
+        )
+        outer = inner.with_finalizer(_combine_updates)
+
+        final = await outer.get_final_response()
+
+        # Inner's finalizer IS called first
+        assert inner_finalizer_called["value"] is True
+        # But the outer result is from outer's finalizer (working on outer's updates)
+        assert final.text == "update_0update_1"
+
+    async def test_with_finalizer_plus_result_hooks(self) -> None:
+        """with_finalizer() works with result hooks."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        def outer_hook(response: ChatResponse) -> ChatResponse:
+            return ChatResponse(messages=Message("assistant", [f"outer_{response.text}"]))
+
+        outer = inner.with_finalizer(_combine_updates).with_result_hook(outer_hook)
+
+        final = await outer.get_final_response()
+
+        assert final.text == "outer_update_0update_1"
+
+    async def test_map_with_finalizer(self) -> None:
+        """map() takes a finalizer and transforms updates."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        def add_prefix(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text(f"mapped_{update.text}")],
+                role=update.role,
+            )
+
+        outer = inner.map(add_prefix, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["mapped_update_0", "mapped_update_1"]
+
+        final = await outer.get_final_response()
+        assert final.text == "mapped_update_0mapped_update_1"
+
+    async def test_outer_transform_hooks_independent(self) -> None:
+        """Outer stream has its own independent transform hooks."""
+        inner_hook_calls = {"value": 0}
+        outer_hook_calls = {"value": 0}
+
+        def inner_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            inner_hook_calls["value"] += 1
+            return update
+
+        def outer_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            outer_hook_calls["value"] += 1
+            return update
+
+        inner = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            transform_hooks=[inner_hook],
+        )
+        outer = inner.map(lambda u: u, _combine_updates).with_transform_hook(outer_hook)
+
+        async for _ in outer:
+            pass
+
+        assert inner_hook_calls["value"] == 2
+        assert outer_hook_calls["value"] == 2
+
+    async def test_preserves_single_consumption(self) -> None:
+        """Inner stream is only consumed once."""
+        consumption_count = {"value": 0}
+
+        async def counting_generator() -> AsyncIterable[ChatResponseUpdate]:
+            consumption_count["value"] += 1
+            for i in range(2):
+                yield ChatResponseUpdate(contents=[Content.from_text(f"u{i}")], role="assistant")
+
+        inner = ResponseStream(counting_generator(), finalizer=_combine_updates)
+        outer = inner.map(lambda u: u, _combine_updates)
+
+        async for _ in outer:
+            pass
+        await outer.get_final_response()
+
+        assert consumption_count["value"] == 1
+
+    async def test_async_map_transform(self) -> None:
+        """map() supports async transform function."""
+        inner = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        async def async_map(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text(f"async_{update.text}")],
+                role=update.role,
+            )
+
+        outer = inner.map(async_map, _combine_updates)
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["async_update_0", "async_update_1"]
+
+    async def test_from_awaitable(self) -> None:
+        """from_awaitable() wraps an awaitable ResponseStream."""
+
+        async def get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            return ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        outer = ResponseStream.from_awaitable(get_stream())
+
+        collected: list[str] = []
+        async for update in outer:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1"]
+
+        final = await outer.get_final_response()
+        assert final.text == "update_0update_1"
+
+
+class TestResponseStreamExecutionOrder:
+    """Tests verifying the correct execution order of hooks."""
+
+    async def test_execution_order_iteration_then_finalize(self) -> None:
+        """Verify execution order: transform -> cleanup -> finalizer -> result."""
+        order: list[str] = []
+
+        def transform_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            order.append(f"transform_{update.text}")
+            return update
+
+        def cleanup_hook() -> None:
+            order.append("cleanup")
+
+        def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            order.append("finalizer")
+            return ChatResponse(messages=Message("assistant", ["done"]))
+
+        def result_hook(response: ChatResponse) -> ChatResponse:
+            order.append("result")
+            return response
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=finalizer,
+            transform_hooks=[transform_hook],
+            cleanup_hooks=[cleanup_hook],
+            result_hooks=[result_hook],
+        )
+
+        async for _ in stream:
+            pass
+        await stream.get_final_response()
+
+        assert order == [
+            "transform_update_0",
+            "transform_update_1",
+            "cleanup",
+            "finalizer",
+            "result",
+        ]
+
+    async def test_cleanup_runs_before_finalizer_on_direct_finalize(self) -> None:
+        """Cleanup hooks run before finalizer even when not iterating manually."""
+        order: list[str] = []
+
+        def cleanup_hook() -> None:
+            order.append("cleanup")
+
+        def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            order.append("finalizer")
+            return ChatResponse(messages=Message("assistant", ["done"]))
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=finalizer,
+            cleanup_hooks=[cleanup_hook],
+        )
+
+        await stream.get_final_response()
+
+        assert order == ["cleanup", "finalizer"]
+
+
+class TestResponseStreamAwaitableSource:
+    """Tests for ResponseStream with awaitable stream sources."""
+
+    async def test_awaitable_stream_source(self) -> None:
+        """ResponseStream can accept an awaitable that resolves to an async iterable."""
+
+        async def get_stream() -> AsyncIterable[ChatResponseUpdate]:
+            return _generate_updates(2)
+
+        stream = ResponseStream(get_stream(), finalizer=_combine_updates)
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1"]
+
+    async def test_await_stream(self) -> None:
+        """ResponseStream can be awaited to resolve stream source."""
+
+        async def get_stream() -> AsyncIterable[ChatResponseUpdate]:
+            return _generate_updates(2)
+
+        stream = await ResponseStream(get_stream(), finalizer=_combine_updates)
+
+        collected: list[str] = []
+        async for update in stream:
+            collected.append(update.text or "")
+
+        assert collected == ["update_0", "update_1"]
+
+
+class TestResponseStreamEdgeCases:
+    """Tests for edge cases and error handling."""
+
+    async def test_empty_stream(self) -> None:
+        """Empty stream produces empty result."""
+
+        async def empty_gen() -> AsyncIterable[ChatResponseUpdate]:
+            return
+            yield  # type: ignore[misc]  # Make it a generator
+
+        stream = ResponseStream(empty_gen(), finalizer=_combine_updates)
+
+        final = await stream.get_final_response()
+
+        assert final.text == ""
+        assert len(stream.updates) == 0
+
+    async def test_hooks_not_called_on_empty_stream_iteration(self) -> None:
+        """Transform hooks not called when stream is empty."""
+        hook_calls = {"value": 0}
+
+        def transform_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            hook_calls["value"] += 1
+            return update
+
+        async def empty_gen() -> AsyncIterable[ChatResponseUpdate]:
+            return
+            yield  # type: ignore[misc]
+
+        stream = ResponseStream(
+            empty_gen(),
+            finalizer=_combine_updates,
+            transform_hooks=[transform_hook],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert hook_calls["value"] == 0
+
+    async def test_cleanup_called_even_on_empty_stream(self) -> None:
+        """Cleanup hooks are called even when stream is empty."""
+        cleanup_called = {"value": False}
+
+        def cleanup_hook() -> None:
+            cleanup_called["value"] = True
+
+        async def empty_gen() -> AsyncIterable[ChatResponseUpdate]:
+            return
+            yield  # type: ignore[misc]
+
+        stream = ResponseStream(
+            empty_gen(),
+            finalizer=_combine_updates,
+            cleanup_hooks=[cleanup_hook],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert cleanup_called["value"] is True
+
+    async def test_all_constructor_parameters(self) -> None:
+        """All constructor parameters work together."""
+        events: list[str] = []
+
+        def transform(u: ChatResponseUpdate) -> ChatResponseUpdate:
+            events.append("transform")
+            return u
+
+        def cleanup() -> None:
+            events.append("cleanup")
+
+        def finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            events.append("finalizer")
+            return ChatResponse(messages=Message("assistant", ["done"]))
+
+        def result(r: ChatResponse) -> ChatResponse:
+            events.append("result")
+            return r
+
+        stream = ResponseStream(
+            _generate_updates(1),
+            finalizer=finalizer,
+            transform_hooks=[transform],
+            cleanup_hooks=[cleanup],
+            result_hooks=[result],
+        )
+
+        await stream.get_final_response()
+
+        assert events == ["transform", "cleanup", "finalizer", "result"]
 
 
 # endregion

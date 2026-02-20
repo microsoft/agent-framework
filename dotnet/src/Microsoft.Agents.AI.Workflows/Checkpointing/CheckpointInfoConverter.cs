@@ -15,7 +15,7 @@ internal sealed partial class CheckpointInfoConverter() : JsonConverterDictionar
     protected override JsonTypeInfo<CheckpointInfo> TypeInfo
         => WorkflowsJsonUtilities.JsonContext.Default.CheckpointInfo;
 
-    private const string CheckpointInfoPropertyNamePattern = @"^(?<runId>(((\|\|)|([^\|]))*))\|(?<checkpointId>(((\|\|)|([^\|]))*)?)$";
+    private const string CheckpointInfoPropertyNamePattern = @"^(?<sessionId>(((\|\|)|([^\|]))*))\|(?<checkpointId>(((\|\|)|([^\|]))*)?)$";
 #if NET
     [GeneratedRegex(CheckpointInfoPropertyNamePattern, RegexOptions.CultureInvariant | RegexOptions.ExplicitCapture)]
     public static partial Regex CheckpointInfoPropertyNameRegex();
@@ -33,17 +33,17 @@ internal sealed partial class CheckpointInfoConverter() : JsonConverterDictionar
             throw new JsonException($"Invalid CheckpointInfo property name format. Got '{propertyName}'.");
         }
 
-        string runId = scopeKeyPatternMatch.Groups["runId"].Value;
+        string sessionId = scopeKeyPatternMatch.Groups["sessionId"].Value;
         string checkpointId = scopeKeyPatternMatch.Groups["checkpointId"].Value;
 
-        return new(Unescape(runId)!, Unescape(checkpointId)!);
+        return new(Unescape(sessionId)!, Unescape(checkpointId)!);
     }
 
     protected override string Stringify([DisallowNull] CheckpointInfo value)
     {
-        string? runIdEscaped = Escape(value.RunId);
+        string? sessionIdEscaped = Escape(value.SessionId);
         string? checkpointIdEscaped = Escape(value.CheckpointId);
 
-        return $"{runIdEscaped}|{checkpointIdEscaped}";
+        return $"{sessionIdEscaped}|{checkpointIdEscaped}";
     }
 }

@@ -13,7 +13,10 @@ const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";
 
 // Get a client to create/retrieve server side agents with.
-var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+var persistentAgentsClient = new PersistentAgentsClient(endpoint, new DefaultAzureCredential());
 
 // You can create a server side persistent agent with the Azure.AI.Agents.Persistent SDK.
 var agentMetadata = await persistentAgentsClient.Administration.CreateAgentAsync(
@@ -31,7 +34,7 @@ AIAgent agent2 = await persistentAgentsClient.CreateAIAgentAsync(
     instructions: JokerInstructions);
 
 // You can then invoke the agent like any other AIAgent.
-AgentSession session = await agent1.GetNewSessionAsync();
+AgentSession session = await agent1.CreateSessionAsync();
 Console.WriteLine(await agent1.RunAsync("Tell me a joke about a pirate.", session));
 
 // Cleanup for sample purposes.

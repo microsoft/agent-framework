@@ -45,7 +45,7 @@ You can also override environment variables by explicitly passing configuration 
 ```python
 from agent_framework.azure import AzureOpenAIChatClient
 
-chat_client = AzureOpenAIChatClient(
+client = AzureOpenAIChatClient(
     api_key="",
     endpoint="",
     deployment_name="",
@@ -53,7 +53,7 @@ chat_client = AzureOpenAIChatClient(
 )
 ```
 
-See the following [setup guide](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started) for more information.
+See the following [setup guide](../../samples/01-get-started) for more information.
 
 ## 2. Create a Simple Agent
 
@@ -61,12 +61,12 @@ Create agents and invoke them directly:
 
 ```python
 import asyncio
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 
 async def main():
-    agent = ChatAgent(
-        chat_client=OpenAIChatClient(),
+    agent = Agent(
+        client=OpenAIChatClient(),
         instructions="""
         1) A robot may not injure a human being...
         2) A robot must obey orders given it by human beings...
@@ -90,14 +90,14 @@ You can use the chat client classes directly for advanced workflows:
 ```python
 import asyncio
 from agent_framework.openai import OpenAIChatClient
-from agent_framework import ChatMessage, Role
+from agent_framework import Message, Role
 
 async def main():
     client = OpenAIChatClient()
 
     messages = [
-        ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant."),
-        ChatMessage(role=Role.USER, text="Write a haiku about Agent Framework.")
+        Message("system", ["You are a helpful assistant."]),
+        Message("user", ["Write a haiku about Agent Framework."])
     ]
 
     response = await client.get_response(messages)
@@ -123,7 +123,7 @@ import asyncio
 from typing import Annotated
 from random import randint
 from pydantic import Field
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 
 
@@ -145,8 +145,8 @@ def get_menu_specials() -> str:
 
 
 async def main():
-    agent = ChatAgent(
-        chat_client=OpenAIChatClient(),
+    agent = Agent(
+        client=OpenAIChatClient(),
         instructions="You are a helpful assistant that can provide weather and restaurant information.",
         tools=[get_weather, get_menu_specials]
     )
@@ -161,7 +161,7 @@ async def main():
 asyncio.run(main())
 ```
 
-You can explore additional agent samples [here](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents).
+You can explore additional agent samples [here](../../samples/02-agents).
 
 ## 5. Multi-Agent Orchestration
 
@@ -169,20 +169,20 @@ Coordinate multiple agents to collaborate on complex tasks using orchestration p
 
 ```python
 import asyncio
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 
 
 async def main():
     # Create specialized agents
-    writer = ChatAgent(
-        chat_client=OpenAIChatClient(),
+    writer = Agent(
+        client=OpenAIChatClient(),
         name="Writer",
         instructions="You are a creative content writer. Generate and refine slogans based on feedback."
     )
 
-    reviewer = ChatAgent(
-        chat_client=OpenAIChatClient(),
+    reviewer = Agent(
+        client=OpenAIChatClient(),
         name="Reviewer",
         instructions="You are a critical reviewer. Provide detailed feedback on proposed slogans."
     )
@@ -213,17 +213,14 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-**Note**: GroupChat, Sequential, and Concurrent orchestrations are available today. See examples in:
-- [python/samples/getting_started/workflows/orchestration/](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/workflows/orchestration)
-- [group_chat_simple_selector.py](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/workflows/orchestration/group_chat_simple_selector.py)
-- [group_chat_prompt_based_manager.py](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/workflows/orchestration/group_chat_prompt_based_manager.py)
+**Note**: Sequential, Concurrent, Group Chat, Handoff, and Magentic orchestrations are available. See examples in [orchestration samples](../../samples/03-workflows/orchestrations).
 
 ## More Examples & Samples
 
-- [Getting Started with Agents](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents): Basic agent creation and tool usage
-- [Chat Client Examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/chat_client): Direct chat client usage patterns
+- [Getting Started with Agents](../../samples/02-agents): Basic agent creation and tool usage
+- [Chat Client Examples](../../samples/02-agents/chat_client): Direct chat client usage patterns
 - [Azure AI Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/azure-ai): Azure AI integration
-- [.NET Workflows Samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/GettingStarted/Workflows): Advanced multi-agent patterns (.NET)
+- [.NET Workflows Samples](../../../dotnet/samples/GettingStarted/Workflows): Advanced multi-agent patterns (.NET)
 
 ## Agent Framework Documentation
 

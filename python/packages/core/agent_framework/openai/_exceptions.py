@@ -1,14 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
 from openai import BadRequestError
 
-from ..exceptions import ServiceContentFilterException
-
-__all__ = ["ContentFilterResultSeverity", "OpenAIContentFilterException"]
+from ..exceptions import ChatClientContentFilterException
 
 
 class ContentFilterResultSeverity(Enum):
@@ -29,7 +29,7 @@ class ContentFilterResult:
     severity: ContentFilterResultSeverity = ContentFilterResultSeverity.SAFE
 
     @classmethod
-    def from_inner_error_result(cls, inner_error_results: dict[str, Any]) -> "ContentFilterResult":
+    def from_inner_error_result(cls, inner_error_results: dict[str, Any]) -> ContentFilterResult:
         """Creates a ContentFilterResult from the inner error results.
 
         Args:
@@ -54,7 +54,7 @@ class ContentFilterCodes(Enum):
 
 
 @dataclass
-class OpenAIContentFilterException(ServiceContentFilterException):
+class OpenAIContentFilterException(ChatClientContentFilterException):
     """AI exception for an error from Azure OpenAI's content filter."""
 
     # The parameter that caused the error.

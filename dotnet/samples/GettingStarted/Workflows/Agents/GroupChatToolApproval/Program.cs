@@ -45,8 +45,11 @@ public static class Program
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
+        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
         // 1. Create AI client
-        IChatClient client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+        IChatClient client = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
             .GetChatClient(deploymentName)
             .AsIChatClient();
 
@@ -88,7 +91,7 @@ public static class Program
 
         List<ChatMessage> messages = [new(ChatRole.User, "We need to deploy version 2.4.0 to production. Please coordinate the deployment.")];
 
-        await using StreamingRun run = await InProcessExecution.Lockstep.StreamAsync(workflow, messages);
+        await using StreamingRun run = await InProcessExecution.Lockstep.RunStreamingAsync(workflow, messages);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
         string? lastExecutorId = null;
@@ -98,7 +101,7 @@ public static class Program
             {
                 case RequestInfoEvent e:
                 {
-                    if (e.Request.DataIs(out FunctionApprovalRequestContent? approvalRequestContent))
+                    if (e.Request.TryGetDataAs(out FunctionApprovalRequestContent? approvalRequestContent))
                     {
                         Console.WriteLine();
                         Console.WriteLine($"[APPROVAL REQUIRED] From agent: {e.Request.PortInfo.PortId}");

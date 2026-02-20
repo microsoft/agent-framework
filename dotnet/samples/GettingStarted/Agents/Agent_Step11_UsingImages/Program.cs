@@ -11,7 +11,10 @@ using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 
-var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+var agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
     .GetChatClient(deploymentName)
     .AsAIAgent(
         name: "VisionAgent",
@@ -22,7 +25,7 @@ ChatMessage message = new(ChatRole.User, [
     new UriContent("https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg", "image/jpeg")
 ]);
 
-var session = await agent.GetNewSessionAsync();
+var session = await agent.CreateSessionAsync();
 
 await foreach (var update in agent.RunStreamingAsync(message, session))
 {

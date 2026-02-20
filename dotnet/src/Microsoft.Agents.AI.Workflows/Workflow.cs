@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
+using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -76,6 +77,11 @@ public class Workflow
     /// </summary>
     public string? Description { get; internal init; }
 
+    /// <summary>
+    /// Gets the telemetry context for the workflow.
+    /// </summary>
+    internal WorkflowTelemetryContext TelemetryContext { get; }
+
     internal bool AllowConcurrent => this.ExecutorBindings.Values.All(registration => registration.SupportsConcurrentSharedExecution);
 
     internal IEnumerable<string> NonConcurrentExecutorIds =>
@@ -88,11 +94,13 @@ public class Workflow
     /// <param name="startExecutorId">The unique identifier of the starting executor for the workflow. Cannot be <c>null</c>.</param>
     /// <param name="name">Optional human-readable name for the workflow.</param>
     /// <param name="description">Optional description of what the workflow does.</param>
-    internal Workflow(string startExecutorId, string? name = null, string? description = null)
+    /// <param name="telemetryContext">Optional telemetry context for the workflow.</param>
+    internal Workflow(string startExecutorId, string? name = null, string? description = null, WorkflowTelemetryContext? telemetryContext = null)
     {
         this.StartExecutorId = Throw.IfNull(startExecutorId);
         this.Name = name;
         this.Description = description;
+        this.TelemetryContext = telemetryContext ?? WorkflowTelemetryContext.Disabled;
     }
 
     private bool _needsReset;
@@ -210,8 +218,14 @@ public class Workflow
         ExecutorBinding startExecutorRegistration = this.ExecutorBindings[this.StartExecutorId];
         Executor startExecutor = await startExecutorRegistration.CreateInstanceAsync(string.Empty)
                                                                 .ConfigureAwait(false);
-        startExecutor.Configure(new NoOpExternalRequestContext());
+        startExecutor.AttachRequestContext(new NoOpExternalRequestContext());
 
-        return startExecutor.DescribeProtocol();
+        ProtocolDescriptor inputProtocol = startExecutor.DescribeProtocol();
+        IEnumerable<Task<Executor>> outputExecutorTasks = this.OutputExecutors.Select(executorId => this.ExecutorBindings[executorId].CreateInstanceAsync(string.Empty).AsTask());
+
+        Executor[] outputExecutors = await Task.WhenAll(outputExecutorTasks).ConfigureAwait(false);
+        IEnumerable<Type> yieldedTypes = outputExecutors.SelectMany(executor => executor.DescribeProtocol().Yields);
+
+        return new(inputProtocol.Accepts, yieldedTypes, [], inputProtocol.AcceptsAll);
     }
 }

@@ -55,14 +55,14 @@ public sealed class GitHubCopilotAgentTests
     }
 
     [Fact]
-    public async Task GetNewSessionAsync_ReturnsGitHubCopilotAgentSessionAsync()
+    public async Task CreateSessionAsync_ReturnsGitHubCopilotAgentSessionAsync()
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
         var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
 
         // Act
-        var session = await agent.GetNewSessionAsync();
+        var session = await agent.CreateSessionAsync();
 
         // Assert
         Assert.NotNull(session);
@@ -70,7 +70,7 @@ public sealed class GitHubCopilotAgentTests
     }
 
     [Fact]
-    public async Task GetNewSessionAsync_WithSessionId_ReturnsSessionWithSessionIdAsync()
+    public async Task CreateSessionAsync_WithSessionId_ReturnsSessionWithSessionIdAsync()
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
@@ -78,7 +78,7 @@ public sealed class GitHubCopilotAgentTests
         const string TestSessionId = "test-session-id";
 
         // Act
-        var session = await agent.GetNewSessionAsync(TestSessionId);
+        var session = await agent.CreateSessionAsync(TestSessionId);
 
         // Assert
         Assert.NotNull(session);
@@ -99,5 +99,126 @@ public sealed class GitHubCopilotAgentTests
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(agent.Id);
+    }
+
+    [Fact]
+    public void CopySessionConfig_CopiesAllProperties()
+    {
+        // Arrange
+        List<AIFunction> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+        var hooks = new SessionHooks();
+        var infiniteSessions = new InfiniteSessionConfig();
+        var systemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "Be helpful" };
+        PermissionHandler permissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult());
+        UserInputHandler userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
+        var mcpServers = new Dictionary<string, object> { ["server1"] = new McpLocalServerConfig() };
+
+        var source = new SessionConfig
+        {
+            Model = "gpt-4o",
+            ReasoningEffort = "high",
+            Tools = tools,
+            SystemMessage = systemMessage,
+            AvailableTools = ["tool1", "tool2"],
+            ExcludedTools = ["tool3"],
+            WorkingDirectory = "/workspace",
+            ConfigDir = "/config",
+            Hooks = hooks,
+            InfiniteSessions = infiniteSessions,
+            OnPermissionRequest = permissionHandler,
+            OnUserInputRequest = userInputHandler,
+            McpServers = mcpServers,
+            DisabledSkills = ["skill1"],
+        };
+
+        // Act
+        SessionConfig result = GitHubCopilotAgent.CopySessionConfig(source);
+
+        // Assert
+        Assert.Equal("gpt-4o", result.Model);
+        Assert.Equal("high", result.ReasoningEffort);
+        Assert.Same(tools, result.Tools);
+        Assert.Same(systemMessage, result.SystemMessage);
+        Assert.Equal(new List<string> { "tool1", "tool2" }, result.AvailableTools);
+        Assert.Equal(new List<string> { "tool3" }, result.ExcludedTools);
+        Assert.Equal("/workspace", result.WorkingDirectory);
+        Assert.Equal("/config", result.ConfigDir);
+        Assert.Same(hooks, result.Hooks);
+        Assert.Same(infiniteSessions, result.InfiniteSessions);
+        Assert.Same(permissionHandler, result.OnPermissionRequest);
+        Assert.Same(userInputHandler, result.OnUserInputRequest);
+        Assert.Same(mcpServers, result.McpServers);
+        Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
+        Assert.True(result.Streaming);
+    }
+
+    [Fact]
+    public void CopyResumeSessionConfig_CopiesAllProperties()
+    {
+        // Arrange
+        List<AIFunction> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+        var hooks = new SessionHooks();
+        var infiniteSessions = new InfiniteSessionConfig();
+        var systemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "Be helpful" };
+        PermissionHandler permissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult());
+        UserInputHandler userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
+        var mcpServers = new Dictionary<string, object> { ["server1"] = new McpLocalServerConfig() };
+
+        var source = new SessionConfig
+        {
+            Model = "gpt-4o",
+            ReasoningEffort = "high",
+            Tools = tools,
+            SystemMessage = systemMessage,
+            AvailableTools = ["tool1", "tool2"],
+            ExcludedTools = ["tool3"],
+            WorkingDirectory = "/workspace",
+            ConfigDir = "/config",
+            Hooks = hooks,
+            InfiniteSessions = infiniteSessions,
+            OnPermissionRequest = permissionHandler,
+            OnUserInputRequest = userInputHandler,
+            McpServers = mcpServers,
+            DisabledSkills = ["skill1"],
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.CopyResumeSessionConfig(source);
+
+        // Assert
+        Assert.Equal("gpt-4o", result.Model);
+        Assert.Equal("high", result.ReasoningEffort);
+        Assert.Same(tools, result.Tools);
+        Assert.Same(systemMessage, result.SystemMessage);
+        Assert.Equal(new List<string> { "tool1", "tool2" }, result.AvailableTools);
+        Assert.Equal(new List<string> { "tool3" }, result.ExcludedTools);
+        Assert.Equal("/workspace", result.WorkingDirectory);
+        Assert.Equal("/config", result.ConfigDir);
+        Assert.Same(hooks, result.Hooks);
+        Assert.Same(infiniteSessions, result.InfiniteSessions);
+        Assert.Same(permissionHandler, result.OnPermissionRequest);
+        Assert.Same(userInputHandler, result.OnUserInputRequest);
+        Assert.Same(mcpServers, result.McpServers);
+        Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
+        Assert.True(result.Streaming);
+    }
+
+    [Fact]
+    public void CopyResumeSessionConfig_WithNullSource_ReturnsDefaults()
+    {
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.CopyResumeSessionConfig(null);
+
+        // Assert
+        Assert.Null(result.Model);
+        Assert.Null(result.ReasoningEffort);
+        Assert.Null(result.Tools);
+        Assert.Null(result.SystemMessage);
+        Assert.Null(result.OnPermissionRequest);
+        Assert.Null(result.OnUserInputRequest);
+        Assert.Null(result.Hooks);
+        Assert.Null(result.WorkingDirectory);
+        Assert.Null(result.ConfigDir);
+        Assert.True(result.Streaming);
     }
 }

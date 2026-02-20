@@ -19,9 +19,12 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 
 var stateStore = new Dictionary<string, JsonElement?>();
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
      .GetResponsesClient(deploymentName)
      .AsAIAgent(
         name: "SpaceNovelWriter",
@@ -32,7 +35,7 @@ AIAgent agent = new AzureOpenAIClient(
 // Enable background responses (only supported by {Azure}OpenAI Responses at this time).
 AgentRunOptions options = new() { AllowBackgroundResponses = true };
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Start the initial run.
 AgentResponse response = await agent.RunAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", session, options);
@@ -40,7 +43,7 @@ AgentResponse response = await agent.RunAsync("Write a very long novel about a t
 // Poll for background responses until complete.
 while (response.ContinuationToken is not null)
 {
-    PersistAgentState(session, response.ContinuationToken);
+    await PersistAgentState(agent, session, response.ContinuationToken);
 
     await Task.Delay(TimeSpan.FromSeconds(10));
 
@@ -52,9 +55,9 @@ while (response.ContinuationToken is not null)
 
 Console.WriteLine(response.Text);
 
-void PersistAgentState(AgentSession? session, ResponseContinuationToken? continuationToken)
+async Task PersistAgentState(AIAgent agent, AgentSession? session, ResponseContinuationToken? continuationToken)
 {
-    stateStore["session"] = session!.Serialize();
+    stateStore["session"] = await agent.SerializeSessionAsync(session!);
     stateStore["continuationToken"] = JsonSerializer.SerializeToElement(continuationToken, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
 }
 

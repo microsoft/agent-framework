@@ -1,14 +1,18 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import functools
 import hashlib
 import json
 import logging
+import types
 import uuid
-from collections.abc import AsyncIterable, Awaitable, Callable
-from typing import Any
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from typing import Any, Literal, overload
 
+from .._types import ResponseStream
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent import WorkflowAgent
 from ._checkpoint import CheckpointStorage
@@ -18,22 +22,17 @@ from ._edge import (
     FanOutEdgeGroup,
 )
 from ._events import (
-    RequestInfoEvent,
     WorkflowErrorDetails,
     WorkflowEvent,
-    WorkflowFailedEvent,
-    WorkflowOutputEvent,
     WorkflowRunState,
-    WorkflowStartedEvent,
-    WorkflowStatusEvent,
     _framework_event_origin,  # type: ignore
 )
 from ._executor import Executor
 from ._model_utils import DictConvertible
 from ._runner import Runner
 from ._runner_context import RunnerContext
-from ._shared_state import SharedState
-from ._typing_utils import is_instance_of
+from ._state import State
+from ._typing_utils import is_instance_of, try_coerce_to_type
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +57,9 @@ class WorkflowRunResult(list[WorkflowEvent]):
     - status_timeline(): Access the complete status event history
     """
 
-    def __init__(self, events: list[WorkflowEvent], status_events: list[WorkflowStatusEvent] | None = None) -> None:
+    def __init__(self, events: list[WorkflowEvent[Any]], status_events: list[WorkflowEvent[Any]] | None = None) -> None:
         super().__init__(events)
-        self._status_events: list[WorkflowStatusEvent] = status_events or []
+        self._status_events: list[WorkflowEvent[Any]] = status_events or []
 
     def get_outputs(self) -> list[Any]:
         """Get all outputs from the workflow run result.
@@ -68,30 +67,30 @@ class WorkflowRunResult(list[WorkflowEvent]):
         Returns:
             A list of outputs produced by the workflow during its execution.
         """
-        return [event.data for event in self if isinstance(event, WorkflowOutputEvent)]
+        return [event.data for event in self if event.type == "output"]
 
-    def get_request_info_events(self) -> list[RequestInfoEvent]:
+    def get_request_info_events(self) -> list[WorkflowEvent[Any]]:
         """Get all request info events from the workflow run result.
 
         Returns:
-            A list of RequestInfoEvent instances found in the workflow run result.
+            A list of WorkflowEvent instances with type='request_info' found in the workflow run result.
         """
-        return [event for event in self if isinstance(event, RequestInfoEvent)]
+        return [event for event in self if event.type == "request_info"]
 
     def get_final_state(self) -> WorkflowRunState:
         """Return the final run state based on explicit status events.
 
-        Returns the last WorkflowStatusEvent.state observed. Raises if none were emitted.
+        Returns the last status event's state observed. Raises if none were emitted.
         """
         if self._status_events:
             return self._status_events[-1].state  # type: ignore[return-value]
         raise RuntimeError(
-            "Final state is unknown because no WorkflowStatusEvent was emitted. "
+            "Final state is unknown because no status event was emitted. "
             "Ensure your workflow entry points are used (which emit status events) "
             "or handle the absence of status explicitly."
         )
 
-    def status_timeline(self) -> list[WorkflowStatusEvent]:
+    def status_timeline(self) -> list[WorkflowEvent[Any]]:
         """Return the list of status events emitted during the run (control-plane)."""
         return list(self._status_events)
 
@@ -128,7 +127,7 @@ class Workflow(DictConvertible):
     The workflow provides two primary execution APIs, each supporting multiple scenarios:
 
     - **run()**: Execute to completion, returns WorkflowRunResult with all events
-    - **run_stream()**: Returns async generator yielding events as they occur
+    - **run(..., stream=True)**: Returns ResponseStream yielding events as they occur
 
     Both methods support:
     - Initial workflow runs: Provide `message` parameter
@@ -137,25 +136,25 @@ class Workflow(DictConvertible):
     - Runtime checkpointing: Provide `checkpoint_storage` to enable/override checkpointing for this run
 
     ## State Management
-    Workflow instances contain states and states are preserved across calls to `run` and `run_stream`.
+    Workflow instances contain states and states are preserved across calls to `run`.
     To execute multiple independent runs, create separate Workflow instances via WorkflowBuilder.
 
     ## External Input Requests
     Executors within a workflow can request external input using `ctx.request_info()`:
     1. Executor calls `ctx.request_info()` to request input
     2. Executor implements `response_handler()` to process the response
-    3. Requests are emitted as RequestInfoEvent instances in the event stream
+    3. Requests are emitted as request_info events (WorkflowEvent with type='request_info') in the event stream
     4. Workflow enters IDLE_WITH_PENDING_REQUESTS state
-    5. Caller handles requests and provides responses via the `send_responses` or `send_responses_streaming` methods
+    5. Caller handles requests and provides responses via `run(responses=...)` or `run(responses=..., stream=True)`
     6. Responses are routed to the requesting executors and response handlers are invoked
 
     ## Checkpointing
     Checkpointing can be configured at build time or runtime:
 
     Build-time (via WorkflowBuilder):
-        workflow = WorkflowBuilder().with_checkpointing(storage).build()
+        workflow = WorkflowBuilder(checkpoint_storage=storage).build()
 
-    Runtime (via run/run_stream parameters):
+    Runtime (via run parameters):
         result = await workflow.run(message, checkpoint_storage=runtime_storage)
 
     When enabled, checkpoints are created at the end of each superstep, capturing:
@@ -176,9 +175,10 @@ class Workflow(DictConvertible):
         executors: dict[str, Executor],
         start_executor: Executor,
         runner_context: RunnerContext,
-        max_iterations: int = DEFAULT_MAX_ITERATIONS,
-        name: str | None = None,
+        name: str,
         description: str | None = None,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        output_executors: list[str] | None = None,
         **kwargs: Any,
     ):
         """Initialize the workflow with a list of edges.
@@ -189,38 +189,49 @@ class Workflow(DictConvertible):
             start_executor: The starting executor for the workflow.
             runner_context: The RunnerContext instance to be used during workflow execution.
             max_iterations: The maximum number of iterations the workflow will run for convergence.
-            name: Optional human-readable name for the workflow.
-            description: Optional description of what the workflow does.
+            name: A human-readable name for the workflow. This can be used to identify the workflow in
+                checkpoints, and telemetry. If the workflow is built using WorkflowBuilder, this will be the
+                name of the builder. This name should be unique across different workflow definitions for
+                better observability and management.
+            description: Optional description of what the workflow does. If the workflow is built using
+                WorkflowBuilder, this will be the description of the builder.
+            output_executors: Optional list of executor IDs whose outputs will be considered workflow outputs.
+                              If None or empty, all executor outputs are treated as workflow outputs.
             kwargs: Additional keyword arguments. Unused in this implementation.
         """
         self.edge_groups = list(edge_groups)
         self.executors = dict(executors)
         self.start_executor_id = start_executor.id
         self.max_iterations = max_iterations
-        self.id = str(uuid.uuid4())
         self.name = name
         self.description = description
+        # Generate a unique ID for the workflow instance for monitoring purposes. This is not intended to be a
+        # stable identifier across instances created from the same builder, for that, use the name field.
+        self.id = str(uuid.uuid4())
+        # Capture a canonical fingerprint of the workflow graph so checkpoints can assert they are resumed with
+        # an equivalent topology.
+        self.graph_signature = self._compute_graph_signature()
+        self.graph_signature_hash = self._hash_graph_signature(self.graph_signature)
+
+        # Output events (WorkflowEvent with type='output') from these executors are treated as workflow outputs.
+        # If None or empty, all executor outputs are considered workflow outputs.
+        self._output_executors = list(output_executors) if output_executors else list(self.executors.keys())
 
         # Store non-serializable runtime objects as private attributes
         self._runner_context = runner_context
-        self._shared_state = SharedState()
+        self._state = State()
         self._runner: Runner = Runner(
             self.edge_groups,
             self.executors,
-            self._shared_state,
+            self._state,
             runner_context,
+            self.name,
+            self.graph_signature_hash,
             max_iterations=max_iterations,
-            workflow_id=self.id,
         )
 
         # Flag to prevent concurrent workflow executions
         self._is_running = False
-
-        # Capture a canonical fingerprint of the workflow graph so checkpoints
-        # can assert they are resumed with an equivalent topology.
-        self._graph_signature = self._compute_graph_signature()
-        self._graph_signature_hash = self._hash_graph_signature(self._graph_signature)
-        self._runner.graph_signature_hash = self._graph_signature_hash
 
     def _ensure_not_running(self) -> None:
         """Ensure the workflow is not already running."""
@@ -235,16 +246,15 @@ class Workflow(DictConvertible):
     def to_dict(self) -> dict[str, Any]:
         """Serialize the workflow definition into a JSON-ready dictionary."""
         data: dict[str, Any] = {
+            "name": self.name,
             "id": self.id,
             "start_executor_id": self.start_executor_id,
             "max_iterations": self.max_iterations,
             "edge_groups": [group.to_dict() for group in self.edge_groups],
             "executors": {executor_id: executor.to_dict() for executor_id, executor in self.executors.items()},
+            "output_executors": self._output_executors,
         }
 
-        # Add optional name and description if provided
-        if self.name is not None:
-            data["name"] = self.name
         if self.description is not None:
             data["description"] = self.description
 
@@ -276,6 +286,10 @@ class Workflow(DictConvertible):
         """
         return self.executors[self.start_executor_id]
 
+    def get_output_executors(self) -> list[Executor]:
+        """Get the list of output executors in the workflow."""
+        return [self.executors[executor_id] for executor_id in self._output_executors]
+
     def get_executors_list(self) -> list[Executor]:
         """Get the list of executors in the workflow."""
         return list(self.executors.values())
@@ -296,7 +310,7 @@ class Workflow(DictConvertible):
             initial_executor_fn: Optional function to execute initial executor
             reset_context: Whether to reset the context for a new run
             streaming: Whether to enable streaming mode for agents
-            run_kwargs: Optional kwargs to store in SharedState for agent invocations
+            run_kwargs: Optional kwargs to store in State for agent invocations
 
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
@@ -319,21 +333,22 @@ class Workflow(DictConvertible):
                 span.add_event(OtelAttr.WORKFLOW_STARTED)
                 # Emit explicit start/status events to the stream
                 with _framework_event_origin():
-                    started = WorkflowStartedEvent()
+                    started = WorkflowEvent.started()
                 yield started
                 with _framework_event_origin():
-                    in_progress = WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS)
+                    in_progress = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
                 yield in_progress
 
                 # Reset context for a new run if supported
                 if reset_context:
                     self._runner.reset_iteration_count()
                     self._runner.context.reset_for_new_run()
-                    await self._shared_state.clear()
+                    self._state.clear()
 
-                # Store run kwargs in SharedState so executors can access them
+                # Store run kwargs in State so executors can access them
                 # Always store (even empty dict) so retrieval is deterministic
-                await self._shared_state.set(WORKFLOW_RUN_KWARGS_KEY, run_kwargs or {})
+                self._state.set(WORKFLOW_RUN_KWARGS_KEY, run_kwargs or {})
+                self._state.commit()  # Commit immediately so kwargs are available
 
                 # Set streaming mode after reset
                 self._runner_context.set_streaming(streaming)
@@ -345,39 +360,39 @@ class Workflow(DictConvertible):
                 # All executor executions happen within workflow span
                 async for event in self._runner.run_until_convergence():
                     # Track request events for final status determination
-                    if isinstance(event, RequestInfoEvent):
+                    if event.type == "request_info":
                         saw_request = True
                     yield event
 
-                    if isinstance(event, RequestInfoEvent) and not emitted_in_progress_pending:
+                    if event.type == "request_info" and not emitted_in_progress_pending:
                         emitted_in_progress_pending = True
                         with _framework_event_origin():
-                            pending_status = WorkflowStatusEvent(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+                            pending_status = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
                         yield pending_status
 
                 # Workflow runs until idle - emit final status based on whether requests are pending
                 if saw_request:
                     with _framework_event_origin():
-                        terminal_status = WorkflowStatusEvent(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+                        terminal_status = WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
                     yield terminal_status
                 else:
                     with _framework_event_origin():
-                        terminal_status = WorkflowStatusEvent(WorkflowRunState.IDLE)
+                        terminal_status = WorkflowEvent.status(WorkflowRunState.IDLE)
                     yield terminal_status
 
                 span.add_event(OtelAttr.WORKFLOW_COMPLETED)
             except Exception as exc:
-                # Drain any pending events (for example, ExecutorFailedEvent) before yielding WorkflowFailedEvent
+                # Drain any pending events (for example, executor_failed) before yielding failed event
                 for event in await self._runner.context.drain_events():
                     yield event
 
                 # Surface structured failure details before propagating exception
                 details = WorkflowErrorDetails.from_exception(exc)
                 with _framework_event_origin():
-                    failed_event = WorkflowFailedEvent(details)
+                    failed_event = WorkflowEvent.failed(details)
                 yield failed_event
                 with _framework_event_origin():
-                    failed_status = WorkflowStatusEvent(WorkflowRunState.FAILED)
+                    failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
                 yield failed_status
                 span.add_event(
                     name=OtelAttr.WORKFLOW_ERROR,
@@ -416,7 +431,7 @@ class Workflow(DictConvertible):
             if not has_checkpointing and checkpoint_storage is None:
                 raise ValueError(
                     "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
-                    "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
+                    "or build workflow with WorkflowBuilder(checkpoint_storage=checkpoint_storage)."
                 )
 
             await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
@@ -427,261 +442,168 @@ class Workflow(DictConvertible):
             await executor.execute(
                 message,
                 [self.__class__.__name__],
-                self._shared_state,
+                self._state,
                 self._runner.context,
                 trace_contexts=None,
                 source_span_ids=None,
             )
 
-    async def run_stream(
+    @overload
+    def run(
         self,
         message: Any | None = None,
         *,
+        stream: Literal[True],
+        responses: dict[str, Any] | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[WorkflowEvent]:
-        """Run the workflow and stream events.
+    ) -> ResponseStream[WorkflowEvent, WorkflowRunResult]: ...
 
-        Unified streaming interface supporting initial runs and checkpoint restoration.
-
-        Args:
-            message: Initial message for the start executor. Required for new workflow runs,
-                    should be None when resuming from checkpoint.
-            checkpoint_id: ID of checkpoint to restore from. If provided, the workflow resumes
-                          from this checkpoint instead of starting fresh. When resuming, checkpoint_storage
-                          must be provided (either at build time or runtime) to load the checkpoint.
-            checkpoint_storage: Runtime checkpoint storage with two behaviors:
-                               - With checkpoint_id: Used to load and restore the specified checkpoint
-                               - Without checkpoint_id: Enables checkpointing for this run, overriding
-                                 build-time configuration
-            **kwargs: Additional keyword arguments to pass through to agent invocations.
-                     These are stored in SharedState and accessible in @tool functions
-                     via the **kwargs parameter.
-
-        Yields:
-            WorkflowEvent: Events generated during workflow execution.
-
-        Raises:
-            ValueError: If both message and checkpoint_id are provided, or if neither is provided.
-            ValueError: If checkpoint_id is provided but no checkpoint storage is available
-                       (neither at build time nor runtime).
-            RuntimeError: If checkpoint restoration fails.
-
-        Examples:
-            Initial run:
-
-            .. code-block:: python
-
-                async for event in workflow.run_stream("start message"):
-                    process(event)
-
-            With custom context for tools:
-
-            .. code-block:: python
-
-                async for event in workflow.run_stream(
-                    "analyze data",
-                    custom_data={"endpoint": "https://api.example.com"},
-                    user_token={"user": "alice"},
-                ):
-                    process(event)
-
-            Enable checkpointing at runtime:
-
-            .. code-block:: python
-
-                storage = FileCheckpointStorage("./checkpoints")
-                async for event in workflow.run_stream("start", checkpoint_storage=storage):
-                    process(event)
-
-            Resume from checkpoint (storage provided at build time):
-
-            .. code-block:: python
-
-                async for event in workflow.run_stream(checkpoint_id="cp_123"):
-                    process(event)
-
-            Resume from checkpoint (storage provided at runtime):
-
-            .. code-block:: python
-
-                storage = FileCheckpointStorage("./checkpoints")
-                async for event in workflow.run_stream(checkpoint_id="cp_123", checkpoint_storage=storage):
-                    process(event)
-        """
-        # Validate mutually exclusive parameters BEFORE setting running flag
-        if message is not None and checkpoint_id is not None:
-            raise ValueError("Cannot provide both 'message' and 'checkpoint_id'. Use one or the other.")
-
-        if message is None and checkpoint_id is None:
-            raise ValueError("Must provide either 'message' (new run) or 'checkpoint_id' (resume).")
-
-        self._ensure_not_running()
-
-        # Enable runtime checkpointing if storage provided
-        # Two cases:
-        # 1. checkpoint_storage + checkpoint_id: Load checkpoint from this storage and resume
-        # 2. checkpoint_storage without checkpoint_id: Enable checkpointing for this run
-        if checkpoint_storage is not None:
-            self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
-
-        try:
-            # Reset context only for new runs (not checkpoint restoration)
-            reset_context = message is not None and checkpoint_id is None
-
-            async for event in self._run_workflow_with_tracing(
-                initial_executor_fn=functools.partial(
-                    self._execute_with_message_or_checkpoint, message, checkpoint_id, checkpoint_storage
-                ),
-                reset_context=reset_context,
-                streaming=True,
-                run_kwargs=kwargs if kwargs else None,
-            ):
-                yield event
-        finally:
-            if checkpoint_storage is not None:
-                self._runner.context.clear_runtime_checkpoint_storage()
-            self._reset_running_flag()
-
-    async def send_responses_streaming(self, responses: dict[str, Any]) -> AsyncIterable[WorkflowEvent]:
-        """Send responses back to the workflow and stream the events generated by the workflow.
-
-        Args:
-            responses: The responses to be sent back to the workflow, where keys are request IDs
-                       and values are the corresponding response data.
-
-        Yields:
-            WorkflowEvent: The events generated during the workflow execution after sending the responses.
-        """
-        self._ensure_not_running()
-        try:
-            async for event in self._run_workflow_with_tracing(
-                initial_executor_fn=functools.partial(self._send_responses_internal, responses),
-                reset_context=False,  # Don't reset context when sending responses
-                streaming=True,
-            ):
-                yield event
-        finally:
-            self._reset_running_flag()
-
-    async def run(
+    @overload
+    def run(
         self,
         message: Any | None = None,
         *,
+        stream: Literal[False] = ...,
+        responses: dict[str, Any] | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
         **kwargs: Any,
-    ) -> WorkflowRunResult:
-        """Run the workflow to completion and return all events.
+    ) -> Awaitable[WorkflowRunResult]: ...
 
-        Unified non-streaming interface supporting initial runs and checkpoint restoration.
+    def run(
+        self,
+        message: Any | None = None,
+        *,
+        stream: bool = False,
+        responses: dict[str, Any] | None = None,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        include_status_events: bool = False,
+        **kwargs: Any,
+    ) -> ResponseStream[WorkflowEvent, WorkflowRunResult] | Awaitable[WorkflowRunResult]:
+        """Run the workflow, optionally streaming events.
+
+        Unified interface supporting initial runs, checkpoint restoration, and
+        sending responses to pending requests.
 
         Args:
-            message: Initial message for the start executor. Required for new workflow runs,
-                    should be None when resuming from checkpoint.
-            checkpoint_id: ID of checkpoint to restore from. If provided, the workflow resumes
-                          from this checkpoint instead of starting fresh. When resuming, checkpoint_storage
-                          must be provided (either at build time or runtime) to load the checkpoint.
-            checkpoint_storage: Runtime checkpoint storage with two behaviors:
-                               - With checkpoint_id: Used to load and restore the specified checkpoint
-                               - Without checkpoint_id: Enables checkpointing for this run, overriding
-                                 build-time configuration
-            include_status_events: Whether to include WorkflowStatusEvent instances in the result list.
+            message: Initial message for the start executor. Required for new workflow runs.
+                Mutually exclusive with responses.
+            stream: If True, returns a ResponseStream of events with
+                ``get_final_response()`` for the final WorkflowRunResult. If False
+                (default), returns an awaitable WorkflowRunResult.
+            responses: Responses to send for pending request info events, where keys are
+                request IDs and values are the corresponding response data. Mutually
+                exclusive with message. Can be combined with checkpoint_id to restore
+                a checkpoint and send responses in a single call.
+            checkpoint_id: ID of checkpoint to restore from. Can be used alone (resume
+                from checkpoint), with message (not allowed), or with responses
+                (restore then send responses).
+            checkpoint_storage: Runtime checkpoint storage.
+            include_status_events: Whether to include status events (non-streaming only).
             **kwargs: Additional keyword arguments to pass through to agent invocations.
-                     These are stored in SharedState and accessible in @tool functions
-                     via the **kwargs parameter.
 
         Returns:
-            A WorkflowRunResult instance containing events generated during workflow execution.
+            When stream=True: A ResponseStream[WorkflowEvent, WorkflowRunResult] for
+                streaming events. Iterate for events, call get_final_response() for result.
+            When stream=False: An Awaitable[WorkflowRunResult] with all events.
 
         Raises:
-            ValueError: If both message and checkpoint_id are provided, or if neither is provided.
-            ValueError: If checkpoint_id is provided but no checkpoint storage is available
-                       (neither at build time nor runtime).
-            RuntimeError: If checkpoint restoration fails.
-
-        Examples:
-            Initial run:
-
-            .. code-block:: python
-
-                result = await workflow.run("start message")
-                outputs = result.get_outputs()
-
-            With custom context for tools:
-
-            .. code-block:: python
-
-                result = await workflow.run(
-                    "analyze data",
-                    custom_data={"endpoint": "https://api.example.com"},
-                    user_token={"user": "alice"},
-                )
-
-            Enable checkpointing at runtime:
-
-            .. code-block:: python
-
-                storage = FileCheckpointStorage("./checkpoints")
-                result = await workflow.run("start", checkpoint_storage=storage)
-
-            Resume from checkpoint (storage provided at build time):
-
-            .. code-block:: python
-
-                result = await workflow.run(checkpoint_id="cp_123")
-
-            Resume from checkpoint (storage provided at runtime):
-
-            .. code-block:: python
-
-                storage = FileCheckpointStorage("./checkpoints")
-                result = await workflow.run(checkpoint_id="cp_123", checkpoint_storage=storage)
+            ValueError: If parameter combination is invalid.
         """
-        # Validate mutually exclusive parameters BEFORE setting running flag
-        if message is not None and checkpoint_id is not None:
-            raise ValueError("Cannot provide both 'message' and 'checkpoint_id'. Use one or the other.")
-
-        if message is None and checkpoint_id is None:
-            raise ValueError("Must provide either 'message' (new run) or 'checkpoint_id' (resume).")
-
+        # Validate parameters and set running flag eagerly (before any async work)
+        self._validate_run_params(message, responses, checkpoint_id)
         self._ensure_not_running()
 
+        response_stream = ResponseStream[WorkflowEvent, WorkflowRunResult](
+            self._run_core(
+                message=message,
+                responses=responses,
+                checkpoint_id=checkpoint_id,
+                checkpoint_storage=checkpoint_storage,
+                streaming=stream,
+                **kwargs,
+            ),
+            finalizer=functools.partial(self._finalize_events, include_status_events=include_status_events),
+            cleanup_hooks=[
+                functools.partial(self._run_cleanup, checkpoint_storage),
+            ],
+        )
+
+        if stream:
+            return response_stream
+        return response_stream.get_final_response()
+
+    async def _run_core(
+        self,
+        message: Any | None = None,
+        *,
+        responses: dict[str, Any] | None = None,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        streaming: bool = False,
+        **kwargs: Any,
+    ) -> AsyncIterable[WorkflowEvent]:
+        """Single core execution path for both streaming and non-streaming modes.
+
+        Yields:
+            WorkflowEvent: The events generated during the workflow execution.
+        """
         # Enable runtime checkpointing if storage provided
         if checkpoint_storage is not None:
             self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
 
-        try:
-            # Reset context only for new runs (not checkpoint restoration)
-            reset_context = message is not None and checkpoint_id is None
+        initial_executor_fn, reset_context = self._resolve_execution_mode(
+            message, responses, checkpoint_id, checkpoint_storage
+        )
 
-            raw_events = [
-                event
-                async for event in self._run_workflow_with_tracing(
-                    initial_executor_fn=functools.partial(
-                        self._execute_with_message_or_checkpoint, message, checkpoint_id, checkpoint_storage
-                    ),
-                    reset_context=reset_context,
-                    run_kwargs=kwargs if kwargs else None,
-                )
-            ]
-        finally:
-            if checkpoint_storage is not None:
-                self._runner.context.clear_runtime_checkpoint_storage()
-            self._reset_running_flag()
+        async for event in self._run_workflow_with_tracing(
+            initial_executor_fn=initial_executor_fn,
+            reset_context=reset_context,
+            streaming=streaming,
+            run_kwargs=kwargs if kwargs else None,
+        ):
+            if event.type == "output" and not self._should_yield_output_event(event):
+                continue
+            if event.type == "request_info" and event.request_id in (responses or {}):
+                # Don't yield request_info events for which we have responses to send -
+                # these are considered "handled". This prevents the caller from seeing
+                # events for requests they are already responding to.
+                # This usually happens when responses are provided with a checkpoint
+                # (restore then send), because the request_info events are stored in the
+                # checkpoint and would be emitted on restoration by the runner regardless
+                # of if a response is provided or not.
+                continue
+            yield event
 
-        # Filter events for non-streaming mode
+    async def _run_cleanup(self, checkpoint_storage: CheckpointStorage | None) -> None:
+        """Cleanup hook called after stream consumption."""
+        if checkpoint_storage is not None:
+            self._runner.context.clear_runtime_checkpoint_storage()
+        self._reset_running_flag()
+
+    @staticmethod
+    def _finalize_events(
+        events: Sequence[WorkflowEvent],
+        *,
+        include_status_events: bool = False,
+    ) -> WorkflowRunResult:
+        """Convert collected workflow events into a WorkflowRunResult.
+
+        Filters out internal events for non-streaming callers.
+        """
         filtered: list[WorkflowEvent] = []
-        status_events: list[WorkflowStatusEvent] = []
+        status_events: list[WorkflowEvent] = []
 
-        for ev in raw_events:
-            # Omit WorkflowStartedEvent from non-streaming (telemetry-only)
-            if isinstance(ev, WorkflowStartedEvent):
+        for ev in events:
+            # Omit started events from result (telemetry-only)
+            if ev.type == "started":
                 continue
             # Track status; include inline only if explicitly requested
-            if isinstance(ev, WorkflowStatusEvent):
+            if ev.type == "status":
                 status_events.append(ev)
                 if include_status_events:
                     filtered.append(ev)
@@ -690,29 +612,84 @@ class Workflow(DictConvertible):
 
         return WorkflowRunResult(filtered, status_events)
 
-    async def send_responses(self, responses: dict[str, Any]) -> WorkflowRunResult:
-        """Send responses back to the workflow.
+    @staticmethod
+    def _validate_run_params(
+        message: Any | None,
+        responses: dict[str, Any] | None,
+        checkpoint_id: str | None,
+    ) -> None:
+        """Validate parameter combinations for run().
 
-        Args:
-            responses: A dictionary where keys are request IDs and values are the corresponding response data.
+        Rules:
+        - message and responses are mutually exclusive
+        - message and checkpoint_id are mutually exclusive
+        - At least one of message, responses, or checkpoint_id must be provided
+        - responses + checkpoint_id is allowed (restore then send)
+        """
+        if message is not None and responses is not None:
+            raise ValueError("Cannot provide both 'message' and 'responses'. Use one or the other.")
+
+        if message is not None and checkpoint_id is not None:
+            raise ValueError("Cannot provide both 'message' and 'checkpoint_id'. Use one or the other.")
+
+        if message is None and responses is None and checkpoint_id is None:
+            raise ValueError(
+                "Must provide at least one of: 'message' (new run), 'responses' (send responses), "
+                "or 'checkpoint_id' (resume from checkpoint)."
+            )
+
+    def _resolve_execution_mode(
+        self,
+        message: Any | None,
+        responses: dict[str, Any] | None,
+        checkpoint_id: str | None,
+        checkpoint_storage: CheckpointStorage | None,
+    ) -> tuple[Callable[[], Awaitable[None]], bool]:
+        """Determine the initial executor function and reset_context flag based on parameters.
 
         Returns:
-            A WorkflowRunResult instance containing a list of events generated during the workflow execution.
+            A tuple of (initial_executor_fn, reset_context).
         """
-        self._ensure_not_running()
-        try:
-            events = [
-                event
-                async for event in self._run_workflow_with_tracing(
-                    initial_executor_fn=functools.partial(self._send_responses_internal, responses),
-                    reset_context=False,  # Don't reset context when sending responses
+        if responses is not None:
+            if checkpoint_id is not None:
+                # Combined: restore checkpoint then send responses
+                initial_executor_fn = functools.partial(
+                    self._restore_and_send_responses, checkpoint_id, checkpoint_storage, responses
                 )
-            ]
-            status_events = [e for e in events if isinstance(e, WorkflowStatusEvent)]
-            filtered_events = [e for e in events if not isinstance(e, (WorkflowStatusEvent, WorkflowStartedEvent))]
-            return WorkflowRunResult(filtered_events, status_events)
-        finally:
-            self._reset_running_flag()
+            else:
+                # Send responses only (requires pending requests in workflow state)
+                initial_executor_fn = functools.partial(self._send_responses_internal, responses)
+            return initial_executor_fn, False
+        # Regular run or checkpoint restoration
+        initial_executor_fn = functools.partial(
+            self._execute_with_message_or_checkpoint, message, checkpoint_id, checkpoint_storage
+        )
+        reset_context = message is not None and checkpoint_id is None
+        return initial_executor_fn, reset_context
+
+    async def _restore_and_send_responses(
+        self,
+        checkpoint_id: str,
+        checkpoint_storage: CheckpointStorage | None,
+        responses: dict[str, Any],
+    ) -> None:
+        """Restore from a checkpoint then send responses to pending requests.
+
+        Args:
+            checkpoint_id: ID of checkpoint to restore from.
+            checkpoint_storage: Runtime checkpoint storage.
+            responses: Responses to send after restoration.
+        """
+        has_checkpointing = self._runner.context.has_checkpointing()
+
+        if not has_checkpointing and checkpoint_storage is None:
+            raise ValueError(
+                "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
+                "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
+            )
+
+        await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
+        await self._send_responses_internal(responses)
 
     async def _send_responses_internal(self, responses: dict[str, Any]) -> None:
         """Internal method to validate and send responses to the executors."""
@@ -720,20 +697,24 @@ class Workflow(DictConvertible):
         if not pending_requests:
             raise RuntimeError("No pending requests found in workflow context.")
 
-        # Validate responses against pending requests
+        # Validate and coerce responses against pending requests
+        coerced_responses: dict[str, Any] = {}
         for request_id, response in responses.items():
             if request_id not in pending_requests:
                 raise ValueError(f"Response provided for unknown request ID: {request_id}")
             pending_request = pending_requests[request_id]
+            # Try to coerce raw values (e.g., dicts from JSON) to the expected type
+            response = try_coerce_to_type(response, pending_request.response_type)
             if not is_instance_of(response, pending_request.response_type):
                 raise ValueError(
                     f"Response type mismatch for request ID {request_id}: "
                     f"expected {pending_request.response_type}, got {type(response)}"
                 )
+            coerced_responses[request_id] = response
 
         await asyncio.gather(*[
             self._runner_context.send_request_info_response(request_id, response)
-            for request_id, response in responses.items()
+            for request_id, response in coerced_responses.items()
         ])
 
     def _get_executor_by_id(self, executor_id: str) -> Executor:
@@ -749,6 +730,22 @@ class Workflow(DictConvertible):
             raise ValueError(f"Executor with ID {executor_id} not found.")
         return self.executors[executor_id]
 
+    def _should_yield_output_event(self, event: WorkflowEvent[Any]) -> bool:
+        """Determine if an output event should be yielded as a workflow output.
+
+        Args:
+            event: The WorkflowEvent with type='output' to evaluate.
+
+        Returns:
+            True if the event should be yielded as a workflow output, False otherwise.
+        """
+        # If no specific output executors are defined, yield all outputs
+        if not self._output_executors:
+            return True
+
+        # Check if the event's source executor is in the list of output executors
+        return event.executor_id in self._output_executors
+
     # Graph signature helpers
 
     def _compute_graph_signature(self) -> dict[str, Any]:
@@ -759,10 +756,19 @@ class Workflow(DictConvertible):
         ignoring data/state changes. Used to verify that a workflow's structure hasn't
         changed when resuming from checkpoints.
         """
-        executors_signature = {
-            executor_id: f"{executor.__class__.__module__}.{executor.__class__.__name__}"
-            for executor_id, executor in self.executors.items()
-        }
+        from ._workflow_executor import WorkflowExecutor
+
+        executors_signature = {}
+        for executor_id, executor in self.executors.items():
+            executor_sig: Any = f"{executor.__class__.__module__}.{executor.__class__.__name__}"
+
+            if isinstance(executor, WorkflowExecutor):
+                executor_sig = {
+                    "type": executor_sig,
+                    "sub_workflow": executor.workflow.graph_signature,
+                }
+
+            executors_signature[executor_id] = executor_sig
 
         edge_groups_signature: list[dict[str, Any]] = []
         for group in self.edge_groups:
@@ -802,7 +808,6 @@ class Workflow(DictConvertible):
             "start_executor": self.start_executor_id,
             "executors": executors_signature,
             "edge_groups": edge_groups_signature,
-            "max_iterations": self.max_iterations,
         }
 
     @staticmethod
@@ -811,11 +816,7 @@ class Workflow(DictConvertible):
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     @property
-    def graph_signature_hash(self) -> str:
-        return self._graph_signature_hash
-
-    @property
-    def input_types(self) -> list[type[Any]]:
+    def input_types(self) -> list[type[Any] | types.UnionType]:
         """Get the input types of the workflow.
 
         The input types are the list of input types of the start executor.
@@ -827,7 +828,7 @@ class Workflow(DictConvertible):
         return start_executor.input_types
 
     @property
-    def output_types(self) -> list[type[Any]]:
+    def output_types(self) -> list[type[Any] | types.UnionType]:
         """Get the output types of the workflow.
 
         The output types are the list of all workflow output types from executors
@@ -836,7 +837,7 @@ class Workflow(DictConvertible):
         Returns:
             A list of output types that the workflow can produce.
         """
-        output_types: set[type[Any]] = set()
+        output_types: set[type[Any] | types.UnionType] = set()
 
         for executor in self.executors.values():
             workflow_output_types = executor.workflow_output_types
@@ -847,14 +848,14 @@ class Workflow(DictConvertible):
     def as_agent(self, name: str | None = None) -> WorkflowAgent:
         """Create a WorkflowAgent that wraps this workflow.
 
-        The returned agent converts standard agent inputs (strings, ChatMessage, or lists of these)
-        into a list[ChatMessage] that is passed to the workflow's start executor. This conversion
+        The returned agent converts standard agent inputs (strings, Message, or lists of these)
+        into a list[Message] that is passed to the workflow's start executor. This conversion
         happens in WorkflowAgent._normalize_messages() which transforms:
-        - str -> [ChatMessage(role=USER, text=str)]
-        - ChatMessage -> [ChatMessage]
-        - list[str | ChatMessage] -> list[ChatMessage] (with string elements converted)
+        - str -> [Message(USER, [str])]
+        - Message -> [Message]
+        - list[str | Message] -> list[Message] (with string elements converted)
 
-        The workflow's start executor must accept list[ChatMessage] as an input type, otherwise
+        The workflow's start executor must accept list[Message] as an input type, otherwise
         initialization will fail with a ValueError.
 
         Args:
@@ -864,7 +865,7 @@ class Workflow(DictConvertible):
             A WorkflowAgent instance that wraps this workflow.
 
         Raises:
-            ValueError: If the workflow's start executor cannot handle list[ChatMessage] input.
+            ValueError: If the workflow's start executor cannot handle list[Message] input.
         """
         # Import here to avoid circular imports
         from ._agent import WorkflowAgent

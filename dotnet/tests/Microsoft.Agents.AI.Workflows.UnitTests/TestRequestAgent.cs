@@ -29,7 +29,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
     protected override string? IdCore => id;
     public override string? Name => name;
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken)
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken)
         => new(requestType switch
         {
             TestAgentRequestType.FunctionCall => new TestRequestAgentSession<FunctionCallContent, FunctionResultContent>(),
@@ -37,13 +37,16 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             _ => throw new NotSupportedException(),
         });
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => new(requestType switch
         {
             TestAgentRequestType.FunctionCall => new TestRequestAgentSession<FunctionCallContent, FunctionResultContent>(),
             TestAgentRequestType.UserInputRequest => new TestRequestAgentSession<UserInputRequestContent, UserInputResponseContent>(),
             _ => throw new NotSupportedException(),
         });
+
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => default;
 
     protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         => this.RunStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
@@ -73,7 +76,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
                     where TRequest : AIContent
                     where TResponse : AIContent
     {
-        this.LastSession = session ??= await this.GetNewSessionAsync(cancellationToken);
+        this.LastSession = session ??= await this.CreateSessionAsync(cancellationToken);
         TestRequestAgentSession<TRequest, TResponse> traSessin = ConvertSession<TRequest, TResponse>(session);
 
         if (traSessin.HasSentRequests)
@@ -322,12 +325,12 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
 
         static TRequest AssertAndExtractRequestContent<TRequest>(ExternalRequest request)
         {
-            request.DataIs(out TRequest? content).Should().BeTrue();
+            request.TryGetDataAs(out TRequest? content).Should().BeTrue();
             return content!;
         }
     }
 
-    private sealed class TestRequestAgentSession<TRequest, TResponse> : InMemoryAgentSession
+    private sealed class TestRequestAgentSession<TRequest, TResponse> : AgentSession
         where TRequest : AIContent
         where TResponse : AIContent
     {
@@ -340,19 +343,13 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
         public HashSet<string> ServicedRequests { get; } = new();
         public HashSet<string> PairedRequests { get; } = new();
 
-        private static JsonElement DeserializeAndExtractState(JsonElement serializedState,
-                                                              out TestRequestAgentSessionState state,
-                                                              JsonSerializerOptions? jsonSerializerOptions = null)
+        public TestRequestAgentSession(JsonElement element, JsonSerializerOptions? jsonSerializerOptions = null)
         {
-            state = JsonSerializer.Deserialize<TestRequestAgentSessionState>(serializedState, jsonSerializerOptions)
+            var state = JsonSerializer.Deserialize<TestRequestAgentSessionState>(element, jsonSerializerOptions)
                  ?? throw new ArgumentException("Unable to deserialize session state.");
 
-            return state.SessionState;
-        }
+            this.StateBag = AgentSessionStateBag.Deserialize(state.SessionState);
 
-        public TestRequestAgentSession(JsonElement element, JsonSerializerOptions? jsonSerializerOptions = null)
-            : base(DeserializeAndExtractState(element, out TestRequestAgentSessionState state, jsonSerializerOptions))
-        {
             this.UnservicedRequests = state.UnservicedRequests.ToDictionary(
                 keySelector: item => item.Key,
                 elementSelector: item => item.Value.As<TRequest>()!);
@@ -361,9 +358,9 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             this.PairedRequests = state.PairedRequests;
         }
 
-        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+        internal JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
         {
-            JsonElement sessionState = base.Serialize(jsonSerializerOptions);
+            JsonElement sessionState = this.StateBag.Serialize();
 
             Dictionary<string, PortableValue> portableUnservicedRequests =
                 this.UnservicedRequests.ToDictionary(

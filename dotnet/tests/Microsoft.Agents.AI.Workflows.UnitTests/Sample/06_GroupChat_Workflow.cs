@@ -29,7 +29,7 @@ internal static class Step6EntryPoint
     {
         Workflow workflow = CreateWorkflow(maxSteps);
 
-        StreamingRun run = await environment.StreamAsync(workflow, Array.Empty<ChatMessage>())
+        StreamingRun run = await environment.RunStreamingAsync(workflow, Array.Empty<ChatMessage>())
                                     .ConfigureAwait(false);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
@@ -60,11 +60,14 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     protected override string? IdCore => id;
     public override string? Name => id;
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
         => new(new HelloAgentSession());
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => new(new HelloAgentSession());
+
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => default;
 
     protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -87,4 +90,4 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     }
 }
 
-internal sealed class HelloAgentSession() : InMemoryAgentSession();
+internal sealed class HelloAgentSession() : AgentSession();

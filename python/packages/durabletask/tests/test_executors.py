@@ -11,12 +11,12 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentResponse, Role
+from agent_framework import AgentResponse
 from durabletask.entities import EntityInstanceId
 from durabletask.task import Task
 from pydantic import BaseModel
 
-from agent_framework_durabletask import DurableAgentThread
+from agent_framework_durabletask import DurableAgentSession
 from agent_framework_durabletask._constants import DEFAULT_MAX_POLL_RETRIES, DEFAULT_POLL_INTERVAL_SECONDS
 from agent_framework_durabletask._executors import (
     ClientAgentExecutor,
@@ -106,42 +106,42 @@ def configure_failed_entity_task(mock_entity_task: Mock) -> Any:
     return _configure
 
 
-class TestExecutorThreadCreation:
-    """Test that executors properly create DurableAgentThread with parameters."""
+class TestExecutorSessionCreation:
+    """Test that executors properly create DurableAgentSession with parameters."""
 
-    def test_client_executor_creates_durable_thread(self, mock_client: Mock) -> None:
-        """Verify ClientAgentExecutor creates DurableAgentThread instances."""
+    def test_client_executor_creates_durable_session(self, mock_client: Mock) -> None:
+        """Verify ClientAgentExecutor creates DurableAgentSession instances."""
         executor = ClientAgentExecutor(mock_client)
 
-        thread = executor.get_new_thread("test_agent")
+        session = executor.get_new_session("test_agent")
 
-        assert isinstance(thread, DurableAgentThread)
+        assert isinstance(session, DurableAgentSession)
 
-    def test_client_executor_forwards_kwargs_to_thread(self, mock_client: Mock) -> None:
-        """Verify ClientAgentExecutor forwards kwargs to DurableAgentThread creation."""
+    def test_client_executor_forwards_kwargs_to_session(self, mock_client: Mock) -> None:
+        """Verify ClientAgentExecutor forwards kwargs to DurableAgentSession creation."""
         executor = ClientAgentExecutor(mock_client)
 
-        thread = executor.get_new_thread("test_agent", service_thread_id="client-123")
+        session = executor.get_new_session("test_agent", service_session_id="client-123")
 
-        assert isinstance(thread, DurableAgentThread)
-        assert thread.service_thread_id == "client-123"
+        assert isinstance(session, DurableAgentSession)
+        assert session.service_session_id == "client-123"
 
-    def test_orchestration_executor_creates_durable_thread(
+    def test_orchestration_executor_creates_durable_session(
         self, orchestration_executor: OrchestrationAgentExecutor
     ) -> None:
-        """Verify OrchestrationAgentExecutor creates DurableAgentThread instances."""
-        thread = orchestration_executor.get_new_thread("test_agent")
+        """Verify OrchestrationAgentExecutor creates DurableAgentSession instances."""
+        session = orchestration_executor.get_new_session("test_agent")
 
-        assert isinstance(thread, DurableAgentThread)
+        assert isinstance(session, DurableAgentSession)
 
-    def test_orchestration_executor_forwards_kwargs_to_thread(
+    def test_orchestration_executor_forwards_kwargs_to_session(
         self, orchestration_executor: OrchestrationAgentExecutor
     ) -> None:
-        """Verify OrchestrationAgentExecutor forwards kwargs to DurableAgentThread creation."""
-        thread = orchestration_executor.get_new_thread("test_agent", service_thread_id="orch-456")
+        """Verify OrchestrationAgentExecutor forwards kwargs to DurableAgentSession creation."""
+        session = orchestration_executor.get_new_session("test_agent", service_session_id="orch-456")
 
-        assert isinstance(thread, DurableAgentThread)
-        assert thread.service_thread_id == "orch-456"
+        assert isinstance(session, DurableAgentSession)
+        assert session.service_session_id == "orch-456"
 
 
 class TestClientAgentExecutorRun:
@@ -189,19 +189,29 @@ class TestClientAgentExecutorPollingConfiguration:
         # Verify get_entity was called 2 times (max_poll_retries)
         assert mock_client.get_entity.call_count == 2
 
-    def test_executor_respects_custom_poll_interval(self, mock_client: Mock, sample_run_request: RunRequest) -> None:
+    def test_executor_respects_custom_poll_interval(
+        self,
+        mock_client: Mock,
+        sample_run_request: RunRequest,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Verify executor respects custom poll_interval_seconds during polling."""
         # Create executor with very short interval
         executor = ClientAgentExecutor(mock_client, max_poll_retries=3, poll_interval_seconds=0.01)
 
-        # Measure time taken
-        start = time.time()
-        result = executor.run_durable_agent("test_agent", sample_run_request)
-        elapsed = time.time() - start
+        sleep_calls: list[float] = []
 
-        # Should take roughly 3 * 0.01 = 0.03 seconds (plus overhead)
-        # Be generous with timing to avoid flakiness
-        assert elapsed < 0.2  # Should be quick with 0.01 interval
+        def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        # Use deterministic assertions instead of wall-clock timing to avoid CI flakiness.
+        monkeypatch.setattr("agent_framework_durabletask._executors.time.sleep", fake_sleep)
+
+        result = executor.run_durable_agent("test_agent", sample_run_request)
+
+        assert len(sleep_calls) == 3
+        assert sleep_calls == pytest.approx([0.01, 0.01, 0.01])
+        assert mock_client.get_entity.call_count == 3
         assert isinstance(result, AgentResponse)
 
 
@@ -241,7 +251,7 @@ class TestClientAgentExecutorFireAndForget:
         # Verify it contains an acceptance message
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
-        assert result.messages[0].role == Role.SYSTEM
+        assert result.messages[0].role == "system"
         # Check message contains key information
         message_text = result.messages[0].text
         assert "accepted" in message_text.lower()
@@ -294,7 +304,7 @@ class TestOrchestrationAgentExecutorFireAndForget:
         response = result.get_result()
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
-        assert response.messages[0].role == Role.SYSTEM
+        assert response.messages[0].role == "system"
         assert "test-789" in response.messages[0].text
 
     def test_orchestration_blocking_mode_calls_call_entity(self, mock_orchestration_context: Mock) -> None:
@@ -353,18 +363,18 @@ class TestOrchestrationAgentExecutorRun:
         # Verify request dict
         assert request_dict_arg == sample_run_request.to_dict()
 
-    def test_orchestration_executor_uses_thread_session_id(
+    def test_orchestration_executor_uses_session_durable_id(
         self,
         mock_orchestration_context: Mock,
         orchestration_executor: OrchestrationAgentExecutor,
         sample_run_request: RunRequest,
     ) -> None:
-        """Verify executor uses thread's session ID when provided."""
-        # Create thread with specific session ID
+        """Verify executor uses session's durable session ID when provided."""
+        # Create session with specific durable session ID
         session_id = AgentSessionId(name="test_agent", key="specific-key-123")
-        thread = DurableAgentThread.from_session_id(session_id)
+        session = DurableAgentSession.from_session_id(session_id)
 
-        result = orchestration_executor.run_durable_agent("test_agent", sample_run_request, thread=thread)
+        result = orchestration_executor.run_durable_agent("test_agent", sample_run_request, session=session)
 
         # Verify call_entity was called with the specific key
         call_args = mock_orchestration_context.call_entity.call_args
@@ -392,7 +402,7 @@ class TestDurableAgentTask:
         result = task.get_result()
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 1
-        assert result.messages[0].role == Role.ASSISTANT
+        assert result.messages[0].role == "assistant"
 
     def test_durable_agent_task_propagates_failure(self, configure_failed_entity_task: Any) -> None:
         """Verify DurableAgentTask propagates task failures."""
@@ -519,8 +529,8 @@ class TestDurableAgentTask:
         result = task.get_result()
         assert isinstance(result, AgentResponse)
         assert len(result.messages) == 2
-        assert result.messages[0].role == Role.ASSISTANT
-        assert result.messages[1].role == Role.ASSISTANT
+        assert result.messages[0].role == "assistant"
+        assert result.messages[1].role == "assistant"
 
     def test_durable_agent_task_is_not_complete_initially(self, mock_entity_task: Mock) -> None:
         """Verify DurableAgentTask is not complete when first created."""

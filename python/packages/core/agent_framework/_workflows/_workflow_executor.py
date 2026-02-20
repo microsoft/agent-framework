@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import sys
+import types
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -10,17 +11,15 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
-from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
+from ._checkpoint_encoding import decode_checkpoint_value
 from ._const import WORKFLOW_RUN_KWARGS_KEY
 from ._events import (
-    RequestInfoEvent,
-    WorkflowErrorEvent,
-    WorkflowFailedEvent,
+    WorkflowEvent,
     WorkflowRunState,
 )
 from ._executor import Executor, handler
 from ._request_info_mixin import response_handler
-from ._runner_context import Message
+from ._runner_context import WorkflowMessage
 from ._typing_utils import is_instance_of
 from ._workflow import WorkflowRunResult
 from ._workflow_context import WorkflowContext
@@ -51,38 +50,38 @@ class ExecutionContext:
 
     # Pending requests to be fulfilled. This will get updated as the
     # WorkflowExecutor receives responses.
-    pending_requests: dict[str, RequestInfoEvent]  # request_id -> request_info_event
+    pending_requests: dict[str, WorkflowEvent]  # request_id -> request_info_event
 
 
 @dataclass
 class SubWorkflowResponseMessage:
     """Message sent from a parent workflow to a sub-workflow via WorkflowExecutor to provide requested information.
 
-    This message wraps the response data along with the original RequestInfoEvent emitted by the sub-workflow executor.
+    This message wraps the response data along with the original WorkflowEvent emitted by the sub-workflow executor.
 
     Attributes:
         data: The response data to the original request.
-        source_event: The original RequestInfoEvent emitted by the sub-workflow executor.
+        source_event: The original WorkflowEvent emitted by the sub-workflow executor.
     """
 
     data: Any
-    source_event: RequestInfoEvent
+    source_event: WorkflowEvent
 
 
 @dataclass
 class SubWorkflowRequestMessage:
     """Message sent from a sub-workflow to an executor in the parent workflow to request information.
 
-    This message wraps a RequestInfoEvent emitted by the executor in the sub-workflow.
+    This message wraps a WorkflowEvent emitted by the executor in the sub-workflow.
 
     Attributes:
-        source_event: The original RequestInfoEvent emitted by the sub-workflow executor.
+        source_event: The original WorkflowEvent emitted by the sub-workflow executor.
         executor_id: The ID of the WorkflowExecutor in the parent workflow that is
             responsible for this sub-workflow. This can be used to ensure that the response
             is sent back to the correct sub-workflow instance.
     """
 
-    source_event: RequestInfoEvent
+    source_event: WorkflowEvent
     executor_id: str
 
     def create_response(self, data: Any) -> SubWorkflowResponseMessage:
@@ -152,7 +151,7 @@ class WorkflowExecutor(Executor):
         # An executor in the sub-workflow makes request
         request = MyDataRequest(query="user info")
 
-        # WorkflowExecutor captures RequestInfoEvent and wraps it in a SubWorkflowRequestMessage
+        # WorkflowExecutor captures WorkflowEvent and wraps it in a SubWorkflowRequestMessage
         # then send it to the receiving executor in parent workflow. The executor in parent workflow
         # can handle the request locally or forward it to an external source.
         # The WorkflowExecutor tracks the pending request, and implements a response handler.
@@ -190,8 +189,8 @@ class WorkflowExecutor(Executor):
 
     ## Error Handling
     WorkflowExecutor propagates sub-workflow failures:
-    - Captures WorkflowFailedEvent from sub-workflow
-    - Converts to WorkflowErrorEvent in parent context
+    - Captures failed event (type='failed') from sub-workflow
+    - Converts to error event in parent context
     - Provides detailed error information including sub-workflow ID
 
     ## Concurrent Execution Support
@@ -284,7 +283,7 @@ class WorkflowExecutor(Executor):
                                  workflow's event stream.
             propagate_request: Whether to propagate requests from the sub-workflow to the
                                parent workflow. If set to true, requests from the sub-workflow
-                               will be propagated as the original RequestInfoEvent to the parent
+                               will be propagated as the original WorkflowEvent to the parent
                                workflow. Otherwise, they will be wrapped in a SubWorkflowRequestMessage,
                                which should be handled by an executor in the parent workflow.
 
@@ -302,13 +301,13 @@ class WorkflowExecutor(Executor):
         self._propagate_request = propagate_request
 
     @property
-    def input_types(self) -> list[type[Any]]:
+    def input_types(self) -> list[type[Any] | types.UnionType]:
         """Get the input types based on the underlying workflow's input types plus WorkflowExecutor-specific types.
 
         Returns:
             A list of input types that the WorkflowExecutor can accept.
         """
-        input_types = list(self.workflow.input_types)
+        input_types: list[type[Any] | types.UnionType] = list(self.workflow.input_types)
 
         # WorkflowExecutor can also handle SubWorkflowResponseMessage for sub-workflow responses
         if SubWorkflowResponseMessage not in input_types:
@@ -317,7 +316,7 @@ class WorkflowExecutor(Executor):
         return input_types
 
     @property
-    def output_types(self) -> list[type[Any]]:
+    def output_types(self) -> list[type[Any] | types.UnionType]:
         """Get the output types based on the underlying workflow's output types.
 
         Returns:
@@ -325,7 +324,7 @@ class WorkflowExecutor(Executor):
             Includes the SubWorkflowRequestMessage type if any executor in the
             sub-workflow is request-response capable.
         """
-        output_types = list(self.workflow.output_types)
+        output_types: list[type[Any] | types.UnionType] = list(self.workflow.output_types)
 
         is_request_response_capable = any(
             executor.is_request_response_capable for executor in self.workflow.executors.values()
@@ -341,7 +340,7 @@ class WorkflowExecutor(Executor):
         data["workflow"] = self.workflow.to_dict()
         return data
 
-    def can_handle(self, message: Message) -> bool:
+    def can_handle(self, message: WorkflowMessage) -> bool:
         """Override can_handle to only accept messages that the wrapped workflow can handle.
 
         This prevents the WorkflowExecutor from accepting messages that should go to other
@@ -385,8 +384,8 @@ class WorkflowExecutor(Executor):
         logger.debug(f"WorkflowExecutor {self.id} starting sub-workflow {self.workflow.id} execution {execution_id}")
 
         try:
-            # Get kwargs from parent workflow's SharedState to propagate to subworkflow
-            parent_kwargs: dict[str, Any] = await ctx.get_shared_state(WORKFLOW_RUN_KWARGS_KEY) or {}
+            # Get kwargs from parent workflow's State to propagate to subworkflow
+            parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY) or {}
 
             # Run the sub-workflow and collect all events, passing parent kwargs
             result = await self.workflow.run(input_data, **parent_kwargs)
@@ -420,8 +419,9 @@ class WorkflowExecutor(Executor):
             response: The response to a previous request.
             ctx: The workflow context.
         """
+        request_id = response.source_event.request_id
         await self._handle_response(
-            request_id=response.source_event.request_id,
+            request_id=request_id,
             response=response.data,
             ctx=ctx,
         )
@@ -436,7 +436,7 @@ class WorkflowExecutor(Executor):
         """Handle response for a request that was propagated to the parent workflow.
 
         Args:
-            original_request: The original RequestInfoEvent.
+            original_request: The original WorkflowEvent.
             response: The response data.
             ctx: The workflow context.
         """
@@ -454,8 +454,7 @@ class WorkflowExecutor(Executor):
         """Get the current state of the WorkflowExecutor for checkpointing purposes."""
         return {
             "execution_contexts": {
-                execution_id: encode_checkpoint_value(execution_context)
-                for execution_id, execution_context in self._execution_contexts.items()
+                execution_id: execution_context for execution_id, execution_context in self._execution_contexts.items()
             },
             "request_to_execution": dict(self._request_to_execution),
         }
@@ -549,15 +548,17 @@ class WorkflowExecutor(Executor):
 
         # Process request info events
         for event in request_info_events:
+            request_id = event.request_id
+            response_type = event.response_type
             # Track the pending request in execution context
-            execution_context.pending_requests[event.request_id] = event
+            execution_context.pending_requests[request_id] = event
             # Map request to execution for response routing
-            self._request_to_execution[event.request_id] = execution_context.execution_id
+            self._request_to_execution[request_id] = execution_context.execution_id
             if self._propagate_request:
                 # In a workflow where the parent workflow does not handle the request, the request
                 # should be propagated via the `request_info` mechanism to an external source. And
                 # a @response_handler would be required in the WorkflowExecutor to handle the response.
-                await ctx.request_info(event.data, event.response_type, request_id=event.request_id)
+                await ctx.request_info(event.data, response_type, request_id=request_id)
             else:
                 # In a workflow where the parent workflow has an executor that may intercept the
                 # request and handle it directly, a message should be sent.
@@ -568,18 +569,19 @@ class WorkflowExecutor(Executor):
 
         # Handle final state
         if workflow_run_state == WorkflowRunState.FAILED:
-            # Find the WorkflowFailedEvent.
-            failed_events = [e for e in result if isinstance(e, WorkflowFailedEvent)]
+            # Find the failed event (type='failed').
+            failed_events = [e for e in result if isinstance(e, WorkflowEvent) and e.type == "failed"]
             if failed_events:
                 failed_event = failed_events[0]
-                error_type = failed_event.details.error_type
-                error_message = failed_event.details.message
-                exception = Exception(
-                    f"Sub-workflow {self.workflow.id} failed with error: {error_type} - {error_message}"
-                )
-                error_event = WorkflowErrorEvent(
-                    data=exception,
-                )
+                if failed_event.details is not None:
+                    error_type = failed_event.details.error_type
+                    error_message = failed_event.details.message
+                    exception = Exception(
+                        f"Sub-workflow {self.workflow.id} failed with error: {error_type} - {error_message}"
+                    )
+                else:
+                    exception = Exception(f"Sub-workflow {self.workflow.id} failed with unknown error")
+                error_event = WorkflowEvent.error(exception)
                 await ctx.add_event(error_event)
         elif workflow_run_state == WorkflowRunState.IDLE:
             # Sub-workflow is idle - nothing more to do now
@@ -650,8 +652,7 @@ class WorkflowExecutor(Executor):
 
         try:
             # Resume the sub-workflow with all collected responses
-            result = await self.workflow.send_responses(responses_to_send)
-
+            result = await self.workflow.run(responses=responses_to_send)
             # Process the workflow result using shared logic
             await self._process_workflow_result(result, execution_context, ctx)
         finally:
