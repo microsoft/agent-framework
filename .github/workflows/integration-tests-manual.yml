@@ -1,0 +1,61 @@
+#
+# This workflow allows manually running integration tests against an open PR.
+# Go to Actions → "Integration Tests (Manual)" → Run workflow → enter the PR number.
+#
+# It reuses the existing dotnet-build-and-test and python-merge-tests workflows,
+# passing the PR's head commit SHA so they check out and test the PR code.
+#
+
+name: Integration Tests (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: "PR number to run integration tests against"
+        required: true
+        type: string
+
+concurrency:
+  group: integration-tests-manual-pr-${{ github.event.inputs.pr-number }}
+  cancel-in-progress: true
+
+jobs:
+  resolve-pr:
+    name: Resolve PR
+    runs-on: ubuntu-latest
+    outputs:
+      head-sha: ${{ steps.pr-info.outputs.head-sha }}
+    steps:
+      - name: Get PR info
+        id: pr-info
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_DATA=$(gh pr view ${{ github.event.inputs.pr-number }} --repo ${{ github.repository }} --json headRefOid,state)
+          PR_STATE=$(echo "$PR_DATA" | jq -r '.state')
+          HEAD_SHA=$(echo "$PR_DATA" | jq -r '.headRefOid')
+
+          if [ "$PR_STATE" != "OPEN" ]; then
+            echo "::error::PR #${{ github.event.inputs.pr-number }} is not open (state: $PR_STATE)"
+            exit 1
+          fi
+
+          echo "head-sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "Running integration tests for PR #${{ github.event.inputs.pr-number }} at commit $HEAD_SHA"
+
+  dotnet-integration-tests:
+    name: .NET Integration Tests
+    needs: resolve-pr
+    uses: ./.github/workflows/dotnet-build-and-test.yml
+    with:
+      checkout-ref: ${{ needs.resolve-pr.outputs.head-sha }}
+    secrets: inherit
+
+  python-integration-tests:
+    name: Python Integration Tests
+    needs: resolve-pr
+    uses: ./.github/workflows/python-merge-tests.yml
+    with:
+      checkout-ref: ${{ needs.resolve-pr.outputs.head-sha }}
+    secrets: inherit

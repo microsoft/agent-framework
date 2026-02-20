@@ -7,6 +7,13 @@ name: dotnet-build-and-test
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      checkout-ref:
+        description: "Git ref to checkout (e.g., a commit SHA from a PR)"
+        required: false
+        type: string
+        default: ""
   pull_request:
     branches: ["main", "feature*"]
   merge_group:
@@ -39,6 +46,8 @@ jobs:
       cosmosDbChanges: ${{ steps.filter.outputs.cosmosdb }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref }}
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -76,6 +85,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+            ref: ${{ inputs.checkout-ref }}
             persist-credentials: false
             sparse-checkout: |
               .
