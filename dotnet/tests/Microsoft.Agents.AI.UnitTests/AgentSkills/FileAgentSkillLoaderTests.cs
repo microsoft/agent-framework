@@ -351,6 +351,95 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Single(skills["dedup-skill"].ResourceNames);
     }
 
+    [Fact]
+    public void DiscoverAndLoadSkills_DotSlashPrefix_NormalizesToBarePath()
+    {
+        // Arrange — body references a resource with ./ prefix
+        string skillDir = Path.Combine(this._testRoot, "dotslash-skill");
+        string refsDir = Path.Combine(skillDir, "refs");
+        Directory.CreateDirectory(refsDir);
+        File.WriteAllText(Path.Combine(refsDir, "doc.md"), "content");
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: dotslash-skill\ndescription: Dot-slash test\n---\nSee [doc](./refs/doc.md).");
+
+        // Act
+        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
+
+        // Assert
+        Assert.Single(skills);
+        var skill = skills["dotslash-skill"];
+        Assert.Single(skill.ResourceNames);
+        Assert.Equal("refs/doc.md", skill.ResourceNames[0]);
+    }
+
+    [Fact]
+    public void DiscoverAndLoadSkills_DotSlashAndBarePath_DeduplicatesResources()
+    {
+        // Arrange — body references the same resource with and without ./ prefix
+        string skillDir = Path.Combine(this._testRoot, "mixed-prefix-skill");
+        string refsDir = Path.Combine(skillDir, "refs");
+        Directory.CreateDirectory(refsDir);
+        File.WriteAllText(Path.Combine(refsDir, "doc.md"), "content");
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: mixed-prefix-skill\ndescription: Mixed prefix test\n---\nSee [a](./refs/doc.md) and [b](refs/doc.md).");
+
+        // Act
+        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
+
+        // Assert
+        Assert.Single(skills);
+        var skill = skills["mixed-prefix-skill"];
+        Assert.Single(skill.ResourceNames);
+        Assert.Equal("refs/doc.md", skill.ResourceNames[0]);
+    }
+
+    [Fact]
+    public async Task ReadSkillResourceAsync_DotSlashPrefix_MatchesNormalizedResourceAsync()
+    {
+        // Arrange — skill loaded with bare path, caller uses ./ prefix
+        _ = this.CreateSkillDirectoryWithResource("dotslash-read", "A skill", "See [doc](refs/doc.md).", "refs/doc.md", "Document content.");
+        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
+        var skill = skills["dotslash-read"];
+
+        // Act — caller passes ./refs/doc.md which should match refs/doc.md
+        string content = await this._loader.ReadSkillResourceAsync(skill, "./refs/doc.md");
+
+        // Assert
+        Assert.Equal("Document content.", content);
+    }
+
+    [Fact]
+    public async Task ReadSkillResourceAsync_BackslashSeparator_MatchesNormalizedResourceAsync()
+    {
+        // Arrange — skill loaded with forward-slash path, caller uses backslashes
+        _ = this.CreateSkillDirectoryWithResource("backslash-read", "A skill", "See [doc](refs/doc.md).", "refs/doc.md", "Backslash content.");
+        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
+        var skill = skills["backslash-read"];
+
+        // Act — caller passes refs\doc.md which should match refs/doc.md
+        string content = await this._loader.ReadSkillResourceAsync(skill, "refs\\doc.md");
+
+        // Assert
+        Assert.Equal("Backslash content.", content);
+    }
+
+    [Fact]
+    public async Task ReadSkillResourceAsync_DotSlashWithBackslash_MatchesNormalizedResourceAsync()
+    {
+        // Arrange — skill loaded with forward-slash path, caller uses .\ prefix with backslashes
+        _ = this.CreateSkillDirectoryWithResource("mixed-sep-read", "A skill", "See [doc](refs/doc.md).", "refs/doc.md", "Mixed separator content.");
+        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
+        var skill = skills["mixed-sep-read"];
+
+        // Act — caller passes .\refs\doc.md which should match refs/doc.md
+        string content = await this._loader.ReadSkillResourceAsync(skill, ".\\refs\\doc.md");
+
+        // Assert
+        Assert.Equal("Mixed separator content.", content);
+    }
+
     private string CreateSkillDirectory(string name, string description, string body)
     {
         string skillDir = Path.Combine(this._testRoot, name);

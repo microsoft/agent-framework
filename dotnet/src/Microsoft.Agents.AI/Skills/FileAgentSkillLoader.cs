@@ -124,6 +124,8 @@ internal sealed partial class FileAgentSkillLoader
     /// </exception>
     internal async Task<string> ReadSkillResourceAsync(FileAgentSkill skill, string resourceName, CancellationToken cancellationToken = default)
     {
+        resourceName = NormalizeResourcePath(resourceName);
+
         if (!skill.ResourceNames.Any(r => r.Equals(resourceName, StringComparison.OrdinalIgnoreCase)))
         {
             throw new InvalidOperationException($"Resource '{resourceName}' not found in skill '{skill.Frontmatter.Name}'.");
@@ -347,7 +349,7 @@ internal sealed partial class FileAgentSkillLoader
         var paths = new List<string>();
         foreach (Match m in s_resourceLinkRegex.Matches(content))
         {
-            string path = m.Groups[1].Value;
+            string path = NormalizeResourcePath(m.Groups[1].Value);
             if (seen.Add(path))
             {
                 paths.Add(path);
@@ -355,6 +357,23 @@ internal sealed partial class FileAgentSkillLoader
         }
 
         return paths;
+    }
+
+    /// <summary>
+    /// Normalizes a relative resource path by trimming a leading <c>./</c> prefix and replacing
+    /// backslashes with forward slashes so that <c>./refs/doc.md</c> and <c>refs/doc.md</c> are
+    /// treated as the same resource.
+    /// </summary>
+    private static string NormalizeResourcePath(string path)
+    {
+        path = path.Replace('\\', '/');
+
+        if (path.StartsWith("./", StringComparison.Ordinal))
+        {
+            path = path.Substring(2);
+        }
+
+        return path;
     }
 
     [LoggerMessage(LogLevel.Information, "Discovered {Count} potential skills")]
