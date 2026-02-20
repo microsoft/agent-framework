@@ -20,7 +20,11 @@ from typing import Any
 from agent_framework import tool
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

@@ -25,10 +25,7 @@ from client import get_client, run_interactive_client
 from dotenv import load_dotenv
 from worker import get_worker, setup_worker
 
-logging.basicConfig(
-    level=logging.INFO,
-    force=True
-)
+logging.basicConfig(level=logging.INFO, force=True)
 logger = logging.getLogger()
 
 

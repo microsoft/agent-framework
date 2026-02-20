@@ -17,11 +17,10 @@ from agent_framework import (
 from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import Agent as AzureAgent
 from azure.ai.agents.models import ResponseFormatJsonSchema, ResponseFormatJsonSchemaType
-from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import BaseModel
 
 from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions
@@ -93,7 +92,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         agents_client: AgentsClient | None = None,
         *,
         project_endpoint: str | None = None,
-        credential: AsyncTokenCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -106,13 +105,14 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         Keyword Args:
             project_endpoint: The Azure AI Project endpoint URL.
                 Can also be set via AZURE_AI_PROJECT_ENDPOINT environment variable.
-            credential: Azure async credential for authentication.
+            credential: Azure credential for authentication. Accepts a TokenCredential,
+                AsyncTokenCredential, or a callable token provider.
                 Required if agents_client is not provided.
             env_file_path: Path to .env file for loading settings.
             env_file_encoding: Encoding of the .env file.
 
         Raises:
-            ServiceInitializationError: If required parameters are missing or invalid.
+            ValueError: If required parameters are missing or invalid.
         """
         self._settings = load_settings(
             AzureAISettings,
@@ -129,15 +129,15 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         else:
             resolved_endpoint = self._settings.get("project_endpoint")
             if not resolved_endpoint:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Azure AI project endpoint is required. Provide 'project_endpoint' parameter "
                     "or set 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
                 )
             if not credential:
-                raise ServiceInitializationError("Azure credential is required when agents_client is not provided.")
+                raise ValueError("Azure credential is required when agents_client is not provided.")
             self._agents_client = AgentsClient(
                 endpoint=resolved_endpoint,
-                credential=credential,
+                credential=credential,  # type: ignore[arg-type]
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             self._should_close_client = True
@@ -198,7 +198,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             Agent: A Agent instance configured with the created agent.
 
         Raises:
-            ServiceInitializationError: If model deployment name is not available.
+            ValueError: If model deployment name is not available.
 
         Examples:
             .. code-block:: python
@@ -211,7 +211,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         """
         resolved_model = model or self._settings.get("model_deployment_name")
         if not resolved_model:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Model deployment name is required. Provide 'model' parameter "
                 "or set 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
             )
@@ -289,7 +289,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             Agent: A Agent instance configured with the retrieved agent.
 
         Raises:
-            ServiceInitializationError: If required function tools are not provided.
+            ValueError: If required function tools are not provided.
 
         Examples:
             .. code-block:: python
@@ -339,7 +339,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             Agent: A Agent instance configured with the agent.
 
         Raises:
-            ServiceInitializationError: If required function tools are not provided.
+            ValueError: If required function tools are not provided.
 
         Examples:
             .. code-block:: python
@@ -448,7 +448,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         """Validate that required function tools are provided.
 
         Raises:
-            ServiceInitializationError: If agent has function tools but user
+            ValueError: If agent has function tools but user
                 didn't provide implementations.
         """
         if not agent_tools:
@@ -482,7 +482,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         # Check for missing implementations
         missing = function_tool_names - provided_names
         if missing:
-            raise ServiceInitializationError(
+            raise ValueError(
                 f"Agent has function tools that require implementations: {missing}. "
                 "Provide these functions via the 'tools' parameter."
             )

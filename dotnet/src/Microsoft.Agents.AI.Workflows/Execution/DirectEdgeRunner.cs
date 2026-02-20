@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Observability;
 
@@ -9,10 +10,7 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 internal sealed class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData edgeData) :
     EdgeRunner<DirectEdgeData>(runContext, edgeData)
 {
-    private async ValueTask<Executor> FindRouterAsync(IStepTracer? tracer) => await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId, tracer)
-                                    .ConfigureAwait(false);
-
-    protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer)
+    protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer, CancellationToken cancellationToken)
     {
         using var activity = this.StartActivity();
         activity?
@@ -35,8 +33,11 @@ internal sealed class DirectEdgeRunner(IRunnerContext runContext, DirectEdgeData
                 return null;
             }
 
-            Executor target = await this.FindRouterAsync(stepTracer).ConfigureAwait(false);
-            if (target.CanHandle(envelope.MessageType))
+            Type? messageType = await this.GetMessageRuntimeTypeAsync(envelope, stepTracer, cancellationToken)
+                                          .ConfigureAwait(false);
+
+            Executor target = await this.RunContext.EnsureExecutorAsync(this.EdgeData.SinkId, stepTracer, cancellationToken).ConfigureAwait(false);
+            if (CanHandle(target, messageType))
             {
                 activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Delivered);
                 return new DeliveryMapping(envelope, target);

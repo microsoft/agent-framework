@@ -21,7 +21,6 @@ from agent_framework import (
     tool,
 )
 from agent_framework._settings import load_settings
-from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
@@ -213,15 +212,13 @@ def test_init_missing_project_endpoint() -> None:
     with patch("agent_framework_azure_ai._client.load_settings") as mock_load_settings:
         mock_load_settings.return_value = {"project_endpoint": None, "model_deployment_name": "test-model"}
 
-        with pytest.raises(ServiceInitializationError, match="Azure AI project endpoint is required"):
+        with pytest.raises(ValueError, match="Azure AI project endpoint is required"):
             AzureAIClient(credential=MagicMock())
 
 
 def test_init_missing_credential(azure_ai_unit_test_env: dict[str, str]) -> None:
     """Test AzureAIClient.__init__ when credential is missing and no project_client provided."""
-    with pytest.raises(
-        ServiceInitializationError, match="Azure credential is required when project_client is not provided"
-    ):
+    with pytest.raises(ValueError, match="Azure credential is required when project_client is not provided"):
         AzureAIClient(
             project_endpoint=azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
             model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
@@ -245,7 +242,7 @@ async def test_get_agent_reference_or_create_missing_agent_name(
     """Test _get_agent_reference_or_create raises when agent_name is missing."""
     client = create_test_azure_ai_client(mock_project_client, agent_name=None)
 
-    with pytest.raises(ServiceInitializationError, match="Agent name is required"):
+    with pytest.raises(ValueError, match="Agent name is required"):
         await client._get_agent_reference_or_create({}, None)  # type: ignore
 
 
@@ -283,7 +280,7 @@ async def test_get_agent_reference_missing_model(
     """Test _get_agent_reference_or_create when model is missing for agent creation."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent")
 
-    with pytest.raises(ServiceInitializationError, match="Model deployment name is required for agent creation"):
+    with pytest.raises(ValueError, match="Model deployment name is required for agent creation"):
         await client._get_agent_reference_or_create({}, None)  # type: ignore
 
 
@@ -1286,7 +1283,6 @@ def test_from_azure_ai_tools_web_search() -> None:
 
 
 # endregion
-
 
 # region Integration Tests
 

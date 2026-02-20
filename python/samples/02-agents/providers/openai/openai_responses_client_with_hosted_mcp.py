@@ -7,15 +7,18 @@ from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
+if TYPE_CHECKING:
+    from agent_framework import AgentSession, SupportsAgentRun
+
+# Load environment variables from .env file
+load_dotenv()
+
 """
 OpenAI Responses Client with Hosted MCP Example
 
 This sample demonstrates integrating hosted Model Context Protocol (MCP) tools with
 OpenAI Responses Client, including user approval workflows for function call security.
 """
-load_dotenv()  # Load environment variables from .env file if present
-if TYPE_CHECKING:
-    from agent_framework import AgentSession, SupportsAgentRun
 
 
 async def handle_approvals_without_session(query: str, agent: "SupportsAgentRun"):

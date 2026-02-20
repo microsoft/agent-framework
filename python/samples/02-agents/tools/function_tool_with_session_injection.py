@@ -5,7 +5,11 @@ from typing import Annotated, Any
 
 from agent_framework import AgentSession, tool
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 AI Function with Session Injection Example
@@ -16,7 +20,9 @@ and accessing that session in AI function.
 
 
 # Define the function tool with **kwargs
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

@@ -16,9 +16,15 @@ Demonstrates conversation state management and streaming in both frameworks.
 
 import asyncio
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 
 async def run_autogen() -> None:
     """AutoGen agent with conversation history and streaming."""
+
     from autogen_agentchat.agents import AssistantAgent
     from autogen_agentchat.ui import Console
     from autogen_ext.models.openai import OpenAIChatCompletionClient

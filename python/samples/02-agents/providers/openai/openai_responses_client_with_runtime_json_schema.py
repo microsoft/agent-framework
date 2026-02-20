@@ -4,6 +4,10 @@ import asyncio
 import json
 
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 OpenAI Chat Client Runtime JSON Schema Example

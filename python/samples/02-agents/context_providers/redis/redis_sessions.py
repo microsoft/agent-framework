@@ -32,17 +32,20 @@ import os
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.redis import RedisContextProvider
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Default Redis URL for local Redis Stack.
 # Override via the REDIS_URL environment variable for remote or authenticated instances.
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
+
 # Please set OPENAI_API_KEY to use the OpenAI vectorizer.
 # For chat responses, also set AZURE_AI_PROJECT_ENDPOINT and AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
-
-
 def create_chat_client() -> AzureOpenAIResponsesClient:
     """Create an Azure OpenAI Responses client using a Foundry project endpoint."""
     return AzureOpenAIResponsesClient(

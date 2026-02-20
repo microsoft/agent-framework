@@ -36,27 +36,26 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         this._options = options;
     }
 
-    private RouteBuilder ConfigureUserInputRoutes(RouteBuilder routeBuilder)
+    private ProtocolBuilder ConfigureUserInputHandling(ProtocolBuilder protocolBuilder)
     {
         this._userInputHandler = new AIContentExternalHandler<UserInputRequestContent, UserInputResponseContent>(
-            ref routeBuilder,
+            ref protocolBuilder,
             portId: $"{this.Id}_UserInput",
             intercepted: this._options.InterceptUserInputRequests,
             handler: this.HandleUserInputResponseAsync);
 
         this._functionCallHandler = new AIContentExternalHandler<FunctionCallContent, FunctionResultContent>(
-            ref routeBuilder,
+            ref protocolBuilder,
             portId: $"{this.Id}_FunctionCall",
             intercepted: this._options.InterceptUnterminatedFunctionCalls,
             handler: this.HandleFunctionResultAsync);
 
-        return routeBuilder;
+        return protocolBuilder;
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        routeBuilder = base.ConfigureRoutes(routeBuilder);
-        return this.ConfigureUserInputRoutes(routeBuilder);
+        return this.ConfigureUserInputHandling(base.ConfigureProtocol(protocolBuilder));
     }
 
     private ValueTask HandleUserInputResponseAsync(

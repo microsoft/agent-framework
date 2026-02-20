@@ -14,6 +14,7 @@ This sample demonstrates how to add middleware to intercept:
 5. Per‑request chat client middleware
 6. Per‑request function pipeline with approval
 7. Combining agent‑level and per‑request middleware
+8. MessageAIContextProvider middleware via `AIAgentBuilder.Use(...)` for injecting additional context messages
 
 ## Function Invocation Middleware
 

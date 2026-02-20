@@ -22,7 +22,7 @@ from agent_framework import (
 )
 from agent_framework._serialization import SerializationMixin
 from agent_framework._settings import load_settings
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
+from agent_framework.exceptions import ChatClientInvalidRequestException
 from azure.ai.agents.models import (
     AgentsNamedToolChoice,
     AgentsNamedToolChoiceType,
@@ -165,7 +165,7 @@ def test_azure_ai_chat_client_init_missing_project_endpoint() -> None:
     with patch("agent_framework_azure_ai._chat_client.load_settings") as mock_load_settings:
         mock_load_settings.return_value = {"project_endpoint": None, "model_deployment_name": "test-model"}
 
-        with pytest.raises(ServiceInitializationError, match="project endpoint is required"):
+        with pytest.raises(ValueError, match="project endpoint is required"):
             AzureAIAgentClient(
                 agents_client=None,
                 agent_id=None,
@@ -181,7 +181,7 @@ def test_azure_ai_chat_client_init_missing_model_deployment_for_agent_creation()
     with patch("agent_framework_azure_ai._chat_client.load_settings") as mock_load_settings:
         mock_load_settings.return_value = {"project_endpoint": "https://test.com", "model_deployment_name": None}
 
-        with pytest.raises(ServiceInitializationError, match="model deployment name is required"):
+        with pytest.raises(ValueError, match="model deployment name is required"):
             AzureAIAgentClient(
                 agents_client=None,
                 agent_id=None,  # No existing agent
@@ -193,9 +193,7 @@ def test_azure_ai_chat_client_init_missing_model_deployment_for_agent_creation()
 
 def test_azure_ai_chat_client_init_missing_credential(azure_ai_unit_test_env: dict[str, str]) -> None:
     """Test AzureAIAgentClient.__init__ when credential is missing and no agents_client provided."""
-    with pytest.raises(
-        ServiceInitializationError, match="Azure credential is required when agents_client is not provided"
-    ):
+    with pytest.raises(ValueError, match="Azure credential is required when agents_client is not provided"):
         AzureAIAgentClient(
             agents_client=None,
             agent_id="existing-agent",
@@ -325,7 +323,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_missing_model(
     """Test _get_agent_id_or_create when model_deployment_name is missing."""
     client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    with pytest.raises(ServiceInitializationError, match="Model deployment name is required"):
+    with pytest.raises(ValueError, match="Model deployment name is required"):
         await client._get_agent_id_or_create()  # type: ignore
 
 
@@ -2011,7 +2009,7 @@ async def test_azure_ai_chat_client_prepare_options_with_invalid_response_format
     # Invalid response_format (not BaseModel or Mapping)
     chat_options: ChatOptions = {"response_format": "invalid_format"}  # type: ignore[typeddict-item]
 
-    with pytest.raises(ServiceInvalidRequestError, match="response_format must be a Pydantic BaseModel"):
+    with pytest.raises(ChatClientInvalidRequestException, match="response_format must be a Pydantic BaseModel"):
         await client._prepare_options([], chat_options)  # type: ignore
 
 

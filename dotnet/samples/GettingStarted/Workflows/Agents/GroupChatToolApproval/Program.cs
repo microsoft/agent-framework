@@ -91,7 +91,7 @@ public static class Program
 
         List<ChatMessage> messages = [new(ChatRole.User, "We need to deploy version 2.4.0 to production. Please coordinate the deployment.")];
 
-        await using StreamingRun run = await InProcessExecution.Lockstep.StreamAsync(workflow, messages);
+        await using StreamingRun run = await InProcessExecution.Lockstep.RunStreamingAsync(workflow, messages);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
         string? lastExecutorId = null;
@@ -101,7 +101,7 @@ public static class Program
             {
                 case RequestInfoEvent e:
                 {
-                    if (e.Request.DataIs(out FunctionApprovalRequestContent? approvalRequestContent))
+                    if (e.Request.TryGetDataAs(out FunctionApprovalRequestContent? approvalRequestContent))
                     {
                         Console.WriteLine();
                         Console.WriteLine($"[APPROVAL REQUIRED] From agent: {e.Request.PortInfo.PortId}");

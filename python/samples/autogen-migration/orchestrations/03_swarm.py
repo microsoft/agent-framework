@@ -16,13 +16,18 @@ to other specialized agents based on the task requirements.
 """
 
 import asyncio
+from typing import Any
 
 from agent_framework import AgentResponseUpdate, WorkflowEvent
-from typing import Any
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def run_autogen() -> None:
     """AutoGen's Swarm pattern with human-in-the-loop handoffs."""
+
     from autogen_agentchat.agents import AssistantAgent
     from autogen_agentchat.conditions import HandoffTermination, TextMentionTermination
     from autogen_agentchat.messages import HandoffMessage

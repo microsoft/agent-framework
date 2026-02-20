@@ -162,15 +162,13 @@ def run_evaluation(
             "data_mapping": {"response_id": "{{item.resp_id}}"},
             "source": {
                 "type": "file_content",
-                "content": [{"item": {"resp_id": resp_id}} for resp_id in selected_response_ids]
+                "content": [{"item": {"resp_id": resp_id}} for resp_id in selected_response_ids],
             },
         },
     }
 
     eval_run = openai_client.evals.runs.create(
-        eval_id=eval_object.id,
-        name="Multi-Agent Response Evaluation",
-        data_source=data_source
+        eval_id=eval_object.id, name="Multi-Agent Response Evaluation", data_source=data_source
     )
 
     print(f"Evaluation run created: {eval_run.id}")
@@ -183,10 +181,7 @@ def monitor_evaluation(openai_client: OpenAI, eval_object: EvalCreateResponse, e
     print("Waiting for evaluation to complete...")
 
     while eval_run.status not in ["completed", "failed"]:
-        eval_run = openai_client.evals.runs.retrieve(
-            run_id=eval_run.id,
-            eval_id=eval_object.id
-        )
+        eval_run = openai_client.evals.runs.retrieve(run_id=eval_run.id, eval_id=eval_object.id)
         print(f"Status: {eval_run.status}")
         time.sleep(5)
 

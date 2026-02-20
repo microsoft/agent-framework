@@ -34,8 +34,12 @@ from agent_framework import Message, tool
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.redis import RedisContextProvider
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Default Redis URL for local Redis Stack.
 # Override via the REDIS_URL environment variable for remote or authenticated instances.
