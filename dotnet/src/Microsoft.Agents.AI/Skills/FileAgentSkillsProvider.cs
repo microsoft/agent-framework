@@ -12,6 +12,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
@@ -83,6 +84,8 @@ public sealed partial class FileAgentSkillsProvider : AIContextProvider
     /// <param name="loggerFactory">Optional logger factory.</param>
     public FileAgentSkillsProvider(IEnumerable<string> skillPaths, FileAgentSkillsProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
     {
+        _ = Throw.IfNull(skillPaths);
+
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<FileAgentSkillsProvider>();
 
         this._loader = new FileAgentSkillLoader(this._logger);
