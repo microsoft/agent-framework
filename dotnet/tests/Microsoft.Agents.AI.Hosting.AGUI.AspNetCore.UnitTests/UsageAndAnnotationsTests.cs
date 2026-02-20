@@ -153,18 +153,29 @@ public sealed class UsageAndAnnotationsTests
 
         List<BaseEvent> events = await CollectEventsAsync(updates);
 
-        // Assert — Serialize all events to JSON and check that token counts appear
-        string allEventsJson = SerializeAllEvents(events);
+        // Assert — find the usage custom event and verify its payload contains the expected token counts
+        List<CustomEvent> usageEvents = events
+            .OfType<CustomEvent>()
+            .Where(e => e.Name == "usage")
+            .ToList();
 
-        // The token counts should be present in the serialized event stream
-        Assert.True(
-            allEventsJson.Contains("500") || allEventsJson.Contains("input"),
-            "InputTokenCount (500) should be present in the serialized AGUI events. " +
+        Assert.Single(
+            usageEvents,
+            "Exactly one usage custom event should be present in the AGUI events. " +
             "See https://github.com/microsoft/agent-framework/issues/3752");
-        Assert.True(
-            allEventsJson.Contains("200") || allEventsJson.Contains("output"),
-            "OutputTokenCount (200) should be present in the serialized AGUI events. " +
-            "See https://github.com/microsoft/agent-framework/issues/3752");
+
+        string usageJson = usageEvents[0].Value ?? string.Empty;
+
+        // The token counts should be present in the usage event payload
+        Assert.Contains(
+            "500",
+            usageJson);
+        Assert.Contains(
+            "200",
+            usageJson);
+        Assert.Contains(
+            "700",
+            usageJson);
     }
 
     #endregion
