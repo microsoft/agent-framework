@@ -299,7 +299,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     public void DiscoverAndLoadSkills_NameExceedsMaxLength_ExcludesSkill()
     {
         // Arrange — name longer than 64 characters
-        string longName = new string('a', 65);
+        string longName = new('a', 65);
         string skillDir = Path.Combine(this._testRoot, "long-name");
         Directory.CreateDirectory(skillDir);
         File.WriteAllText(
@@ -317,7 +317,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     public void DiscoverAndLoadSkills_DescriptionExceedsMaxLength_ExcludesSkill()
     {
         // Arrange — description longer than 1024 characters
-        string longDesc = new string('x', 1025);
+        string longDesc = new('x', 1025);
         string skillDir = Path.Combine(this._testRoot, "long-desc");
         Directory.CreateDirectory(skillDir);
         File.WriteAllText(
