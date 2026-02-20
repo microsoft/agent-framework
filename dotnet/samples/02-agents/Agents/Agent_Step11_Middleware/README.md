@@ -36,7 +36,7 @@ Attempting to use function middleware on agents that do not wrap a ChatClientAge
 
 Use PowerShell:
 ```powershell
-cd dotnet/samples/02-agents/Agents/Agent_Step14_Middleware
+cd dotnet/samples/02-agents/Agents/Agent_Step11_Middleware
 dotnet run
 ```
 
