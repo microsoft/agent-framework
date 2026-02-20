@@ -44,7 +44,7 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
     public async Task ValidateImageFileDataAsync(string fileSource, string mediaType, bool useConversation)
     {
         // Arrange
-        byte[] fileData = await ReadLocalFileAsync(fileSource);
+        byte[] fileData = ReadLocalFile(fileSource);
         string encodedData = Convert.ToBase64String(fileData);
         string fileUrl = $"data:{mediaType};base64,{encodedData}";
         this.Output.WriteLine($"Content: {fileUrl.Substring(0, Math.Min(112, fileUrl.Length))}...");
@@ -59,7 +59,7 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
     public async Task ValidateFileDataAsync(string fileSource, string mediaType, bool useConversation)
     {
         // Arrange
-        byte[] fileData = await ReadLocalFileAsync(fileSource);
+        byte[] fileData = ReadLocalFile(fileSource);
         string encodedData = Convert.ToBase64String(fileData);
         string fileUrl = $"data:{mediaType};base64,{encodedData}";
         this.Output.WriteLine($"Content: {fileUrl.Substring(0, Math.Min(112, fileUrl.Length))}...");
@@ -76,7 +76,7 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
     public async Task ValidateFileUploadAsync(string fileSource, string documentName, bool useConversation)
     {
         // Arrange
-        byte[] fileData = await ReadLocalFileAsync(fileSource);
+        byte[] fileData = ReadLocalFile(fileSource);
         AIProjectClient client = new(this.TestEndpoint, new AzureCliCredential());
         using MemoryStream contentStream = new(fileData);
         OpenAIFileClient fileClient = client.GetProjectOpenAIClient().GetOpenAIFileClient();
@@ -94,10 +94,10 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
         }
     }
 
-    private static Task<byte[]> ReadLocalFileAsync(string relativePath)
+    private static byte[] ReadLocalFile(string relativePath)
     {
         string fullPath = Path.Combine(AppContext.BaseDirectory, relativePath);
-        return Task.FromResult(File.ReadAllBytes(fullPath));
+        return File.ReadAllBytes(fullPath);
     }
 
     private async Task ValidateFileAsync(AIContent fileContent, bool useConversation)
