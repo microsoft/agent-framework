@@ -37,7 +37,7 @@ $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o" # Replace with your model deployment 
 Navigate to the sample directory and run:
 
 ```powershell
-cd Agent_Step11_UsingImages
+cd Agent_Step08_UsingImages
 dotnet run
 ```
 
