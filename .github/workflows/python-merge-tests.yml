@@ -17,7 +17,7 @@ on:
     - cron: "0 0 * * *" # Run at midnight UTC daily
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 env:
