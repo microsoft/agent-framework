@@ -177,9 +177,11 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                         channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(deltaEvent));
                         break;
 
-                    case AssistantMessageEvent assistantMessage:
-                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(assistantMessage));
-                        break;
+                    // AssistantMessageEvent is intentionally NOT handled here.
+                    // It contains the full assembled text of all deltas, and emitting it
+                    // as TextContent would duplicate what was already streamed via
+                    // AssistantMessageDeltaEvent (see issue #3979).
+                    // It falls through to the default case for raw representation only.
 
                     case AssistantUsageEvent usageEvent:
                         channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(usageEvent));
@@ -331,7 +333,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         };
     }
 
-    private AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantMessageDeltaEvent deltaEvent)
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantMessageDeltaEvent deltaEvent)
     {
         TextContent textContent = new(deltaEvent.Data?.DeltaContent ?? string.Empty)
         {
@@ -346,14 +348,16 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         };
     }
 
-    private AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantMessageEvent assistantMessage)
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantMessageEvent assistantMessage)
     {
-        TextContent textContent = new(assistantMessage.Data?.Content ?? string.Empty)
+        // Store as raw representation only — no TextContent — to avoid duplicating
+        // the text that was already streamed via AssistantMessageDeltaEvent (issue #3979).
+        AIContent content = new()
         {
             RawRepresentation = assistantMessage
         };
 
-        return new AgentResponseUpdate(ChatRole.Assistant, [textContent])
+        return new AgentResponseUpdate(ChatRole.Assistant, [content])
         {
             AgentId = this.Id,
             ResponseId = assistantMessage.Data?.MessageId,
@@ -362,7 +366,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         };
     }
 
-    private AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantUsageEvent usageEvent)
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantUsageEvent usageEvent)
     {
         UsageDetails usageDetails = new()
         {
@@ -415,7 +419,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         return additionalCounts;
     }
 
-    private AgentResponseUpdate ConvertToAgentResponseUpdate(SessionEvent sessionEvent)
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(SessionEvent sessionEvent)
     {
         // Handle arbitrary events by storing as RawRepresentation
         AIContent content = new()
