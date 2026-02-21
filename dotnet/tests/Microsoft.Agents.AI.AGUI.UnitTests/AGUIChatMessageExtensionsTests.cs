@@ -286,6 +286,7 @@ public sealed class AGUIChatMessageExtensionsTests
         FunctionResultContent result = Assert.IsType<FunctionResultContent>(message.Contents[0]);
         Assert.Equal("call_abc", result.CallId);
         Assert.NotNull(result.Result);
+        Assert.Equal("msg1", message.MessageId);
     }
 
     [Fact]
@@ -310,6 +311,7 @@ public sealed class AGUIChatMessageExtensionsTests
         FunctionResultContent result = Assert.IsType<FunctionResultContent>(message.Contents[0]);
         Assert.Equal("call_def", result.CallId);
         Assert.Equal(string.Empty, result.Result);
+        Assert.Equal("msg1", message.MessageId);
     }
 
     [Fact]
@@ -334,6 +336,7 @@ public sealed class AGUIChatMessageExtensionsTests
         Assert.Equal(ChatRole.Tool, message.Role);
         var resultContent = Assert.IsType<FunctionResultContent>(message.Contents.First());
         Assert.Equal(string.Empty, resultContent.CallId);
+        Assert.Equal("msg1", message.MessageId);
     }
 
     [Fact]
@@ -423,6 +426,7 @@ public sealed class AGUIChatMessageExtensionsTests
         Assert.Equal("Seattle", ((System.Text.Json.JsonElement)toolCallContent.Arguments["location"]!).GetString());
         Assert.Equal("fahrenheit", ((System.Text.Json.JsonElement)toolCallContent.Arguments["units"]!).GetString());
         Assert.True(toolCallContent.Arguments["includeForecast"] is System.Text.Json.JsonElement j && j.GetBoolean());
+        Assert.Equal("msg1", message.MessageId);
     }
 
     [Fact]
