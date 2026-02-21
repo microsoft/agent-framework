@@ -7,18 +7,6 @@ name: dotnet-build-and-test
 
 on:
   workflow_dispatch:
-  workflow_call:
-    inputs:
-      checkout-ref:
-        description: "Git ref to checkout (e.g., a commit SHA from a PR)"
-        required: false
-        type: string
-        default: ""
-      integration-only:
-        description: "Run only integration tests (skip unit tests, coverage, and non-integration matrix entries)"
-        required: false
-        type: boolean
-        default: false
   pull_request:
     branches: ["main", "feature*"]
   merge_group:
@@ -47,14 +35,11 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      dotnetChanges: ${{ inputs.checkout-ref != '' && 'true' || steps.filter.outputs.dotnet }}
-      cosmosDbChanges: ${{ inputs.checkout-ref != '' && 'true' || steps.filter.outputs.cosmosdb }}
+      dotnetChanges: ${{ steps.filter.outputs.dotnet }}
+      cosmosDbChanges: ${{ steps.filter.outputs.cosmosdb }}
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref }}
       - uses: dorny/paths-filter@v3
-        if: ${{ inputs.checkout-ref == '' }}
         id: filter
         with:
           filters: |
@@ -76,7 +61,7 @@ jobs:
 
   dotnet-build-and-test:
     needs: paths-filter
-    if: needs.paths-filter.outputs.dotnetChanges == 'true' && (inputs.integration-only != true || matrix.integration-tests)
+    if: needs.paths-filter.outputs.dotnetChanges == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -91,7 +76,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-            ref: ${{ inputs.checkout-ref }}
             persist-credentials: false
             sparse-checkout: |
               .
@@ -125,7 +109,7 @@ jobs:
         shell: bash
         # All frameworks are only built for the release configuration, so we only run this step for the release configuration
         # and dotnet new doesn't support net472
-        if: inputs.integration-only != true && matrix.configuration == 'Release' && matrix.targetFramework != 'net472'
+        if: matrix.configuration == 'Release' && matrix.targetFramework != 'net472'
         run: |
           TEMP_DIR=$(mktemp -d)
 
@@ -157,7 +141,6 @@ jobs:
           rm -rf "$TEMP_DIR"
 
       - name: Run Unit Tests
-        if: inputs.integration-only != true
         shell: bash
         run: |
           export UT_PROJECTS=$(find ./dotnet -type f -name "*.UnitTests.csproj" | tr '\n' ' ')
@@ -239,7 +222,7 @@ jobs:
 
       # Generate test reports and check coverage
       - name: Generate test reports
-        if: inputs.integration-only != true && matrix.targetFramework == env.COVERAGE_FRAMEWORK
+        if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
         uses: danielpalme/ReportGenerator-GitHub-Action@5.5.1
         with:
           reports: "./TestResults/Coverage/**/coverage.cobertura.xml"
@@ -247,14 +230,14 @@ jobs:
           reporttypes: "HtmlInline;JsonSummary"
 
       - name: Upload coverage report artifact
-        if: inputs.integration-only != true && matrix.targetFramework == env.COVERAGE_FRAMEWORK
+        if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
         uses: actions/upload-artifact@v6
         with:
           name: CoverageReport-${{ matrix.os }}-${{ matrix.targetFramework }}-${{ matrix.configuration }} # Artifact name
           path: ./TestResults/Reports # Directory containing files to upload
 
       - name: Check coverage
-        if: inputs.integration-only != true && matrix.targetFramework == env.COVERAGE_FRAMEWORK
+        if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
         shell: pwsh
         run: .github/workflows/dotnet-check-coverage.ps1 -JsonReportPath "TestResults/Reports/Summary.json" -CoverageThreshold $env:COVERAGE_THRESHOLD
 

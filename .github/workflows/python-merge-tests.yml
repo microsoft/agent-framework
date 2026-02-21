@@ -2,18 +2,6 @@ name: Python - Merge - Tests
 
 on:
   workflow_dispatch:
-  workflow_call:
-    inputs:
-      checkout-ref:
-        description: "Git ref to checkout (e.g., a commit SHA from a PR)"
-        required: false
-        type: string
-        default: ""
-      integration-only:
-        description: "Run only integration tests (skip sample tests)"
-        required: false
-        type: boolean
-        default: false
   pull_request:
     branches: ["main"]
   merge_group:
@@ -38,12 +26,10 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      pythonChanges: ${{ inputs.checkout-ref != '' && 'true' || steps.filter.outputs.python }}
+      pythonChanges: ${{ steps.filter.outputs.python }}
     steps:
       - uses: actions/checkout@v6
-        if: ${{ inputs.checkout-ref == '' }}
       - uses: dorny/paths-filter@v3
-        if: ${{ inputs.checkout-ref == '' }}
         id: filter
         with:
           filters: |
@@ -90,8 +76,6 @@ jobs:
         working-directory: python
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref }}
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -116,7 +100,7 @@ jobs:
         working-directory: ./python
       - name: Test core samples
         timeout-minutes: 10
-        if: inputs.integration-only != true && env.RUN_SAMPLES_TESTS == 'true'
+        if: env.RUN_SAMPLES_TESTS == 'true'
         run: uv run pytest tests/samples/ -m "openai" -m "azure"
         working-directory: ./python
       - name: Surface failing tests
@@ -151,8 +135,6 @@ jobs:
         working-directory: python
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref }}
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -175,7 +157,7 @@ jobs:
         working-directory: ./python
       - name: Test Azure AI samples
         timeout-minutes: 10
-        if: inputs.integration-only != true && env.RUN_SAMPLES_TESTS == 'true'
+        if: env.RUN_SAMPLES_TESTS == 'true'
         run: uv run pytest tests/samples/ -m "azure-ai"
         working-directory: ./python
       - name: Surface failing tests

@@ -2,7 +2,7 @@
 # This workflow allows manually running integration tests against an open PR or a branch.
 # Go to Actions → "Integration Tests (Manual)" → Run workflow → enter a PR number or branch name.
 #
-# It reuses the existing dotnet-build-and-test and python-merge-tests workflows,
+# It calls dedicated integration-only workflows (dotnet-integration-tests and python-integration-tests),
 # passing a ref so they check out and test the correct code.
 # Changed paths are detected here so only the relevant test suites run.
 #
@@ -119,18 +119,16 @@ jobs:
     name: .NET Integration Tests
     needs: resolve-ref
     if: needs.resolve-ref.outputs.dotnet-changes == 'true'
-    uses: ./.github/workflows/dotnet-build-and-test.yml
+    uses: ./.github/workflows/dotnet-integration-tests.yml
     with:
       checkout-ref: ${{ needs.resolve-ref.outputs.checkout-ref }}
-      integration-only: true
     secrets: inherit
 
   python-integration-tests:
     name: Python Integration Tests
     needs: resolve-ref
     if: needs.resolve-ref.outputs.python-changes == 'true'
-    uses: ./.github/workflows/python-merge-tests.yml
+    uses: ./.github/workflows/python-integration-tests.yml
     with:
       checkout-ref: ${{ needs.resolve-ref.outputs.checkout-ref }}
-      integration-only: true
     secrets: inherit
