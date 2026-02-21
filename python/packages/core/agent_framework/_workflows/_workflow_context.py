@@ -327,7 +327,7 @@ class WorkflowContext(Generic[OutT, W_OutT]):
             self._sent_messages.append(message)
 
             # Inject current trace context if tracing enabled
-            if OBSERVABILITY_SETTINGS.ENABLED and span and span.is_recording():  # type: ignore[name-defined]
+            if OBSERVABILITY_SETTINGS is not None and OBSERVABILITY_SETTINGS.ENABLED and span and span.is_recording():  # type: ignore[name-defined]
                 trace_context: dict[str, str] = {}
                 inject(trace_context)  # Inject current trace context for message propagation
 

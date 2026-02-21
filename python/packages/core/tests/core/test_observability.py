@@ -1013,7 +1013,8 @@ def test_enable_instrumentation_function(monkeypatch):
     observability = importlib.import_module("agent_framework.observability")
     importlib.reload(observability)
 
-    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is False
+    # After reload, OBSERVABILITY_SETTINGS is None (deferred creation)
+    assert observability.OBSERVABILITY_SETTINGS is None
 
     observability.enable_instrumentation()
     assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
@@ -2597,3 +2598,153 @@ async def test_agent_no_instructions_in_default_or_options(
     span = spans[0]
 
     assert OtelAttr.SYSTEM_INSTRUCTIONS not in span.attributes
+
+
+# region Test env fallback for enable_sensitive_data after late load_dotenv
+
+
+def test_configure_otel_providers_reads_sensitive_data_from_env(monkeypatch):
+    """configure_otel_providers() should pick up ENABLE_SENSITIVE_DATA from os.environ
+    even when OBSERVABILITY_SETTINGS was constructed before the env var was set
+    (simulates the load_dotenv-after-import pattern used by all samples).
+    """
+    import importlib
+
+    import agent_framework.observability as observability
+
+    # 1. Start with a clean environment — no instrumentation env vars
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+    # Clear OTLP endpoints to prevent _configure from trying to create exporters
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    # 2. Reload module — OBSERVABILITY_SETTINGS is now None (deferred creation).
+    importlib.reload(observability)
+    assert observability.OBSERVABILITY_SETTINGS is None
+
+    # 3. Simulate load_dotenv() populating the env (happens after import in real samples)
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
+
+    # 4. Call configure_otel_providers() without explicit enable_sensitive_data param.
+    #    Settings are created fresh at call time, reading current os.environ.
+    #    Mock _configure to avoid mutating global OTel providers.
+    monkeypatch.setattr(observability.ObservabilitySettings, "_configure", lambda self, **kwargs: None)
+    observability.configure_otel_providers()
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
+    assert observability.OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED is True
+
+
+def test_configure_otel_providers_explicit_param_overrides_env(monkeypatch):
+    """An explicit enable_sensitive_data=False should override the env var."""
+    import importlib
+
+    import agent_framework.observability as observability
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    importlib.reload(observability)
+
+    # Env says true, but explicit param says False — param wins.
+    # Mock _configure to avoid mutating global OTel providers.
+    monkeypatch.setattr(observability.ObservabilitySettings, "_configure", lambda self, **kwargs: None)
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
+    observability.configure_otel_providers(enable_sensitive_data=False)
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+
+def test_enable_instrumentation_reads_sensitive_data_from_env(monkeypatch):
+    """enable_instrumentation() should pick up ENABLE_SENSITIVE_DATA from os.environ
+    when called without an explicit enable_sensitive_data parameter.
+    """
+    import importlib
+
+    import agent_framework.observability as observability
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    importlib.reload(observability)
+    assert observability.OBSERVABILITY_SETTINGS is None
+
+    # Simulate load_dotenv() after import
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
+
+    observability.enable_instrumentation()
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
+
+
+def test_enable_instrumentation_explicit_false_overrides_env(monkeypatch):
+    """enable_instrumentation(enable_sensitive_data=False) should override env var."""
+    import importlib
+
+    import agent_framework.observability as observability
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    importlib.reload(observability)
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
+
+    observability.enable_instrumentation(enable_sensitive_data=False)
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+
+def test_configure_otel_providers_reads_vs_code_port_from_env(monkeypatch):
+    """configure_otel_providers() should pick up VS_CODE_EXTENSION_PORT from os.environ."""
+    import importlib
+
+    import agent_framework.observability as observability
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+    monkeypatch.delenv("VS_CODE_EXTENSION_PORT", raising=False)
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    importlib.reload(observability)
+    assert observability.OBSERVABILITY_SETTINGS is None
+
+    monkeypatch.setenv("VS_CODE_EXTENSION_PORT", "4317")
+    # Mock _configure to avoid requiring OTLP exporter packages
+    monkeypatch.setattr(observability.ObservabilitySettings, "_configure", lambda self, **kwargs: None)
+    observability.configure_otel_providers()
+
+    assert observability.OBSERVABILITY_SETTINGS.vs_code_extension_port == 4317
+
+
+def test_observability_settings_none_at_import(monkeypatch):
+    """OBSERVABILITY_SETTINGS should be None at import time (deferred creation)."""
+    import importlib
+
+    import agent_framework.observability as observability
+
+    monkeypatch.delenv("ENABLE_INSTRUMENTATION", raising=False)
+    monkeypatch.delenv("ENABLE_SENSITIVE_DATA", raising=False)
+
+    importlib.reload(observability)
+    assert observability.OBSERVABILITY_SETTINGS is None

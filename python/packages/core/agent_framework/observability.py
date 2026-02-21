@@ -880,8 +880,7 @@ def get_meter(
         return metrics.get_meter(name=name, version=version, schema_url=schema_url)
 
 
-global OBSERVABILITY_SETTINGS
-OBSERVABILITY_SETTINGS: ObservabilitySettings = ObservabilitySettings()
+OBSERVABILITY_SETTINGS: ObservabilitySettings | None = None
 
 
 def enable_instrumentation(
@@ -900,8 +899,11 @@ def enable_instrumentation(
     Keyword Args:
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
             the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
+            When not provided, falls back to the ENABLE_SENSITIVE_DATA environment variable.
     """
     global OBSERVABILITY_SETTINGS
+    if OBSERVABILITY_SETTINGS is None:
+        OBSERVABILITY_SETTINGS = ObservabilitySettings()
     OBSERVABILITY_SETTINGS.enable_instrumentation = True
     if enable_sensitive_data is not None:
         OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
@@ -1026,27 +1028,22 @@ def configure_otel_providers(
         - https://opentelemetry.io/docs/languages/sdk-configuration/otlp-exporter/
     """
     global OBSERVABILITY_SETTINGS
-    if env_file_path:
-        # Build kwargs, excluding None values
-        settings_kwargs: dict[str, Any] = {
-            "enable_instrumentation": True,
-            "env_file_path": env_file_path,
-        }
-        if env_file_encoding is not None:
-            settings_kwargs["env_file_encoding"] = env_file_encoding
-        if enable_sensitive_data is not None:
-            settings_kwargs["enable_sensitive_data"] = enable_sensitive_data
-        if vs_code_extension_port is not None:
-            settings_kwargs["vs_code_extension_port"] = vs_code_extension_port
+    # Build kwargs for a fresh ObservabilitySettings, excluding None values.
+    # Creating the settings here (instead of at import time) ensures that
+    # environment variables populated by the caller's load_dotenv() are picked up.
+    settings_kwargs: dict[str, Any] = {
+        "enable_instrumentation": True,
+    }
+    if env_file_path is not None:
+        settings_kwargs["env_file_path"] = env_file_path
+    if env_file_encoding is not None:
+        settings_kwargs["env_file_encoding"] = env_file_encoding
+    if enable_sensitive_data is not None:
+        settings_kwargs["enable_sensitive_data"] = enable_sensitive_data
+    if vs_code_extension_port is not None:
+        settings_kwargs["vs_code_extension_port"] = vs_code_extension_port
 
-        OBSERVABILITY_SETTINGS = ObservabilitySettings(**settings_kwargs)
-    else:
-        # Update the observability settings with the provided values
-        OBSERVABILITY_SETTINGS.enable_instrumentation = True
-        if enable_sensitive_data is not None:
-            OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
-        if vs_code_extension_port is not None:
-            OBSERVABILITY_SETTINGS.vs_code_extension_port = vs_code_extension_port
+    OBSERVABILITY_SETTINGS = ObservabilitySettings(**settings_kwargs)
 
     OBSERVABILITY_SETTINGS._configure(  # type: ignore[reportPrivateUsage]
         additional_exporters=exporters,
@@ -1132,10 +1129,10 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Trace chat responses with OpenTelemetry spans and metrics."""
-        global OBSERVABILITY_SETTINGS
+        settings = OBSERVABILITY_SETTINGS
         super_get_response = super().get_response  # type: ignore[misc]
 
-        if not OBSERVABILITY_SETTINGS.ENABLED:
+        if settings is None or not settings.ENABLED:
             return super_get_response(messages=messages, stream=stream, options=options, **kwargs)  # type: ignore[no-any-return]
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
@@ -1170,7 +1167,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             span_name = attributes.get(SpanAttributes.LLM_REQUEST_MODEL, "unknown")
             span = get_tracer().start_span(f"{operation} {span_name}")
             span.set_attributes(attributes)
-            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
+            if settings.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
                     span=span,
                     provider_name=provider_name,
@@ -1205,11 +1202,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                         operation_duration_histogram=self.duration_histogram,
                         duration=duration,
                     )
-                    if (
-                        OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
-                        and isinstance(response, ChatResponse)
-                        and response.messages
-                    ):
+                    if settings.SENSITIVE_DATA_ENABLED and isinstance(response, ChatResponse) and response.messages:
                         _capture_messages(
                             span=span,
                             provider_name=provider_name,
@@ -1230,7 +1223,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
 
         async def _get_response() -> ChatResponse:
             with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
-                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
+                if settings.SENSITIVE_DATA_ENABLED and messages:
                     _capture_messages(
                         span=span,
                         provider_name=provider_name,
@@ -1252,7 +1245,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     operation_duration_histogram=self.duration_histogram,
                     duration=duration,
                 )
-                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
+                if settings.SENSITIVE_DATA_ENABLED and response.messages:
                     _capture_messages(
                         span=span,
                         provider_name=provider_name,
@@ -1312,12 +1305,12 @@ class AgentTelemetryLayer:
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Trace agent runs with OpenTelemetry spans and metrics."""
-        global OBSERVABILITY_SETTINGS
+        settings = OBSERVABILITY_SETTINGS
         super_run = super().run  # type: ignore[misc]
         provider_name = str(self.otel_provider_name)
         capture_usage = bool(getattr(self, "_otel_capture_usage", True))
 
-        if not OBSERVABILITY_SETTINGS.ENABLED:
+        if settings is None or not settings.ENABLED:
             return super_run(  # type: ignore[no-any-return]
                 messages=messages,
                 stream=stream,
@@ -1363,7 +1356,7 @@ class AgentTelemetryLayer:
             span_name = attributes.get(OtelAttr.AGENT_NAME, "unknown")
             span = get_tracer().start_span(f"{operation} {span_name}")
             span.set_attributes(attributes)
-            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
+            if settings.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
                     span=span,
                     provider_name=provider_name,
@@ -1396,11 +1389,7 @@ class AgentTelemetryLayer:
                         capture_usage=capture_usage,
                     )
                     _capture_response(span=span, attributes=response_attributes, duration=duration)
-                    if (
-                        OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
-                        and isinstance(response, AgentResponse)
-                        and response.messages
-                    ):
+                    if settings.SENSITIVE_DATA_ENABLED and isinstance(response, AgentResponse) and response.messages:
                         _capture_messages(
                             span=span,
                             provider_name=provider_name,
@@ -1420,7 +1409,7 @@ class AgentTelemetryLayer:
 
         async def _run() -> AgentResponse:
             with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
-                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
+                if settings.SENSITIVE_DATA_ENABLED and messages:
                     _capture_messages(
                         span=span,
                         provider_name=provider_name,
@@ -1442,7 +1431,7 @@ class AgentTelemetryLayer:
                 if response:
                     response_attributes = _get_response_attributes(attributes, response, capture_usage=capture_usage)
                     _capture_response(span=span, attributes=response_attributes, duration=duration)
-                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
+                    if settings.SENSITIVE_DATA_ENABLED and response.messages:
                         _capture_messages(
                             span=span,
                             provider_name=provider_name,
@@ -1780,8 +1769,7 @@ class EdgeGroupDeliveryStatus(Enum):
 
 def workflow_tracer() -> Tracer:
     """Get a workflow tracer or a no-op tracer if not enabled."""
-    global OBSERVABILITY_SETTINGS
-    return get_tracer() if OBSERVABILITY_SETTINGS.ENABLED else trace.NoOpTracer()
+    return get_tracer() if OBSERVABILITY_SETTINGS is not None and OBSERVABILITY_SETTINGS.ENABLED else trace.NoOpTracer()
 
 
 def create_workflow_span(
