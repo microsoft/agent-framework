@@ -19,6 +19,7 @@ permissions:
 
 env:
   UV_CACHE_DIR: /tmp/.uv-cache
+  RUN_INTEGRATION_TESTS: "true"
 
 jobs:
   python-tests-core:
