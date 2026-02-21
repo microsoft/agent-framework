@@ -86,7 +86,7 @@ class AgentFrameworkExecutor:
             from agent_framework.observability import OBSERVABILITY_SETTINGS, configure_otel_providers
 
             # Configure if instrumentation is enabled (via enable_instrumentation() or env var)
-            if OBSERVABILITY_SETTINGS.ENABLED:
+            if OBSERVABILITY_SETTINGS is not None and OBSERVABILITY_SETTINGS.ENABLED:
                 # Only configure providers if not already executed
                 if not OBSERVABILITY_SETTINGS._executed_setup:
                     # Call configure_otel_providers to set up exporters.

@@ -149,7 +149,7 @@ def _default_histogram() -> Histogram:
     """
     from .observability import OBSERVABILITY_SETTINGS  # local import to avoid circulars
 
-    if not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
+    if OBSERVABILITY_SETTINGS is None or not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
         return NoOpHistogram(
             name=OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION,
             unit=OtelAttr.DURATION_UNIT,
@@ -476,7 +476,8 @@ class FunctionTool(SerializationMixin):
                 kwargs.update(original_kwargs)
         else:
             kwargs = original_kwargs
-        if not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
+        settings = OBSERVABILITY_SETTINGS
+        if settings is None or not settings.ENABLED:  # type: ignore[name-defined]
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {kwargs}")
             res = self.__call__(**kwargs)
@@ -506,7 +507,7 @@ class FunctionTool(SerializationMixin):
                 "response_format",
             }
         }
-        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+        if settings.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
             attributes.update({
                 OtelAttr.TOOL_ARGUMENTS: (
                     json.dumps(serializable_kwargs, default=str, ensure_ascii=False) if serializable_kwargs else "None"
@@ -515,7 +516,7 @@ class FunctionTool(SerializationMixin):
         with get_function_span(attributes=attributes) as span:
             attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
             logger.info(f"Function name: {self.name}")
-            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+            if settings.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
                 logger.debug(f"Function arguments: {serializable_kwargs}")
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
@@ -536,7 +537,7 @@ class FunctionTool(SerializationMixin):
                     logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
                     parsed = str(result)
                 logger.info(f"Function {self.name} succeeded.")
-                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
+                if settings.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
                     span.set_attribute(OtelAttr.TOOL_RESULT, parsed)
                     logger.debug(f"Function result: {parsed}")
                 return parsed
