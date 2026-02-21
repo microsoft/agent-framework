@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.DurableTask;
@@ -58,4 +58,38 @@ internal sealed class DurableWorkflowClient : IWorkflowClient
         string? runId = null,
         CancellationToken cancellationToken = default)
         => this.RunAsync<string>(workflow, input, runId, cancellationToken);
+
+    /// <inheritdoc/>
+    public async ValueTask<IStreamingWorkflowRun> StreamAsync<TInput>(
+        Workflow workflow,
+        TInput input,
+        string? runId = null,
+        CancellationToken cancellationToken = default)
+        where TInput : notnull
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+
+        if (string.IsNullOrEmpty(workflow.Name))
+        {
+            throw new ArgumentException("Workflow must have a valid Name property.", nameof(workflow));
+        }
+
+        DurableWorkflowInput<TInput> workflowInput = new() { Input = input };
+
+        string instanceId = await this._client.ScheduleNewOrchestrationInstanceAsync(
+            orchestratorName: WorkflowNamingHelper.ToOrchestrationFunctionName(workflow.Name),
+            input: workflowInput,
+            options: runId is not null ? new StartOrchestrationOptions(runId) : null,
+            cancellation: cancellationToken).ConfigureAwait(false);
+
+        return new DurableStreamingWorkflowRun(this._client, instanceId, workflow);
+    }
+
+    /// <inheritdoc/>
+    public ValueTask<IStreamingWorkflowRun> StreamAsync(
+        Workflow workflow,
+        string input,
+        string? runId = null,
+        CancellationToken cancellationToken = default)
+        => this.StreamAsync<string>(workflow, input, runId, cancellationToken);
 }

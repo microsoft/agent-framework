@@ -31,12 +31,14 @@ internal static class DurableExecutorDispatcher
     /// <param name="context">The task orchestration context.</param>
     /// <param name="executorInfo">Information about the executor to dispatch.</param>
     /// <param name="envelope">The message envelope containing input and type information.</param>
+    /// <param name="sharedState">The shared state dictionary to pass to the executor.</param>
     /// <param name="logger">The logger for tracing.</param>
     /// <returns>The result from the executor.</returns>
     internal static async Task<string> DispatchAsync(
         TaskOrchestrationContext context,
         WorkflowExecutorInfo executorInfo,
         DurableMessageEnvelope envelope,
+        Dictionary<string, string> sharedState,
         ILogger logger)
     {
         logger.LogDispatchingExecutor(executorInfo.ExecutorId, executorInfo.IsAgenticExecutor);
@@ -46,14 +48,15 @@ internal static class DurableExecutorDispatcher
             return await ExecuteAgentAsync(context, executorInfo, logger, envelope.Message).ConfigureAwait(true);
         }
 
-        return await ExecuteActivityAsync(context, executorInfo, envelope.Message, envelope.InputTypeName).ConfigureAwait(true);
+        return await ExecuteActivityAsync(context, executorInfo, envelope.Message, envelope.InputTypeName, sharedState).ConfigureAwait(true);
     }
 
     private static async Task<string> ExecuteActivityAsync(
         TaskOrchestrationContext context,
         WorkflowExecutorInfo executorInfo,
         string input,
-        string? inputTypeName)
+        string? inputTypeName,
+        Dictionary<string, string> sharedState)
     {
         string executorName = WorkflowNamingHelper.GetExecutorName(executorInfo.ExecutorId);
         string activityName = WorkflowNamingHelper.ToOrchestrationFunctionName(executorName);
@@ -61,7 +64,8 @@ internal static class DurableExecutorDispatcher
         DurableActivityInput activityInput = new()
         {
             Input = input,
-            InputTypeName = inputTypeName
+            InputTypeName = inputTypeName,
+            State = sharedState
         };
 
         string serializedInput = JsonSerializer.Serialize(activityInput, DurableWorkflowJsonContext.Default.DurableActivityInput);

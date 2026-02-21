@@ -16,15 +16,6 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows;
 internal static class DurableActivityExecutor
 {
     /// <summary>
-    /// Shared JSON options that match the DurableDataConverter settings.
-    /// </summary>
-    private static readonly JsonSerializerOptions s_jsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true
-    };
-
-    /// <summary>
     /// Executes an activity using the provided executor binding.
     /// </summary>
     /// <param name="binding">The executor binding to invoke.</param>
@@ -53,7 +44,7 @@ internal static class DurableActivityExecutor
         Type inputType = ResolveInputType(inputWithState?.InputTypeName, executor.InputTypes);
         object typedInput = DeserializeInput(executorInput, inputType);
 
-        DurableActivityContext workflowContext = new(sharedState, executor);
+        DurableWorkflowContext workflowContext = new(sharedState, executor);
         object? result = await executor.ExecuteAsync(
             typedInput,
             new TypeId(inputType),
@@ -63,19 +54,34 @@ internal static class DurableActivityExecutor
         return SerializeActivityOutput(result, workflowContext);
     }
 
-    private static string SerializeActivityOutput(object? result, DurableActivityContext context)
+    private static string SerializeActivityOutput(object? result, DurableWorkflowContext context)
     {
-        DurableActivityOutput output = new()
+        DurableExecutorOutput output = new()
         {
             Result = SerializeResult(result),
-            SentMessages = context.SentMessages.ConvertAll(m => new SentMessageInfo
-            {
-                Message = m.Message,
-                TypeName = m.TypeName
-            })
+            StateUpdates = context.StateUpdates,
+            ClearedScopes = [.. context.ClearedScopes],
+            Events = context.OutboundEvents.ConvertAll(SerializeEvent),
+            SentMessages = context.SentMessages,
+            HaltRequested = context.HaltRequested
         };
 
-        return JsonSerializer.Serialize(output, DurableWorkflowJsonContext.Default.DurableActivityOutput);
+        return JsonSerializer.Serialize(output, DurableWorkflowJsonContext.Default.DurableExecutorOutput);
+    }
+
+    /// <summary>
+    /// Serializes a workflow event with type information for proper deserialization.
+    /// </summary>
+    private static string SerializeEvent(WorkflowEvent evt)
+    {
+        Type eventType = evt.GetType();
+        TypedPayload wrapper = new()
+        {
+            TypeName = eventType.AssemblyQualifiedName,
+            Data = JsonSerializer.Serialize(evt, eventType, DurableSerialization.Options)
+        };
+
+        return JsonSerializer.Serialize(wrapper, DurableWorkflowJsonContext.Default.TypedPayload);
     }
 
     private static string SerializeResult(object? result)
@@ -90,7 +96,7 @@ internal static class DurableActivityExecutor
             return str;
         }
 
-        return JsonSerializer.Serialize(result, result.GetType(), s_jsonOptions);
+        return JsonSerializer.Serialize(result, result.GetType(), DurableSerialization.Options);
     }
 
     private static DurableActivityInput? TryDeserializeActivityInput(string input)
@@ -112,7 +118,7 @@ internal static class DurableActivityExecutor
             return input;
         }
 
-        return JsonSerializer.Deserialize(input, targetType, s_jsonOptions)
+        return JsonSerializer.Deserialize(input, targetType, DurableSerialization.Options)
             ?? throw new InvalidOperationException($"Failed to deserialize input to type '{targetType.Name}'.");
     }
 

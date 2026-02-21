@@ -136,8 +136,8 @@ internal sealed class DurableDirectEdgeRouter : IDurableEdgeRouter
         // so the condition function can access strongly-typed properties.
         // Otherwise, deserialize as a generic object for basic inspection.
         return targetType is null
-            ? JsonSerializer.Deserialize<object>(json)
-            : JsonSerializer.Deserialize(json, targetType);
+            ? JsonSerializer.Deserialize<object>(json, DurableSerialization.Options)
+            : JsonSerializer.Deserialize(json, targetType, DurableSerialization.Options);
     }
 
     private static void EnqueueMessage(

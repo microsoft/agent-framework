@@ -312,11 +312,8 @@ public static class ServiceCollectionExtensions
         Dictionary<string, ExecutorBinding> executorBindings = workflow.ReflectExecutors();
         List<ActivityRegistrationInfo> activities = [];
 
-        // Filter out AI agents and subworkflows - they are not registered as activities.
-        // AI agents use Durable Entities for stateful execution, and subworkflows are
-        // registered as separate orchestrations via BuildWorkflowRegistrationRecursive.
         foreach (KeyValuePair<string, ExecutorBinding> entry in executorBindings
-                    .Where(e => e.Value is not AIAgentBinding and not SubworkflowBinding))
+                    .Where(e => IsActivityBinding(e.Value)))
         {
             string executorName = WorkflowNamingHelper.GetExecutorName(entry.Key);
             string activityName = WorkflowNamingHelper.ToOrchestrationFunctionName(executorName);
@@ -329,6 +326,15 @@ public static class ServiceCollectionExtensions
 
         return new WorkflowRegistrationInfo(orchestrationName, activities);
     }
+
+    /// <summary>
+    /// Returns <see langword="true"/> for bindings that should be registered as Durable Task activities.
+    /// <see cref="AIAgentBinding"/> (Durable Entities) and <see cref="SubworkflowBinding"/> (sub-orchestrations)
+    /// use specialized dispatch and are excluded.
+    /// </summary>
+    private static bool IsActivityBinding(ExecutorBinding binding)
+        => binding is not AIAgentBinding
+            and not SubworkflowBinding;
 
     private static async Task<string> RunWorkflowOrchestrationAsync(
         TaskOrchestrationContext context,
