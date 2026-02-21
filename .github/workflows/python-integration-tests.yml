@@ -48,6 +48,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
 
       - name: Set up python and install the project
         id: python-setup
@@ -71,7 +72,6 @@ jobs:
 
       - name: Test with pytest
         run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
-        working-directory: ./python
 
   python-tests-azure-ai:
     name: Python Integration Tests - Azure AI
@@ -90,6 +90,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
 
       - name: Set up python and install the project
         id: python-setup
@@ -110,4 +111,3 @@ jobs:
       - name: Test with pytest
         timeout-minutes: 15
         run: uv run --directory packages/azure-ai poe integration-tests -n logical --dist loadfile --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
-        working-directory: ./python
