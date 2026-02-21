@@ -132,7 +132,7 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
             {
                 // The framework clears custom status on completion, so events may be in
                 // SerializedOutput as a DurableWorkflowResult wrapper.
-                if (TryParseWorkflowResult(metadata.SerializedOutput, out DurableWorkflowResult outputResult))
+                if (TryParseWorkflowResult(metadata.SerializedOutput, out DurableWorkflowResult? outputResult))
                 {
                     (List<WorkflowEvent> events, _) = DrainNewEvents(outputResult.Events, lastReadEventIndex);
                     foreach (WorkflowEvent evt in events)
@@ -209,7 +209,7 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
             {
                 throw new TaskFailedException(
                     taskName: this.WorkflowName,
-                    taskId: 0,
+                    taskId: -1,
                     failureDetails: metadata.FailureDetails);
             }
 
@@ -268,7 +268,7 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
     /// </remarks>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow result wrapper.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow result wrapper.")]
-    private static bool TryParseWorkflowResult(string? serializedOutput, out DurableWorkflowResult result)
+    private static bool TryParseWorkflowResult(string? serializedOutput, [NotNullWhen(true)] out DurableWorkflowResult? result)
     {
         if (serializedOutput is null)
         {
@@ -311,7 +311,7 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
             return default;
         }
 
-        if (!TryParseWorkflowResult(serializedOutput, out DurableWorkflowResult workflowResult))
+        if (!TryParseWorkflowResult(serializedOutput, out DurableWorkflowResult? workflowResult))
         {
             throw new InvalidOperationException(
                 "Failed to parse orchestration output as DurableWorkflowResult. " +
