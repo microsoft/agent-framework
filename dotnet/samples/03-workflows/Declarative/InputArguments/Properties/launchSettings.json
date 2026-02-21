@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "Default": {
+      "commandName": "Project"
+    },
+    "Vacation": {
+      "commandName": "Project",
+      "commandLineArgs": "\"I'd like to go on vacation.\""
+    }
+  }
+}

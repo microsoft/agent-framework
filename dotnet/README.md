@@ -1,11 +1,5 @@
 # Get Started with Microsoft Agent Framework for C# Developers
 
-## Samples
-
-- [Getting Started with Agents](./samples/GettingStarted/Agents): basic agent creation and tool usage
-- [Agent Provider Samples](./samples/GettingStarted/AgentProviders): samples showing different agent providers
-- [Workflow Samples](./samples/GettingStarted/Workflows): advanced multi-agent patterns and workflow orchestration
-
 ## Quickstart
 
 ### Basic Agent - .NET
@@ -28,9 +22,9 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 
 ## Examples & Samples
 
-- [Getting Started with Agents](./samples/GettingStarted/Agents): basic agent creation and tool usage
-- [Agent Provider Samples](./samples/GettingStarted/AgentProviders): samples showing different agent providers
-- [Workflow Samples](./samples/GettingStarted/Workflows): advanced multi-agent patterns and workflow orchestration
+- [Getting Started with Agents](./samples/02-agents/Agents): basic agent creation and tool usage
+- [Agent Provider Samples](./samples/02-agents/AgentProviders): samples showing different agent providers
+- [Workflow Samples](./samples/03-workflows): advanced multi-agent patterns and workflow orchestration
 
 ## Agent Framework Documentation
 
