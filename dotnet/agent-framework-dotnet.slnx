@@ -78,10 +78,9 @@
     <Project Path="samples/02-agents/AGUI/Step04_HumanInLoop/Client/Client.csproj" />
     <Project Path="samples/02-agents/AGUI/Step04_HumanInLoop/Server/Server.csproj" />
   </Folder>
-  <Folder Name="/Samples/GettingStarted/" />
-  <Folder Name="/Samples/GettingStarted/AgentSkills/">
-    <File Path="samples/GettingStarted/AgentSkills/README.md" />
-    <Project Path="samples/GettingStarted/AgentSkills/Agent_Step01_BasicSkills/Agent_Step01_BasicSkills.csproj" />
+  <Folder Name="/Samples/02-agents/Agent_AgentSkills/">
+    <File Path="samples/02-agents/Agent_AgentSkills/README.md" />
+    <Project Path="samples/02-agents/Agent_AgentSkills/Agent_Step01_BasicSkills/Agent_Step01_BasicSkills.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AGUI/Step05_StateManagement/">
     <Project Path="samples/02-agents/AGUI/Step05_StateManagement/Client/Client.csproj" />
@@ -102,7 +101,7 @@
     <File Path="samples/02-agents/AgentWithMemory/README.md" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step01_ChatHistoryMemory/AgentWithMemory_Step01_ChatHistoryMemory.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step02_MemoryUsingMem0/AgentWithMemory_Step02_MemoryUsingMem0.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step04_MemoryUsingFoundry/AgentWithMemory_Step04_MemoryUsingFoundry.csproj" />
+    <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step04_MemoryUsingFoundry/AgentWithMemory_Step04_MemoryUsingFoundry.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AgentWithOpenAI/">
     <File Path="samples/02-agents/AgentWithOpenAI/README.md" />
