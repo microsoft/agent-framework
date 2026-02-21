@@ -78,12 +78,10 @@
     <Project Path="samples/02-agents/AGUI/Step04_HumanInLoop/Client/Client.csproj" />
     <Project Path="samples/02-agents/AGUI/Step04_HumanInLoop/Server/Server.csproj" />
   </Folder>
+  <Folder Name="/Samples/GettingStarted/" />
   <Folder Name="/Samples/GettingStarted/AgentSkills/">
     <File Path="samples/GettingStarted/AgentSkills/README.md" />
     <Project Path="samples/GettingStarted/AgentSkills/Agent_Step01_BasicSkills/Agent_Step01_BasicSkills.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
-    <Project Path="samples/GettingStarted/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AGUI/Step05_StateManagement/">
     <Project Path="samples/02-agents/AGUI/Step05_StateManagement/Client/Client.csproj" />
@@ -104,6 +102,7 @@
     <File Path="samples/02-agents/AgentWithMemory/README.md" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step01_ChatHistoryMemory/AgentWithMemory_Step01_ChatHistoryMemory.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step02_MemoryUsingMem0/AgentWithMemory_Step02_MemoryUsingMem0.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step04_MemoryUsingFoundry/AgentWithMemory_Step04_MemoryUsingFoundry.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AgentWithOpenAI/">
     <File Path="samples/02-agents/AgentWithOpenAI/README.md" />
@@ -152,13 +151,6 @@
   </Folder>
   <Folder Name="/Samples/02-agents/Observability/">
     <Project Path="samples/02-agents/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AgentWithMemory/">
-    <File Path="samples/GettingStarted/AgentWithMemory/README.md" />
-    <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step01_ChatHistoryMemory/AgentWithMemory_Step01_ChatHistoryMemory.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step02_MemoryUsingMem0/AgentWithMemory_Step02_MemoryUsingMem0.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step03_CustomMemory/AgentWithMemory_Step03_CustomMemory.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step04_MemoryUsingFoundry/AgentWithMemory_Step04_MemoryUsingFoundry.csproj" />
   </Folder>
    <Folder Name="/Samples/03-workflows/">
     <File Path="samples/03-workflows/README.md" />
