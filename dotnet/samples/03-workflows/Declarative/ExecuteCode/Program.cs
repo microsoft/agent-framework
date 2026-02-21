@@ -17,7 +17,7 @@ namespace Demo.DeclarativeCode;
 /// </summary>
 /// <remarks>
 /// <b>Configuration</b>
-/// Define FOUNDRY_PROJECT_ENDPOINT as a user-secret or environment variable that
+/// Define AZURE_AI_PROJECT_ENDPOINT as a user-secret or environment variable that
 /// points to your Foundry project endpoint.
 /// </remarks>
 internal sealed class Program

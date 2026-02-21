@@ -89,7 +89,7 @@ The server exposes the agent via the AG-UI protocol at `http://localhost:5100/ag
 The client (`Client/Program.cs`) configures an `AGUIChatClient` to connect to the server:
 
 ```csharp
-string serverUrl = builder.Configuration["SERVER_URL"] ?? "http://localhost:5100";
+string serverUrl = builder.Configuration["AGUI_SERVER_URL"] ?? "http://localhost:5100";
 
 builder.Services.AddHttpClient("aguiserver", httpClient => httpClient.BaseAddress = new Uri(serverUrl));
 
@@ -141,17 +141,17 @@ The client connects to the server URL specified in `Client/Properties/launchSett
     "http": {
       "applicationUrl": "http://localhost:5000",
       "environmentVariables": {
-        "SERVER_URL": "http://localhost:5100"
+        "AGUI_SERVER_URL": "http://localhost:5100"
       }
     }
   }
 }
 ```
 
-To change the server URL, modify the `SERVER_URL` environment variable in the client's launch settings or provide it at runtime:
+To change the server URL, modify the `AGUI_SERVER_URL` environment variable in the client's launch settings or provide it at runtime:
 
 ```powershell
-$env:SERVER_URL="http://your-server:5100"
+$env:AGUI_SERVER_URL="http://your-server:5100"
 dotnet run
 ```
 

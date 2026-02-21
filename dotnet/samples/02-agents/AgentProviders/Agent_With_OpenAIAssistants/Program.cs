@@ -12,7 +12,7 @@ using OpenAI;
 using OpenAI.Assistants;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
+var model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt-4o-mini";
 
 const string JokerName = "Joker";
 const string JokerInstructions = "You are good at telling jokes.";

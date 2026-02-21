@@ -6,10 +6,10 @@ using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
-var deepResearchDeploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEEP_RESEARCH_DEPLOYMENT_NAME") ?? "o3-deep-research";
-var modelDeploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o";
-var bingConnectionId = Environment.GetEnvironmentVariable("BING_CONNECTION_ID") ?? throw new InvalidOperationException("BING_CONNECTION_ID is not set.");
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+var deepResearchDeploymentName = Environment.GetEnvironmentVariable("AZURE_AI_REASONING_DEPLOYMENT_NAME") ?? "o3-deep-research";
+var modelDeploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
+var bingConnectionId = Environment.GetEnvironmentVariable("AZURE_AI_BING_CONNECTION_ID") ?? throw new InvalidOperationException("AZURE_AI_BING_CONNECTION_ID is not set.");
 
 // Configure extended network timeout for long-running Deep Research tasks.
 PersistentAgentsAdministrationClientOptions persistentAgentsClientOptions = new();

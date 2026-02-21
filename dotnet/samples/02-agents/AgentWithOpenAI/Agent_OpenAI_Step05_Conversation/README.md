@@ -69,7 +69,7 @@ foreach (ClientResult result in getConversationItemsResults.GetRawPages())
 1. Set the required environment variables:
    ```powershell
    $env:OPENAI_API_KEY = "your_api_key_here"
-   $env:OPENAI_MODEL = "gpt-4o-mini"
+   $env:OPENAI_CHAT_MODEL_NAME = "gpt-4o-mini"
    ```
 
 2. Run the sample:

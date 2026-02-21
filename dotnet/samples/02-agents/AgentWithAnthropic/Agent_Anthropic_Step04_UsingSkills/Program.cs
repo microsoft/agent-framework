@@ -19,7 +19,7 @@ using Microsoft.Extensions.AI;
 
 string apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") ?? throw new InvalidOperationException("ANTHROPIC_API_KEY is not set.");
 // Skills require Claude 4.5 models (Sonnet 4.5, Haiku 4.5, or Opus 4.5)
-string model = Environment.GetEnvironmentVariable("ANTHROPIC_MODEL") ?? "claude-sonnet-4-5-20250929";
+string model = Environment.GetEnvironmentVariable("ANTHROPIC_CHAT_MODEL_NAME") ?? "claude-sonnet-4-5-20250929";
 
 // Create the Anthropic client
 AnthropicClient anthropicClient = new() { ApiKey = apiKey };
