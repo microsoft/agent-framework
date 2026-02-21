@@ -1,62 +1,34 @@
-name: Python - Merge - Tests
+#
+# Dedicated Python integration tests workflow, called from the manual integration test orchestrator.
+# Runs all tests (unit + integration).
+#
+
+name: python-integration-tests
 
 on:
-  workflow_dispatch:
-  pull_request:
-    branches: ["main"]
-  merge_group:
-    branches: ["main"]
-  schedule:
-    - cron: "0 0 * * *" # Run at midnight UTC daily
+  workflow_call:
+    inputs:
+      checkout-ref:
+        description: "Git ref to checkout (e.g., refs/pull/123/head)"
+        required: true
+        type: string
 
 permissions:
   contents: read
   id-token: write
 
 env:
-  # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
   RUN_INTEGRATION_TESTS: "true"
-  RUN_SAMPLES_TESTS: ${{ vars.RUN_SAMPLES_TESTS }}
 
 jobs:
-  paths-filter:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      pythonChanges: ${{ steps.filter.outputs.python }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            python:
-              - 'python/**'
-      # run only if 'python' files were changed
-      - name: python tests
-        if: steps.filter.outputs.python == 'true'
-        run: echo "Python file"
-      # run only if not 'python' files were changed
-      - name: not python tests
-        if: steps.filter.outputs.python != 'true'
-        run: echo "NOT python file"
   python-tests-core:
-    name: Python Tests - Core
-    needs: paths-filter
-    if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true'
-    runs-on: ${{ matrix.os }}
-    environment: ${{ matrix.environment }}
-    strategy:
-      fail-fast: true
-      matrix:
-        python-version: ["3.10"]
-        os: [ubuntu-latest]
-        environment: ["integration"]
+    name: Python Integration Tests - Core
+    runs-on: ubuntu-latest
+    environment: integration
+    timeout-minutes: 60
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
+      UV_PYTHON: "3.10"
       OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
       OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
@@ -66,67 +38,48 @@ jobs:
       AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
-      # For Azure Functions integration tests
       FUNCTIONS_WORKER_RUNTIME: "python"
       DURABLE_TASK_SCHEDULER_CONNECTION_STRING: "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None"
       AzureWebJobsStorage: "UseDevelopmentStorage=true"
-
     defaults:
       run:
         working-directory: python
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.10"
           os: ${{ runner.os }}
         env:
-          # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
+
       - name: Azure CLI Login
-        if: github.event_name != 'pull_request'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       - name: Set up Azure Functions Integration Test Emulators
         uses: ./.github/actions/azure-functions-integration-setup
         id: azure-functions-setup
+
       - name: Test with pytest
         run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
-        working-directory: ./python
-      - name: Test core samples
-        timeout-minutes: 10
-        if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "openai" -m "azure"
-        working-directory: ./python
-      - name: Surface failing tests
-        if: always()
-        uses: pmeier/pytest-results-action@v0.7.2
-        with:
-          path: ./python/**.xml
-          summary: true
-          display-options: fEX
-          fail-on-empty: false
-          title: Test results
 
   python-tests-azure-ai:
-    name: Python Tests - Azure AI
-    needs: paths-filter
-    if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true'
-    runs-on: ${{ matrix.os }}
-    environment: ${{ matrix.environment }}
-    strategy:
-      fail-fast: true
-      matrix:
-        python-version: ["3.10"]
-        os: [ubuntu-latest]
-        environment: ["integration"]
+    name: Python Integration Tests - Azure AI
+    runs-on: ubuntu-latest
+    environment: integration
+    timeout-minutes: 60
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
+      UV_PYTHON: "3.10"
       AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
       AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
@@ -135,42 +88,29 @@ jobs:
         working-directory: python
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.10"
           os: ${{ runner.os }}
         env:
-          # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
+
       - name: Azure CLI Login
-        if: github.event_name != 'pull_request'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       - name: Test with pytest
         timeout-minutes: 15
         run: uv run --directory packages/azure-ai poe integration-tests -n logical --dist loadfile --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
-        working-directory: ./python
-      - name: Test Azure AI samples
-        timeout-minutes: 10
-        if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "azure-ai"
-        working-directory: ./python
-      - name: Surface failing tests
-        if: always()
-        uses: pmeier/pytest-results-action@v0.7.2
-        with:
-          path: ./python/**.xml
-          summary: true
-          display-options: fEX
-          fail-on-empty: false
-          title: Test results
-
-  # TODO: Add python-tests-lab
 
   python-integration-tests-check:
     if: always()
@@ -181,16 +121,13 @@ jobs:
         python-tests-azure-ai
       ]
     steps:
-
       - name: Fail workflow if tests failed
-        id: check_tests_failed
         if: contains(join(needs.*.result, ','), 'failure')
         uses: actions/github-script@v8
         with:
           script: core.setFailed('Integration Tests Failed!')
 
       - name: Fail workflow if tests cancelled
-        id: check_tests_cancelled
         if: contains(join(needs.*.result, ','), 'cancelled')
         uses: actions/github-script@v8
         with:

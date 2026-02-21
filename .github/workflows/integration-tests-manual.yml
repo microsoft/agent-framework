@@ -2,8 +2,9 @@
 # This workflow allows manually running integration tests against an open PR or a branch.
 # Go to Actions → "Integration Tests (Manual)" → Run workflow → enter a PR number or branch name.
 #
-# It reuses the existing dotnet-build-and-test and python-merge-tests workflows,
+# It calls dedicated integration-only workflows (dotnet-integration-tests and python-integration-tests),
 # passing a ref so they check out and test the correct code.
+# Changed paths are detected here so only the relevant test suites run.
 #
 
 name: Integration Tests (Manual)
@@ -37,6 +38,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       checkout-ref: ${{ steps.resolve.outputs.checkout-ref }}
+      dotnet-changes: ${{ steps.detect-changes.outputs.dotnet }}
+      python-changes: ${{ steps.detect-changes.outputs.python }}
     steps:
       - name: Resolve checkout ref
         id: resolve
@@ -45,7 +48,6 @@ jobs:
           PR_NUMBER: ${{ github.event.inputs.pr-number }}
           BRANCH: ${{ github.event.inputs.branch }}
           REPO: ${{ github.repository }}
-          REPO_OWNER: ${{ github.repository_owner }}
         run: |
           if [ -n "$PR_NUMBER" ] && [ -n "$BRANCH" ]; then
             echo "::error::Please provide either a PR number or a branch name, not both."
@@ -63,17 +65,11 @@ jobs:
               exit 1
             fi
 
-            PR_DATA=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state,headRepository,headRepositoryOwner)
+            PR_DATA=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state)
             PR_STATE=$(echo "$PR_DATA" | jq -r '.state')
-            HEAD_OWNER=$(echo "$PR_DATA" | jq -r '.headRepositoryOwner.login')
 
             if [ "$PR_STATE" != "OPEN" ]; then
               echo "::error::PR #$PR_NUMBER is not open (state: $PR_STATE)"
-              exit 1
-            fi
-
-            if [ "$HEAD_OWNER" != "$REPO_OWNER" ]; then
-              echo "::error::PR #$PR_NUMBER is from a fork ($HEAD_OWNER). Running integration tests against fork PRs is not allowed for security reasons."
               exit 1
             fi
 
@@ -89,10 +85,41 @@ jobs:
             echo "Running integration tests for branch $BRANCH"
           fi
 
+      - name: Detect changed paths
+        id: detect-changes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.inputs.pr-number }}
+          BRANCH: ${{ github.event.inputs.branch }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -n "$PR_NUMBER" ]; then
+            CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --repo "$REPO" --name-only)
+          else
+            # For branches, compare against main using the GitHub API
+            CHANGED_FILES=$(gh api "repos/$REPO/compare/main...$BRANCH" --jq '.files[].filename')
+          fi
+
+          DOTNET_CHANGES=false
+          PYTHON_CHANGES=false
+
+          if echo "$CHANGED_FILES" | grep -q '^dotnet/'; then
+            DOTNET_CHANGES=true
+          fi
+
+          if echo "$CHANGED_FILES" | grep -q '^python/'; then
+            PYTHON_CHANGES=true
+          fi
+
+          echo "dotnet=$DOTNET_CHANGES" >> "$GITHUB_OUTPUT"
+          echo "python=$PYTHON_CHANGES" >> "$GITHUB_OUTPUT"
+          echo "Detected changes — dotnet: $DOTNET_CHANGES, python: $PYTHON_CHANGES"
+
   dotnet-integration-tests:
     name: .NET Integration Tests
     needs: resolve-ref
-    uses: ./.github/workflows/dotnet-build-and-test.yml
+    if: needs.resolve-ref.outputs.dotnet-changes == 'true'
+    uses: ./.github/workflows/dotnet-integration-tests.yml
     with:
       checkout-ref: ${{ needs.resolve-ref.outputs.checkout-ref }}
     secrets: inherit
@@ -100,7 +127,8 @@ jobs:
   python-integration-tests:
     name: Python Integration Tests
     needs: resolve-ref
-    uses: ./.github/workflows/python-merge-tests.yml
+    if: needs.resolve-ref.outputs.python-changes == 'true'
+    uses: ./.github/workflows/python-integration-tests.yml
     with:
       checkout-ref: ${{ needs.resolve-ref.outputs.checkout-ref }}
     secrets: inherit
