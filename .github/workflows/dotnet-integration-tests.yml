@@ -1,6 +1,6 @@
 #
 # Dedicated .NET integration tests workflow, called from the manual integration test orchestrator.
-# Only runs integration test matrix entries (net10.0 and net472). No unit tests, no coverage.
+# Only runs integration test matrix entries (net10.0 and net472).
 #
 
 name: dotnet-integration-tests
