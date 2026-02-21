@@ -17,4 +17,4 @@ of the agent framework.
 |[Agent With Anthropic](./AgentWithAnthropic/README.md)|Getting started with agents using Anthropic Claude|
 |[Workflow](../03-workflows/README.md)|Getting started with Workflow|
 |[Model Context Protocol](./ModelContextProtocol/README.md)|Getting started with Model Context Protocol|
-|[Agent Skills](./Agent_AgentSkills/README.md)|Getting started with Agent Skills|
+|[Agent Skills](./AgentSkills/README.md)|Getting started with Agent Skills|

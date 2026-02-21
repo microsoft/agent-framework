@@ -78,9 +78,9 @@
     <Project Path="samples/02-agents/AGUI/Step04_HumanInLoop/Client/Client.csproj" />
     <Project Path="samples/02-agents/AGUI/Step04_HumanInLoop/Server/Server.csproj" />
   </Folder>
-  <Folder Name="/Samples/02-agents/Agent_AgentSkills/">
-    <File Path="samples/02-agents/Agent_AgentSkills/README.md" />
-    <Project Path="samples/02-agents/Agent_AgentSkills/Agent_Step01_BasicSkills/Agent_Step01_BasicSkills.csproj" />
+  <Folder Name="/Samples/02-agents/AgentSkills/">
+    <File Path="samples/02-agents/AgentSkills/README.md" />
+    <Project Path="samples/02-agents/AgentSkills/Agent_Step01_BasicSkills/Agent_Step01_BasicSkills.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AGUI/Step05_StateManagement/">
     <Project Path="samples/02-agents/AGUI/Step05_StateManagement/Client/Client.csproj" />
