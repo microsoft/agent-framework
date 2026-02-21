@@ -29,6 +29,7 @@ using types like `IChatClient`, `FunctionInvokingChatClient`, `AITool`, `AIFunct
 
 ## Key Conventions
 
+- **Encoding**: All new files must be saved with UTF-8 encoding with BOM (Byte Order Mark). This is required for `dotnet format` to work correctly.
 - **Copyright header**: `// Copyright (c) Microsoft. All rights reserved.` at top of all `.cs` files
 - **XML docs**: Required for all public methods and classes
 - **Async**: Use `Async` suffix for methods returning `Task`/`ValueTask`
