@@ -150,6 +150,82 @@ async def test_runner_run_until_convergence_not_completed():
             assert event.type != "status" or event.state != WorkflowRunState.IDLE
 
 
+async def test_runner_run_iteration_preserves_message_order_per_edge_runner() -> None:
+    """Test that _run_iteration preserves message order to the same target path."""
+
+    class RecordingEdgeRunner:
+        def __init__(self) -> None:
+            self.received: list[int] = []
+
+        async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+            message_data = message.data
+            assert isinstance(message_data, MockMessage)
+            self.received.append(message_data.data)
+            await asyncio.sleep(0.005)
+            return True
+
+    ctx = InProcRunnerContext()
+    state = State()
+    runner = Runner([], {}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    edge_runner = RecordingEdgeRunner()
+    runner._edge_runner_map = {"source": [edge_runner]}  # type: ignore[assignment]
+
+    for index in range(5):
+        await ctx.send_message(WorkflowMessage(data=MockMessage(data=index), source_id="source"))
+
+    await runner._run_iteration()
+
+    assert edge_runner.received == [0, 1, 2, 3, 4]
+
+
+async def test_runner_run_iteration_delivers_different_edge_runners_concurrently() -> None:
+    """Test that different edge runners for the same source are executed concurrently."""
+
+    class BlockingEdgeRunner:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.call_count = 0
+
+        async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+            self.call_count += 1
+            self.started.set()
+            await self.release.wait()
+            return True
+
+    class ProbeEdgeRunner:
+        def __init__(self) -> None:
+            self.probe_completed = asyncio.Event()
+            self.call_count = 0
+
+        async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+            self.call_count += 1
+            self.probe_completed.set()
+            return True
+
+    ctx = InProcRunnerContext()
+    state = State()
+    runner = Runner([], {}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    blocking_edge_runner = BlockingEdgeRunner()
+    probe_edge_runner = ProbeEdgeRunner()
+    runner._edge_runner_map = {"source": [blocking_edge_runner, probe_edge_runner]}  # type: ignore[assignment]
+
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source"))
+
+    iteration_task = asyncio.create_task(runner._run_iteration())
+
+    await blocking_edge_runner.started.wait()
+    await asyncio.wait_for(probe_edge_runner.probe_completed.wait(), timeout=0.2)
+
+    blocking_edge_runner.release.set()
+    await iteration_task
+
+    assert blocking_edge_runner.call_count == 1
+    assert probe_edge_runner.call_count == 1
+
+
 async def test_runner_already_running():
     """Test that running the runner while it is already running raises an error."""
     executor_a = MockExecutor(id="executor_a")

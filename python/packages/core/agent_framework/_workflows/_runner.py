@@ -158,7 +158,7 @@ class Runner:
             self._running = False
 
     async def _run_iteration(self) -> None:
-        async def _deliver_messages(source_executor_id: str, messages: list[WorkflowMessage]) -> None:
+        async def _deliver_messages(source_executor_id: str, source_messages: list[WorkflowMessage]) -> None:
             """Outer loop to concurrently deliver messages from all sources to their targets."""
 
             async def _deliver_message_inner(edge_runner: EdgeRunner, message: WorkflowMessage) -> bool:
@@ -172,13 +172,20 @@ class Runner:
                 logger.debug(f"No outgoing edges found for executor {source_executor_id}; dropping messages.")
                 return
 
-            for message in messages:
-                # Deliver a message through all edge runners associated with the source executor concurrently.
-                tasks = [_deliver_message_inner(edge_runner, message) for edge_runner in associated_edge_runners]
-                await asyncio.gather(*tasks)
+            async def _deliver_messages_for_edge_runner(edge_runner: EdgeRunner) -> None:
+                # Preserve message order per edge runner (and therefore per routed target path)
+                # while still allowing parallelism across different edge runners.
+                for message in source_messages:
+                    await _deliver_message_inner(edge_runner, message)
 
-        messages = await self._ctx.drain_messages()
-        tasks = [_deliver_messages(source_executor_id, messages) for source_executor_id, messages in messages.items()]
+            tasks = [_deliver_messages_for_edge_runner(edge_runner) for edge_runner in associated_edge_runners]
+            await asyncio.gather(*tasks)
+
+        message_batches = await self._ctx.drain_messages()
+        tasks = [
+            _deliver_messages(source_executor_id, source_messages)
+            for source_executor_id, source_messages in message_batches.items()
+        ]
         await asyncio.gather(*tasks)
 
     async def _create_checkpoint_if_enabled(self, previous_checkpoint_id: CheckpointID | None) -> CheckpointID | None:
