@@ -111,3 +111,24 @@ jobs:
       - name: Test with pytest
         timeout-minutes: 15
         run: uv run --directory packages/azure-ai poe integration-tests -n logical --dist loadfile --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
+
+  python-integration-tests-check:
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      [
+        python-tests-core,
+        python-tests-azure-ai
+      ]
+    steps:
+      - name: Fail workflow if tests failed
+        if: contains(join(needs.*.result, ','), 'failure')
+        uses: actions/github-script@v8
+        with:
+          script: core.setFailed('Integration Tests Failed!')
+
+      - name: Fail workflow if tests cancelled
+        if: contains(join(needs.*.result, ','), 'cancelled')
+        uses: actions/github-script@v8
+        with:
+          script: core.setFailed('Integration Tests Cancelled!')
