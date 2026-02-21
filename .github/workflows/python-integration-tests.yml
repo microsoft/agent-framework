@@ -1,6 +1,6 @@
 #
 # Dedicated Python integration tests workflow, called from the manual integration test orchestrator.
-# Only runs integration tests (core + Azure AI). No sample tests, no paths filtering.
+# Runs all tests (unit + integration).
 #
 
 name: python-integration-tests
