@@ -1,0 +1,106 @@
+#
+# This workflow allows manually running integration tests against an open PR or a branch.
+# Go to Actions → "Integration Tests (Manual)" → Run workflow → enter a PR number or branch name.
+#
+# It reuses the existing dotnet-build-and-test and python-merge-tests workflows,
+# passing a ref so they check out and test the correct code.
+#
+
+name: Integration Tests (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: "PR number to run integration tests against (leave empty if using branch)"
+        required: false
+        type: string
+        default: ""
+      branch:
+        description: "Branch name to run integration tests against (leave empty if using PR number)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: read
+  id-token: write
+
+concurrency:
+  group: integration-tests-manual-${{ github.event.inputs.pr-number || github.event.inputs.branch }}
+  cancel-in-progress: true
+
+jobs:
+  resolve-ref:
+    name: Resolve ref
+    runs-on: ubuntu-latest
+    outputs:
+      checkout-ref: ${{ steps.resolve.outputs.checkout-ref }}
+    steps:
+      - name: Resolve checkout ref
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.inputs.pr-number }}
+          BRANCH: ${{ github.event.inputs.branch }}
+          REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          if [ -n "$PR_NUMBER" ] && [ -n "$BRANCH" ]; then
+            echo "::error::Please provide either a PR number or a branch name, not both."
+            exit 1
+          fi
+
+          if [ -z "$PR_NUMBER" ] && [ -z "$BRANCH" ]; then
+            echo "::error::Please provide either a PR number or a branch name."
+            exit 1
+          fi
+
+          if [ -n "$PR_NUMBER" ]; then
+            if ! echo "$PR_NUMBER" | grep -Eq '^[0-9]+$'; then
+              echo "::error::Invalid PR number. Only numeric values are allowed."
+              exit 1
+            fi
+
+            PR_DATA=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state,headRepository,headRepositoryOwner)
+            PR_STATE=$(echo "$PR_DATA" | jq -r '.state')
+            HEAD_OWNER=$(echo "$PR_DATA" | jq -r '.headRepositoryOwner.login')
+
+            if [ "$PR_STATE" != "OPEN" ]; then
+              echo "::error::PR #$PR_NUMBER is not open (state: $PR_STATE)"
+              exit 1
+            fi
+
+            if [ "$HEAD_OWNER" != "$REPO_OWNER" ]; then
+              echo "::error::PR #$PR_NUMBER is from a fork ($HEAD_OWNER). Running integration tests against fork PRs is not allowed for security reasons."
+              exit 1
+            fi
+
+            echo "checkout-ref=refs/pull/$PR_NUMBER/head" >> "$GITHUB_OUTPUT"
+            echo "Running integration tests for PR #$PR_NUMBER"
+          else
+            if ! echo "$BRANCH" | grep -Eq '^[a-zA-Z0-9_./-]+$'; then
+              echo "::error::Invalid branch name. Only alphanumeric characters, hyphens, underscores, dots, and slashes are allowed."
+              exit 1
+            fi
+
+            echo "checkout-ref=$BRANCH" >> "$GITHUB_OUTPUT"
+            echo "Running integration tests for branch $BRANCH"
+          fi
+
+  dotnet-integration-tests:
+    name: .NET Integration Tests
+    needs: resolve-ref
+    uses: ./.github/workflows/dotnet-build-and-test.yml
+    with:
+      checkout-ref: ${{ needs.resolve-ref.outputs.checkout-ref }}
+    secrets: inherit
+
+  python-integration-tests:
+    name: Python Integration Tests
+    needs: resolve-ref
+    uses: ./.github/workflows/python-merge-tests.yml
+    with:
+      checkout-ref: ${{ needs.resolve-ref.outputs.checkout-ref }}
+    secrets: inherit
