@@ -826,12 +826,12 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 
         string openAiEndpoint = s_configuration["AZURE_OPENAI_ENDPOINT"] ??
             throw new InvalidOperationException("The required AZURE_OPENAI_ENDPOINT env variable is not set.");
-        string openAiDeployment = s_configuration["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"] ??
-            throw new InvalidOperationException("The required AZURE_OPENAI_CHAT_DEPLOYMENT_NAME env variable is not set.");
+        string openAiDeployment = s_configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ??
+            throw new InvalidOperationException("The required AZURE_OPENAI_DEPLOYMENT_NAME env variable is not set.");
 
         // Set required environment variables for the function app (see local.settings.json for required settings)
         startInfo.EnvironmentVariables["AZURE_OPENAI_ENDPOINT"] = openAiEndpoint;
-        startInfo.EnvironmentVariables["AZURE_OPENAI_DEPLOYMENT"] = openAiDeployment;
+        startInfo.EnvironmentVariables["AZURE_OPENAI_DEPLOYMENT_NAME"] = openAiDeployment;
         startInfo.EnvironmentVariables["DURABLE_TASK_SCHEDULER_CONNECTION_STRING"] =
             $"Endpoint=http://localhost:{DtsPort};TaskHub=default;Authentication=None";
         startInfo.EnvironmentVariables["AzureWebJobsStorage"] = "UseDevelopmentStorage=true";
