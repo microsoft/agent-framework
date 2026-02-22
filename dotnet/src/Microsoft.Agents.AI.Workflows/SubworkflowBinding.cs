@@ -27,9 +27,11 @@ public record SubworkflowBinding(Workflow WorkflowInstance, string Id, ExecutorO
 
         return InitHostExecutorAsync;
 
-        ValueTask<Executor> InitHostExecutorAsync(string runId)
+        async ValueTask<Executor> InitHostExecutorAsync(string sessionId)
         {
-            return new(new WorkflowHostExecutor(id, workflow, runId, ownershipToken, options));
+            ProtocolDescriptor workflowProtocol = await workflow.DescribeProtocolAsync().ConfigureAwait(false);
+
+            return new WorkflowHostExecutor(id, workflow, workflowProtocol, sessionId, ownershipToken, options);
         }
     }
 

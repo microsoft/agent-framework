@@ -5,7 +5,11 @@ import os
 
 from agent_framework import Content
 from agent_framework.openai import OpenAIAssistantProvider, OpenAIAssistantsClient
+from dotenv import load_dotenv
 from openai import AsyncOpenAI
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 OpenAI Assistants with File Search Example

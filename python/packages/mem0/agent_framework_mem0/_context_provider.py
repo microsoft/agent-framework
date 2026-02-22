@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
-from agent_framework.exceptions import ServiceInitializationError
 from mem0 import AsyncMemory, AsyncMemoryClient
 
 if sys.version_info >= (3, 11):
@@ -107,7 +106,7 @@ class Mem0ContextProvider(BaseContextProvider):
         if not input_text.strip():
             return
 
-        filters = self._build_filters(session_id=context.session_id)
+        filters = self._build_filters()
 
         # AsyncMemory (OSS) expects user_id/agent_id/run_id as direct kwargs
         # AsyncMemoryClient (Platform) expects them in a filters dict
@@ -164,7 +163,6 @@ class Mem0ContextProvider(BaseContextProvider):
                 messages=messages,
                 user_id=self.user_id,
                 agent_id=self.agent_id,
-                run_id=context.session_id,
                 metadata={"application_id": self.application_id},
             )
 
@@ -173,19 +171,15 @@ class Mem0ContextProvider(BaseContextProvider):
     def _validate_filters(self) -> None:
         """Validates that at least one filter is provided."""
         if not self.agent_id and not self.user_id and not self.application_id:
-            raise ServiceInitializationError(
-                "At least one of the filters: agent_id, user_id, or application_id is required."
-            )
+            raise ValueError("At least one of the filters: agent_id, user_id, or application_id is required.")
 
-    def _build_filters(self, *, session_id: str | None = None) -> dict[str, Any]:
+    def _build_filters(self) -> dict[str, Any]:
         """Build search filters from initialization parameters."""
         filters: dict[str, Any] = {}
         if self.user_id:
             filters["user_id"] = self.user_id
         if self.agent_id:
             filters["agent_id"] = self.agent_id
-        if session_id:
-            filters["run_id"] = session_id
         if self.application_id:
             filters["app_id"] = self.application_id
         return filters

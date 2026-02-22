@@ -379,8 +379,8 @@ class TestClaudeAgentRunStream:
             assert updates[1].text == "response"
 
     async def test_run_stream_raises_on_assistant_message_error(self) -> None:
-        """Test run raises ServiceException when AssistantMessage has an error."""
-        from agent_framework.exceptions import ServiceException
+        """Test run raises AgentException when AssistantMessage has an error."""
+        from agent_framework.exceptions import AgentException
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
         messages = [
@@ -402,15 +402,15 @@ class TestClaudeAgentRunStream:
 
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
-            with pytest.raises(ServiceException) as exc_info:
+            with pytest.raises(AgentException) as exc_info:
                 async for _ in agent.run("Hello", stream=True):
                     pass
             assert "Invalid request to Claude API" in str(exc_info.value)
             assert "Error details from API" in str(exc_info.value)
 
     async def test_run_stream_raises_on_result_message_error(self) -> None:
-        """Test run raises ServiceException when ResultMessage.is_error is True."""
-        from agent_framework.exceptions import ServiceException
+        """Test run raises AgentException when ResultMessage.is_error is True."""
+        from agent_framework.exceptions import AgentException
         from claude_agent_sdk import ResultMessage
 
         messages = [
@@ -428,7 +428,7 @@ class TestClaudeAgentRunStream:
 
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
-            with pytest.raises(ServiceException) as exc_info:
+            with pytest.raises(AgentException) as exc_info:
                 async for _ in agent.run("Hello", stream=True):
                     pass
             assert "Model 'claude-sonnet-4.5' not found" in str(exc_info.value)

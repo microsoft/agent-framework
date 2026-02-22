@@ -27,7 +27,7 @@ public class TestRunContext : IRunnerContext
 
     internal TestRunContext ConfigureExecutor(Executor executor, EdgeMap? map = null)
     {
-        executor.Configure(new TestExternalRequestContext(this, executor.Id, map));
+        executor.AttachRequestContext(new TestExternalRequestContext(this, executor.Id, map));
         this.Executors.Add(executor.Id, executor);
         return this;
     }
@@ -51,7 +51,20 @@ public class TestRunContext : IRunnerContext
             => runnerContext.AddEventAsync(workflowEvent, cancellationToken);
 
         public ValueTask YieldOutputAsync(object output, CancellationToken cancellationToken = default)
-            => this.AddEventAsync(new WorkflowOutputEvent(output, executorId), cancellationToken);
+        {
+            // Special-case AgentResponse and AgentResponseUpdate to create their specific event types
+            // (consistent with InProcessRunnerContext.YieldOutputAsync)
+            if (output is AgentResponseUpdate update)
+            {
+                return this.AddEventAsync(new AgentResponseUpdateEvent(executorId, update), cancellationToken);
+            }
+            else if (output is AgentResponse response)
+            {
+                return this.AddEventAsync(new AgentResponseEvent(executorId, response), cancellationToken);
+            }
+
+            return this.AddEventAsync(new WorkflowOutputEvent(output, executorId), cancellationToken);
+        }
 
         public ValueTask RequestHaltAsync()
             => this.AddEventAsync(new RequestHaltEvent());
@@ -131,7 +144,7 @@ public class TestRunContext : IRunnerContext
     public Dictionary<string, Executor> Executors { get; set; } = [];
     public string StartingExecutorId { get; set; } = string.Empty;
 
-    public bool WithCheckpointing => false;
+    public bool IsCheckpointingEnabled => false;
     public bool ConcurrentRunsEnabled => false;
 
     WorkflowTelemetryContext IRunnerContext.TelemetryContext => WorkflowTelemetryContext.Disabled;

@@ -29,8 +29,12 @@ from agent_framework.azure import (
     AzureOpenAIChatClient,
 )
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from redis_stream_response_handler import RedisStreamResponseHandler, StreamChunk
 from tools import get_local_events, get_weather_forecast
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -217,9 +221,7 @@ async def stream(req: func.HttpRequest) -> func.HttpResponse:
         # Get optional cursor from query string
         cursor = req.params.get("cursor")
 
-        logger.info(
-            f"Resuming stream for conversation {conversation_id} from cursor: {cursor or '(beginning)'}"
-        )
+        logger.info(f"Resuming stream for conversation {conversation_id} from cursor: {cursor or '(beginning)'}")
 
         # Check Accept header to determine response format
         accept_header = req.headers.get("Accept", "")

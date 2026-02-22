@@ -7,7 +7,11 @@ from typing import Annotated
 from agent_framework import FunctionInvocationContext, tool
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Exception Handling with MiddlewareTypes
@@ -24,7 +28,9 @@ a helpful message for the user, preventing raw exceptions from reaching the end 
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def unstable_data_service(
     query: Annotated[str, Field(description="The data query to execute.")],

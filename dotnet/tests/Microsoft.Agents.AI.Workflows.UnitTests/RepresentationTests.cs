@@ -19,7 +19,7 @@ public class RepresentationTests
 {
     private sealed class TestExecutor() : Executor("TestExecutor")
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) => routeBuilder;
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) => protocolBuilder;
     }
 
     private sealed class TestAgent : AIAgent
@@ -47,7 +47,7 @@ public class RepresentationTests
     {
         ExecutorInfo info = binding.ToExecutorInfo();
 
-        info.IsMatch(await binding.CreateInstanceAsync(runId: string.Empty)).Should().BeTrue();
+        info.IsMatch(await binding.CreateInstanceAsync(sessionId: string.Empty)).Should().BeTrue();
     }
 
     [Fact]

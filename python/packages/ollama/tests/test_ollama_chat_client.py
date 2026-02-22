@@ -14,11 +14,7 @@ from agent_framework import (
     chat_middleware,
     tool,
 )
-from agent_framework.exceptions import (
-    ServiceInvalidRequestError,
-    ServiceResponseException,
-    SettingNotFoundError,
-)
+from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException, SettingNotFoundError
 from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
@@ -234,7 +230,7 @@ async def test_empty_messages() -> None:
         host="http://localhost:12345",
         model_id="test-model",
     )
-    with pytest.raises(ServiceInvalidRequestError):
+    with pytest.raises(ChatClientInvalidRequestException):
         await ollama_chat_client.get_response(messages=[])
 
 
@@ -284,7 +280,7 @@ async def test_cmc_chat_failure(
 
     ollama_client = OllamaChatClient()
 
-    with pytest.raises(ServiceResponseException) as exc_info:
+    with pytest.raises(ChatClientException) as exc_info:
         await ollama_client.get_response(messages=chat_history)
 
     assert "Ollama chat request failed" in str(exc_info.value)
@@ -339,7 +335,7 @@ async def test_cmc_streaming_chat_failure(
 
     ollama_client = OllamaChatClient()
 
-    with pytest.raises(ServiceResponseException) as exc_info:
+    with pytest.raises(ChatClientException) as exc_info:
         async for _ in ollama_client.get_response(messages=chat_history, stream=True):
             pass
 
@@ -436,7 +432,7 @@ async def test_cmc_with_invalid_data_content_media_type(
     chat_history: list[Message],
     mock_streaming_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
-    with pytest.raises(ServiceInvalidRequestError):
+    with pytest.raises(ChatClientInvalidRequestException):
         mock_chat.return_value = mock_streaming_chat_completion_response
         # Remote Uris are not supported by Ollama client
         chat_history.append(
@@ -459,7 +455,7 @@ async def test_cmc_with_invalid_content_type(
     chat_history: list[Message],
     mock_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
-    with pytest.raises(ServiceInvalidRequestError):
+    with pytest.raises(ChatClientInvalidRequestException):
         mock_chat.return_value = mock_chat_completion_response
         # Remote Uris are not supported by Ollama client
         chat_history.append(

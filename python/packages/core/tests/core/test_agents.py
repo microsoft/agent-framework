@@ -266,6 +266,45 @@ async def test_chat_client_agent_update_session_id_streaming_does_not_use_respon
     assert session.service_session_id is None
 
 
+async def test_chat_client_agent_streaming_session_id_set_without_get_final_response(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Test that session.service_session_id is set during streaming iteration.
+
+    This verifies the eager propagation of conversation_id via transform hook,
+    which is needed for multi-turn flows (e.g. hosted MCP approval) where the
+    user iterates the stream and then makes a follow-up call without calling
+    get_final_response().
+    """
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_text("part 1")],
+                role="assistant",
+                response_id="resp_123",
+                conversation_id="resp_123",
+            ),
+            ChatResponseUpdate(
+                contents=[Content.from_text(" part 2")],
+                role="assistant",
+                response_id="resp_123",
+                conversation_id="resp_123",
+                finish_reason="stop",
+            ),
+        ]
+    ]
+
+    agent = Agent(client=chat_client_base)
+    session = agent.create_session()
+    assert session.service_session_id is None
+
+    # Only iterate — do NOT call get_final_response()
+    async for _ in agent.run("Hello", session=session, stream=True):
+        pass
+
+    assert session.service_session_id == "resp_123"
+
+
 async def test_chat_client_agent_update_session_messages(client: SupportsChatGetResponse) -> None:
     from agent_framework._sessions import InMemoryHistoryProvider
 

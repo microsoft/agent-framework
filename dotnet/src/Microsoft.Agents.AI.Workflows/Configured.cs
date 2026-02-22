@@ -79,7 +79,7 @@ public class Configured<TSubject>(Func<Config, string, ValueTask<TSubject>> fact
     /// Gets a "partially" applied factory function that only requires no parameters to create an instance of
     /// <typeparamref name="TSubject"/> with the provided <see cref="Configuration"/> instance.
     /// </summary>
-    internal Func<string, ValueTask<TSubject>> BoundFactoryAsync => (runId) => this.FactoryAsync(this.Configuration, runId);
+    internal Func<string, ValueTask<TSubject>> BoundFactoryAsync => (sessionId) => this.FactoryAsync(this.Configuration, sessionId);
 }
 
 /// <summary>
@@ -122,20 +122,20 @@ public class Configured<TSubject, TOptions>(Func<Config<TOptions>, string, Value
     /// Gets a "partially" applied factory function that only requires no parameters to create an instance of
     /// <typeparamref name="TSubject"/> with the provided <see cref="Configuration"/> instance.
     /// </summary>
-    internal Func<string, ValueTask<TSubject>> BoundFactoryAsync => (runId) => this.CreateValidatingMemoizedFactory()(this.Configuration, runId);
+    internal Func<string, ValueTask<TSubject>> BoundFactoryAsync => (sessionId) => this.CreateValidatingMemoizedFactory()(this.Configuration, sessionId);
 
     private Func<Config, string, ValueTask<TSubject>> CreateValidatingMemoizedFactory()
     {
         return FactoryAsync;
 
-        async ValueTask<TSubject> FactoryAsync(Config configuration, string runId)
+        async ValueTask<TSubject> FactoryAsync(Config configuration, string sessionId)
         {
             if (this.Id != configuration.Id)
             {
                 throw new InvalidOperationException($"Requested instance ID '{configuration.Id}' does not match configured ID '{this.Id}'.");
             }
 
-            TSubject subject = await this.FactoryAsync(this.Configuration, runId).ConfigureAwait(false);
+            TSubject subject = await this.FactoryAsync(this.Configuration, sessionId).ConfigureAwait(false);
 
             if (this.Id is not null && subject is IIdentified identified && identified.Id != this.Id)
             {

@@ -32,7 +32,7 @@ public static class MicrosoftAgentAIDevUIServiceCollectionsExtensions
             var workflow = sp.GetKeyedService<Workflow>(keyAsStr);
             if (workflow is not null)
             {
-                return workflow.AsAgent(name: workflow.Name);
+                return workflow.AsAIAgent(name: workflow.Name);
             }
 
             // another thing we can do is resolve a non-keyed workflow.
@@ -41,7 +41,7 @@ public static class MicrosoftAgentAIDevUIServiceCollectionsExtensions
             workflow = sp.GetService<Workflow>();
             if (workflow is not null && workflow.Name?.Equals(keyAsStr, StringComparison.Ordinal) == true)
             {
-                return workflow.AsAgent(name: workflow.Name);
+                return workflow.AsAIAgent(name: workflow.Name);
             }
 
             // and it's possible to lookup at the default-registered AIAgent

@@ -20,10 +20,10 @@ Integration with Microsoft Purview for data governance and policy enforcement.
 
 ### Exceptions
 
-- **`PurviewAuthenticationError`** - Authentication failures
-- **`PurviewRateLimitError`** - Rate limit exceeded
-- **`PurviewRequestError`** / **`PurviewServiceError`** - Request/service errors
-- **`PurviewPaymentRequiredError`** - Payment required
+- **`PurviewAuthenticationError`** - Authentication failures (inherits from `IntegrationInvalidAuthException`)
+- **`PurviewRateLimitError`** - Rate limit exceeded (inherits from `IntegrationException` via `PurviewServiceError`)
+- **`PurviewRequestError`** / **`PurviewServiceError`** - Request/service errors (inherit from `IntegrationException`)
+- **`PurviewPaymentRequiredError`** - Payment required (inherits from `IntegrationException` via `PurviewServiceError`)
 
 ## Usage
 

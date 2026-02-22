@@ -40,7 +40,7 @@ from agent_framework._tools import (
     normalize_function_invocation_configuration,
 )
 from agent_framework._types import ResponseStream
-from agent_framework.exceptions import AgentExecutionException
+from agent_framework.exceptions import AgentInvalidResponseException
 
 from ._message_adapters import normalize_agui_input_messages
 from ._orchestration._predictive_state import PredictiveStateHandler
@@ -207,7 +207,7 @@ async def _normalize_response_stream(response_stream: Any) -> AsyncIterable[Any]
         if isinstance(resolved_stream, AsyncIterable):
             return cast(AsyncIterable[Any], resolved_stream)
         resolved_type = f"{type(resolved_stream).__module__}.{type(resolved_stream).__name__}"
-        raise AgentExecutionException(
+        raise AgentInvalidResponseException(
             "Agent did not return a streaming AsyncIterable response. "
             f"Awaitable resolved to unsupported type: {resolved_type}."
         )
@@ -220,7 +220,7 @@ async def _normalize_response_stream(response_stream: Any) -> AsyncIterable[Any]
         return cast(AsyncIterable[Any], response_stream)
 
     stream_type = f"{type(response_stream).__module__}.{type(response_stream).__name__}"
-    raise AgentExecutionException(
+    raise AgentInvalidResponseException(
         f"Agent did not return a streaming AsyncIterable response. Received unsupported type: {stream_type}."
     )
 

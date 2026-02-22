@@ -11,8 +11,10 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 /// Provides an executor that aggregates received chat messages that it then releases when
 /// receiving a <see cref="TurnToken"/>.
 /// </summary>
-internal sealed class AggregateTurnMessagesExecutor(string id) : ChatProtocolExecutor(id, declareCrossRunShareable: true), IResettableExecutor
+internal sealed class AggregateTurnMessagesExecutor(string id) : ChatProtocolExecutor(id, s_options, declareCrossRunShareable: true), IResettableExecutor
 {
+    private static readonly ChatProtocolExecutorOptions s_options = new() { AutoSendTurnToken = false };
+
     /// <inheritdoc/>
     protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
         => context.SendMessageAsync(messages, cancellationToken: cancellationToken);

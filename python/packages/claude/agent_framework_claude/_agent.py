@@ -26,7 +26,7 @@ from agent_framework import (
     normalize_messages,
     normalize_tools,
 )
-from agent_framework.exceptions import ServiceException
+from agent_framework.exceptions import AgentException
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeSDKClient,
@@ -360,7 +360,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         as an async context manager.
 
         Raises:
-            ServiceException: If the client fails to start.
+            AgentException: If the client fails to start.
         """
         await self._ensure_session()
 
@@ -407,7 +407,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
                 self._current_session_id = session_id
             except Exception as ex:
                 self._client = None
-                raise ServiceException(f"Failed to start Claude SDK client: {ex}") from ex
+                raise AgentException(f"Failed to start Claude SDK client: {ex}") from ex
 
     def _prepare_client_options(self, resume_session_id: str | None = None) -> SDKOptions:
         """Prepare SDK options for client initialization.
@@ -639,7 +639,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         await self._ensure_session(session.service_session_id)
 
         if not self._client:
-            raise ServiceException("Claude SDK client not initialized.")
+            raise RuntimeError("Claude SDK client not initialized.")
 
         prompt = self._format_prompt(normalize_messages(messages))
 
@@ -693,12 +693,12 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
                             if isinstance(block, TextBlock):
                                 error_msg = f"{error_msg}: {block.text}"
                                 break
-                    raise ServiceException(error_msg)
+                    raise AgentException(error_msg)
             elif isinstance(message, ResultMessage):
                 # Check for errors in result message
                 if message.is_error:
                     error_msg = message.result or "Unknown error from Claude API"
-                    raise ServiceException(f"Claude API error: {error_msg}")
+                    raise AgentException(f"Claude API error: {error_msg}")
                 session_id = message.session_id
 
         # Update session with session ID

@@ -12,6 +12,11 @@
 
 import asyncio
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 
 async def run_semantic_kernel() -> None:
     from azure.identity.aio import AzureCliCredential
@@ -19,7 +24,7 @@ async def run_semantic_kernel() -> None:
 
     async with AzureCliCredential() as credential, AzureAIAgent.create_client(credential=credential) as client:
         settings = AzureAIAgentSettings()
-        definition = await client.agents.as_agent(
+        definition = await client.agents.create_agent(
             model=settings.model_deployment_name,
             name="Planner",
             instructions="Track follow-up questions within the same thread.",

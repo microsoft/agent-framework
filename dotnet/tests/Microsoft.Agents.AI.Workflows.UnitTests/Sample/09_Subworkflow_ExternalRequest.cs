@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -68,10 +69,10 @@ internal static class Step9EntryPoint
 
         var requestPort = RequestPort.Create<TRequest, TResponse>(id);
 
-        return builder.ForwardMessage<ExternalRequest>(source, targets: [filter], condition: message => message.DataIs<TRequest>())
-                      .ForwardMessage<ExternalRequest>(filter, targets: [requestPort], condition: message => message.DataIs<TRequest>())
-                      .ForwardMessage<ExternalResponse>(requestPort, targets: [filter], condition: message => message.DataIs<TResponse>())
-                      .ForwardMessage<ExternalResponse>(filter, targets: [source], condition: message => message.DataIs<TResponse>());
+        return builder.ForwardMessage<ExternalRequest>(source, targets: [filter], condition: message => message.IsDataOfType<TRequest>())
+                      .ForwardMessage<ExternalRequest>(filter, targets: [requestPort], condition: message => message.IsDataOfType<TRequest>())
+                      .ForwardMessage<ExternalResponse>(requestPort, targets: [filter], condition: message => message.IsDataOfType<TResponse>())
+                      .ForwardMessage<ExternalResponse>(filter, targets: [source], condition: message => message.IsDataOfType<TResponse>());
     }
 
     public static WorkflowBuilder AddExternalRequest<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorBinding source, string? id = null)
@@ -206,11 +207,11 @@ internal static class Step9EntryPoint
             }
             else if (evt is RequestInfoEvent requestInfoEvent)
             {
-                if (requestInfoEvent.Request.DataIs<ResourceRequest>())
+                if (requestInfoEvent.Request.IsDataOfType<ResourceRequest>())
                 {
                     resourceRequests.Add(requestInfoEvent.Request);
                 }
-                else if (requestInfoEvent.Request.DataIs<PolicyCheckRequest>())
+                else if (requestInfoEvent.Request.IsDataOfType<PolicyCheckRequest>())
                 {
                     policyRequests.Add(requestInfoEvent.Request);
                 }
@@ -236,14 +237,14 @@ internal static class Step9EntryPoint
 
         foreach (ExternalRequest request in resourceRequests)
         {
-            ResourceRequest resourceRequest = request.DataAs<ResourceRequest>()!;
+            ResourceRequest resourceRequest = request.Data.As<ResourceRequest>()!;
             resourceRequest.Id.Should().BeOneOf(ResourceMissIds);
             responses.Add(request.CreateResponse(Part2FinishedResponses[resourceRequest.Id].ResourceResponse!));
         }
 
         foreach (ExternalRequest request in policyRequests)
         {
-            PolicyCheckRequest policyRequest = request.DataAs<PolicyCheckRequest>()!;
+            PolicyCheckRequest policyRequest = request.Data.As<PolicyCheckRequest>()!;
             policyRequest.Id.Should().BeOneOf(PolicyMissIds);
             responses.Add(request.CreateResponse(Part2FinishedResponses[policyRequest.Id].PolicyResponse!));
         }
@@ -256,6 +257,22 @@ internal static class Step9EntryPoint
 
         await workflowRun.ResumeAsync(responses: responses).ConfigureAwait(false);
         runStatus = await workflowRun.GetStatusAsync();
+        List<Exception?> errors = workflowRun.OutgoingEvents.OfType<WorkflowErrorEvent>()
+                                                            .Select(errorEvent => errorEvent.Exception)
+                                                            .Where(e => e is not null).ToList();
+        if (errors.Count > 0)
+        {
+            StringBuilder errorBuilder = new();
+            errorBuilder.AppendLine($"Workflow execution failed. ({errors.Count} errors.):");
+
+            foreach (Exception? error in errors)
+            {
+                errorBuilder.Append('\t').AppendLine(error!.ToString());
+            }
+
+            Assert.Fail(errorBuilder.ToString());
+        }
+
         runStatus.Should().Be(RunStatus.Idle);
 
         results = finishedRequests;
@@ -277,18 +294,26 @@ internal static class Step9EntryPoint
 
 internal sealed class ResourceRequestor() : Executor(nameof(ResourceRequestor), declareCrossRunShareable: true)
 {
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        return routeBuilder.AddHandler<List<UserRequest>>(this.RequestResourcesAsync)
-                           .AddHandler<UserRequest>(InvokeResourceRequestAsync)
-                           .AddHandler<ResourceResponse>(this.HandleResponseAsync)
-                           .AddHandler<PolicyResponse>(this.HandleResponseAsync);
+        return protocolBuilder.ConfigureRoutes(ConfigureRoutes)
+                              .SendsMessage<ResourceRequest>()
+                              .SendsMessage<PolicyCheckRequest>()
+                              .YieldsOutput<RequestFinished>();
 
-        // For some reason, using a lambda here causes the analyzer to generate a spurious
-        // VSTHRD110: "Observe the awaitable result of this method call by awaiting it, assigning
-        // to a variable, or passing it to another method"
-        ValueTask InvokeResourceRequestAsync(UserRequest request, IWorkflowContext context)
-            => this.RequestResourcesAsync([request], context);
+        void ConfigureRoutes(RouteBuilder routeBuilder)
+        {
+            routeBuilder.AddHandler<List<UserRequest>>(this.RequestResourcesAsync)
+                        .AddHandler<UserRequest>(InvokeResourceRequestAsync)
+                        .AddHandler<ResourceResponse>(this.HandleResponseAsync)
+                        .AddHandler<PolicyResponse>(this.HandleResponseAsync);
+
+            // For some reason, using a lambda here causes the analyzer to generate a spurious
+            // VSTHRD110: "Observe the awaitable result of this method call by awaiting it, assigning
+            // to a variable, or passing it to another method"
+            ValueTask InvokeResourceRequestAsync(UserRequest request, IWorkflowContext context)
+                => this.RequestResourcesAsync([request], context);
+        }
     }
 
     private async ValueTask RequestResourcesAsync(List<UserRequest> requests, IWorkflowContext context)
@@ -332,17 +357,22 @@ internal sealed class ResourceCache()
             ["disk"] = 100,
         };
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        // Note the disbalance here - we could also handle ExternalResponse here instead, but we would have
-        // to do the exact same type check on it, so we might as well handle
-        return routeBuilder.AddHandler<ExternalRequest>(this.UnwrapAndHandleRequestAsync)
-                           .AddHandler<ExternalResponse>(this.CollectResultAsync);
+        return protocolBuilder.ConfigureRoutes(ConfigureRoutes);
+
+        void ConfigureRoutes(RouteBuilder routeBuilder)
+        {
+            // Note the disbalance here - we could also handle ExternalResponse here instead, but we would have
+            // to do the exact same type check on it, so we might as well handle
+            routeBuilder.AddHandler<ExternalRequest>(this.UnwrapAndHandleRequestAsync)
+                        .AddHandler<ExternalResponse>(this.CollectResultAsync);
+        }
     }
 
     private async ValueTask UnwrapAndHandleRequestAsync(ExternalRequest request, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        if (request.DataIs(out ResourceRequest? resourceRequest))
+        if (request.TryGetDataAs(out ResourceRequest? resourceRequest))
         {
             ResourceResponse? response = await this.TryHandleResourceRequestAsync(resourceRequest, context, cancellationToken)
                                                    .ConfigureAwait(false);
@@ -391,7 +421,7 @@ internal sealed class ResourceCache()
 
     private ValueTask CollectResultAsync(ExternalResponse response, IWorkflowContext context)
     {
-        if (response.DataIs<ResourceResponse>())
+        if (response.IsDataOfType<ResourceResponse>())
         {
             // Normally we'd update the cache according to whatever logic we want here.
             return context.SendMessageAsync(response);
@@ -414,15 +444,22 @@ internal sealed class QuotaPolicyEngine()
             ["disk"] = 1000,
         };
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        return routeBuilder.AddHandler<ExternalRequest>(this.UnwrapAndHandleRequestAsync)
-                           .AddHandler<ExternalResponse>(this.CollectAndForwardAsync);
+        return protocolBuilder.ConfigureRoutes(ConfigureRoutes);
+
+        void ConfigureRoutes(RouteBuilder routeBuilder)
+        {
+            // Note the disbalance here - we could also handle ExternalResponse here instead, but we would have
+            // to do the exact same type check on it, so we might as well handle
+            routeBuilder.AddHandler<ExternalRequest>(this.UnwrapAndHandleRequestAsync)
+                        .AddHandler<ExternalResponse>(this.CollectAndForwardAsync);
+        }
     }
 
     private async ValueTask UnwrapAndHandleRequestAsync(ExternalRequest request, IWorkflowContext context)
     {
-        if (request.DataIs(out PolicyCheckRequest? policyRquest))
+        if (request.TryGetDataAs(out PolicyCheckRequest? policyRquest))
         {
             PolicyResponse? response = await this.TryHandlePolicyCheckRequestAsync(policyRquest, context)
                                                  .ConfigureAwait(false);
@@ -470,7 +507,7 @@ internal sealed class QuotaPolicyEngine()
     }
     private ValueTask CollectAndForwardAsync(ExternalResponse response, IWorkflowContext context)
     {
-        if (response.DataIs<PolicyResponse>())
+        if (response.IsDataOfType<PolicyResponse>())
         {
             return context.SendMessageAsync(response);
         }
@@ -483,17 +520,24 @@ internal sealed class Coordinator() : Executor(nameof(Coordinator), declareCross
 {
     private const string StateKey = nameof(StateKey);
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        return routeBuilder.AddHandler<List<UserRequest>>(this.StartAsync)
-                           .AddHandler<UserRequest>(InvokeStartAsync)
-                           .AddHandler<RequestFinished>(this.HandleFinishedRequestAsync);
+        return protocolBuilder.ConfigureRoutes(ConfigureRoutes)
+                              .SendsMessage<UserRequest>()
+                              .YieldsOutput<RequestFinished>();
 
-        // For some reason, using a lambda here causes the analyzer to generate a spurious
-        // VSTHRD110: "Observe the awaitable result of this method call by awaiting it, assigning
-        // to a variable, or passing it to another method"
-        ValueTask InvokeStartAsync(UserRequest request, IWorkflowContext context, CancellationToken cancellationToken)
-            => this.StartAsync([request], context, cancellationToken);
+        void ConfigureRoutes(RouteBuilder routeBuilder)
+        {
+            routeBuilder.AddHandler<List<UserRequest>>(this.StartAsync)
+                        .AddHandler<UserRequest>(InvokeStartAsync)
+                        .AddHandler<RequestFinished>(this.HandleFinishedRequestAsync);
+
+            // For some reason, using a lambda here causes the analyzer to generate a spurious
+            // VSTHRD110: "Observe the awaitable result of this method call by awaiting it, assigning
+            // to a variable, or passing it to another method"
+            ValueTask InvokeStartAsync(UserRequest request, IWorkflowContext context, CancellationToken cancellationToken)
+                => this.StartAsync([request], context, cancellationToken);
+        }
     }
 
     private ValueTask HandleFinishedRequestAsync(RequestFinished finished, IWorkflowContext context, CancellationToken cancellationToken)
@@ -525,7 +569,7 @@ internal sealed class Coordinator() : Executor(nameof(Coordinator), declareCross
 
     internal async ValueTask RunWorkflowHandleEventsAsync<TInput>(Workflow workflow, TInput input) where TInput : notnull
     {
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
+        StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input);
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             switch (evt)

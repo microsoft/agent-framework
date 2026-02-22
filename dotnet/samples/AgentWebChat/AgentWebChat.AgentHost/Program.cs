@@ -70,7 +70,7 @@ var knightsKnavesAgentBuilder = builder.AddAIAgent("knights-and-knaves", (sp, ke
         If the user asks a general question about their surrounding, make something up which is consistent with the scenario.
         """, "Narrator");
 
-    return AgentWorkflowBuilder.BuildConcurrent([knight, knave, narrator]).AsAgent(name: key);
+    return AgentWorkflowBuilder.BuildConcurrent([knight, knave, narrator]).AsAIAgent(name: key);
 });
 
 // Workflow consisting of multiple specialized agents

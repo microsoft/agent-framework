@@ -17,11 +17,16 @@ the task in a round-robin fashion.
 
 import asyncio
 
-from agent_framework import AgentResponseUpdate
+from agent_framework import Message
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def run_autogen() -> None:
     """AutoGen's RoundRobinGroupChat for sequential agent orchestration."""
+
     from autogen_agentchat.agents import AssistantAgent
     from autogen_agentchat.conditions import TextMentionTermination
     from autogen_agentchat.teams import RoundRobinGroupChat
@@ -91,17 +96,12 @@ async def run_agent_framework() -> None:
 
     # Run the workflow
     print("[Agent Framework] Sequential conversation:")
-    current_executor = None
     async for event in workflow.run("Create a brief summary about electric vehicles", stream=True):
-        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
-            # Print executor name header when switching to a new agent
-            if current_executor != event.executor_id:
-                if current_executor is not None:
-                    print()  # Newline after previous agent's message
-                print(f"---------- {event.executor_id} ----------")
-                current_executor = event.executor_id
-            print(event.data.text, end="", flush=True)
-    print()  # Final newline after conversation
+        if event.type == "output" and isinstance(event.data, list):
+            for message in event.data:
+                if isinstance(message, Message) and message.role == "assistant" and message.text:
+                    print(f"---------- {message.author_name} ----------")
+                    print(message.text)
 
 
 async def run_agent_framework_with_cycle() -> None:
@@ -144,7 +144,9 @@ async def run_agent_framework_with_cycle() -> None:
         if last_message and "APPROVED" in last_message.text:
             await context.yield_output("Content approved.")
         else:
-            await context.send_message(AgentExecutorRequest(messages=response.full_conversation, should_respond=True))
+            await context.send_message(
+                AgentExecutorRequest(messages=response.full_conversation, should_respond=True)
+            )
 
     workflow = (
         WorkflowBuilder(start_executor=researcher)

@@ -47,7 +47,6 @@ from .._types import (
     ResponseStream,
     UsageDetails,
 )
-from ..exceptions import ServiceInitializationError
 from ..observability import ChatTelemetryLayer
 from ._shared import OpenAIConfigMixin, OpenAISettings
 
@@ -350,11 +349,11 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         )
 
         if not async_client and not openai_settings["api_key"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
         if not openai_settings["chat_model_id"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
@@ -452,7 +451,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         # If no assistant is provided, create a temporary assistant
         if self.assistant_id is None:
             if not self.model_id:
-                raise ServiceInitializationError("Parameter 'model_id' is required for assistant creation.")
+                raise ValueError("Parameter 'model_id' is required for assistant creation.")
 
             client = await self._ensure_client()
             created_assistant = await client.beta.assistants.create(
@@ -670,6 +669,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         tool_choice = options.get("tool_choice")
         tools = options.get("tools")
         response_format = options.get("response_format")
+        tool_resources = options.get("tool_resources")
 
         if max_tokens is not None:
             run_options["max_completion_tokens"] = max_tokens
@@ -682,6 +682,9 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
         if allow_multiple_tool_calls is not None:
             run_options["parallel_tool_calls"] = allow_multiple_tool_calls
+
+        if tool_resources is not None:
+            run_options["tool_resources"] = tool_resources
 
         tool_mode = validate_tool_mode(tool_choice)
         tool_definitions: list[MutableMapping[str, Any]] = []

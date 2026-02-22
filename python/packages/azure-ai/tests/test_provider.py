@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import Agent, FunctionTool
 from agent_framework._mcp import MCPTool
-from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     AgentReference,
@@ -110,15 +109,13 @@ def test_provider_init_missing_endpoint() -> None:
     with patch("agent_framework_azure_ai._project_provider.load_settings") as mock_load_settings:
         mock_load_settings.return_value = {"project_endpoint": None, "model_deployment_name": "test-model"}
 
-        with pytest.raises(ServiceInitializationError, match="Azure AI project endpoint is required"):
+        with pytest.raises(ValueError, match="Azure AI project endpoint is required"):
             AzureAIProjectAgentProvider(credential=MagicMock())
 
 
 def test_provider_init_missing_credential(azure_ai_unit_test_env: dict[str, str]) -> None:
     """Test AzureAIProjectAgentProvider initialization when credential is missing."""
-    with pytest.raises(
-        ServiceInitializationError, match="Azure credential is required when project_client is not provided"
-    ):
+    with pytest.raises(ValueError, match="Azure credential is required when project_client is not provided"):
         AzureAIProjectAgentProvider(
             project_endpoint=azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
         )
@@ -208,7 +205,7 @@ async def test_provider_create_agent_missing_model(mock_project_client: MagicMoc
 
         provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
 
-        with pytest.raises(ServiceInitializationError, match="Model deployment name is required"):
+        with pytest.raises(ValueError, match="Model deployment name is required"):
             await provider.create_agent(name="test-agent")
 
 

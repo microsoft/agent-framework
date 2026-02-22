@@ -6,6 +6,10 @@ from agent_framework import AgentSession
 from agent_framework.azure import AzureAIAgentClient
 from agent_framework.openai import OpenAIChatClient
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Session Suspend and Resume Example

@@ -28,7 +28,6 @@ from agent_framework import (
 )
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
-from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropic
 from anthropic.types.beta import (
@@ -303,7 +302,7 @@ class AnthropicClient(
 
         if anthropic_client is None:
             if not anthropic_settings["api_key"]:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Anthropic API key is required. Set via 'api_key' parameter "
                     "or 'ANTHROPIC_API_KEY' environment variable."
                 )

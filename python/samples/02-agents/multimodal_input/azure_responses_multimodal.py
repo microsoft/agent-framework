@@ -6,6 +6,10 @@ from pathlib import Path
 from agent_framework import Content, Message
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 ASSETS_DIR = Path(__file__).resolve().parents[2] / "shared" / "sample_assets"
 
