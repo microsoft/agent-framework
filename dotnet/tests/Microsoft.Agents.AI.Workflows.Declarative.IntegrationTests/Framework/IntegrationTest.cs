@@ -10,6 +10,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
+using Shared.IntegrationTests;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
@@ -30,8 +31,8 @@ public abstract class IntegrationTest : IDisposable
         this.Output = new TestOutputAdapter(output);
         this.TestEndpoint =
             new Uri(
-                this.Configuration?[AgentProvider.Settings.FoundryEndpoint] ??
-                throw new InvalidOperationException($"Undefined configuration setting: {AgentProvider.Settings.FoundryEndpoint}"));
+                this.Configuration?[TestSettings.AzureAIProjectEndpoint] ??
+                throw new InvalidOperationException($"Undefined configuration setting: {TestSettings.AzureAIProjectEndpoint}"));
         Console.SetOut(this.Output);
         SetProduct();
     }

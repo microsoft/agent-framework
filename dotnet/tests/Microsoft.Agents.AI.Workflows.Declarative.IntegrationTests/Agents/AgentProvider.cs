@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Azure.AI.Projects.OpenAI;
 using Microsoft.Extensions.Configuration;
+using Shared.IntegrationTests;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 
@@ -17,13 +18,6 @@ internal abstract class AgentProvider(IConfiguration configuration)
         public const string MathChat = "MATHCHAT";
         public const string InputArguments = "INPUTARGUMENTS";
         public const string Vision = "VISION";
-    }
-
-    public static class Settings
-    {
-        public const string FoundryEndpoint = "AZURE_AI_PROJECT_ENDPOINT";
-        public const string FoundryModel = "AZURE_AI_MODEL_DEPLOYMENT_NAME";
-        public const string FoundryGroundingTool = "AZURE_AI_BING_CONNECTION_ID";
     }
 
     public static AgentProvider Create(IConfiguration configuration, string providerType) =>
@@ -39,7 +33,7 @@ internal abstract class AgentProvider(IConfiguration configuration)
 
     public async ValueTask CreateAgentsAsync()
     {
-        Uri foundryEndpoint = new(this.GetSetting(Settings.FoundryEndpoint));
+        Uri foundryEndpoint = new(this.GetSetting(TestSettings.AzureAIProjectEndpoint));
 
         await foreach (AgentVersion agent in this.CreateAgentsAsync(foundryEndpoint))
         {
