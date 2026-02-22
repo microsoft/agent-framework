@@ -456,16 +456,16 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             elif event.type == SessionEventType.ASSISTANT_REASONING_DELTA:
                 if event.data.delta_content:
                     update = AgentResponseUpdate(
-                        role=Role.ASSISTANT,
-                        contents=[Content.from_text_reasoning(event.data.delta_content)],
+                        role="assistant",
+                        contents=[Content.from_text_reasoning(text=event.data.delta_content)],
                         raw_representation=event,
                     )
                     queue.put_nowait(update)
             elif event.type == SessionEventType.ASSISTANT_REASONING:
                 if event.data.content:
                     update = AgentResponseUpdate(
-                        role=Role.ASSISTANT,
-                        contents=[Content.from_text_reasoning(event.data.content)],
+                        role="assistant",
+                        contents=[Content.from_text_reasoning(text=event.data.content)],
                         raw_representation=event,
                     )
                     queue.put_nowait(update)

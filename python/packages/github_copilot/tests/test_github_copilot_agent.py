@@ -499,7 +499,7 @@ class TestGitHubCopilotAgentRunStreaming:
 
         assert len(responses) == 1
         assert isinstance(responses[0], AgentResponseUpdate)
-        assert responses[0].role == Role.ASSISTANT
+        assert responses[0].role == "assistant"
         # Check that the content is TextReasoningContent by checking its type
         assert responses[0].contents[0].type == "text_reasoning"
         assert responses[0].contents[0].text == "Thinking step "
@@ -528,7 +528,7 @@ class TestGitHubCopilotAgentRunStreaming:
 
         assert len(responses) == 1
         assert isinstance(responses[0], AgentResponseUpdate)
-        assert responses[0].role == Role.ASSISTANT
+        assert responses[0].role == "assistant"
         # Check that the content is TextReasoningContent by checking its type
         assert responses[0].contents[0].type == "text_reasoning"
         assert responses[0].contents[0].text == "Complete reasoning content"
