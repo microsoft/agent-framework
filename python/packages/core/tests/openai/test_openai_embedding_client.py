@@ -131,6 +131,39 @@ async def test_openai_options_passthrough_encoding_format(openai_unit_test_env: 
     assert call_kwargs["encoding_format"] == "base64"
 
 
+async def test_openai_base64_decoding(openai_unit_test_env: None) -> None:
+    import base64
+    import struct
+
+    # Encode [0.1, 0.2, 0.3] as base64 little-endian floats
+    raw_floats = [0.1, 0.2, 0.3]
+    b64_str = base64.b64encode(struct.pack(f"<{len(raw_floats)}f", *raw_floats)).decode()
+
+    # Mock the embedding item to return a base64 string (as the API does with encoding_format=base64)
+    mock_item = MagicMock()
+    mock_item.embedding = b64_str
+    mock_item.index = 0
+
+    mock_response = MagicMock()
+    mock_response.data = [mock_item]
+    mock_response.model = "text-embedding-3-small"
+    mock_response.usage = MagicMock(prompt_tokens=3, total_tokens=3)
+
+    client = OpenAIEmbeddingClient()
+    client.client = MagicMock()
+    client.client.embeddings = MagicMock()
+    client.client.embeddings.create = AsyncMock(return_value=mock_response)
+
+    options: OpenAIEmbeddingOptions = {"encoding_format": "base64"}
+    result = await client.get_embeddings(["test"], options=options)
+
+    assert len(result) == 1
+    assert len(result[0].vector) == 3
+    assert result[0].dimensions == 3
+    for expected, actual in zip(raw_floats, result[0].vector):
+        assert abs(expected - actual) < 1e-6
+
+
 async def test_openai_error_when_no_model_id() -> None:
     client = OpenAIEmbeddingClient.__new__(OpenAIEmbeddingClient)
     client.model_id = None

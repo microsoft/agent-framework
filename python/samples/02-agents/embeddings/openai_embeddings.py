@@ -4,7 +4,7 @@
 
 import asyncio
 
-from agent_framework.openai import OpenAIEmbeddingClient, OpenAIEmbeddingOptions
+from agent_framework.openai import OpenAIEmbeddingClient
 from dotenv import load_dotenv
 
 load_dotenv()

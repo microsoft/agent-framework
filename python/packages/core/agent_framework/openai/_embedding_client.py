@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import struct
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Generic, Literal, TypedDict
@@ -89,14 +91,23 @@ class RawOpenAIEmbeddingClient(
 
         response = await (await self._ensure_client()).embeddings.create(**kwargs)
 
-        embeddings = [
-            Embedding(
-                vector=item.embedding,
-                dimensions=len(item.embedding),
-                model_id=response.model,
+        encoding = kwargs.get("encoding_format", "float")
+        embeddings: list[Embedding[list[float]]] = []
+        for item in response.data:
+            vector: list[float]
+            if encoding == "base64" and isinstance(item.embedding, str):
+                # Decode base64-encoded floats (little-endian IEEE 754)
+                raw = base64.b64decode(item.embedding)
+                vector = list(struct.unpack(f"<{len(raw) // 4}f", raw))
+            else:
+                vector = item.embedding  # type: ignore[assignment]
+            embeddings.append(
+                Embedding(
+                    vector=vector,
+                    dimensions=len(vector),
+                    model_id=response.model,
+                )
             )
-            for item in response.data
-        ]
 
         usage_dict: dict[str, Any] | None = None
         if response.usage:

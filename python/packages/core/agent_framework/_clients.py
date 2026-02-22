@@ -692,7 +692,7 @@ class SupportsGetEmbeddings(Protocol[EmbeddingInputT, EmbeddingT, EmbeddingOptio
             from agent_framework import SupportsGetEmbeddings
 
 
-            def use_embeddings(client: SupportsGetEmbeddings) -> None:
+            async def use_embeddings(client: SupportsGetEmbeddings) -> None:
                 result = await client.get_embeddings(["Hello, world!"])
                 for embedding in result:
                     print(embedding.vector)
