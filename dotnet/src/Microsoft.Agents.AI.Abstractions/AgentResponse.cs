@@ -279,7 +279,7 @@ public class AgentResponse
                 AgentId = this.AgentId,
                 ResponseId = this.ResponseId,
                 MessageId = message.MessageId,
-                CreatedAt = this.CreatedAt,
+                CreatedAt = message.CreatedAt ?? this.CreatedAt,
             };
         }
 
