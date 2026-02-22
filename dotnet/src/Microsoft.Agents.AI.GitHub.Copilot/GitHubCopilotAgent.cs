@@ -274,32 +274,13 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     }
 
     /// <summary>
-    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance
-    /// with <see cref="SessionConfig.Streaming"/> set to <c>true</c>.
+    /// Clones the given <see cref="SessionConfig"/> and sets <see cref="SessionConfig.Streaming"/> to <c>true</c>.
     /// </summary>
     internal static SessionConfig CopySessionConfig(SessionConfig source)
     {
-        return new SessionConfig
-        {
-            Model = source.Model,
-            ReasoningEffort = source.ReasoningEffort,
-            Tools = source.Tools,
-            SystemMessage = source.SystemMessage,
-            AvailableTools = source.AvailableTools,
-            ExcludedTools = source.ExcludedTools,
-            Provider = source.Provider,
-            OnPermissionRequest = source.OnPermissionRequest,
-            OnUserInputRequest = source.OnUserInputRequest,
-            Hooks = source.Hooks,
-            WorkingDirectory = source.WorkingDirectory,
-            ConfigDir = source.ConfigDir,
-            McpServers = source.McpServers,
-            CustomAgents = source.CustomAgents,
-            SkillDirectories = source.SkillDirectories,
-            DisabledSkills = source.DisabledSkills,
-            InfiniteSessions = source.InfiniteSessions,
-            Streaming = true
-        };
+        SessionConfig copy = source.Clone();
+        copy.Streaming = true;
+        return copy;
     }
 
     /// <summary>

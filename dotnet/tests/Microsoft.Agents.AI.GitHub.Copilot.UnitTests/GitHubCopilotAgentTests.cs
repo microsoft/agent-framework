@@ -137,7 +137,7 @@ public sealed class GitHubCopilotAgentTests
         // Assert
         Assert.Equal("gpt-4o", result.Model);
         Assert.Equal("high", result.ReasoningEffort);
-        Assert.Same(tools, result.Tools);
+        Assert.Equal(tools, result.Tools);
         Assert.Same(systemMessage, result.SystemMessage);
         Assert.Equal(new List<string> { "tool1", "tool2" }, result.AvailableTools);
         Assert.Equal(new List<string> { "tool3" }, result.ExcludedTools);
@@ -147,7 +147,7 @@ public sealed class GitHubCopilotAgentTests
         Assert.Same(infiniteSessions, result.InfiniteSessions);
         Assert.Same(permissionHandler, result.OnPermissionRequest);
         Assert.Same(userInputHandler, result.OnUserInputRequest);
-        Assert.Same(mcpServers, result.McpServers);
+        Assert.Equal(mcpServers, result.McpServers);
         Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
         Assert.True(result.Streaming);
     }
