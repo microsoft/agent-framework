@@ -1325,9 +1325,8 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
                 raise
             duration = perf_counter() - start_time_stamp
             response_attributes: dict[str, Any] = {**attributes}
-            if result.usage:
-                if "prompt_tokens" in result.usage:
-                    response_attributes[OtelAttr.INPUT_TOKENS] = result.usage["prompt_tokens"]
+            if result.usage and "prompt_tokens" in result.usage:
+                response_attributes[OtelAttr.INPUT_TOKENS] = result.usage["prompt_tokens"]
             _capture_response(
                 span=span,
                 attributes=response_attributes,

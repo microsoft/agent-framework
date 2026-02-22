@@ -667,7 +667,17 @@ class SupportsFileSearchTool(Protocol):
 
 # region SupportsGetEmbeddings Protocol
 
-# Contravariant for the Protocol
+# Contravariant/covariant TypeVars for the Protocol
+EmbeddingInputContraT = TypeVar(
+    "EmbeddingInputContraT",
+    default="str",
+    contravariant=True,
+)
+EmbeddingCoT = TypeVar(
+    "EmbeddingCoT",
+    default="list[float]",
+    covariant=True,
+)
 EmbeddingOptionsContraT = TypeVar(
     "EmbeddingOptionsContraT",
     bound=TypedDict,  # type: ignore[valid-type]
@@ -677,7 +687,7 @@ EmbeddingOptionsContraT = TypeVar(
 
 
 @runtime_checkable
-class SupportsGetEmbeddings(Protocol[EmbeddingInputT, EmbeddingT, EmbeddingOptionsContraT]):
+class SupportsGetEmbeddings(Protocol[EmbeddingInputContraT, EmbeddingCoT, EmbeddingOptionsContraT]):
     """Protocol for an embedding client that can generate embeddings.
 
     This protocol enables duck-typing for embedding generation. Any class that
@@ -702,10 +712,10 @@ class SupportsGetEmbeddings(Protocol[EmbeddingInputT, EmbeddingT, EmbeddingOptio
 
     def get_embeddings(
         self,
-        values: Sequence[EmbeddingInputT],
+        values: Sequence[EmbeddingInputContraT],
         *,
         options: EmbeddingOptionsContraT | None = None,
-    ) -> Awaitable[GeneratedEmbeddings[EmbeddingT]]:
+    ) -> Awaitable[GeneratedEmbeddings[EmbeddingCoT]]:
         """Generate embeddings for the given values.
 
         Args:
