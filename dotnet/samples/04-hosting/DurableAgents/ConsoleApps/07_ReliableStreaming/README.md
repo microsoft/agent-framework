@@ -32,7 +32,7 @@ docker ps | grep redis
 With the environment setup, you can run the sample:
 
 ```bash
-cd dotnet/samples/DurableAgents/ConsoleApps/07_ReliableStreaming
+cd dotnet/samples/04-hosting/DurableAgents/ConsoleApps/07_ReliableStreaming
 dotnet run --framework net10.0
 ```
 
