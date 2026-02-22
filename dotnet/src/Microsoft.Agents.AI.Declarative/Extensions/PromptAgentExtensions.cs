@@ -58,7 +58,7 @@ public static class PromptAgentExtensions
     /// </summary>
     /// <param name="promptAgent">Instance of <see cref="GptComponentMetadata"/></param>
     /// <param name="functions">Instance of <see cref="IList{AIFunction}"/></param>
-    internal static List<AITool>? GetAITools(this GptComponentMetadata promptAgent, IList<AIFunction>? functions)
+    public static List<AITool>? GetAITools(this GptComponentMetadata promptAgent, IList<AIFunction>? functions = null)
     {
         return promptAgent.Tools.Select(tool =>
         {
