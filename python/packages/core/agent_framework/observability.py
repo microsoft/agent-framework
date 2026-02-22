@@ -1328,10 +1328,6 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
             if result.usage:
                 if "prompt_tokens" in result.usage:
                     response_attributes[OtelAttr.INPUT_TOKENS] = result.usage["prompt_tokens"]
-                if "total_tokens" in result.usage:
-                    response_attributes[OtelAttr.OUTPUT_TOKENS] = result.usage.get(
-                        "completion_tokens", result.usage["total_tokens"]
-                    )
             _capture_response(
                 span=span,
                 attributes=response_attributes,
