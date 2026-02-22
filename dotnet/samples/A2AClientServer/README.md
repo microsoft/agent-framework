@@ -1,7 +1,18 @@
+---
+page_type: sample
+languages:
+- csharp
+products:
+- agent-framework
+- dotnet
+name: Agent2Agent (A2A) client and server
+urlFragment: a2a-client-server
+---
+
 # A2A Client and Server samples
 
 > **Warning**
-> The [A2A protocol](https://google.github.io/A2A/) is still under development and changing fast.
+> The [A2A protocol](https://a2a-protocol.org/latest/) is still under development and changing fast.
 > We will try to keep these samples updated as the protocol evolves.
 
 These samples are built with [official A2A C# SDK](https://www.nuget.org/packages/A2A) and demonstrates:
@@ -176,13 +187,13 @@ The A2A client will connect to remote agents using the A2A protocol.
 
 By default the client will connect to the invoice, policy and logistics agents provided by the sample A2A Server.
 
-These are available at the following URL's:
+These are available at the following URLs:
 
-- Invoice Agent: http://localhost:5000/ 
-- Policy Agent: http://localhost:5001/ 
+- Invoice Agent: http://localhost:5000/
+- Policy Agent: http://localhost:5001/
 - Logistics Agent: http://localhost:5002/
 
-If you want to change which agents are using then set the agents url as a space delimited string as follows:
+If you want to change which agents are used, set the agents URL as a space delimited string as follows:
 
 ```powershell
 $env:A2A_AGENT_URLS="http://localhost:5000/;http://localhost:5001/;http://localhost:5002/"
@@ -197,7 +208,7 @@ To run the sample, follow these steps:
     ```bash
     cd A2AClient
     dotnet run
-    ```  
+    ```
 3. Enter your request e.g. "Customer is disputing transaction TICKET-XYZ987 as they claim the received fewer t-shirts than ordered."
 4. The host client agent will call the remote agents, these calls will be displayed as console output. The final answer will use information from the remote agents. The sample below includes all three agents but in your case you may only see the policy and invoice agent.
 

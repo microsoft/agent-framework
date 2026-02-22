@@ -1,3 +1,14 @@
+---
+page_type: sample
+languages:
+- csharp
+products:
+- agent-framework
+- dotnet
+name: Azure Functions with Agent Framework
+urlFragment: azure-functions-agent-framework
+---
+
 # Azure Functions Samples
 
 This directory contains samples for Azure Functions.
