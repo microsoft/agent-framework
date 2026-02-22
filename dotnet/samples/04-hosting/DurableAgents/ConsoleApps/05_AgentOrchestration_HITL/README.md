@@ -18,7 +18,7 @@ See the [README.md](../README.md) file in the parent directory for more informat
 With the environment setup, you can run the sample:
 
 ```bash
-cd dotnet/samples/DurableAgents/ConsoleApps/05_AgentOrchestration_HITL
+cd dotnet/samples/04-hosting/DurableAgents/ConsoleApps/05_AgentOrchestration_HITL
 dotnet run --framework net10.0
 ```
 

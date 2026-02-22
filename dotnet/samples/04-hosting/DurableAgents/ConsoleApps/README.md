@@ -93,7 +93,7 @@ export AZURE_OPENAI_DEPLOYMENT_NAME="your-deployment-name"
 Navigate to the sample directory and run the console app:
 
 ```bash
-cd dotnet/samples/DurableAgents/ConsoleApps/01_SingleAgent
+cd dotnet/samples/04-hosting/DurableAgents/ConsoleApps/01_SingleAgent
 dotnet run --framework net10.0
 ```
 
