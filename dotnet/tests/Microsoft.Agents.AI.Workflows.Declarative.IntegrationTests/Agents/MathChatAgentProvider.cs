@@ -30,7 +30,7 @@ internal sealed class MathChatAgentProvider(IConfiguration configuration) : Agen
     }
 
     private PromptAgentDefinition DefineStudentAgent() =>
-        new(this.GetSetting(Settings.FoundryModelMini))
+        new(this.GetSetting(Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -42,7 +42,7 @@ internal sealed class MathChatAgentProvider(IConfiguration configuration) : Agen
         };
 
     private PromptAgentDefinition DefineTeacherAgent() =>
-        new(this.GetSetting(Settings.FoundryModelMini))
+        new(this.GetSetting(Settings.FoundryModel))
         {
             Instructions =
                 """

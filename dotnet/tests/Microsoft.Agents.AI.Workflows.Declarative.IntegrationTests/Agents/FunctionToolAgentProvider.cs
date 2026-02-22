@@ -36,7 +36,7 @@ internal sealed class FunctionToolAgentProvider(IConfiguration configuration) : 
     private PromptAgentDefinition DefineMenuAgent(AIFunction[] functions)
     {
         PromptAgentDefinition agentDefinition =
-            new(this.GetSetting(Settings.FoundryModelMini))
+            new(this.GetSetting(Settings.FoundryModel))
             {
                 Instructions =
                     """

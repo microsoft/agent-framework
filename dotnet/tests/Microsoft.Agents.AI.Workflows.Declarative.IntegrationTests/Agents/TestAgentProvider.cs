@@ -24,5 +24,5 @@ internal sealed class TestAgentProvider(IConfiguration configuration) : AgentPro
     }
 
     private PromptAgentDefinition DefineMenuAgent() =>
-        new(this.GetSetting(Settings.FoundryModelFull));
+        new(this.GetSetting(Settings.FoundryModel));
 }

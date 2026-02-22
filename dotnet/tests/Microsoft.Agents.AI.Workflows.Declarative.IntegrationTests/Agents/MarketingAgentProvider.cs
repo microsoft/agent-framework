@@ -36,7 +36,7 @@ internal sealed class MarketingAgentProvider(IConfiguration configuration) : Age
     }
 
     private PromptAgentDefinition DefineAnalystAgent() =>
-        new(this.GetSetting(Settings.FoundryModelFull))
+        new(this.GetSetting(Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -54,7 +54,7 @@ internal sealed class MarketingAgentProvider(IConfiguration configuration) : Age
         };
 
     private PromptAgentDefinition DefineWriterAgent() =>
-        new(this.GetSetting(Settings.FoundryModelFull))
+        new(this.GetSetting(Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -65,7 +65,7 @@ internal sealed class MarketingAgentProvider(IConfiguration configuration) : Age
         };
 
     private PromptAgentDefinition DefineEditorAgent() =>
-        new(this.GetSetting(Settings.FoundryModelFull))
+        new(this.GetSetting(Settings.FoundryModel))
         {
             Instructions =
                 """

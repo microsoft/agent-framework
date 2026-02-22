@@ -24,7 +24,7 @@ internal sealed class PoemAgentProvider(IConfiguration configuration) : AgentPro
     }
 
     private PromptAgentDefinition DefinePoemAgent() =>
-        new(this.GetSetting(Settings.FoundryModelMini))
+        new(this.GetSetting(Settings.FoundryModel))
         {
             Instructions =
                 """

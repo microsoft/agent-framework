@@ -24,7 +24,7 @@ internal sealed class VisionAgentProvider(IConfiguration configuration) : AgentP
     }
 
     private PromptAgentDefinition DefineVisionAgent() =>
-        new(this.GetSetting(Settings.FoundryModelFull))
+        new(this.GetSetting(Settings.FoundryModel))
         {
             Instructions =
                 """
