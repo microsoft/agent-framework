@@ -366,7 +366,7 @@ Each connector follows the AF package structure:
 
 4. **`from __future__ import annotations`**: Required in all files per AF coding standard.
 
-5. **No `**kwargs` escape hatches**: Use explicit named parameters per AF coding standard.
+5. **No `**kwargs` escape hatches in public APIs**: For user-facing interfaces, use explicit named parameters per AF coding standard. Internal implementation details (e.g., cooperative multiple inheritance / MRO patterns) may use `**kwargs` where necessary, as long as they are not exposed in public signatures.
 
 6. **Lazy loading**: Connector packages use `__getattr__` lazy loading in core provider folders.
 

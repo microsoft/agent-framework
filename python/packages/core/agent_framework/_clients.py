@@ -676,7 +676,6 @@ EmbeddingInputContraT = TypeVar(
 EmbeddingCoT = TypeVar(
     "EmbeddingCoT",
     default="list[float]",
-    covariant=True,
 )
 EmbeddingOptionsContraT = TypeVar(
     "EmbeddingOptionsContraT",
