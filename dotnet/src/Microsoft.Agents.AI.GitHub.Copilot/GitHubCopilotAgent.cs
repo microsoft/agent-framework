@@ -274,59 +274,48 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     }
 
     /// <summary>
-    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance
-    /// with <see cref="SessionConfig.Streaming"/> set to <c>true</c>.
+    /// Clones a <see cref="SessionConfig"/> and sets <see cref="SessionConfig.Streaming"/> to <c>true</c>.
     /// </summary>
     internal static SessionConfig CopySessionConfig(SessionConfig source)
     {
-        return new SessionConfig
-        {
-            Model = source.Model,
-            ReasoningEffort = source.ReasoningEffort,
-            Tools = source.Tools,
-            SystemMessage = source.SystemMessage,
-            AvailableTools = source.AvailableTools,
-            ExcludedTools = source.ExcludedTools,
-            Provider = source.Provider,
-            OnPermissionRequest = source.OnPermissionRequest,
-            OnUserInputRequest = source.OnUserInputRequest,
-            Hooks = source.Hooks,
-            WorkingDirectory = source.WorkingDirectory,
-            ConfigDir = source.ConfigDir,
-            McpServers = source.McpServers,
-            CustomAgents = source.CustomAgents,
-            SkillDirectories = source.SkillDirectories,
-            DisabledSkills = source.DisabledSkills,
-            InfiniteSessions = source.InfiniteSessions,
-            Streaming = true
-        };
+        SessionConfig clone = source.Clone();
+        clone.Streaming = true;
+        return clone;
     }
 
     /// <summary>
-    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new
-    /// <see cref="ResumeSessionConfig"/> with <see cref="ResumeSessionConfig.Streaming"/> set to <c>true</c>.
+    /// Creates a <see cref="ResumeSessionConfig"/> from a source <see cref="SessionConfig"/>
+    /// with <see cref="ResumeSessionConfig.Streaming"/> set to <c>true</c>.
     /// </summary>
     internal static ResumeSessionConfig CopyResumeSessionConfig(SessionConfig? source)
     {
+        if (source is null)
+        {
+            return new ResumeSessionConfig { Streaming = true };
+        }
+
+        // Clone the source config, then create a ResumeSessionConfig from the cloned values.
+        // This ensures collection properties are properly isolated.
+        SessionConfig cloned = source.Clone();
         return new ResumeSessionConfig
         {
-            Model = source?.Model,
-            ReasoningEffort = source?.ReasoningEffort,
-            Tools = source?.Tools,
-            SystemMessage = source?.SystemMessage,
-            AvailableTools = source?.AvailableTools,
-            ExcludedTools = source?.ExcludedTools,
-            Provider = source?.Provider,
-            OnPermissionRequest = source?.OnPermissionRequest,
-            OnUserInputRequest = source?.OnUserInputRequest,
-            Hooks = source?.Hooks,
-            WorkingDirectory = source?.WorkingDirectory,
-            ConfigDir = source?.ConfigDir,
-            McpServers = source?.McpServers,
-            CustomAgents = source?.CustomAgents,
-            SkillDirectories = source?.SkillDirectories,
-            DisabledSkills = source?.DisabledSkills,
-            InfiniteSessions = source?.InfiniteSessions,
+            Model = cloned.Model,
+            ReasoningEffort = cloned.ReasoningEffort,
+            Tools = cloned.Tools,
+            SystemMessage = cloned.SystemMessage,
+            AvailableTools = cloned.AvailableTools,
+            ExcludedTools = cloned.ExcludedTools,
+            Provider = cloned.Provider,
+            OnPermissionRequest = cloned.OnPermissionRequest,
+            OnUserInputRequest = cloned.OnUserInputRequest,
+            Hooks = cloned.Hooks,
+            WorkingDirectory = cloned.WorkingDirectory,
+            ConfigDir = cloned.ConfigDir,
+            McpServers = cloned.McpServers,
+            CustomAgents = cloned.CustomAgents,
+            SkillDirectories = cloned.SkillDirectories,
+            DisabledSkills = cloned.DisabledSkills,
+            InfiniteSessions = cloned.InfiniteSessions,
             Streaming = true
         };
     }
