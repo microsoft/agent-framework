@@ -195,6 +195,7 @@
   </Folder>
   <Folder Name="/Samples/GettingStarted/Observability/">
     <Project Path="samples/GettingStarted/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
+    <Project Path="samples/GettingStarted/Observability/AIClientHttpTrafficTracing/AIClientHttpTrafficTracing.csproj" Id="cb65e098-6154-4996-aa53-faae2ee93842" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/">
     <File Path="samples/GettingStarted/Workflows/README.md" />
