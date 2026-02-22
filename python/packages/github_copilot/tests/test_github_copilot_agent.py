@@ -494,7 +494,7 @@ class TestGitHubCopilotAgentRunStreaming:
 
         agent = GitHubCopilotAgent(client=mock_client)
         responses: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Hello"):
+        async for update in agent.run("Hello", stream=True):
             responses.append(update)
 
         assert len(responses) == 1
@@ -523,7 +523,7 @@ class TestGitHubCopilotAgentRunStreaming:
 
         agent = GitHubCopilotAgent(client=mock_client)
         responses: list[AgentResponseUpdate] = []
-        async for update in agent.run_stream("Hello"):
+        async for update in agent.run("Hello", stream=True):
             responses.append(update)
 
         assert len(responses) == 1
