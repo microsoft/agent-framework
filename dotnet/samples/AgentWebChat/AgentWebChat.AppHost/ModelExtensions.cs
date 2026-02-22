@@ -10,6 +10,27 @@ public static class ModelExtensions
         return builder.CreateResourceBuilder(model);
     }
 
+    public static IResourceBuilder<AIModel> AddAIModel(this IDistributedApplicationBuilder builder, string name, IResourceBuilder<ParameterResource> endpoint, IResourceBuilder<ParameterResource> accessKey, IResourceBuilder<ParameterResource> model, IResourceBuilder<ParameterResource> provider)
+    {
+        var aiModel = new AIModel(name);
+        var resourceBuilder = builder.CreateResourceBuilder(aiModel);
+
+        resourceBuilder.Reset();
+
+        // See: https://github.com/dotnet/aspire/issues/7641
+        var csb = new ReferenceExpressionBuilder();
+        csb.Append($"Endpoint={endpoint.Resource};");
+        csb.Append($"AccessKey={accessKey.Resource};");
+        csb.Append($"Model={model.Resource};");
+        csb.Append($"Provider={provider.Resource};");
+        var cs = csb.Build();
+
+        resourceBuilder.Resource.UnderlyingResource = resourceBuilder.Resource;
+        resourceBuilder.Resource.ConnectionString = cs;
+
+        return resourceBuilder;
+    }
+
     public static IResourceBuilder<AIModel> RunAsOpenAI(this IResourceBuilder<AIModel> builder, string modelName, IResourceBuilder<ParameterResource> apiKey)
     {
         if (builder.ApplicationBuilder.ExecutionContext.IsRunMode)
@@ -255,6 +276,11 @@ public class AIModel(string name) : Resource(name), IResourceWithConnectionStrin
     public ReferenceExpression Build()
     {
         var connectionString = this.ConnectionString ?? throw new InvalidOperationException("No connection string available.");
+
+        if (connectionString.ValueExpression.Contains("Provider="))
+        {
+            return connectionString;
+        }
 
         if (this.Provider is null)
         {
