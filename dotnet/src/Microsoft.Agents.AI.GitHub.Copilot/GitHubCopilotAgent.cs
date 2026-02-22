@@ -181,6 +181,14 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                         channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(assistantMessage));
                         break;
 
+                    case AssistantReasoningDeltaEvent reasoningDeltaEvent:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(reasoningDeltaEvent));
+                        break;
+
+                    case AssistantReasoningEvent reasoningEvent:
+                        channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(reasoningEvent));
+                        break;
+
                     case AssistantUsageEvent usageEvent:
                         channel.Writer.TryWrite(this.ConvertToAgentResponseUpdate(usageEvent));
                         break;
@@ -382,6 +390,34 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         {
             AgentId = this.Id,
             CreatedAt = usageEvent.Timestamp
+        };
+    }
+
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantReasoningDeltaEvent reasoningDeltaEvent)
+    {
+        TextReasoningContent reasoningContent = new(reasoningDeltaEvent.Data?.DeltaContent ?? string.Empty)
+        {
+            RawRepresentation = reasoningDeltaEvent
+        };
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [reasoningContent])
+        {
+            AgentId = this.Id,
+            CreatedAt = reasoningDeltaEvent.Timestamp
+        };
+    }
+
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantReasoningEvent reasoningEvent)
+    {
+        TextReasoningContent reasoningContent = new(reasoningEvent.Data?.Content ?? string.Empty)
+        {
+            RawRepresentation = reasoningEvent
+        };
+
+        return new AgentResponseUpdate(ChatRole.Assistant, [reasoningContent])
+        {
+            AgentId = this.Id,
+            CreatedAt = reasoningEvent.Timestamp
         };
     }
 

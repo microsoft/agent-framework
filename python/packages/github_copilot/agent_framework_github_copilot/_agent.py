@@ -453,6 +453,22 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                         raw_representation=event,
                     )
                     queue.put_nowait(update)
+            elif event.type == SessionEventType.ASSISTANT_REASONING_DELTA:
+                if event.data.delta_content:
+                    update = AgentResponseUpdate(
+                        role="assistant",
+                        contents=[Content.from_text_reasoning(text=event.data.delta_content)],
+                        raw_representation=event,
+                    )
+                    queue.put_nowait(update)
+            elif event.type == SessionEventType.ASSISTANT_REASONING:
+                if event.data.content:
+                    update = AgentResponseUpdate(
+                        role="assistant",
+                        contents=[Content.from_text_reasoning(text=event.data.content)],
+                        raw_representation=event,
+                    )
+                    queue.put_nowait(update)
             elif event.type == SessionEventType.SESSION_IDLE:
                 queue.put_nowait(None)
             elif event.type == SessionEventType.SESSION_ERROR:
