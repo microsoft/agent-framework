@@ -15,8 +15,7 @@ namespace AzureAIAgentsPersistent.IntegrationTests;
 
 public class AzureAIAgentsPersistentCreateTests
 {
-    private static readonly AzureAIConfiguration s_config = TestConfiguration.LoadSection<AzureAIConfiguration>();
-    private readonly PersistentAgentsClient _persistentAgentsClient = new(s_config.Endpoint, new AzureCliCredential());
+    private readonly PersistentAgentsClient _persistentAgentsClient = new(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint), new AzureCliCredential());
 
     [Theory]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
@@ -32,7 +31,7 @@ public class AzureAIAgentsPersistentCreateTests
         var agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
+                TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 options: new ChatClientAgentOptions()
                 {
                     ChatOptions = new() { Instructions = AgentInstructions },
@@ -40,7 +39,7 @@ public class AzureAIAgentsPersistentCreateTests
                     Description = AgentDescription
                 }),
             "CreateWithFoundryOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
+                TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 instructions: AgentInstructions,
                 name: AgentName,
                 description: AgentDescription),
@@ -99,7 +98,7 @@ public class AzureAIAgentsPersistentCreateTests
         var agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
+                TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 options: new ChatClientAgentOptions()
                 {
                     ChatOptions = new()
@@ -109,7 +108,7 @@ public class AzureAIAgentsPersistentCreateTests
                     }
                 }),
             "CreateWithFoundryOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
+                TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 instructions: AgentInstructions,
                 tools: [new FileSearchToolDefinition()],
                 toolResources: new ToolResources() { FileSearch = new([vectorStoreMetadata.Value.Id], null) }),
@@ -162,7 +161,7 @@ public class AzureAIAgentsPersistentCreateTests
         {
             // Hosted tool path (tools supplied via ChatClientAgentOptions)
             "CreateWithChatClientAgentOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
+                TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 options: new ChatClientAgentOptions()
                 {
                     ChatOptions = new()
@@ -172,7 +171,7 @@ public class AzureAIAgentsPersistentCreateTests
                     }
                 }),
             "CreateWithFoundryOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
+                TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 instructions: AgentInstructions,
                 tools: [new CodeInterpreterToolDefinition()],
                 toolResources: new ToolResources() { CodeInterpreter = toolResource }),
@@ -208,7 +207,7 @@ public class AzureAIAgentsPersistentCreateTests
         ChatClientAgent agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
+                TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 options: new ChatClientAgentOptions()
                 {
                     ChatOptions = new()

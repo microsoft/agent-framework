@@ -8,7 +8,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") ?? throw new InvalidOperationException("ANTHROPIC_API_KEY is not set.");
-var model = Environment.GetEnvironmentVariable("ANTHROPIC_MODEL") ?? "claude-haiku-4-5";
+var model = Environment.GetEnvironmentVariable("ANTHROPIC_CHAT_MODEL_NAME") ?? "claude-haiku-4-5";
 
 AIAgent agent = new AnthropicClient(new ClientOptions { ApiKey = apiKey })
     .AsAIAgent(model: model, instructions: "You are good at telling jokes.", name: "Joker");

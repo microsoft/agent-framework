@@ -7,6 +7,7 @@ using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
+using Shared.IntegrationTests;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 
@@ -24,7 +25,7 @@ internal sealed class PoemAgentProvider(IConfiguration configuration) : AgentPro
     }
 
     private PromptAgentDefinition DefinePoemAgent() =>
-        new(this.GetSetting(Settings.FoundryModelMini))
+        new(this.GetSetting(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions =
                 """

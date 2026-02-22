@@ -36,8 +36,8 @@ IConfigurationRoot configuration = new ConfigurationBuilder()
     .Build();
 
 string? apiKey = configuration["OPENAI_API_KEY"];
-string model = configuration["OPENAI_MODEL"] ?? "gpt-4o-mini";
-string? endpoint = configuration["AZURE_FOUNDRY_PROJECT_ENDPOINT"];
+string model = configuration["OPENAI_CHAT_MODEL_NAME"] ?? "gpt-4o-mini";
+string? endpoint = configuration["AZURE_AI_PROJECT_ENDPOINT"];
 
 var invoiceQueryPlugin = new InvoiceQuery();
 IList<AITool> tools =

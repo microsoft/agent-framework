@@ -53,18 +53,18 @@ More information on how to configure RBAC permissions for Azure OpenAI can be fo
 
 ### Setting an API key for the Azure OpenAI service
 
-As an alternative to configuring Azure RBAC permissions, you can set an API key for the Azure OpenAI service by setting the `AZURE_OPENAI_KEY` environment variable.
+As an alternative to configuring Azure RBAC permissions, you can set an API key for the Azure OpenAI service by setting the `AZURE_OPENAI_API_KEY` environment variable.
 
 Bash (Linux/macOS/WSL):
 
 ```bash
-export AZURE_OPENAI_KEY="your-api-key"
+export AZURE_OPENAI_API_KEY="your-api-key"
 ```
 
 PowerShell:
 
 ```powershell
-$env:AZURE_OPENAI_KEY="your-api-key"
+$env:AZURE_OPENAI_API_KEY="your-api-key"
 ```
 
 ### Start Durable Task Scheduler
@@ -85,7 +85,7 @@ Each sample reads configuration from environment variables. You'll need to set t
 
 ```bash
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-export AZURE_OPENAI_DEPLOYMENT="your-deployment-name"
+export AZURE_OPENAI_DEPLOYMENT_NAME="your-deployment-name"
 ```
 
 ### Running the Console Apps

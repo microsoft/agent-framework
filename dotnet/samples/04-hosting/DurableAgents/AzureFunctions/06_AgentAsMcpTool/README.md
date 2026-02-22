@@ -38,8 +38,8 @@ Update your `local.settings.json` with your Azure OpenAI credentials:
 {
   "Values": {
     "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
-    "AZURE_OPENAI_DEPLOYMENT": "your-deployment-name",
-    "AZURE_OPENAI_KEY": "your-api-key-if-not-using-rbac"
+    "AZURE_OPENAI_DEPLOYMENT_NAME": "your-deployment-name",
+    "AZURE_OPENAI_API_KEY": "your-api-key-if-not-using-rbac"
   }
 }
 ```

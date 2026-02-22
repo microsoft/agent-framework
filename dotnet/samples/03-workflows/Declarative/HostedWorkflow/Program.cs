@@ -19,7 +19,7 @@ namespace Demo.DeclarativeWorkflow;
 /// </summary>
 /// <remarks>
 /// <b>Configuration</b>
-/// Define FOUNDRY_PROJECT_ENDPOINT as a user-secret or environment variable that
+/// Define AZURE_AI_PROJECT_ENDPOINT as a user-secret or environment variable that
 /// points to your Foundry project endpoint.
 /// <b>Usage</b>
 /// Provide the path to the workflow definition file as the first argument.
@@ -111,7 +111,7 @@ internal sealed class Program
     }
 
     private static PromptAgentDefinition DefineStudentAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -124,7 +124,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineTeacherAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """

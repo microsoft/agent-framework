@@ -35,13 +35,13 @@ Set the following environment variables:
 
 ```powershell
 # Replace with your Azure AI Foundry project endpoint
-$env:AZURE_FOUNDRY_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/"
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/"
 
 # Replace with your Bing connection ID from the project
-$env:BING_CONNECTION_ID="/subscriptions/.../connections/your-bing-connection"
+$env:AZURE_AI_BING_CONNECTION_ID="/subscriptions/.../connections/your-bing-connection"
 
 # Optional, defaults to o3-deep-research
-$env:AZURE_FOUNDRY_PROJECT_DEEP_RESEARCH_DEPLOYMENT_NAME="o3-deep-research"
+$env:AZURE_AI_REASONING_DEPLOYMENT_NAME="o3-deep-research"
 
 # Optional, defaults to gpt-4o
-$env:AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME="gpt-4o"
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o"

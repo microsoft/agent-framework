@@ -239,8 +239,8 @@ These patterns may be overkill for:
 | `REDIS_CONNECTION_STRING` | Redis connection string | `localhost:6379` |
 | `REDIS_STREAM_TTL_MINUTES` | How long streams are retained after last write | `10` |
 | `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint URL | (required) |
-| `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI deployment name | (required) |
-| `AZURE_OPENAI_KEY` | API key (optional, uses Azure CLI auth if not set) | (optional) |
+| `AZURE_OPENAI_DEPLOYMENT_NAME` | Azure OpenAI deployment name | (required) |
+| `AZURE_OPENAI_API_KEY` | API key (optional, uses Azure CLI auth if not set) | (optional) |
 
 ## Cleanup
 

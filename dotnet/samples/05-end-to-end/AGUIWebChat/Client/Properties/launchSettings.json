@@ -8,7 +8,7 @@
       "applicationUrl": "http://localhost:5000",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "SERVER_URL": "http://localhost:5100"
+        "AGUI_SERVER_URL": "http://localhost:5100"
       }
     }
   }

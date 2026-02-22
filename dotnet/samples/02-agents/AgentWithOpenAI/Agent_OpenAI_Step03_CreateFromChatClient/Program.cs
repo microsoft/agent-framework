@@ -7,7 +7,7 @@ using OpenAI.Chat;
 using OpenAIChatClientSample;
 
 string apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
-string model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
+string model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt-4o-mini";
 
 // Create a ChatClient directly from OpenAIClient
 ChatClient chatClient = new OpenAIClient(apiKey).GetChatClient(model);
