@@ -115,6 +115,18 @@ public static class Program
                     Console.WriteLine();
                     Console.WriteLine(new string('=', 80));
                     break;
+
+                case ExecutorFailedEvent failureEvent:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"Executor failed [{failureEvent.ExecutorId}]: {failureEvent.Data?.Message ?? "Unknown error"}");
+                    Console.ResetColor();
+                    break;
+
+                case WorkflowErrorEvent errorEvent:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"Workflow error: {errorEvent.Exception?.Message ?? "Unknown error"}");
+                    Console.ResetColor();
+                    throw errorEvent.Exception ?? new InvalidOperationException("Workflow encountered an error.");
             }
         }
     }
