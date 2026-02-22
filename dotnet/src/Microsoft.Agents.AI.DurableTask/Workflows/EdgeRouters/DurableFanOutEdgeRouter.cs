@@ -19,6 +19,7 @@
 //  Each DirectRouter independently evaluates its condition,
 //  so resultB always reaches C, but only reaches D if NeedsReview is true.
 
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.DurableTask.Workflows.EdgeRouters;
@@ -54,6 +55,11 @@ internal sealed class DurableFanOutEdgeRouter : IDurableEdgeRouter
         Dictionary<string, Queue<DurableMessageEnvelope>> messageQueues,
         ILogger logger)
     {
+        using Activity? activity = DurableWorkflowInstrumentation.ActivitySource.StartActivity("edge_group.process");
+        activity?
+            .SetTag("edge_group.type", nameof(DurableFanOutEdgeRouter))
+            .SetTag("message.source_id", this._sourceId);
+
         if (logger.IsEnabled(LogLevel.Debug))
         {
             logger.LogDebug("Fan-Out from {Source}: routing to {Count} targets", this._sourceId, this._targetRouters.Count);

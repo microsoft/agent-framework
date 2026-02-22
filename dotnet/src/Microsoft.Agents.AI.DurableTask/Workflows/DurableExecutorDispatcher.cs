@@ -43,6 +43,9 @@ internal static class DurableExecutorDispatcher
     {
         logger.LogDispatchingExecutor(executorInfo.ExecutorId, executorInfo.IsAgenticExecutor);
 
+        // Note: executor.process telemetry is emitted by core Executor.ExecuteAsync inside the
+        // activity worker. We don't duplicate it here because orchestration replay semantics
+        // make wrapping spans unreliable (context.IsReplaying is true at method entry).
         if (executorInfo.IsAgenticExecutor)
         {
             return await ExecuteAgentAsync(context, executorInfo, logger, envelope.Message).ConfigureAwait(true);

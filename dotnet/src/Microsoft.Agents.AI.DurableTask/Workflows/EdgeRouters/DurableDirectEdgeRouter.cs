@@ -29,6 +29,7 @@
 //  Enqueue to
 //  D's queue
 
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -84,6 +85,12 @@ internal sealed class DurableDirectEdgeRouter : IDurableEdgeRouter
         Dictionary<string, Queue<DurableMessageEnvelope>> messageQueues,
         ILogger logger)
     {
+        using Activity? activity = DurableWorkflowInstrumentation.ActivitySource.StartActivity("edge_group.process");
+        activity?
+            .SetTag("edge_group.type", nameof(DurableDirectEdgeRouter))
+            .SetTag("message.source_id", this._sourceId)
+            .SetTag("message.target_id", this._sinkId);
+
         if (this._condition is not null)
         {
             try
@@ -92,17 +99,23 @@ internal sealed class DurableDirectEdgeRouter : IDurableEdgeRouter
                 if (!this._condition(messageObj))
                 {
                     logger.LogEdgeConditionFalse(this._sourceId, this._sinkId);
+                    activity?.SetTag("edge_group.delivered", false)
+                        .SetTag("edge_group.delivery_status", "dropped condition false");
                     return;
                 }
             }
             catch (Exception ex)
             {
                 logger.LogEdgeConditionEvaluationFailed(ex, this._sourceId, this._sinkId);
+                activity?.SetTag("edge_group.delivered", false)
+                    .SetTag("edge_group.delivery_status", "exception");
                 return;
             }
         }
 
         logger.LogEdgeRoutingMessage(this._sourceId, this._sinkId);
+        activity?.SetTag("edge_group.delivered", true)
+            .SetTag("edge_group.delivery_status", "delivered");
         EnqueueMessage(messageQueues, this._sinkId, envelope);
     }
 

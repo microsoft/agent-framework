@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -33,10 +33,12 @@ internal sealed class DurableWorkflowContext : IWorkflowContext
     /// </summary>
     /// <param name="initialState">The shared state passed from the orchestration.</param>
     /// <param name="executor">The executor running in this context.</param>
-    internal DurableWorkflowContext(Dictionary<string, string>? initialState, Executor executor)
+    /// <param name="traceContext">Optional trace context for correlation.</param>
+    internal DurableWorkflowContext(Dictionary<string, string>? initialState, Executor executor, IReadOnlyDictionary<string, string>? traceContext = null)
     {
         this._executor = executor;
         this._initialState = initialState ?? [];
+        this.TraceContext = traceContext;
     }
 
     /// <summary>
@@ -87,6 +89,8 @@ internal sealed class DurableWorkflowContext : IWorkflowContext
     {
         if (message is not null)
         {
+            using Activity? activity = DurableWorkflowInstrumentation.ActivitySource.StartActivity("message.send", ActivityKind.Producer);
+
             Type messageType = message.GetType();
             this.SentMessages.Add(new TypedPayload
             {
@@ -269,7 +273,7 @@ internal sealed class DurableWorkflowContext : IWorkflowContext
     }
 
     /// <inheritdoc/>
-    public IReadOnlyDictionary<string, string>? TraceContext => null;
+    public IReadOnlyDictionary<string, string>? TraceContext { get; }
 
     /// <inheritdoc/>
     public bool ConcurrentRunsEnabled => false;

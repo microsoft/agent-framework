@@ -44,6 +44,7 @@
 //  Superstep 5 — loop exits (no pending messages)
 //    GetFinalResult returns resultE
 
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Agents.AI.DurableTask.Workflows.EdgeRouters;
@@ -115,7 +116,23 @@ internal sealed class DurableWorkflowRunner
         // Extract input - the start executor determines the expected input type from its own InputTypes
         object input = workflowInput.Input;
 
-        return await RunSuperstepLoopAsync(context, workflow, edgeMap, input, logger).ConfigureAwait(true);
+        string result = await RunSuperstepLoopAsync(context, workflow, edgeMap, input, logger).ConfigureAwait(true);
+
+        // Emit the workflow.run span after the superstep loop completes.
+        // Durable Task orchestrations replay the method from the top, where context.IsReplaying
+        // is true. It only transitions to false during forward progress (after all cached activity
+        // results are replayed). By emitting here — after RunSuperstepLoopAsync — we are guaranteed
+        // to be in non-replay mode, so the span is always captured exactly once.
+        if (!context.IsReplaying)
+        {
+            using Activity? activity = DurableWorkflowInstrumentation.ActivitySource.StartActivity("workflow.run");
+            activity?.SetTag("workflow.id", workflow.StartExecutorId)
+                .SetTag("workflow.name", workflowName)
+                .SetTag("run.id", instanceId)
+                .AddEvent(new ActivityEvent("workflow.completed"));
+        }
+
+        return result;
     }
 
     private Workflow GetWorkflowOrThrow(string orchestrationName)
