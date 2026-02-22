@@ -92,6 +92,8 @@ class OpenAISettings(TypedDict, total=False):
             Can be set via environment variable OPENAI_CHAT_MODEL_ID.
         responses_model_id: The OpenAI responses model ID to use, for example, gpt-4o or o1.
             Can be set via environment variable OPENAI_RESPONSES_MODEL_ID.
+        embedding_model_id: The OpenAI embedding model ID to use, for example, text-embedding-3-small.
+            Can be set via environment variable OPENAI_EMBEDDING_MODEL_ID.
 
     Examples:
         .. code-block:: python
@@ -115,6 +117,7 @@ class OpenAISettings(TypedDict, total=False):
     org_id: str | None
     chat_model_id: str | None
     responses_model_id: str | None
+    embedding_model_id: str | None
 
 
 class OpenAIBase(SerializationMixin):

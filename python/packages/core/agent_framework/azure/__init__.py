@@ -36,6 +36,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "AzureOpenAIAssistantsOptions": ("agent_framework.azure._assistants_client", "agent-framework-core"),
     "AzureOpenAIChatClient": ("agent_framework.azure._chat_client", "agent-framework-core"),
     "AzureOpenAIChatOptions": ("agent_framework.azure._chat_client", "agent-framework-core"),
+    "AzureOpenAIEmbeddingClient": ("agent_framework.azure._embedding_client", "agent-framework-core"),
     "AzureOpenAIResponsesClient": ("agent_framework.azure._responses_client", "agent-framework-core"),
     "AzureOpenAIResponsesOptions": ("agent_framework.azure._responses_client", "agent-framework-core"),
     "AzureOpenAISettings": ("agent_framework.azure._shared", "agent-framework-core"),

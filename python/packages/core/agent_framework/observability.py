@@ -38,6 +38,10 @@ if sys.version_info >= (3, 13):
 else:
     from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
+# Defined here to avoid circular import with _types.py
+EmbeddingInputT = TypeVar("EmbeddingInputT", default="str")
+EmbeddingT = TypeVar("EmbeddingT", default="list[float]")
+
 if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.sdk._logs.export import LogRecordExporter
     from opentelemetry.sdk.metrics.export import MetricExporter
@@ -59,7 +63,9 @@ if TYPE_CHECKING:  # pragma: no cover
         ChatResponse,
         ChatResponseUpdate,
         Content,
+        EmbeddingGenerationOptions,
         FinishReason,
+        GeneratedEmbeddings,
         Message,
         ResponseStream,
     )
@@ -70,6 +76,7 @@ __all__ = [
     "OBSERVABILITY_SETTINGS",
     "AgentTelemetryLayer",
     "ChatTelemetryLayer",
+    "EmbeddingTelemetryLayer",
     "OtelAttr",
     "configure_otel_providers",
     "create_metric_views",
@@ -251,6 +258,7 @@ class OtelAttr(str, Enum):
 
     # Operation names
     CHAT_COMPLETION_OPERATION = "chat"
+    EMBEDDING_OPERATION = "embeddings"
     TOOL_EXECUTION_OPERATION = "execute_tool"
     #    Describes GenAI agent creation and is usually applicable when working with remote agent services.
     AGENT_CREATE_OPERATION = "create_agent"
@@ -1263,6 +1271,75 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 return response  # type: ignore[return-value,no-any-return]
 
         return _get_response()
+
+
+EmbeddingOptionsCoT = TypeVar(
+    "EmbeddingOptionsCoT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="EmbeddingGenerationOptions",
+    covariant=True,
+)
+
+
+class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOptionsCoT]):
+    """Layer that wraps embedding client get_embeddings with OpenTelemetry tracing."""
+
+    def __init__(self, *args: Any, otel_provider_name: str | None = None, **kwargs: Any) -> None:
+        """Initialize telemetry attributes and histograms."""
+        super().__init__(*args, **kwargs)
+        self.token_usage_histogram = _get_token_usage_histogram()
+        self.duration_histogram = _get_duration_histogram()
+        self.otel_provider_name = otel_provider_name or getattr(self, "OTEL_PROVIDER_NAME", "unknown")
+
+    async def get_embeddings(
+        self,
+        values: Sequence[EmbeddingInputT],
+        *,
+        options: EmbeddingOptionsCoT | None = None,
+    ) -> GeneratedEmbeddings[EmbeddingT]:
+        """Trace embedding generation with OpenTelemetry spans and metrics."""
+        global OBSERVABILITY_SETTINGS
+        super_get_embeddings = super().get_embeddings  # type: ignore[misc]
+
+        if not OBSERVABILITY_SETTINGS.ENABLED:
+            return await super_get_embeddings(values, options=options)  # type: ignore[no-any-return]
+
+        opts: dict[str, Any] = options or {}  # type: ignore[assignment]
+        provider_name = str(self.otel_provider_name)
+        model_id = opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
+        service_url_func = getattr(self, "service_url", None)
+        service_url = str(service_url_func() if callable(service_url_func) else "unknown")
+        attributes = _get_span_attributes(
+            operation_name=OtelAttr.EMBEDDING_OPERATION,
+            provider_name=provider_name,
+            model=model_id,
+            service_url=service_url,
+        )
+
+        with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
+            start_time_stamp = perf_counter()
+            try:
+                result = await super_get_embeddings(values, options=options)
+            except Exception as exception:
+                capture_exception(span=span, exception=exception, timestamp=time_ns())
+                raise
+            duration = perf_counter() - start_time_stamp
+            response_attributes: dict[str, Any] = {**attributes}
+            if result.usage:
+                if "prompt_tokens" in result.usage:
+                    response_attributes[OtelAttr.INPUT_TOKENS] = result.usage["prompt_tokens"]
+                if "total_tokens" in result.usage:
+                    response_attributes[OtelAttr.OUTPUT_TOKENS] = result.usage.get(
+                        "completion_tokens", result.usage["total_tokens"]
+                    )
+            _capture_response(
+                span=span,
+                attributes=response_attributes,
+                token_usage_histogram=self.token_usage_histogram,
+                operation_duration_histogram=self.duration_histogram,
+                duration=duration,
+            )
+            return result  # type: ignore[no-any-return]
 
 
 class AgentTelemetryLayer:
