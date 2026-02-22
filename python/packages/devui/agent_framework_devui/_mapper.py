@@ -1200,15 +1200,15 @@ class MessageMapper:
                 return [trace_event]
 
             # For unknown/legacy events, still emit as workflow event for backward compatibility
-            # Get event data and serialize if it's a SerializationMixin
+            # Use _serialize_value to handle dataclasses, SerializationMixin, and nested objects
             raw_event_data = getattr(event, "data", None)
-            serialized_event_data: dict[str, Any] | str | None = raw_event_data
-            if raw_event_data is not None and hasattr(raw_event_data, "to_dict"):
-                # SerializationMixin objects - convert to dict for JSON serialization
+            serialized_event_data: dict[str, Any] | str | None = None
+            if raw_event_data is not None:
                 try:
-                    serialized_event_data = raw_event_data.to_dict()
+                    # Use _serialize_value which handles all types: dataclasses, SerializationMixin, etc.
+                    serialized_event_data = self._serialize_value(raw_event_data)
                 except Exception as e:
-                    logger.debug(f"Failed to serialize event data with to_dict(): {e}")
+                    logger.debug(f"Failed to serialize event data: {e}")
                     serialized_event_data = str(raw_event_data)
 
             # Create structured workflow event (keeping for backward compatibility)
