@@ -2,12 +2,14 @@
 
   <PropertyGroup>
     <IsReleaseCandidate>true</IsReleaseCandidate>
-    <NoWarn>$(NoWarn);MEAI001</NoWarn>
+    <NoWarn>$(NoWarn);MEAI001;MAAI001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
+    <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
   </PropertyGroup>

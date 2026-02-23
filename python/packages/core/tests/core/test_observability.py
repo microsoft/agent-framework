@@ -7,7 +7,6 @@ from unittest.mock import Mock
 
 import pytest
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from opentelemetry.semconv_ai import SpanAttributes
 from opentelemetry.trace import StatusCode
 
 from agent_framework import (
@@ -48,8 +47,8 @@ def test_role_event_map():
 def test_enum_values():
     """Test that OtelAttr enum has expected values."""
     assert OtelAttr.OPERATION == "gen_ai.operation.name"
-    assert SpanAttributes.LLM_SYSTEM == "gen_ai.system"
-    assert SpanAttributes.LLM_REQUEST_MODEL == "gen_ai.request.model"
+    assert OtelAttr.SYSTEM == "gen_ai.system"
+    assert OtelAttr.REQUEST_MODEL == "gen_ai.request.model"
     assert OtelAttr.CHAT_COMPLETION_OPERATION == "chat"
     assert OtelAttr.TOOL_EXECUTION_OPERATION == "execute_tool"
     assert OtelAttr.AGENT_INVOKE_OPERATION == "invoke_agent"
@@ -213,7 +212,7 @@ async def test_chat_client_observability(mock_chat_client, span_exporter: InMemo
     span = spans[0]
     assert span.name == "chat Test"
     assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION
-    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "Test"
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "Test"
     assert span.attributes[OtelAttr.INPUT_TOKENS] == 10
     assert span.attributes[OtelAttr.OUTPUT_TOKENS] == 20
     if enable_sensitive_data:
@@ -243,7 +242,7 @@ async def test_chat_client_streaming_observability(
     span = spans[0]
     assert span.name == "chat Test"
     assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION
-    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "Test"
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "Test"
     if enable_sensitive_data:
         assert span.attributes[OtelAttr.INPUT_MESSAGES] is not None
         assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None
@@ -392,7 +391,7 @@ async def test_chat_client_without_model_id_observability(mock_chat_client, span
 
     assert span.name == "chat unknown"
     assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION
-    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "unknown"
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "unknown"
 
 
 async def test_chat_client_streaming_without_model_id_observability(
@@ -416,7 +415,7 @@ async def test_chat_client_streaming_without_model_id_observability(
     span = spans[0]
     assert span.name == "chat unknown"
     assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION
-    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "unknown"
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "unknown"
 
 
 def test_prepend_user_agent_with_none_value():
@@ -491,7 +490,7 @@ async def test_agent_instrumentation_enabled(
     assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
     assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
-    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "TestModel"
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "TestModel"
     assert span.attributes[OtelAttr.INPUT_TOKENS] == 15
     assert span.attributes[OtelAttr.OUTPUT_TOKENS] == 25
     if enable_sensitive_data:
@@ -521,7 +520,7 @@ async def test_agent_streaming_response_with_diagnostics_enabled(
     assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
     assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
-    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "TestModel"
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "TestModel"
     if enable_sensitive_data:
         assert span.attributes.get(OtelAttr.OUTPUT_MESSAGES) is not None  # Streaming, so no usage yet
 
@@ -1381,8 +1380,6 @@ def test_get_response_attributes_with_model_id():
     """Test _get_response_attributes includes model_id."""
     from unittest.mock import Mock
 
-    from opentelemetry.semconv_ai import SpanAttributes
-
     from agent_framework.observability import _get_response_attributes
 
     response = Mock()
@@ -1395,7 +1392,7 @@ def test_get_response_attributes_with_model_id():
     attrs = {}
     result = _get_response_attributes(attrs, response)
 
-    assert result[SpanAttributes.LLM_RESPONSE_MODEL] == "gpt-4"
+    assert result[OtelAttr.RESPONSE_MODEL] == "gpt-4"
 
 
 def test_get_response_attributes_with_usage():

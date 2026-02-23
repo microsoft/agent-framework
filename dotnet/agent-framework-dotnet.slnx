@@ -96,6 +96,10 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step19_Declarative/Agent_Step19_Declarative.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step20_AdditionalAIContext/Agent_Step20_AdditionalAIContext.csproj" />
   </Folder>
+  <Folder Name="/Samples/GettingStarted/AgentSkills/">
+    <File Path="samples/GettingStarted/AgentSkills/README.md" />
+    <Project Path="samples/GettingStarted/AgentSkills/Agent_Step01_BasicSkills/Agent_Step01_BasicSkills.csproj" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
     <Project Path="samples/GettingStarted/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
   </Folder>
