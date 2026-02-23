@@ -105,11 +105,26 @@ Console.WriteLine("\n\n=== Example 5: MessageAIContextProvider middleware ===");
 
 var contextProviderAgent = originalAgent
     .AsBuilder()
-    .Use([new DateTimeContextProvider()])
+    .UseAIContextProviders(new DateTimeContextProvider())
     .Build();
 
 var contextResponse = await contextProviderAgent.RunAsync("Is it almost time for lunch?");
 Console.WriteLine($"Context-enriched response: {contextResponse}");
+
+// AIContextProvider at the chat client level. Unlike the agent-level MessageAIContextProvider,
+// this operates within the IChatClient pipeline and can also enrich tools and instructions.
+// It must be used within the context of a running AIAgent (uses AIAgent.CurrentRunContext).
+// In this case we are attaching an AIContextProvider that only adds messages.
+Console.WriteLine("\n\n=== Example 6: AIContextProvider on chat client pipeline ===");
+
+var chatClientProviderAgent = azureOpenAIClient.AsIChatClient()
+    .AsBuilder()
+    .UseAIContextProviders(new DateTimeContextProvider())
+    .BuildAIAgent(
+        instructions: "You are an AI assistant that helps people find information.");
+
+var chatClientContextResponse = await chatClientProviderAgent.RunAsync("Is it almost time for lunch?");
+Console.WriteLine($"Chat client context-enriched response: {chatClientContextResponse}");
 
 // Function invocation middleware that logs before and after function calls.
 async ValueTask<object?> FunctionCallMiddleware(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
@@ -278,7 +293,7 @@ async Task<ChatResponse> PerRequestChatClientMiddleware(IEnumerable<ChatMessage>
 /// <summary>
 /// A <see cref="MessageAIContextProvider"/> that injects the current date and time into the agent's context.
 /// This is a simple example of how to use a MessageAIContextProvider to enrich agent messages
-/// via the <see cref="AIAgentBuilder.Use(MessageAIContextProvider[])"/> extension method.
+/// via the <see cref="AIAgentBuilder.UseAIContextProviders(MessageAIContextProvider[])"/> extension method.
 /// </summary>
 internal sealed class DateTimeContextProvider : MessageAIContextProvider
 {

@@ -362,9 +362,7 @@ async def test_run_request_with_full_history_clears_service_session_id() -> None
     """Replaying a full conversation (including function calls) via AgentExecutorRequest must
     clear service_session_id so the API does not receive both previous_response_id and the
     same function-call items in input — which would cause a 'Duplicate item' API error."""
-    tool_agent = _ToolHistoryAgent(
-        id="tool_agent", name="ToolAgent", summary_text="Done."
-    )
+    tool_agent = _ToolHistoryAgent(id="tool_agent", name="ToolAgent", summary_text="Done.")
     tool_exec = AgentExecutor(tool_agent, id="tool_agent")
 
     spy_agent = _SessionIdCapturingAgent(id="spy_agent", name="SpyAgent")
@@ -393,9 +391,7 @@ async def test_from_response_preserves_service_session_id() -> None:
     """from_response hands off a prior agent's full conversation to the next executor.
     The receiving executor's service_session_id is preserved so the API can continue
     the conversation using previous_response_id."""
-    tool_agent = _ToolHistoryAgent(
-        id="tool_agent2", name="ToolAgent", summary_text="Done."
-    )
+    tool_agent = _ToolHistoryAgent(id="tool_agent2", name="ToolAgent", summary_text="Done.")
     tool_exec = AgentExecutor(tool_agent, id="tool_agent2")
 
     spy_agent = _SessionIdCapturingAgent(id="spy_agent2", name="SpyAgent")
@@ -403,11 +399,7 @@ async def test_from_response_preserves_service_session_id() -> None:
     # Simulate a prior run on the spy executor.
     spy_exec._session.service_session_id = "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
 
-    wf = (
-        WorkflowBuilder(start_executor=tool_exec, output_executors=[spy_exec])
-        .add_edge(tool_exec, spy_exec)
-        .build()
-    )
+    wf = WorkflowBuilder(start_executor=tool_exec, output_executors=[spy_exec]).add_edge(tool_exec, spy_exec).build()
 
     result = await wf.run("start")
     assert result.get_outputs() is not None

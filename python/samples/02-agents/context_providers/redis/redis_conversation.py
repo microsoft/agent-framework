@@ -21,7 +21,6 @@ Run:
 import asyncio
 import os
 
-from agent_framework import AgentSession
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.redis import RedisContextProvider
 from azure.identity import AzureCliCredential

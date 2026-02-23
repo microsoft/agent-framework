@@ -642,9 +642,8 @@ def test_prepare_message_with_text_reasoning_content(openai_unit_test_env: dict[
     assert len(prepared) == 1
     assert "reasoning_details" in prepared[0]
     assert prepared[0]["reasoning_details"] == mock_reasoning_data
-    # Should also have the text content
-    assert prepared[0]["content"][0]["type"] == "text"
-    assert prepared[0]["content"][0]["text"] == "The answer is 42."
+    # Should also have the text content (flattened to string for text-only)
+    assert prepared[0]["content"] == "The answer is 42."
 
 
 def test_function_approval_content_is_skipped_in_preparation(openai_unit_test_env: dict[str, str]) -> None:
@@ -690,8 +689,7 @@ def test_function_approval_content_is_skipped_in_preparation(openai_unit_test_en
     )
     prepared_mixed = client._prepare_message_for_openai(mixed_message)
     assert len(prepared_mixed) == 1  # Only text content should remain
-    assert prepared_mixed[0]["content"][0]["type"] == "text"
-    assert prepared_mixed[0]["content"][0]["text"] == "I need approval for this action."
+    assert prepared_mixed[0]["content"] == "I need approval for this action."
 
 
 def test_usage_content_in_streaming_response(openai_unit_test_env: dict[str, str]) -> None:
@@ -728,6 +726,43 @@ def test_usage_content_in_streaming_response(openai_unit_test_env: dict[str, str
     assert usage_content.usage_details["input_token_count"] == 100
     assert usage_content.usage_details["output_token_count"] == 50
     assert usage_content.usage_details["total_token_count"] == 150
+
+
+def test_streaming_chunk_with_usage_and_text(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that text content is not lost when usage data is in the same chunk.
+
+    Some providers (e.g. Gemini) include both usage and text content in the
+    same streaming chunk. See https://github.com/microsoft/agent-framework/issues/3434
+    """
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice, ChoiceDelta
+    from openai.types.completion_usage import CompletionUsage
+
+    client = OpenAIChatClient()
+
+    mock_chunk = ChatCompletionChunk(
+        id="test-chunk",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="gemini-2.0-flash-lite",
+        choices=[
+            Choice(
+                index=0,
+                delta=ChoiceDelta(content="Hello world", role="assistant"),
+                finish_reason=None,
+            )
+        ],
+        usage=CompletionUsage(prompt_tokens=18, completion_tokens=5, total_tokens=23),
+    )
+
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    # Should have BOTH text and usage content
+    content_types = [c.type for c in update.contents]
+    assert "text" in content_types, "Text content should not be lost when usage is present"
+    assert "usage" in content_types, "Usage content should still be present"
+
+    text_content = next(c for c in update.contents if c.type == "text")
+    assert text_content.text == "Hello world"
 
 
 def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
@@ -814,7 +849,7 @@ def test_prepare_options_with_instructions(openai_unit_test_env: dict[str, str])
     assert "messages" in prepared_options
     assert len(prepared_options["messages"]) == 2
     assert prepared_options["messages"][0]["role"] == "system"
-    assert prepared_options["messages"][0]["content"][0]["text"] == "You are a helpful assistant."
+    assert prepared_options["messages"][0]["content"] == "You are a helpful assistant."
 
 
 def test_prepare_message_with_author_name(openai_unit_test_env: dict[str, str]) -> None:
@@ -849,6 +884,109 @@ def test_prepare_message_with_tool_result_author_name(openai_unit_test_env: dict
     assert len(prepared) == 1
     # Should not have 'name' field for tool messages
     assert "name" not in prepared[0]
+
+
+def test_prepare_system_message_content_is_string(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that system message content is a plain string, not a list.
+
+    Some OpenAI-compatible endpoints (e.g. NVIDIA NIM) reject system messages
+    with list content. See https://github.com/microsoft/agent-framework/issues/1407
+    """
+    client = OpenAIChatClient()
+
+    message = Message(role="system", contents=[Content.from_text(text="You are a helpful assistant.")])
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "system"
+    assert isinstance(prepared[0]["content"], str)
+    assert prepared[0]["content"] == "You are a helpful assistant."
+
+
+def test_prepare_developer_message_content_is_string(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that developer message content is a plain string, not a list."""
+    client = OpenAIChatClient()
+
+    message = Message(role="developer", contents=[Content.from_text(text="Follow these rules.")])
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "developer"
+    assert isinstance(prepared[0]["content"], str)
+    assert prepared[0]["content"] == "Follow these rules."
+
+
+def test_prepare_system_message_multiple_text_contents_joined(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that system messages with multiple text contents are joined into a single string."""
+    client = OpenAIChatClient()
+
+    message = Message(
+        role="system",
+        contents=[
+            Content.from_text(text="You are a helpful assistant."),
+            Content.from_text(text="Be concise."),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "system"
+    assert isinstance(prepared[0]["content"], str)
+    assert prepared[0]["content"] == "You are a helpful assistant.\nBe concise."
+
+
+def test_prepare_user_message_text_content_is_string(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that text-only user message content is flattened to a plain string.
+
+    Some OpenAI-compatible endpoints (e.g. Foundry Local) cannot deserialize
+    the list format. See https://github.com/microsoft/agent-framework/issues/4084
+    """
+    client = OpenAIChatClient()
+
+    message = Message(role="user", contents=[Content.from_text(text="Hello")])
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "user"
+    assert isinstance(prepared[0]["content"], str)
+    assert prepared[0]["content"] == "Hello"
+
+
+def test_prepare_user_message_multimodal_content_remains_list(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that multimodal user message content remains a list."""
+    client = OpenAIChatClient()
+
+    message = Message(
+        role="user",
+        contents=[
+            Content.from_text(text="What's in this image?"),
+            Content.from_uri(uri="https://example.com/image.png", media_type="image/png"),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    # Multimodal content must stay as list for the API
+    has_list_content = any(isinstance(m.get("content"), list) for m in prepared)
+    assert has_list_content
+
+
+def test_prepare_assistant_message_text_content_is_string(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that text-only assistant message content is flattened to a plain string."""
+    client = OpenAIChatClient()
+
+    message = Message(role="assistant", contents=[Content.from_text(text="Sure, I can help.")])
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "assistant"
+    assert isinstance(prepared[0]["content"], str)
+    assert prepared[0]["content"] == "Sure, I can help."
 
 
 def test_tool_choice_required_with_function_name(openai_unit_test_env: dict[str, str]) -> None:
