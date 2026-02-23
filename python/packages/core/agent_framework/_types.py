@@ -2256,6 +2256,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: type[ResponseModelBoundT],
+        value: Any | None = None,
     ) -> AgentResponse[ResponseModelBoundT]: ...
 
     @overload
@@ -2265,6 +2266,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: None = None,
+        value: Any | None = None,
     ) -> AgentResponse[Any]: ...
 
     @classmethod
