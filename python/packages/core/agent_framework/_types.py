@@ -2273,6 +2273,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: type[BaseModel] | None = None,
+        value: Any | None = None,
     ) -> AgentResponseT:
         """Joins multiple updates into a single AgentResponse.
 
@@ -2281,8 +2282,9 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data.
+            value: Optional pre-parsed structured output value to set directly on the response.
         """
-        msg = cls(messages=[], response_format=output_format_type)
+        msg = cls(messages=[], response_format=output_format_type, value=value)
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)

@@ -881,7 +881,7 @@ class TestClaudeAgentStructuredOutput:
             assert response.value is None
 
     async def test_structured_output_with_streaming(self) -> None:
-        """Test that structured_output is available in streaming updates."""
+        """Test that structured_output is available via get_final_response after streaming."""
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
         from claude_agent_sdk.types import StreamEvent
 
@@ -913,13 +913,13 @@ class TestClaudeAgentStructuredOutput:
 
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
-            updates: list[AgentResponseUpdate] = []
-            async for update in agent.run("Return structured data", stream=True):
-                updates.append(update)
-            # Last update should carry structured_output in additional_properties
-            last_update = updates[-1]
-            assert last_update.additional_properties is not None
-            assert last_update.additional_properties.get("structured_output") == structured_data
+            stream = agent.run("Return structured data", stream=True)
+            # Consume the stream
+            async for _ in stream:
+                pass
+            # Structured output should be available via get_final_response
+            response = await stream.get_final_response()
+            assert response.value == structured_data
 
     async def test_structured_output_with_error_does_not_propagate(self) -> None:
         """Test that structured_output is not propagated when ResultMessage is an error."""

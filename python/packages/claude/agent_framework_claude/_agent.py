@@ -624,8 +624,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
             return response
         return response.get_final_response()
 
-    @staticmethod
-    def _finalize_response(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
+    def _finalize_response(self, updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
         """Build AgentResponse and propagate structured_output as value.
 
         Args:
@@ -634,13 +633,8 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         Returns:
             An AgentResponse with structured_output set as value if present.
         """
-        response = AgentResponse.from_updates(updates)
-        for update in updates:
-            if update.additional_properties and "structured_output" in update.additional_properties:
-                response._value = update.additional_properties["structured_output"]
-                response._value_parsed = True
-                break
-        return response
+        structured_output = getattr(self, "_structured_output", None)
+        return AgentResponse.from_updates(updates, value=structured_output)
 
     async def _get_stream(
         self,
@@ -721,13 +715,9 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
                 session_id = message.session_id
                 structured_output = message.structured_output
 
-        # Yield structured output if present
-        if structured_output is not None:
-            yield AgentResponseUpdate(
-                role="assistant",
-                additional_properties={"structured_output": structured_output},
-            )
-
         # Update session with session ID
         if session_id:
             session.service_session_id = session_id
+
+        # Store structured output for the finalizer
+        self._structured_output = structured_output
