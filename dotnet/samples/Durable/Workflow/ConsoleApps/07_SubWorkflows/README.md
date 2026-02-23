@@ -1,13 +1,13 @@
 # Sub-Workflows Sample (Nested Workflows)
 
-This sample demonstrates how to compose complex workflows from simpler, reusable sub-workflows using the Durable Task Framework. Sub-workflows run as separate orchestration instances, providing modular design, independent checkpointing, and hierarchical visualization in the DTS dashboard.
+This sample demonstrates how to compose complex workflows from simpler, reusable sub-workflows. Sub-workflows are built using `WorkflowBuilder` and embedded as executors via `BindAsExecutor()`. Unlike the in-process workflow runner, the durable workflow backend persists execution state across process restarts — each sub-workflow runs as a separate orchestration instance on the Durable Task Scheduler, providing independent checkpointing, fault tolerance, and hierarchical visualization in the DTS dashboard.
 
 ## Key Concepts Demonstrated
 
 - **Sub-workflows**: Using `Workflow.BindAsExecutor()` to embed a workflow as an executor in another workflow
 - **Multi-level nesting**: Sub-workflows within sub-workflows (Level 2 nesting)
 - **Automatic discovery**: Registering only the main workflow; sub-workflows are discovered automatically
-- **Failure isolation**: Each sub-workflow runs as a separate orchestration instance
+- **Failure isolation**: Each sub-workflow runs as a separate orchestration instance on the DTS backend
 - **Hierarchical visualization**: Parent-child orchestration hierarchy visible in the DTS dashboard
 - **Event propagation**: Custom workflow events (`FraudRiskAssessedEvent`) bubble up from nested sub-workflows to the streaming client
 - **Message passing**: Using `Executor<TInput>` (void return) with `SendMessageAsync` to forward typed messages to connected executors (`SelectCarrier`)
