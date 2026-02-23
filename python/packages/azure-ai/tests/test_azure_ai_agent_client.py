@@ -858,6 +858,44 @@ async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_file_search_with_
     assert run_options["tool_resources"] == {"file_search": {"vector_store_ids": ["vs-123"]}}
 
 
+async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_code_interpreter_with_file_ids(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _prepare_tools_for_azure_ai with CodeInterpreterTool with file_ids from get_code_interpreter_tool()."""
+
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+
+    code_interpreter_tool = client.get_code_interpreter_tool(file_ids=["file-123", "file-456"])
+
+    run_options: dict[str, Any] = {}
+    result = await client._prepare_tools_for_azure_ai([code_interpreter_tool], run_options)  # type: ignore
+
+    assert len(result) == 1
+    assert result[0] == {"type": "code_interpreter"}
+    assert "tool_resources" in run_options
+    assert "code_interpreter" in run_options["tool_resources"]
+    assert sorted(run_options["tool_resources"]["code_interpreter"]["file_ids"]) == ["file-123", "file-456"]
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_basic() -> None:
+    """Test get_code_interpreter_tool returns CodeInterpreterTool without files."""
+    from azure.ai.agents.models import CodeInterpreterTool
+
+    tool = AzureAIAgentClient.get_code_interpreter_tool()
+    assert isinstance(tool, CodeInterpreterTool)
+    assert len(tool.file_ids) == 0
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_with_file_ids() -> None:
+    """Test get_code_interpreter_tool forwards file_ids to the SDK."""
+    from azure.ai.agents.models import CodeInterpreterTool
+
+    tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=["file-abc", "file-def"])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert "file-abc" in tool.file_ids
+    assert "file-def" in tool.file_ids
+
+
 async def test_azure_ai_chat_client_create_agent_stream_submit_tool_approvals(
     mock_agents_client: MagicMock,
 ) -> None:
