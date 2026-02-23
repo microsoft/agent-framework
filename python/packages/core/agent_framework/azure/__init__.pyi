@@ -49,5 +49,4 @@ __all__ = [
     "DurableAIAgentOrchestrationContext",
     "DurableAIAgentWorker",
     "FoundryMemoryProvider",
-    "get_entra_auth_token",
 ]
