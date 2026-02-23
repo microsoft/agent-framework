@@ -20,7 +20,10 @@ const string AssistantInstructions = "You are a helpful assistant that can get w
 const string AssistantName = "WeatherAssistant";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Define the agent with function tools.
 AITool tool = AIFunctionFactory.Create(GetWeather);
@@ -37,11 +40,11 @@ var newAgent = await aiProjectClient.CreateAIAgentAsync(name: AssistantName, mod
 var existingAgent = await aiProjectClient.GetAIAgentAsync(name: AssistantName, tools: [tool]);
 
 // Non-streaming agent interaction with function tools.
-AgentSession session = await existingAgent.GetNewSessionAsync();
+AgentSession session = await existingAgent.CreateSessionAsync();
 Console.WriteLine(await existingAgent.RunAsync("What is the weather like in Amsterdam?", session));
 
 // Streaming agent interaction with function tools.
-session = await existingAgent.GetNewSessionAsync();
+session = await existingAgent.CreateSessionAsync();
 await foreach (AgentResponseUpdate update in existingAgent.RunStreamingAsync("What is the weather like in Amsterdam?", session))
 {
     Console.WriteLine(update);

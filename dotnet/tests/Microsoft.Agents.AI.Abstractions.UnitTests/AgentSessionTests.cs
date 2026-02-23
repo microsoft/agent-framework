@@ -11,13 +11,20 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 /// </summary>
 public class AgentSessionTests
 {
+    #region StateBag Tests
+
     [Fact]
-    public void Serialize_ReturnsDefaultJsonElement()
+    public void StateBag_Values_Roundtrips()
     {
+        // Arrange
         var session = new TestAgentSession();
-        var result = session.Serialize();
-        Assert.Equal(default, result);
+
+        // Act & Assert
+        session.StateBag.SetValue("key1", "value1");
+        Assert.Equal("value1", session.StateBag.GetValue<string>("key1"));
     }
+
+    #endregion
 
     #region GetService Method Tests
 

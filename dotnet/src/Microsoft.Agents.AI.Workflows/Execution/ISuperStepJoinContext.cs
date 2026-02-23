@@ -8,7 +8,7 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 
 internal interface ISuperStepJoinContext
 {
-    bool WithCheckpointing { get; }
+    bool IsCheckpointingEnabled { get; }
     bool ConcurrentRunsEnabled { get; }
 
     ValueTask ForwardWorkflowEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default);

@@ -84,7 +84,7 @@ public static class Program
         {
             string? lastExecutorId = null;
 
-            await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, messages);
+            await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, messages);
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
             await foreach (WorkflowEvent evt in run.WatchStreamAsync())
             {

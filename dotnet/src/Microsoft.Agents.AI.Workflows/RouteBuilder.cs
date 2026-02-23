@@ -35,9 +35,6 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <summary>
 /// Provides a builder for configuring message type handlers for an <see cref="Executor"/>.
 /// </summary>
-/// <remarks>
-/// Override the <see cref="Executor.ConfigureRoutes"/> method to customize the routing of messages to handlers.
-/// </remarks>
 public class RouteBuilder
 {
     private readonly IExternalRequestContext? _externalRequestContext;
@@ -161,7 +158,7 @@ public class RouteBuilder
 
         async ValueTask<ExternalResponse?> InvokeHandlerAsync(ExternalResponse response, IWorkflowContext context, CancellationToken cancellationToken)
         {
-            if (!response.DataIs(out TResponse? typedResponse))
+            if (!response.TryGetDataAs(out TResponse? typedResponse))
             {
                 throw new InvalidOperationException($"Received response data is not of expected type {typeof(TResponse).FullName} for port {port.Id}.");
             }
@@ -630,6 +627,8 @@ public class RouteBuilder
             throw new InvalidOperationException($"Unknown port {response.PortInfo}");
         }
     }
+
+    internal IEnumerable<Type> OutputTypes => this._outputTypes.Values;
 
     internal MessageRouter Build()
     {

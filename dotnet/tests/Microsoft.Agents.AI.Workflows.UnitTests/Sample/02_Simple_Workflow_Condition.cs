@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - Testing legacy reflection-based pattern
+
 using System;
 using System.IO;
 using System.Linq;
@@ -31,7 +33,7 @@ internal static class Step2EntryPoint
 
     public static async ValueTask<string> RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment, string input = "This is a spam message.")
     {
-        StreamingRun handle = await environment.StreamAsync(WorkflowInstance, input: input).ConfigureAwait(false);
+        StreamingRun handle = await environment.RunStreamingAsync(WorkflowInstance, input: input).ConfigureAwait(false);
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (evt)
@@ -43,6 +45,9 @@ internal static class Step2EntryPoint
                     return workflowResult;
                 case ExecutorCompletedEvent executorCompletedEvt:
                     writer.WriteLine($"'{executorCompletedEvt.ExecutorId}: {executorCompletedEvt.Data}");
+                    break;
+                case WorkflowErrorEvent errorEvent:
+                    Assert.Fail($"Workflow failed with error: {errorEvent.Exception}");
                     break;
             }
         }
@@ -58,10 +63,11 @@ internal sealed class DetectSpamExecutor(string id, params string[] spamKeywords
         spamKeywords.Any(keyword => message.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0);
 }
 
-internal sealed class RespondToMessageExecutor(string id) : ReflectingExecutor<RespondToMessageExecutor>(id, declareCrossRunShareable: true), IMessageHandler<bool>
+internal sealed partial class RespondToMessageExecutor(string id) : Executor(id, declareCrossRunShareable: true), IMessageHandler<bool>
 {
     public const string ActionResult = "Message processed successfully.";
 
+    [MessageHandler(Yield = [typeof(string)])]
     public async ValueTask HandleAsync(bool message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (message)
@@ -77,10 +83,11 @@ internal sealed class RespondToMessageExecutor(string id) : ReflectingExecutor<R
     }
 }
 
-internal sealed class RemoveSpamExecutor(string id) : ReflectingExecutor<RemoveSpamExecutor>(id, declareCrossRunShareable: true), IMessageHandler<bool>
+internal sealed partial class RemoveSpamExecutor(string id) : Executor(id, declareCrossRunShareable: true), IMessageHandler<bool>
 {
     public const string ActionResult = "Spam message removed.";
 
+    [MessageHandler(Yield = [typeof(string)])]
     public async ValueTask HandleAsync(bool message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (!message)

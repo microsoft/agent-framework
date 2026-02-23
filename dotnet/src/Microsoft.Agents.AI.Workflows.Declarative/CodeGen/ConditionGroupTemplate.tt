@@ -1,7 +1,10 @@
 ﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
 <#@ output extension=".cs" #>
 <#@ assembly name="System.Core" #>
-<#@ include file="Snippets/Index.tt" once="true" #>
+<#@ import namespace="Microsoft.Agents.AI.Workflows.Declarative.ObjectModel" #>
+<#@ import namespace="Microsoft.Agents.ObjectModel" #>
+<#@ include file="Snippets/AssignVariableTemplate.tt" once="true" #>
+<#@ include file="Snippets/EvaluateBoolExpressionTemplate.tt" once="true" #>
 /// <summary>
 /// Conditional branching similar to an if / elseif / elseif / else chain.
 /// </summary>

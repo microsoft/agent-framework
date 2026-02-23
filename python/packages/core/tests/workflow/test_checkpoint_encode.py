@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from agent_framework._workflows._checkpoint_encoding import (
-    _CYCLE_SENTINEL,
-    DATACLASS_MARKER,
-    MODEL_MARKER,
+    _PICKLE_MARKER,
+    _TYPE_MARKER,
     encode_checkpoint_value,
 )
 
@@ -41,23 +42,6 @@ class ModelWithToDict:
         return cls(data=d["data"])
 
 
-class ModelWithToJson:
-    """A class that implements to_json/from_json protocol."""
-
-    def __init__(self, data: str) -> None:
-        self.data = data
-
-    def to_json(self) -> str:
-        return f'{{"data": "{self.data}"}}'
-
-    @classmethod
-    def from_json(cls, json_str: str) -> "ModelWithToJson":
-        import json
-
-        d = json.loads(json_str)
-        return cls(data=d["data"])
-
-
 class UnknownObject:
     """A class that doesn't support any serialization protocol."""
 
@@ -68,43 +52,37 @@ class UnknownObject:
         return f"UnknownObject({self.value})"
 
 
-# --- Tests for primitive encoding ---
+# --- Tests for primitive encoding (pass-through) ---
 
 
 def test_encode_string() -> None:
     """Test encoding a string value."""
-    result = encode_checkpoint_value("hello")
-    assert result == "hello"
+    assert encode_checkpoint_value("hello") == "hello"
 
 
 def test_encode_integer() -> None:
     """Test encoding an integer value."""
-    result = encode_checkpoint_value(42)
-    assert result == 42
+    assert encode_checkpoint_value(42) == 42
 
 
 def test_encode_float() -> None:
     """Test encoding a float value."""
-    result = encode_checkpoint_value(3.14)
-    assert result == 3.14
+    assert encode_checkpoint_value(3.14) == 3.14
 
 
 def test_encode_boolean_true() -> None:
     """Test encoding a True boolean value."""
-    result = encode_checkpoint_value(True)
-    assert result is True
+    assert encode_checkpoint_value(True) is True
 
 
 def test_encode_boolean_false() -> None:
     """Test encoding a False boolean value."""
-    result = encode_checkpoint_value(False)
-    assert result is False
+    assert encode_checkpoint_value(False) is False
 
 
 def test_encode_none() -> None:
     """Test encoding a None value."""
-    result = encode_checkpoint_value(None)
-    assert result is None
+    assert encode_checkpoint_value(None) is None
 
 
 # --- Tests for collection encoding ---
@@ -112,8 +90,7 @@ def test_encode_none() -> None:
 
 def test_encode_empty_dict() -> None:
     """Test encoding an empty dictionary."""
-    result = encode_checkpoint_value({})
-    assert result == {}
+    assert encode_checkpoint_value({}) == {}
 
 
 def test_encode_simple_dict() -> None:
@@ -132,8 +109,7 @@ def test_encode_dict_with_non_string_keys() -> None:
 
 def test_encode_empty_list() -> None:
     """Test encoding an empty list."""
-    result = encode_checkpoint_value([])
-    assert result == []
+    assert encode_checkpoint_value([]) == []
 
 
 def test_encode_simple_list() -> None:
@@ -144,29 +120,26 @@ def test_encode_simple_list() -> None:
 
 
 def test_encode_tuple() -> None:
-    """Test encoding a tuple (converted to list)."""
+    """Test encoding a tuple (pickled to preserve type)."""
     data = (1, 2, 3)
     result = encode_checkpoint_value(data)
-    assert result == [1, 2, 3]
+    assert isinstance(result, dict)
+    assert _PICKLE_MARKER in result
+    assert _TYPE_MARKER in result
 
 
 def test_encode_set() -> None:
-    """Test encoding a set (converted to list)."""
+    """Test encoding a set (pickled to preserve type)."""
     data = {1, 2, 3}
     result = encode_checkpoint_value(data)
-    assert isinstance(result, list)
-    assert sorted(result) == [1, 2, 3]
+    assert isinstance(result, dict)
+    assert _PICKLE_MARKER in result
+    assert _TYPE_MARKER in result
 
 
 def test_encode_nested_dict() -> None:
     """Test encoding a nested dictionary structure."""
-    data = {
-        "outer": {
-            "inner": {
-                "value": 42,
-            }
-        }
-    }
+    data = {"outer": {"inner": {"value": 42}}}
     result = encode_checkpoint_value(data)
     assert result == {"outer": {"inner": {"value": 42}}}
 
@@ -178,18 +151,18 @@ def test_encode_list_of_dicts() -> None:
     assert result == [{"a": 1}, {"b": 2}]
 
 
-# --- Tests for dataclass encoding ---
+# --- Tests for non-JSON-native types (pickled) ---
 
 
 def test_encode_simple_dataclass() -> None:
-    """Test encoding a simple dataclass."""
+    """Test encoding a simple dataclass produces a pickled entry."""
     obj = SimpleDataclass(name="test", value=42)
     result = encode_checkpoint_value(obj)
 
     assert isinstance(result, dict)
-    assert DATACLASS_MARKER in result
-    assert "value" in result
-    assert result["value"] == {"name": "test", "value": 42}
+    assert _PICKLE_MARKER in result
+    assert _TYPE_MARKER in result
+    assert isinstance(result[_PICKLE_MARKER], str)  # base64 string
 
 
 def test_encode_nested_dataclass() -> None:
@@ -199,12 +172,8 @@ def test_encode_nested_dataclass() -> None:
     result = encode_checkpoint_value(outer)
 
     assert isinstance(result, dict)
-    assert DATACLASS_MARKER in result
-    assert "value" in result
-
-    outer_value = result["value"]
-    assert outer_value["outer_name"] == "outer"
-    assert DATACLASS_MARKER in outer_value["inner"]
+    assert _PICKLE_MARKER in result
+    assert _TYPE_MARKER in result
 
 
 def test_encode_list_of_dataclasses() -> None:
@@ -218,7 +187,7 @@ def test_encode_list_of_dataclasses() -> None:
     assert isinstance(result, list)
     assert len(result) == 2
     for item in result:
-        assert DATACLASS_MARKER in item
+        assert _PICKLE_MARKER in item
 
 
 def test_encode_dict_with_dataclass_values() -> None:
@@ -230,169 +199,77 @@ def test_encode_dict_with_dataclass_values() -> None:
     result = encode_checkpoint_value(data)
 
     assert isinstance(result, dict)
-    assert DATACLASS_MARKER in result["item1"]
-    assert DATACLASS_MARKER in result["item2"]
-
-
-# --- Tests for model protocol encoding ---
+    assert _PICKLE_MARKER in result["item1"]
+    assert _PICKLE_MARKER in result["item2"]
 
 
 def test_encode_model_with_to_dict() -> None:
-    """Test encoding an object implementing to_dict/from_dict protocol."""
+    """Test encoding an object with to_dict is pickled (not using to_dict)."""
     obj = ModelWithToDict(data="test_data")
     result = encode_checkpoint_value(obj)
 
     assert isinstance(result, dict)
-    assert MODEL_MARKER in result
-    assert result["strategy"] == "to_dict"
-    assert result["value"] == {"data": "test_data"}
+    assert _PICKLE_MARKER in result
 
 
-def test_encode_model_with_to_json() -> None:
-    """Test encoding an object implementing to_json/from_json protocol."""
-    obj = ModelWithToJson(data="test_data")
-    result = encode_checkpoint_value(obj)
-
-    assert isinstance(result, dict)
-    assert MODEL_MARKER in result
-    assert result["strategy"] == "to_json"
-    assert '"data": "test_data"' in result["value"]
-
-
-# --- Tests for unknown object encoding ---
-
-
-def test_encode_unknown_object_fallback_to_string() -> None:
-    """Test that unknown objects are encoded as strings."""
+def test_encode_unknown_object() -> None:
+    """Test that arbitrary objects are pickled."""
     obj = UnknownObject(value="test")
     result = encode_checkpoint_value(obj)
 
-    assert isinstance(result, str)
-    assert "UnknownObject" in result
+    assert isinstance(result, dict)
+    assert _PICKLE_MARKER in result
 
 
-# --- Tests for cycle detection ---
+def test_encode_datetime() -> None:
+    """Test that datetime objects are pickled."""
+    dt = datetime(2024, 5, 4, 12, 30, 45, tzinfo=timezone.utc)
+    result = encode_checkpoint_value(dt)
+
+    assert isinstance(result, dict)
+    assert _PICKLE_MARKER in result
 
 
-def test_encode_dict_with_self_reference() -> None:
-    """Test that dict self-references are detected and handled."""
-    data: dict[str, Any] = {"name": "test"}
-    data["self"] = data  # Create circular reference
-
-    result = encode_checkpoint_value(data)
-    assert result["name"] == "test"
-    assert result["self"] == _CYCLE_SENTINEL
+# --- Tests for type marker ---
 
 
-def test_encode_list_with_self_reference() -> None:
-    """Test that list self-references are detected and handled."""
-    data: list[Any] = [1, 2]
-    data.append(data)  # Create circular reference
+def test_encode_type_marker_records_type_info() -> None:
+    """Test that encoded objects include correct type information."""
+    obj = SimpleDataclass(name="test", value=42)
+    result = encode_checkpoint_value(obj)
 
-    result = encode_checkpoint_value(data)
-    assert result[0] == 1
-    assert result[1] == 2
-    assert result[2] == _CYCLE_SENTINEL
+    type_key = result[_TYPE_MARKER]
+    assert "SimpleDataclass" in type_key
 
 
-# --- Tests for reserved keyword handling ---
-# Note: Security is enforced at deserialization time by validating class types,
-# not at serialization time. This allows legitimate encoded data to be re-encoded.
+def test_encode_type_marker_uses_module_qualname_format() -> None:
+    """Test that type marker uses module:qualname format."""
+    obj = SimpleDataclass(name="test", value=42)
+    result = encode_checkpoint_value(obj)
+
+    type_key = result[_TYPE_MARKER]
+    assert ":" in type_key
+    module, qualname = type_key.split(":")
+    assert module  # non-empty module
+    assert qualname == "SimpleDataclass"
 
 
-def test_encode_allows_dict_with_model_marker_and_value() -> None:
-    """Test that encoding a dict with MODEL_MARKER and 'value' is allowed.
+# --- Tests for JSON serializability ---
 
-    Security is enforced at deserialization time, not serialization time.
-    """
+
+def test_encode_result_is_json_serializable() -> None:
+    """Test that encoded output is fully JSON-serializable."""
     data = {
-        MODEL_MARKER: "some.module:SomeClass",
-        "value": {"data": "test"},
+        "dc": SimpleDataclass(name="test", value=42),
+        "model": ModelWithToDict(data="test"),
+        "dt": datetime.now(timezone.utc),
+        "nested": [SimpleDataclass(name="n", value=1)],
     }
-    result = encode_checkpoint_value(data)
-    assert MODEL_MARKER in result
-    assert "value" in result
-
-
-def test_encode_allows_dict_with_dataclass_marker_and_value() -> None:
-    """Test that encoding a dict with DATACLASS_MARKER and 'value' is allowed.
-
-    Security is enforced at deserialization time, not serialization time.
-    """
-    data = {
-        DATACLASS_MARKER: "some.module:SomeClass",
-        "value": {"field": "test"},
-    }
-    result = encode_checkpoint_value(data)
-    assert DATACLASS_MARKER in result
-    assert "value" in result
-
-
-def test_encode_allows_nested_dict_with_marker_keys() -> None:
-    """Test that encoding nested dict with marker keys is allowed.
-
-    Security is enforced at deserialization time, not serialization time.
-    """
-    nested_data = {
-        "outer": {
-            MODEL_MARKER: "some.module:SomeClass",
-            "value": {"data": "test"},
-        }
-    }
-    result = encode_checkpoint_value(nested_data)
-    assert "outer" in result
-    assert MODEL_MARKER in result["outer"]
-
-
-def test_encode_allows_marker_without_value() -> None:
-    """Test that a dict with marker key but without 'value' key is allowed."""
-    data = {
-        MODEL_MARKER: "some.module:SomeClass",
-        "other_key": "allowed",
-    }
-    result = encode_checkpoint_value(data)
-    assert MODEL_MARKER in result
-    assert result["other_key"] == "allowed"
-
-
-def test_encode_allows_value_without_marker() -> None:
-    """Test that a dict with 'value' key but without marker is allowed."""
-    data = {
-        "value": {"nested": "data"},
-        "other_key": "allowed",
-    }
-    result = encode_checkpoint_value(data)
-    assert "value" in result
-    assert result["other_key"] == "allowed"
-
-
-# --- Tests for max depth protection ---
-
-
-def test_encode_deep_nesting_triggers_max_depth() -> None:
-    """Test that very deep nesting triggers max depth protection."""
-    # Create a deeply nested structure (over 100 levels)
-    data: dict[str, Any] = {"level": 0}
-    current = data
-    for i in range(105):
-        current["nested"] = {"level": i + 1}
-        current = current["nested"]
 
     result = encode_checkpoint_value(data)
-
-    # Navigate to find the max_depth sentinel
-    current_result = result
-    found_max_depth = False
-    for _ in range(110):
-        if isinstance(current_result, dict) and "nested" in current_result:
-            current_result = current_result["nested"]
-            if current_result == "<max_depth>":
-                found_max_depth = True
-                break
-        else:
-            break
-
-    assert found_max_depth, "Expected <max_depth> sentinel to be found in deeply nested structure"
+    # Should not raise
+    json_str = json.dumps(result)
+    assert isinstance(json_str, str)
 
 
 # --- Tests for mixed complex structures ---
@@ -413,6 +290,7 @@ def test_encode_complex_mixed_structure() -> None:
 
     result = encode_checkpoint_value(data)
 
+    # Primitives and collections pass through
     assert result["string_value"] == "hello"
     assert result["int_value"] == 42
     assert result["float_value"] == 3.14
@@ -420,4 +298,17 @@ def test_encode_complex_mixed_structure() -> None:
     assert result["none_value"] is None
     assert result["list_value"] == [1, 2, 3]
     assert result["nested_dict"] == {"a": 1, "b": 2}
-    assert DATACLASS_MARKER in result["dataclass_value"]
+    # Dataclass is pickled
+    assert _PICKLE_MARKER in result["dataclass_value"]
+
+
+def test_encode_preserves_dict_with_pickle_marker_key() -> None:
+    """Test that regular dicts containing _PICKLE_MARKER key are recursively encoded."""
+    data = {
+        _PICKLE_MARKER: "some_value",
+        "other_key": "test",
+    }
+    result = encode_checkpoint_value(data)
+    assert _PICKLE_MARKER in result
+    assert result[_PICKLE_MARKER] == "some_value"
+    assert result["other_key"] == "test"

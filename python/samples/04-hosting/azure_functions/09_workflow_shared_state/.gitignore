@@ -1,0 +1,18 @@
+# Local settings
+local.settings.json
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Azure Functions
+bin/
+obj/
+.python_packages/
+
+# IDE
+.vscode/
+.idea/

@@ -86,8 +86,8 @@ export function CheckpointInfoModal({
     (cp) => cp.checkpoint_id === selectedCheckpointId
   );
 
-  const executorIds = fullCheckpoint?.shared_state?._executor_state
-    ? Object.keys(fullCheckpoint.shared_state._executor_state)
+  const executorIds = fullCheckpoint?.state?._executor_state
+    ? Object.keys(fullCheckpoint.state._executor_state)
     : [];
   const messageExecutors = fullCheckpoint?.messages
     ? Object.keys(fullCheckpoint.messages)
@@ -345,14 +345,14 @@ export function CheckpointInfoModal({
                       </div>
                     )}
 
-                  {/* Shared State */}
+                  {/* Workflow State */}
                   <div>
-                    <div className="text-sm font-medium mb-3">Shared State</div>
-                    {fullCheckpoint?.shared_state && Object.keys(fullCheckpoint.shared_state).filter(
+                    <div className="text-sm font-medium mb-3">Workflow State</div>
+                    {fullCheckpoint?.state && Object.keys(fullCheckpoint.state).filter(
                       (k) => k !== "_executor_state"
                     ).length > 0 ? (
                       <div className="flex flex-wrap gap-2">
-                        {Object.keys(fullCheckpoint.shared_state)
+                        {Object.keys(fullCheckpoint.state)
                           .filter((k) => k !== "_executor_state")
                           .map((key) => (
                             <Badge key={key} variant="secondary" className="font-mono text-xs">

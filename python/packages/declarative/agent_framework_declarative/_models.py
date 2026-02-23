@@ -1,24 +1,38 @@
 # Copyright (c) Microsoft. All rights reserved.
+from __future__ import annotations
+
+import logging
 import os
 from collections.abc import MutableMapping
 from contextvars import ContextVar
-from typing import Any, Literal, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, overload
 
-from agent_framework import get_logger
 from agent_framework._serialization import SerializationMixin
 
-try:
+if TYPE_CHECKING:
     from powerfx import Engine
 
-    engine: Engine | None = Engine()
-except (ImportError, RuntimeError):
-    # ImportError: powerfx package not installed
-    # RuntimeError: .NET runtime not available or misconfigured
-    engine = None
+_engine_initialized = False
+_engine: Engine | None = None
 
-from typing import overload
 
-logger = get_logger("agent_framework.declarative")
+def _get_engine() -> Engine | None:
+    """Lazily initialize the PowerFx engine on first use."""
+    global _engine_initialized, _engine
+    if not _engine_initialized:
+        _engine_initialized = True
+        try:
+            from powerfx import Engine
+
+            _engine = Engine()
+        except (ImportError, RuntimeError):
+            # ImportError: powerfx package not installed
+            # RuntimeError: .NET runtime not available or misconfigured
+            pass
+    return _engine
+
+
+logger = logging.getLogger("agent_framework.declarative")
 
 # Context variable for safe_mode setting.
 # When True (default), environment variables are NOT accessible in PowerFx expressions.
@@ -39,12 +53,13 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
 
     Args:
         value: The value to check.
-        log_value: Whether to log the full value on error or just a snippet.
+        log_value: Whether to log additional context on error.
     """
     if value is None:
         return value
     if not value.startswith("="):
         return value
+    engine = _get_engine()
     if engine is None:
         logger.warning(
             "PowerFx engine not available for evaluating values starting with '='. "
@@ -59,9 +74,9 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
         return engine.eval(value[1:], symbols={"Env": dict(os.environ)})
     except Exception as exc:
         if log_value:
-            logger.debug(f"PowerFx evaluation failed for value '{value}': {exc}")
+            logger.debug("PowerFx evaluation failed for a value: %s", exc)
         else:
-            logger.debug(f"PowerFx evaluation failed for value (first five characters shown) '{value[:5]}': {exc}")
+            logger.debug("PowerFx evaluation failed for a value (details redacted): %s", exc)
         return value
 
 
@@ -101,15 +116,19 @@ class Property(SerializationMixin):
     @classmethod
     def from_dict(
         cls, value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "Property":
+    ) -> Property:
         """Create a Property instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base Property class
         if cls is not Property:
             # We're being called on a subclass, use the normal from_dict
             return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
-        # Filter out 'type' (if it exists) field which is not a Property parameter
-        value.pop("type", None)
+        # The YAML spec uses 'type' for the data type, but Property stores it as 'kind'
+        if "type" in value:
+            if "kind" not in value:
+                value["kind"] = value.pop("type")
+            else:
+                value.pop("type")
         kind = value.get("kind", "")
         if kind == "array":
             return ArrayProperty.from_dict(value, dependencies=dependencies)
@@ -211,7 +230,7 @@ class PropertySchema(SerializationMixin):
     @classmethod
     def from_dict(
         cls, value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "PropertySchema":
+    ) -> PropertySchema:
         """Create a PropertySchema instance from a dictionary, filtering out 'kind' field."""
         # Filter out 'kind', 'type', 'name', and 'description' fields that may appear in YAML
         # but aren't PropertySchema params
@@ -222,15 +241,25 @@ class PropertySchema(SerializationMixin):
         """Get a schema out of this PropertySchema to create pydantic models."""
         json_schema = self.to_dict(exclude={"type"}, exclude_none=True)
         new_props = {}
+        required_fields: list[str] = []
         for prop in json_schema.get("properties", []):
             prop_name = prop.pop("name")
             prop["type"] = prop.pop("kind", None)
+            # Convert property-level 'required' boolean to a top-level 'required' array
+            if prop.pop("required", False):
+                required_fields.append(prop_name)
+            # Remove empty enum arrays
+            if not prop.get("enum"):
+                prop.pop("enum", None)
             new_props[prop_name] = prop
+        json_schema["type"] = "object"
         json_schema["properties"] = new_props
+        if required_fields:
+            json_schema["required"] = required_fields
         return json_schema
 
 
-TConnection = TypeVar("TConnection", bound="Connection")
+ConnectionT = TypeVar("ConnectionT", bound="Connection")
 
 
 class Connection(SerializationMixin):
@@ -248,12 +277,12 @@ class Connection(SerializationMixin):
 
     @classmethod
     def from_dict(
-        cls: type[TConnection],
+        cls: type[ConnectionT],
         value: MutableMapping[str, Any],
         /,
         *,
         dependencies: MutableMapping[str, Any] | None = None,
-    ) -> TConnection:
+    ) -> ConnectionT:
         """Create a Connection instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base Connection class
         if cls is not Connection:
@@ -491,7 +520,7 @@ class AgentDefinition(SerializationMixin):
     @classmethod
     def from_dict(
         cls, value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "AgentDefinition":
+    ) -> AgentDefinition:
         """Create an AgentDefinition instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base AgentDefinition class
         if cls is not AgentDefinition:
@@ -505,7 +534,7 @@ class AgentDefinition(SerializationMixin):
         return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
 
 
-TTool = TypeVar("TTool", bound="Tool")
+ToolT = TypeVar("ToolT", bound="Tool")
 
 
 class Tool(SerializationMixin):
@@ -536,8 +565,8 @@ class Tool(SerializationMixin):
 
     @classmethod
     def from_dict(
-        cls: type[TTool], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "TTool":
+        cls: type[ToolT], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
+    ) -> ToolT:
         """Create a Tool instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base Tool class
         if cls is not Tool:
@@ -867,7 +896,7 @@ class Resource(SerializationMixin):
     @classmethod
     def from_dict(
         cls, value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "Resource":
+    ) -> Resource:
         """Create a Resource instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base Resource class
         if cls is not Resource:

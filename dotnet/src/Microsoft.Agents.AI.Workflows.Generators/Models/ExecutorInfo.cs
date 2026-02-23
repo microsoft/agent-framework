@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Workflows.Generators.Models;
 /// <param name="GenericParameters">The generic type parameters of the class (e.g., "&lt;T, U&gt;"), or null if not generic.</param>
 /// <param name="IsNested">Whether the class is nested inside another class.</param>
 /// <param name="ContainingTypeChain">The chain of containing types for nested classes (e.g., "OuterClass.InnerClass"). Empty string if not nested.</param>
-/// <param name="BaseHasConfigureRoutes">Whether the base class has a ConfigureRoutes method that should be called.</param>
+/// <param name="BaseHasConfigureProtocol">Whether the base class has a ConfigureRoutes method that should be called.</param>
 /// <param name="Handlers">The list of handler methods to register.</param>
 /// <param name="ClassSendTypes">The types declared via class-level [SendsMessage] attributes.</param>
 /// <param name="ClassYieldTypes">The types declared via class-level [YieldsOutput] attributes.</param>
@@ -21,19 +21,20 @@ internal sealed record ExecutorInfo(
     string? GenericParameters,
     bool IsNested,
     string ContainingTypeChain,
-    bool BaseHasConfigureRoutes,
+    bool BaseHasConfigureProtocol,
     ImmutableEquatableArray<HandlerInfo> Handlers,
     ImmutableEquatableArray<string> ClassSendTypes,
     ImmutableEquatableArray<string> ClassYieldTypes)
 {
     /// <summary>
-    /// Gets whether any protocol type overrides should be generated.
+    /// Gets whether any "Sent" message type registrations should be generated.
     /// </summary>
-    public bool ShouldGenerateProtocolOverrides =>
-        !this.ClassSendTypes.IsEmpty ||
-        !this.ClassYieldTypes.IsEmpty ||
-        this.HasHandlerWithSendTypes ||
-        this.HasHandlerWithYieldTypes;
+    public bool ShouldGenerateSentMessageRegistrations => !this.ClassSendTypes.IsEmpty || this.HasHandlerWithSendTypes;
+
+    /// <summary>
+    /// Gets whether any "Yielded" output type registrations should be generated.
+    /// </summary>
+    public bool ShouldGenerateYieldedOutputRegistrations => !this.ClassYieldTypes.IsEmpty || this.HasHandlerWithYieldTypes;
 
     /// <summary>
     /// Gets whether any handler has explicit Send types.

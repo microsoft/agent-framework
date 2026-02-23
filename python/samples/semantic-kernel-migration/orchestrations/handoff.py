@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/orchestrations/handoff.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """Side-by-side handoff orchestrations for Semantic Kernel and Agent Framework."""
 
@@ -7,16 +16,13 @@ from collections.abc import AsyncIterable, Iterator, Sequence
 from typing import cast
 
 from agent_framework import (
-    ChatMessage,
-    HandoffBuilder,
-    HandoffUserInputRequest,
-    RequestInfoEvent,
+    Message,
     WorkflowEvent,
-    WorkflowOutputEvent,
-    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from semantic_kernel.agents import Agent, ChatCompletionAgent, HandoffOrchestration, OrchestrationHandoffs
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
@@ -34,6 +40,8 @@ if sys.version_info >= (3, 12):
 else:
     pass  # pragma: no cover
 
+# Load environment variables from .env file
+load_dotenv()
 
 CUSTOMER_PROMPT = "I need help with order 12345. I want a replacement and need to know when it will arrive."
 SCRIPTED_RESPONSES = [
@@ -120,6 +128,7 @@ _sk_new_message = True
 
 def _sk_streaming_callback(message: StreamingChatMessageContent, is_final: bool) -> None:
     """Display SK agent messages as they stream."""
+
     global _sk_new_message
     if _sk_new_message:
         print(f"{message.name}: ", end="", flush=True)
@@ -215,18 +224,18 @@ async def _drain_events(stream: AsyncIterable[WorkflowEvent]) -> list[WorkflowEv
     return [event async for event in stream]
 
 
-def _collect_handoff_requests(events: list[WorkflowEvent]) -> list[RequestInfoEvent]:
-    requests: list[RequestInfoEvent] = []
+def _collect_handoff_requests(events: list[WorkflowEvent]) -> list[WorkflowEvent]:
+    requests: list[WorkflowEvent] = []
     for event in events:
-        if isinstance(event, RequestInfoEvent) and isinstance(event.data, HandoffUserInputRequest):
+        if event.type == "request_info" and isinstance(event.data, HandoffAgentUserRequest):
             requests.append(event)
     return requests
 
 
-def _extract_final_conversation(events: list[WorkflowEvent]) -> list[ChatMessage]:
+def _extract_final_conversation(events: list[WorkflowEvent]) -> list[Message]:
     for event in events:
-        if isinstance(event, WorkflowOutputEvent):
-            data = cast(list[ChatMessage], event.data)
+        if event.type == "output":
+            data = cast(list[Message], event.data)
             return data
     return []
 
@@ -236,16 +245,20 @@ async def run_agent_framework_example(initial_task: str, scripted_responses: Seq
     triage, refund, status, returns = _create_af_agents(client)
 
     workflow = (
-        HandoffBuilder(name="sk_af_handoff_migration", participants=[triage, refund, status, returns])
-        .set_coordinator(triage)
+        HandoffBuilder(
+            name="sk_af_handoff_migration",
+            participants=[triage, refund, status, returns],
+            termination_condition=lambda conv: sum(1 for m in conv if m.role == "user") >= 4,
+        )
+        .with_start_agent(triage)
         .add_handoff(triage, [refund, status, returns])
         .add_handoff(refund, [status, triage])
         .add_handoff(status, [refund, triage])
-        .add_handoff(returns, triage)
+        .add_handoff(returns, [triage])
         .build()
     )
 
-    events = await _drain_events(workflow.run_stream(initial_task))
+    events = await _drain_events(workflow.run(initial_task, stream=True))
     pending = _collect_handoff_requests(events)
     scripted_iter = iter(scripted_responses)
 
@@ -255,8 +268,8 @@ async def run_agent_framework_example(initial_task: str, scripted_responses: Seq
             user_reply = next(scripted_iter)
         except StopIteration:
             user_reply = "Thanks, that's all."
-        responses = {request.request_id: user_reply for request in pending}
-        final_events = await _drain_events(workflow.send_responses_streaming(responses))
+        responses = {request.request_id: [Message(role="user", text=user_reply)] for request in pending}
+        final_events = await _drain_events(workflow.run(stream=True, responses=responses))
         pending = _collect_handoff_requests(final_events)
 
     conversation = _extract_final_conversation(final_events)
@@ -269,7 +282,7 @@ async def run_agent_framework_example(initial_task: str, scripted_responses: Seq
         text = message.text or ""
         if not text.strip():
             continue
-        speaker = message.author_name or message.role.value
+        speaker = message.author_name or message.role
         lines.append(f"{speaker}: {text}")
     return "\n".join(lines)
 

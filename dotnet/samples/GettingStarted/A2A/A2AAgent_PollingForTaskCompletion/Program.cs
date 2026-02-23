@@ -16,7 +16,7 @@ AgentCard agentCard = await agentCardResolver.GetAgentCardAsync();
 // Create an instance of the AIAgent for an existing A2A agent specified by the agent card.
 AIAgent agent = agentCard.AsAIAgent();
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Start the initial run with a long-running task.
 AgentResponse response = await agent.RunAsync("Conduct a comprehensive analysis of quantum computing applications in cryptography, including recent breakthroughs, implementation challenges, and future roadmap. Please include diagrams and visual representations to illustrate complex concepts.", session);

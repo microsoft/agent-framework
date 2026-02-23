@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentResponse, ChatMessage, Role
+from agent_framework import AgentResponse, Message
 from agent_framework_durabletask import DurableAIAgent
 from azure.durable_functions.models.Task import TaskBase, TaskState
 
@@ -129,6 +129,25 @@ def executor_with_context(mock_context_with_uuid: tuple[Mock, str]) -> tuple[Any
 class TestAgentResponseHelpers:
     """Tests for response handling through public AgentTask API."""
 
+    def test_try_set_value_exception_handling(self) -> None:
+        """Test try_set_value handles exceptions raised when converting a successful task result to AgentResponse."""
+        entity_task = _create_entity_task()
+        task = AgentTask(entity_task, None, "correlation-id")
+
+        # Simulate successful entity task with invalid result that causes exception
+        entity_task.state = TaskState.SUCCEEDED
+        entity_task.result = {"invalid": "format"}  # Missing required fields for AgentResponse
+
+        # Clear pending_tasks to simulate that parent has processed the child
+        task.pending_tasks.clear()
+
+        # Call try_set_value - should catch exception and set error
+        task.try_set_value(entity_task)
+
+        # Verify task failed due to conversion exception
+        assert task.state == TaskState.FAILED
+        assert isinstance(task.result, Exception)
+
     def test_try_set_value_success(self) -> None:
         """Test try_set_value correctly processes successful task completion."""
         entity_task = _create_entity_task()
@@ -136,7 +155,7 @@ class TestAgentResponseHelpers:
 
         # Simulate successful entity task completion
         entity_task.state = TaskState.SUCCEEDED
-        entity_task.result = AgentResponse(messages=[ChatMessage(role="assistant", text="Test response")]).to_dict()
+        entity_task.result = AgentResponse(messages=[Message(role="assistant", text="Test response")]).to_dict()
 
         # Clear pending_tasks to simulate that parent has processed the child
         task.pending_tasks.clear()
@@ -178,7 +197,7 @@ class TestAgentResponseHelpers:
 
         # Simulate successful entity task with JSON response
         entity_task.state = TaskState.SUCCEEDED
-        entity_task.result = AgentResponse(messages=[ChatMessage(role="assistant", text='{"answer": "42"}')]).to_dict()
+        entity_task.result = AgentResponse(messages=[Message(role="assistant", text='{"answer": "42"}')]).to_dict()
 
         # Clear pending_tasks to simulate that parent has processed the child
         task.pending_tasks.clear()
@@ -214,10 +233,10 @@ class TestAzureFunctionsFireAndForget:
         context.call_entity = Mock(return_value=_create_entity_task())
 
         agent = DurableAIAgent(executor, "TestAgent")
-        thread = agent.get_new_thread()
+        session = agent.create_session()
 
         # Run with wait_for_response=False
-        result = agent.run("Test message", thread=thread, options={"wait_for_response": False})
+        result = agent.run("Test message", session=session, options={"wait_for_response": False})
 
         # Verify signal_entity was called and call_entity was not
         assert context.signal_entity.call_count == 1
@@ -232,9 +251,9 @@ class TestAzureFunctionsFireAndForget:
         context.signal_entity = Mock()
 
         agent = DurableAIAgent(executor, "TestAgent")
-        thread = agent.get_new_thread()
+        session = agent.create_session()
 
-        result = agent.run("Test message", thread=thread, options={"wait_for_response": False})
+        result = agent.run("Test message", session=session, options={"wait_for_response": False})
 
         # Task should be immediately complete
         assert isinstance(result, AgentTask)
@@ -246,15 +265,15 @@ class TestAzureFunctionsFireAndForget:
         context.signal_entity = Mock()
 
         agent = DurableAIAgent(executor, "TestAgent")
-        thread = agent.get_new_thread()
+        session = agent.create_session()
 
-        result = agent.run("Test message", thread=thread, options={"wait_for_response": False})
+        result = agent.run("Test message", session=session, options={"wait_for_response": False})
 
         # Get the result
         response = result.result
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
-        assert response.messages[0].role == Role.SYSTEM
+        assert response.messages[0].role == "system"
         # Check message contains key information
         message_text = response.messages[0].text
         assert "accepted" in message_text.lower()
@@ -267,9 +286,9 @@ class TestAzureFunctionsFireAndForget:
         context.call_entity = Mock(return_value=_create_entity_task())
 
         agent = DurableAIAgent(executor, "TestAgent")
-        thread = agent.get_new_thread()
+        session = agent.create_session()
 
-        result = agent.run("Test message", thread=thread, options={"wait_for_response": True})
+        result = agent.run("Test message", session=session, options={"wait_for_response": True})
 
         # Verify call_entity was called and signal_entity was not
         assert context.call_entity.call_count == 1
@@ -277,6 +296,27 @@ class TestAzureFunctionsFireAndForget:
 
         # Should return an AgentTask
         assert isinstance(result, AgentTask)
+
+
+class TestAzureFunctionsAgentExecutor:
+    """Tests for AzureFunctionsAgentExecutor."""
+
+    def test_generate_unique_id(self, mock_context_with_uuid: tuple[Mock, str]) -> None:
+        """Test generate_unique_id method returns UUID from orchestration context."""
+        from agent_framework_azurefunctions._orchestration import AzureFunctionsAgentExecutor
+
+        context, _ = mock_context_with_uuid
+        executor = AzureFunctionsAgentExecutor(context)
+
+        # Call generate_unique_id
+        unique_id = executor.generate_unique_id()
+
+        # Verify it returns the UUID from context (as string with dashes)
+        # The UUID is returned in standard format with dashes
+        context.new_uuid.assert_called_once()
+        # Just verify it's a string representation of UUID
+        assert isinstance(unique_id, str)
+        assert len(unique_id) > 0
 
 
 class TestOrchestrationIntegration:
@@ -298,15 +338,15 @@ class TestOrchestrationIntegration:
         # Create agent directly with executor (not via app.get_agent)
         agent = DurableAIAgent(executor, "WriterAgent")
 
-        # Create thread
-        thread = agent.get_new_thread()
+        # Create session
+        session = agent.create_session()
 
         # First call - returns AgentTask
-        task1 = agent.run("Write something", thread=thread)
+        task1 = agent.run("Write something", session=session)
         assert isinstance(task1, AgentTask)
 
         # Second call - returns AgentTask
-        task2 = agent.run("Improve: something", thread=thread)
+        task2 = agent.run("Improve: something", session=session)
         assert isinstance(task2, AgentTask)
 
         # Verify both calls used the same entity (same session key)
@@ -315,7 +355,7 @@ class TestOrchestrationIntegration:
         # EntityId format is @dafx-writeragent@<uuid_hex>
         expected_entity_id = f"@dafx-writeragent@{uuid_hexes[0]}"
         assert entity_calls[0]["entity_id"] == expected_entity_id
-        # generate_unique_id called 3 times: thread + 2 correlation IDs
+        # generate_unique_id called 3 times: session + 2 correlation IDs
         assert executor.generate_unique_id.call_count == 3
 
     def test_multiple_agents_in_orchestration(self, executor_with_multiple_uuids: tuple[Any, Mock, list[str]]) -> None:
@@ -334,12 +374,12 @@ class TestOrchestrationIntegration:
         writer = DurableAIAgent(executor, "WriterAgent")
         editor = DurableAIAgent(executor, "EditorAgent")
 
-        writer_thread = writer.get_new_thread()
-        editor_thread = editor.get_new_thread()
+        writer_session = writer.create_session()
+        editor_session = editor.create_session()
 
         # Call both agents - returns AgentTasks
-        writer_task = writer.run("Write", thread=writer_thread)
-        editor_task = editor.run("Edit", thread=editor_thread)
+        writer_task = writer.run("Write", session=writer_session)
+        editor_task = editor.run("Edit", session=editor_session)
 
         assert isinstance(writer_task, AgentTask)
         assert isinstance(editor_task, AgentTask)

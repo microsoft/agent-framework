@@ -2,6 +2,8 @@
 
 """Task steps agent demonstrating agentic generative UI (Feature 6)."""
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import AsyncGenerator
 from enum import Enum
@@ -18,9 +20,11 @@ from ag_ui.core import (
     TextMessageStartEvent,
     ToolCallStartEvent,
 )
-from agent_framework import ChatAgent, ChatClientProtocol, ChatMessage, Content, tool
+from agent_framework import Agent, Content, Message, SupportsChatGetResponse, tool
 from agent_framework.ag_ui import AgentFrameworkAgent
 from pydantic import BaseModel, Field
+
+from agent_framework_ag_ui import AgentFrameworkWorkflow
 
 
 class StepStatus(str, Enum):
@@ -52,16 +56,16 @@ def generate_task_steps(steps: list[TaskStep]) -> str:
     return "Steps generated."
 
 
-def _create_task_steps_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrameworkAgent:
+def _create_task_steps_agent(client: SupportsChatGetResponse[Any]) -> AgentFrameworkAgent:
     """Create the task steps agent using tool-based approach for streaming.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A configured AgentFrameworkAgent instance
     """
-    agent = ChatAgent[Any](
+    agent = Agent[Any](
         name="task_steps_agent",
         instructions="""You are a helpful assistant that breaks down tasks into actionable steps.
 
@@ -81,7 +85,7 @@ def _create_task_steps_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrame
     - "Installing platform"
     - "Adding finishing touches"
     """,
-        chat_client=chat_client,
+        client=client,
         tools=[generate_task_steps],
     )
 
@@ -103,38 +107,29 @@ def _create_task_steps_agent(chat_client: ChatClientProtocol[Any]) -> AgentFrame
 
 
 # Wrap the agent's run method to add step execution simulation
-class TaskStepsAgentWithExecution:
+class TaskStepsAgentWithExecution(AgentFrameworkWorkflow):
     """Wrapper that adds step execution simulation after plan generation.
 
     This wrapper delegates to AgentFrameworkAgent but is recognized as compatible
-    by add_agent_framework_fastapi_endpoint since it implements run_agent().
+    by add_agent_framework_fastapi_endpoint since it implements run().
     """
 
     def __init__(self, base_agent: AgentFrameworkAgent):
         """Initialize wrapper with base agent."""
+        super().__init__(name=base_agent.name, description=base_agent.description)
         self._base_agent = base_agent
-
-    @property
-    def name(self) -> str:
-        """Delegate to base agent."""
-        return self._base_agent.name
-
-    @property
-    def description(self) -> str:
-        """Delegate to base agent."""
-        return self._base_agent.description
 
     def __getattr__(self, name: str) -> Any:
         """Delegate all other attribute access to base agent."""
         return getattr(self._base_agent, name)
 
-    async def run_agent(self, input_data: dict[str, Any]) -> AsyncGenerator[Any, None]:
+    async def run(self, input_data: dict[str, Any]) -> AsyncGenerator[Any]:
         """Run the agent and then simulate step execution."""
         import logging
         import uuid
 
         logger = logging.getLogger(__name__)
-        logger.info("TaskStepsAgentWithExecution.run_agent() called - wrapper is active")
+        logger.info("TaskStepsAgentWithExecution.run() called - wrapper is active")
 
         # First, run the base agent to generate the plan - buffer text messages
         final_state: dict[str, Any] = {}
@@ -142,7 +137,7 @@ class TaskStepsAgentWithExecution:
         tool_call_id: str | None = None
         buffered_text_events: list[Any] = []  # Buffer text from first LLM call
 
-        async for event in self._base_agent.run_agent(input_data):
+        async for event in self._base_agent.run(input_data):
             event_type_str = str(event.type) if hasattr(event, "type") else type(event).__name__
             logger.info(f"Processing event: {event_type_str}")
 
@@ -218,30 +213,30 @@ class TaskStepsAgentWithExecution:
 
             # Get the underlying chat agent and client
             chat_agent = self._base_agent.agent  # type: ignore
-            chat_client = chat_agent.chat_client  # type: ignore
+            client = chat_agent.client  # type: ignore
 
             # Build messages for summary call
 
             original_messages = input_data.get("messages", [])
 
-            # Convert to ChatMessage objects if needed
-            messages: list[ChatMessage] = []
+            # Convert to Message objects if needed
+            messages: list[Message] = []
             for msg in original_messages:
                 if isinstance(msg, dict):
                     content_str = msg.get("content", "")
                     if isinstance(content_str, str):
                         messages.append(
-                            ChatMessage(
+                            Message(
                                 role=msg.get("role", "user"),
                                 contents=[Content.from_text(text=content_str)],
                             )
                         )
-                elif isinstance(msg, ChatMessage):
+                elif isinstance(msg, Message):
                     messages.append(msg)
 
             # Add completion message
             messages.append(
-                ChatMessage(
+                Message(
                     role="user",
                     contents=[
                         Content.from_text(
@@ -268,7 +263,7 @@ class TaskStepsAgentWithExecution:
 
                 # Stream completion
                 accumulated_text = ""
-                async for chunk in chat_client.get_streaming_response(messages=messages):
+                async for chunk in client.get_response(messages=messages, stream=True):
                     # chunk is ChatResponseUpdate
                     if hasattr(chunk, "text") and chunk.text:
                         accumulated_text += chunk.text
@@ -330,14 +325,14 @@ class TaskStepsAgentWithExecution:
             yield run_finished_event
 
 
-def task_steps_agent_wrapped(chat_client: ChatClientProtocol[Any]) -> TaskStepsAgentWithExecution:
+def task_steps_agent_wrapped(client: SupportsChatGetResponse[Any]) -> TaskStepsAgentWithExecution:
     """Create a task steps agent with execution simulation.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
         A wrapped agent instance with step execution simulation
     """
-    base_agent = _create_task_steps_agent(chat_client)
+    base_agent = _create_task_steps_agent(client)
     return TaskStepsAgentWithExecution(base_agent)

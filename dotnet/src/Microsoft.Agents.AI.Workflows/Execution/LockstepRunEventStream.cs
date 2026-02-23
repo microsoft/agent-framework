@@ -13,9 +13,6 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 
 internal sealed class LockstepRunEventStream : IRunEventStream
 {
-    private static readonly string s_namespace = typeof(LockstepRunEventStream).Namespace!;
-    private static readonly ActivitySource s_activitySource = new(s_namespace);
-
     private readonly CancellationTokenSource _stopCancellation = new();
     private readonly InputWaiter _inputWaiter = new();
     private int _isDisposed;
@@ -53,8 +50,8 @@ internal sealed class LockstepRunEventStream : IRunEventStream
 
         this._stepRunner.OutgoingEvents.EventRaised += OnWorkflowEventAsync;
 
-        using Activity? activity = s_activitySource.StartActivity(ActivityNames.WorkflowRun);
-        activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.RunId, this._stepRunner.RunId);
+        using Activity? activity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity();
+        activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.SessionId, this._stepRunner.SessionId);
 
         try
         {

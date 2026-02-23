@@ -9,7 +9,7 @@
             "command": "uv",
             "args": [
                 "run",
-                "pre-commit",
+                "prek",
                 "run",
                 "-a"
             ],

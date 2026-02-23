@@ -2,12 +2,15 @@
 
 """Example FastAPI server with AG-UI endpoints."""
 
+from __future__ import annotations
+
 import logging
 import os
+from typing import cast
 
 import uvicorn
 from agent_framework import ChatOptions
-from agent_framework._clients import BaseChatClient
+from agent_framework._clients import SupportsChatGetResponse
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework.anthropic import AnthropicClient
 from agent_framework.azure import AzureOpenAIChatClient
@@ -18,6 +21,7 @@ from ..agents.document_writer_agent import document_writer_agent
 from ..agents.human_in_the_loop_agent import human_in_the_loop_agent
 from ..agents.recipe_agent import recipe_agent
 from ..agents.simple_agent import simple_agent
+from ..agents.subgraphs_agent import subgraphs_agent
 from ..agents.task_steps_agent import task_steps_agent_wrapped
 from ..agents.ui_generator_agent import ui_generator_agent
 from ..agents.weather_agent import weather_agent
@@ -64,42 +68,43 @@ app.add_middleware(
 # Create a shared chat client for all agents
 # You can use different chat clients for different agents if needed
 # Set CHAT_CLIENT=anthropic to use Anthropic, defaults to Azure OpenAI
-chat_client: BaseChatClient[ChatOptions] = (
-    AnthropicClient() if os.getenv("CHAT_CLIENT", "").lower() == "anthropic" else AzureOpenAIChatClient()
+client: SupportsChatGetResponse[ChatOptions] = cast(
+    SupportsChatGetResponse[ChatOptions],
+    AnthropicClient() if os.getenv("CHAT_CLIENT", "").lower() == "anthropic" else AzureOpenAIChatClient(),
 )
 
 # Agentic Chat - basic chat agent
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=simple_agent(chat_client),
+    agent=simple_agent(client),
     path="/agentic_chat",
 )
 
 # Backend Tool Rendering - agent with tools
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=weather_agent(chat_client),
+    agent=weather_agent(client),
     path="/backend_tool_rendering",
 )
 
 # Shared State - recipe agent with structured output
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=recipe_agent(chat_client),
+    agent=recipe_agent(client),
     path="/shared_state",
 )
 
 # Predictive State Updates - document writer with predictive state
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=document_writer_agent(chat_client),
+    agent=document_writer_agent(client),
     path="/predictive_state_updates",
 )
 
 # Human in the Loop - human-in-the-loop agent with step customization
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=human_in_the_loop_agent(chat_client),
+    agent=human_in_the_loop_agent(client),
     path="/human_in_the_loop",
     state_schema={"steps": {"type": "array"}},
     predict_state_config={"steps": {"tool": "generate_task_steps", "tool_argument": "steps"}},
@@ -108,15 +113,22 @@ add_agent_framework_fastapi_endpoint(
 # Agentic Generative UI - task steps agent with streaming state updates
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=task_steps_agent_wrapped(chat_client),  # type: ignore[arg-type]
+    agent=task_steps_agent_wrapped(client),  # type: ignore[arg-type]
     path="/agentic_generative_ui",
 )
 
 # Tool-based Generative UI - UI generator with frontend-rendered tools
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=ui_generator_agent(chat_client),
+    agent=ui_generator_agent(client),
     path="/tool_based_generative_ui",
+)
+
+# Subgraphs - deterministic travel planner with interrupt-driven selections
+add_agent_framework_fastapi_endpoint(
+    app=app,
+    agent=subgraphs_agent(),
+    path="/subgraphs",
 )
 
 

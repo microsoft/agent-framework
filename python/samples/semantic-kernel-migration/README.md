@@ -7,14 +7,14 @@ This gallery helps Semantic Kernel (SK) developers move to the Microsoft Agent F
 ## What’s Included
 
 ### Chat completion parity
-- [01_basic_chat_completion.py](chat_completion/01_basic_chat_completion.py) — Minimal SK `ChatCompletionAgent` and AF `ChatAgent` conversation.
+- [01_basic_chat_completion.py](chat_completion/01_basic_chat_completion.py) — Minimal SK `ChatCompletionAgent` and AF `Agent` conversation.
 - [02_chat_completion_with_tool.py](chat_completion/02_chat_completion_with_tool.py) — Adds a simple tool/function call in both SDKs.
-- [03_chat_completion_thread_and_stream.py](chat_completion/03_chat_completion_thread_and_stream.py) — Demonstrates thread reuse and streaming prompts.
+- [03_chat_completion_thread_and_stream.py](chat_completion/03_chat_completion_thread_and_stream.py) — Demonstrates session reuse and streaming prompts.
 
 ### Azure AI agent parity
 - [01_basic_azure_ai_agent.py](azure_ai_agent/01_basic_azure_ai_agent.py) — Create and run an Azure AI agent end to end.
 - [02_azure_ai_agent_with_code_interpreter.py](azure_ai_agent/02_azure_ai_agent_with_code_interpreter.py) — Enable hosted code interpreter/tool execution.
-- [03_azure_ai_agent_threads_and_followups.py](azure_ai_agent/03_azure_ai_agent_threads_and_followups.py) — Persist threads and follow-ups across invocations.
+- [03_azure_ai_agent_threads_and_followups.py](azure_ai_agent/03_azure_ai_agent_threads_and_followups.py) — Persist sessions and follow-ups across invocations.
 
 ### OpenAI Assistants API parity
 - [01_basic_openai_assistant.py](openai_assistant/01_basic_openai_assistant.py) — Baseline assistant comparison.
@@ -70,6 +70,6 @@ Swap the script path for any other workflow or process sample. Deactivate the sa
 
 ## Tips for Migration
 - Keep the original SK sample open while iterating on the AF equivalent; the code is intentionally formatted so you can copy/paste across SDKs.
-- Threads/conversation state are explicit in AF. When porting SK code that relies on implicit thread reuse, call `agent.get_new_thread()` and pass it into each `run`/`run_stream` call.
+- Sessions/conversation state are explicit in AF. When porting SK code that relies on implicit session reuse, call `agent.create_session()` and pass it into each `run` call.
 - Tools map cleanly: SK `@kernel_function` plugins translate to AF `@tool` callables. Hosted tools (code interpreter, web search, MCP) are available only in AF—introduce them once parity is achieved.
 - For multi-agent orchestration, AF workflows expose checkpoints and resume capabilities that SK Process/Team abstractions do not. Use the workflow samples as a blueprint when modernizing complex agent graphs.

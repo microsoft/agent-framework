@@ -32,7 +32,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     private static bool s_infrastructureStarted;
     private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(1);
     private static readonly string s_samplesPath = Path.GetFullPath(
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "AzureFunctions"));
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "Durable", "Agents", "AzureFunctions"));
 
     private readonly ITestOutputHelper _outputHelper = outputHelper;
 

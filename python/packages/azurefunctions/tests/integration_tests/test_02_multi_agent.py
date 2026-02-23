@@ -15,13 +15,11 @@ Usage:
 """
 
 import pytest
-from testutils import SampleTestHelper, skip_if_azure_functions_integration_tests_disabled
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
     pytest.mark.sample("02_multi_agent"),
     pytest.mark.usefixtures("function_app_for_test"),
-    skip_if_azure_functions_integration_tests_disabled,
 ]
 
 
@@ -29,14 +27,15 @@ class TestSampleMultiAgent:
     """Tests for 02_multi_agent sample."""
 
     @pytest.fixture(autouse=True)
-    def _set_agent_urls(self, base_url: str) -> None:
+    def _setup(self, base_url: str, sample_helper) -> None:
         """Configure base URLs for Weather and Math agents."""
         self.weather_base_url = f"{base_url}/api/agents/WeatherAgent"
         self.math_base_url = f"{base_url}/api/agents/MathAgent"
+        self.helper = sample_helper
 
     def test_weather_agent(self) -> None:
         """Test WeatherAgent endpoint."""
-        response = SampleTestHelper.post_json(
+        response = self.helper.post_json(
             f"{self.weather_base_url}/run",
             {"message": "What is the weather in Seattle?"},
         )
@@ -47,7 +46,7 @@ class TestSampleMultiAgent:
 
     def test_math_agent(self) -> None:
         """Test MathAgent endpoint."""
-        response = SampleTestHelper.post_json(
+        response = self.helper.post_json(
             f"{self.math_base_url}/run",
             {"message": "Calculate a 20% tip on a $50 bill", "wait_for_response": False},
         )

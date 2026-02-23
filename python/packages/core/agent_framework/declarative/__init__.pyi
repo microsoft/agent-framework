@@ -13,7 +13,6 @@ from agent_framework_declarative import (
     ProviderTypeMapping,
     WorkflowFactory,
     WorkflowState,
-    __version__,
 )
 
 __all__ = [
@@ -29,5 +28,4 @@ __all__ = [
     "ProviderTypeMapping",
     "WorkflowFactory",
     "WorkflowState",
-    "__version__",
 ]

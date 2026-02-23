@@ -64,11 +64,11 @@ uv venv --python $PYTHON_VERSION
 uv sync --dev
 # Install all the tools and dependencies
 uv run poe install
-# Install pre-commit hooks
-uv run poe pre-commit-install
+# Install prek hooks
+uv run poe prek-install
 ```
 
-Alternatively, you can reinstall the venv, pacakges, dependencies and pre-commit hooks with a single command (but this requires poe in the current env), this is especially useful if you want to switch python versions:
+Alternatively, you can reinstall the venv, pacakges, dependencies and prek hooks with a single command (but this requires poe in the current env), this is especially useful if you want to switch python versions:
 
 ```bash
 uv run poe setup -p 3.13
@@ -116,7 +116,7 @@ You will then configure the ChatClient class with the keyword argument `env_file
 ```python
 from agent_framework.openai import OpenAIChatClient
 
-chat_client = OpenAIChatClient(env_file_path="openai.env")
+client = OpenAIChatClient(env_file_path="openai.env")
 ```
 
 ## Tests
@@ -144,7 +144,7 @@ To run the same checks that run during a commit and the GitHub Action `Python Co
     uv run poe check
 ```
 
-Ideally you should run these checks before committing any changes, when you install using the instructions above the pre-commit hooks should be installed already.
+Ideally you should run these checks before committing any changes, when you install using the instructions above the prek hooks should be installed already.
 
 ## Code Coverage
 
@@ -196,10 +196,10 @@ and then you can run the following tasks:
 uv sync --all-extras --dev
 ```
 
-After this initial setup, you can use the following tasks to manage your development environment. It is advised to use the following setup command since that also installs the pre-commit hooks.
+After this initial setup, you can use the following tasks to manage your development environment. It is advised to use the following setup command since that also installs the prek hooks.
 
 #### `setup`
-Set up the development environment with a virtual environment, install dependencies and pre-commit hooks:
+Set up the development environment with a virtual environment, install dependencies and prek hooks:
 ```bash
 uv run poe setup
 # or with specific Python version
@@ -220,38 +220,44 @@ uv run poe venv
 uv run poe venv --python 3.12
 ```
 
-#### `pre-commit-install`
-Install pre-commit hooks:
+#### `prek-install`
+Install prek hooks:
 ```bash
-uv run poe pre-commit-install
+uv run poe prek-install
 ```
 
 ### Code Quality and Formatting
 
-Each of the following tasks are designed to run against both the main `agent-framework` package and the extension packages, ensuring consistent code quality across the project.
+Each of the following tasks run against both the main `agent-framework` package and the extension packages in parallel, ensuring consistent code quality across the project.
 
 #### `fmt` (format)
-Format code using ruff:
+Format code using ruff (runs in parallel across all packages):
 ```bash
 uv run poe fmt
 ```
 
 #### `lint`
-Run linting checks and fix issues:
+Run linting checks and fix issues (runs in parallel across all packages):
 ```bash
 uv run poe lint
 ```
 
 #### `pyright`
-Run Pyright type checking:
+Run Pyright type checking (runs in parallel across all packages):
 ```bash
 uv run poe pyright
 ```
 
 #### `mypy`
-Run MyPy type checking:
+Run MyPy type checking (runs in parallel across all packages):
 ```bash
 uv run poe mypy
+```
+
+#### `typing`
+Run both Pyright and MyPy type checking:
+```bash
+uv run poe typing
 ```
 
 ### Code Validation
@@ -264,8 +270,14 @@ uv run poe markdown-code-lint
 
 ### Comprehensive Checks
 
+#### `check-packages`
+Run all package-level quality checks (format, lint, pyright, mypy) in parallel across all packages. This runs the full cross-product of (package × check) concurrently:
+```bash
+uv run poe check-packages
+```
+
 #### `check`
-Run all quality checks (format, lint, pyright, mypy, test, markdown lint):
+Run all quality checks including package checks, samples, tests and markdown lint:
 ```bash
 uv run poe check
 ```
@@ -273,7 +285,7 @@ uv run poe check
 ### Testing
 
 #### `test`
-Run unit tests with coverage by invoking the `test` task in each package sequentially:
+Run unit tests with coverage by invoking the `test` task in each package in parallel:
 ```bash
 uv run poe test
 ```
@@ -319,10 +331,10 @@ Publish packages to PyPI:
 uv run poe publish
 ```
 
-## Pre-commit Hooks
+## Prek Hooks
 
-Pre-commit hooks run automatically on commit and execute a subset of the checks on changed files only. You can also run all checks using pre-commit directly:
+Prek hooks run automatically on commit and execute a subset of the checks on changed files only. Package-level checks (fmt, lint, pyright) run in parallel but only for packages with changed files. Markdown and sample checks are skipped when no relevant files were changed. If the `core` package is changed, all packages are checked. You can also run all checks using prek directly:
 
 ```bash
-uv run pre-commit run -a
+uv run prek run -a
 ```

@@ -21,9 +21,12 @@ HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddSingleton(new ChatClientAgentOptions() { Name = "Joker", ChatOptions = new() { Instructions = "You are good at telling jokes." } });
 
 // Add a chat client to the service collection.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 builder.Services.AddKeyedChatClient("AzureOpenAI", (sp) => new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
         .GetChatClient(deploymentName)
         .AsIChatClient());
 
@@ -49,7 +52,7 @@ internal sealed class SampleService(AIAgent agent, IHostApplicationLifetime appL
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         // Create a session that will be used for the entirety of the service lifetime so that the user can ask follow up questions.
-        this._session = await agent.GetNewSessionAsync(cancellationToken);
+        this._session = await agent.CreateSessionAsync(cancellationToken);
         _ = this.RunAsync(appLifetime.ApplicationStopping);
     }
 

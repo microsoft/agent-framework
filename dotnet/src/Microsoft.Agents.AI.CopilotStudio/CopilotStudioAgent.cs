@@ -42,7 +42,7 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public sealed override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+    protected sealed override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
         => new(new CopilotStudioAgentSession());
 
     /// <summary>
@@ -50,12 +50,25 @@ public class CopilotStudioAgent : AIAgent
     /// </summary>
     /// <param name="conversationId">The conversation id to continue.</param>
     /// <returns>A new <see cref="AgentSession"/> instance.</returns>
-    public ValueTask<AgentSession> GetNewSessionAsync(string conversationId)
+    public ValueTask<AgentSession> CreateSessionAsync(string conversationId)
         => new(new CopilotStudioAgentSession() { ConversationId = conversationId });
 
     /// <inheritdoc/>
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => new(new CopilotStudioAgentSession(serializedSession, jsonSerializerOptions));
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        Throw.IfNull(session);
+
+        if (session is not CopilotStudioAgentSession typedSession)
+        {
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(CopilotStudioAgentSession)}' can be serialized by this agent.");
+        }
+
+        return new(typedSession.Serialize(jsonSerializerOptions));
+    }
+
+    /// <inheritdoc/>
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(CopilotStudioAgentSession.Deserialize(serializedState, jsonSerializerOptions));
 
     /// <inheritdoc/>
     protected override async Task<AgentResponse> RunCoreAsync(
@@ -68,10 +81,10 @@ public class CopilotStudioAgent : AIAgent
 
         // Ensure that we have a valid session to work with.
         // If the session ID is null, we need to start a new conversation and set the session ID accordingly.
-        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not CopilotStudioAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be used.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(CopilotStudioAgentSession)}' can be used by this agent.");
         }
 
         typedSession.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
@@ -107,10 +120,10 @@ public class CopilotStudioAgent : AIAgent
         // Ensure that we have a valid session to work with.
         // If the session ID is null, we need to start a new conversation and set the session ID accordingly.
 
-        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not CopilotStudioAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be used.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(CopilotStudioAgentSession)}' can be used by this agent.");
         }
 
         typedSession.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);

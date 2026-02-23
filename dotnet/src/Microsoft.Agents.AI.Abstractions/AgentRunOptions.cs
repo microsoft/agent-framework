@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -28,12 +30,13 @@ public class AgentRunOptions
     /// </summary>
     /// <param name="options">The options instance from which to copy values.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is <see langword="null"/>.</exception>
-    public AgentRunOptions(AgentRunOptions options)
+    protected AgentRunOptions(AgentRunOptions options)
     {
         _ = Throw.IfNull(options);
         this.ContinuationToken = options.ContinuationToken;
         this.AllowBackgroundResponses = options.AllowBackgroundResponses;
         this.AdditionalProperties = options.AdditionalProperties?.Clone();
+        this.ResponseFormat = options.ResponseFormat;
     }
 
     /// <summary>
@@ -49,6 +52,7 @@ public class AgentRunOptions
     /// can be polled for completion by obtaining the token from the <see cref="AgentResponse.ContinuationToken"/> property
     /// and passing it via this property on subsequent calls to <see cref="AIAgent.RunAsync(AgentSession?, AgentRunOptions?, System.Threading.CancellationToken)"/>.
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AIResponseContinuations)]
     public ResponseContinuationToken? ContinuationToken { get; set; }
 
     /// <summary>
@@ -90,4 +94,35 @@ public class AgentRunOptions
     /// preserving implementation-specific details or extending the options with custom data.
     /// </remarks>
     public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
+
+    /// <summary>
+    /// Gets or sets the response format.
+    /// </summary>
+    /// <remarks>
+    /// If <see langword="null"/>, no response format is specified and the agent will use its default.
+    /// This property can be set to <see cref="ChatResponseFormat.Text"/> to specify that the response should be unstructured text,
+    /// to <see cref="ChatResponseFormat.Json"/> to specify that the response should be structured JSON data, or
+    /// an instance of <see cref="ChatResponseFormatJson"/> constructed with a specific JSON schema to request that the
+    /// response be structured JSON data according to that schema. It is up to the agent implementation if or how
+    /// to honor the request. If the agent implementation doesn't recognize the specific kind of <see cref="ChatResponseFormat"/>,
+    /// it can be ignored.
+    /// </remarks>
+    public ChatResponseFormat? ResponseFormat { get; set; }
+
+    /// <summary>
+    /// Produces a clone of the current <see cref="AgentRunOptions"/> instance.
+    /// </summary>
+    /// <returns>
+    /// A clone of the current <see cref="AgentRunOptions"/> instance.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// The clone will have the same values for all properties as the original instance. Any collections, like <see cref="AdditionalProperties"/>,
+    /// are shallow-cloned, meaning a new collection instance is created, but any references contained by the collections are shared with the original.
+    /// </para>
+    /// <para>
+    /// Derived types should override <see cref="Clone"/> to return an instance of the derived type.
+    /// </para>
+    /// </remarks>
+    public virtual AgentRunOptions Clone() => new(this);
 }

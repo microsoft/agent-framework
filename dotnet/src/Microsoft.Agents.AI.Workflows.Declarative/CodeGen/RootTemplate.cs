@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
 {
     using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
     using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
-    using Microsoft.Bot.ObjectModel;
+    using Microsoft.Agents.ObjectModel;
     using System;
     
     /// <summary>

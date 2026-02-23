@@ -19,23 +19,26 @@ Usage:
 """
 
 import pytest
-from testutils import SampleTestHelper, skip_if_azure_functions_integration_tests_disabled
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
     pytest.mark.orchestration,
     pytest.mark.sample("06_multi_agent_orchestration_conditionals"),
     pytest.mark.usefixtures("function_app_for_test"),
-    skip_if_azure_functions_integration_tests_disabled,
 ]
 
 
 class TestSampleMultiAgentConditionals:
     """Tests for 06_multi_agent_orchestration_conditionals sample."""
 
+    @pytest.fixture(autouse=True)
+    def _setup(self, sample_helper) -> None:
+        """Provide the helper for each test."""
+        self.helper = sample_helper
+
     def test_legitimate_email(self, base_url: str) -> None:
         """Test conditional logic with legitimate email."""
-        response = SampleTestHelper.post_json(
+        response = self.helper.post_json(
             f"{base_url}/api/spamdetection/run",
             {
                 "email_id": "email-test-001",
@@ -48,13 +51,13 @@ class TestSampleMultiAgentConditionals:
         assert "statusQueryGetUri" in data
 
         # Wait for completion
-        status = SampleTestHelper.wait_for_orchestration(data["statusQueryGetUri"])
+        status = self.helper.wait_for_orchestration(data["statusQueryGetUri"])
         assert status["runtimeStatus"] == "Completed"
         assert "Email sent:" in status["output"]
 
     def test_spam_email(self, base_url: str) -> None:
         """Test conditional logic with spam email."""
-        response = SampleTestHelper.post_json(
+        response = self.helper.post_json(
             f"{base_url}/api/spamdetection/run",
             {"email_id": "email-test-002", "email_content": "URGENT! You have won $1,000,000! Click here now!"},
         )
@@ -63,7 +66,7 @@ class TestSampleMultiAgentConditionals:
         assert "instanceId" in data
 
         # Wait for completion
-        status = SampleTestHelper.wait_for_orchestration(data["statusQueryGetUri"])
+        status = self.helper.wait_for_orchestration(data["statusQueryGetUri"])
         assert status["runtimeStatus"] == "Completed"
         assert "Email marked as spam:" in status["output"]
 

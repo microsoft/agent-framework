@@ -11,10 +11,8 @@ Tests human-in-the-loop (HITL) patterns:
 """
 
 import logging
-from typing import Any
 
 import pytest
-from dt_testutils import OrchestrationHelper, create_agent_client
 from durabletask.client import OrchestrationStatus
 
 # Constants from the 07_single_agent_orchestration_hitl sample
@@ -36,18 +34,11 @@ class TestSingleAgentOrchestrationHITL:
     """Test suite for single agent orchestration with human-in-the-loop."""
 
     @pytest.fixture(autouse=True)
-    def setup(self, worker_process: dict[str, Any], dts_endpoint: str) -> None:
+    def setup(self, agent_client_factory: type, orchestration_helper) -> None:
         """Setup test fixtures."""
-        self.endpoint: str = str(worker_process["endpoint"])
-        self.taskhub: str = str(worker_process["taskhub"])
-
-        logging.info(f"Using taskhub: {self.taskhub} at endpoint: {self.endpoint}")
-
-        # Create agent client and DTS client
-        self.dts_client, self.agent_client = create_agent_client(self.endpoint, self.taskhub)
-
-        # Create orchestration helper
-        self.orch_helper = OrchestrationHelper(self.dts_client)
+        # Create agent client using the factory fixture
+        self.dts_client, self.agent_client = agent_client_factory.create()
+        self.orch_helper = orchestration_helper
 
     def test_agent_registered(self):
         """Test that the Writer agent is registered."""

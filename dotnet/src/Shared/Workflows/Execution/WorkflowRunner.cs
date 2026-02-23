@@ -68,7 +68,7 @@ internal sealed class WorkflowRunner
             checkpointManager = CheckpointManager.CreateInMemory();
         }
 
-        Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager).ConfigureAwait(false);
+        StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input, checkpointManager).ConfigureAwait(false);
 
         bool isComplete = false;
         ExternalResponse? requestResponse = null;
@@ -95,7 +95,7 @@ internal sealed class WorkflowRunner
                 Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
                 Notify("WORKFLOW: Restore", ConsoleColor.DarkYellow);
 
-                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager).ConfigureAwait(false);
+                run = await InProcessExecution.ResumeStreamingAsync(workflow, this.LastCheckpoint, checkpointManager).ConfigureAwait(false);
             }
             else
             {
@@ -107,7 +107,7 @@ internal sealed class WorkflowRunner
         Notify("\nWORKFLOW: Done!\n");
     }
 
-    public async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, ExternalResponse? response = null)
+    public async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(StreamingRun run, ExternalResponse? response = null)
     {
 #pragma warning disable CA2007 // Consider calling ConfigureAwait on the awaited task
         await using IAsyncDisposable disposeRun = run;
@@ -121,10 +121,10 @@ internal sealed class WorkflowRunner
 
         if (response is not null)
         {
-            await run.Run.SendResponseAsync(response).ConfigureAwait(false);
+            await run.SendResponseAsync(response).ConfigureAwait(false);
         }
 
-        await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (workflowEvent)
             {
@@ -272,9 +272,10 @@ internal sealed class WorkflowRunner
     /// </summary>
     private async ValueTask<ExternalInputResponse> HandleExternalRequestAsync(ExternalRequest request)
     {
-        ExternalInputRequest inputRequest =
-            request.DataAs<ExternalInputRequest>() ??
-            throw new InvalidOperationException($"Expected external request type: {request.GetType().Name}.");
+        if (!request.TryGetDataAs<ExternalInputRequest>(out var inputRequest))
+        {
+            throw new InvalidOperationException($"Expected external request type: {request.PortInfo.RequestType}.");
+        }
 
         List<ChatMessage> responseMessages = [];
 
@@ -304,7 +305,7 @@ internal sealed class WorkflowRunner
             ChatMessage? responseMessage =
                 requestItem switch
                 {
-                    FunctionCallContent functionCall => await InvokeFunctionAsync(functionCall).ConfigureAwait(false),
+                    FunctionCallContent functionCall when !functionCall.InformationalOnly => await InvokeFunctionAsync(functionCall).ConfigureAwait(false),
                     FunctionApprovalRequestContent functionApprovalRequest => ApproveFunction(functionApprovalRequest),
                     McpServerToolApprovalRequestContent mcpApprovalRequest => ApproveMCP(mcpApprovalRequest),
                     _ => HandleUnknown(requestItem),

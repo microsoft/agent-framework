@@ -11,14 +11,29 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
 
     public override string? Name { get; } = name;
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(
-        JsonElement serializedSession,
-        JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedSession, jsonSerializerOptions));
+        if (session is null)
+        {
+            throw new ArgumentNullException(nameof(session));
+        }
+
+        if (session is not DurableAgentSession durableSession)
+        {
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(DurableAgentSession)}' can be serialized by this agent.");
+        }
+
+        return new(durableSession.Serialize(jsonSerializerOptions));
     }
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
+        JsonElement serializedState,
+        JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        return ValueTask.FromResult<AgentSession>(DurableAgentSession.Deserialize(serializedState, jsonSerializerOptions));
+    }
+
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
     {
         return ValueTask.FromResult<AgentSession>(new DurableAgentSession(AgentSessionId.WithRandomKey(this.Name!)));
     }
@@ -29,12 +44,12 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not DurableAgentSession durableSession)
         {
             throw new ArgumentException(
                 "The provided session is not valid for a durable agent. " +
-                "Create a new session using GetNewSession or provide a session previously created by this agent.",
+                "Create a new session using CreateSessionAsync or provide a session previously created by this agent.",
                 paramName: nameof(session));
         }
 
@@ -47,13 +62,18 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         {
             enableToolCalls = durableOptions.EnableToolCalls;
             enableToolNames = durableOptions.EnableToolNames;
-            responseFormat = durableOptions.ResponseFormat;
             isFireAndForget = durableOptions.IsFireAndForget;
         }
         else if (options is ChatClientAgentRunOptions chatClientOptions)
         {
             // Honor the response format from the chat client options if specified
             responseFormat = chatClientOptions.ChatOptions?.ResponseFormat;
+        }
+
+        // Override the response format if specified in the agent run options
+        if (options?.ResponseFormat is { } format)
+        {
+            responseFormat = format;
         }
 
         RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames);

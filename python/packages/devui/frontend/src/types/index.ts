@@ -185,7 +185,7 @@ export interface MetaResponse {
 }
 
 // Chat message types matching Agent Framework
-export interface ChatMessage {
+export interface Message {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
   contents: import("./agent-framework").Content[];
@@ -212,7 +212,7 @@ export interface AppState {
 }
 
 export interface ChatState {
-  messages: ChatMessage[];
+  messages: Message[];
   isStreaming: boolean;
   // streamEvents removed - use OpenAI events directly instead
 }
@@ -290,7 +290,7 @@ export interface FullCheckpoint {
   workflow_id: string;
   timestamp: string;
   messages: Record<string, unknown[]>;
-  shared_state: Record<string, unknown>;
+  state: Record<string, unknown>;
   pending_request_info_events: Record<string, PendingRequestInfoEvent>;
   iteration_count: number;
   metadata: Record<string, unknown>;

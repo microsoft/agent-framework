@@ -11,10 +11,8 @@ Tests conditional orchestration patterns:
 """
 
 import logging
-from typing import Any
 
 import pytest
-from dt_testutils import OrchestrationHelper, create_agent_client
 from durabletask.client import OrchestrationStatus
 
 # Agent names from the 06_multi_agent_orchestration_conditionals sample
@@ -36,16 +34,11 @@ class TestMultiAgentOrchestrationConditionals:
     """Test suite for multi-agent orchestration with conditionals."""
 
     @pytest.fixture(autouse=True)
-    def setup(self, worker_process: dict[str, Any], dts_endpoint: str) -> None:
+    def setup(self, agent_client_factory: type, orchestration_helper) -> None:
         """Setup test fixtures."""
-        self.endpoint: str = dts_endpoint
-        self.taskhub: str = str(worker_process["taskhub"])
-
-        # Create agent client and DTS client
-        self.dts_client, self.agent_client = create_agent_client(self.endpoint, self.taskhub)
-
-        # Create orchestration helper
-        self.orch_helper = OrchestrationHelper(self.dts_client)
+        # Create agent client using the factory fixture
+        self.dts_client, self.agent_client = agent_client_factory.create()
+        self.orch_helper = orchestration_helper
 
     def test_agents_registered(self):
         """Test that both agents are registered."""

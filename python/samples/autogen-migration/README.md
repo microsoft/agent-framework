@@ -6,9 +6,9 @@ This gallery helps AutoGen developers move to the Microsoft Agent Framework (AF)
 
 ### Single-Agent Parity
 
-- [01_basic_assistant_agent.py](single_agent/01_basic_assistant_agent.py) — Minimal AutoGen `AssistantAgent` and AF `ChatAgent` comparison.
+- [01_basic_assistant_agent.py](single_agent/01_basic_assistant_agent.py) — Minimal AutoGen `AssistantAgent` and AF `Agent` comparison.
 - [02_assistant_agent_with_tool.py](single_agent/02_assistant_agent_with_tool.py) — Function tool integration in both SDKs.
-- [03_assistant_agent_thread_and_stream.py](single_agent/03_assistant_agent_thread_and_stream.py) — Thread management and streaming responses.
+- [03_assistant_agent_thread_and_stream.py](single_agent/03_assistant_agent_thread_and_stream.py) — Session management and streaming responses.
 - [04_agent_as_tool.py](single_agent/04_agent_as_tool.py) — Using agents as tools (hierarchical agent pattern) and streaming with tools.
 
 ### Multi-Agent Orchestration
@@ -51,8 +51,8 @@ python samples/autogen-migration/orchestrations/04_magentic_one.py
 
 ## Tips for Migration
 
-- **Default behavior differences**: AutoGen's `AssistantAgent` is single-turn by default (`max_tool_iterations=1`), while AF's `ChatAgent` is multi-turn and continues tool execution automatically.
-- **Thread management**: AF agents are stateless by default. Use `agent.get_new_thread()` and pass it to `run()`/`run_stream()` to maintain conversation state, similar to AutoGen's conversation context.
+- **Default behavior differences**: AutoGen's `AssistantAgent` is single-turn by default (`max_tool_iterations=1`), while AF's `Agent` is multi-turn and continues tool execution automatically.
+- **Thread management**: AF agents are stateless by default. Use `agent.create_session()` and pass it to `run()` to maintain conversation state, similar to AutoGen's conversation context.
 - **Tools**: AutoGen uses `FunctionTool` wrappers; AF uses `@tool` decorators with automatic schema inference.
 - **Orchestration patterns**:
   - `RoundRobinGroupChat` → `SequentialBuilder` or `WorkflowBuilder`

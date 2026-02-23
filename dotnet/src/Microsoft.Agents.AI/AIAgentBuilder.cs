@@ -152,6 +152,32 @@ public sealed class AIAgentBuilder
     }
 
     /// <summary>
+    /// Adds one or more <see cref="MessageAIContextProvider"/> instances to the agent pipeline, enabling message enrichment
+    /// for any <see cref="AIAgent"/>.
+    /// </summary>
+    /// <param name="providers">
+    /// The <see cref="MessageAIContextProvider"/> instances to invoke before and after each agent invocation.
+    /// Providers are called in sequence, with each receiving the output of the previous provider.
+    /// </param>
+    /// <returns>The <see cref="AIAgentBuilder"/> with the providers added, enabling method chaining.</returns>
+    /// <exception cref="ArgumentException"><paramref name="providers"/> is empty.</exception>
+    /// <remarks>
+    /// <para>
+    /// This method wraps the inner agent with a <see cref="DelegatingAIAgent"/> that calls each provider's
+    /// <see cref="MessageAIContextProvider.InvokingAsync"/> in sequence before the inner agent runs,
+    /// and calls <see cref="AIContextProvider.InvokedAsync"/> on each provider after the inner agent completes.
+    /// </para>
+    /// <para>
+    /// This allows any <see cref="AIAgent"/> to benefit from <see cref="MessageAIContextProvider"/>-based
+    /// context enrichment, not just agents that natively support <see cref="AIContextProvider"/> instances.
+    /// </para>
+    /// </remarks>
+    public AIAgentBuilder Use(MessageAIContextProvider[] providers)
+    {
+        return this.Use((innerAgent, _) => new MessageAIContextProviderAgent(innerAgent, providers));
+    }
+
+    /// <summary>
     /// Provides an empty <see cref="IServiceProvider"/> implementation.
     /// </summary>
     private sealed class EmptyServiceProvider : IServiceProvider, IKeyedServiceProvider

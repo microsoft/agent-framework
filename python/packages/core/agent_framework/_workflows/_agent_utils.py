@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from .._agents import AgentProtocol
+from .._agents import SupportsAgentRun
 
 
-def resolve_agent_id(agent: AgentProtocol) -> str:
+def resolve_agent_id(agent: SupportsAgentRun) -> str:
     """Resolve the unique identifier for an agent.
 
     Prefers the `.name` attribute if set; otherwise falls back to `.id`.

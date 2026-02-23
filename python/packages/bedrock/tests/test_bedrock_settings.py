@@ -6,12 +6,12 @@ from unittest.mock import MagicMock
 
 import pytest
 from agent_framework import (
-    ChatMessage,
     ChatOptions,
     Content,
     FunctionTool,
-    Role,
+    Message,
 )
+from agent_framework._settings import load_settings
 from pydantic import BaseModel
 
 from agent_framework_bedrock._chat_client import BedrockChatClient, BedrockSettings
@@ -34,9 +34,9 @@ def _dummy_weather(location: str) -> str:  # pragma: no cover - helper
 def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BEDROCK_REGION", "us-west-2")
     monkeypatch.setenv("BEDROCK_CHAT_MODEL_ID", "anthropic.claude-v2")
-    settings = BedrockSettings()
-    assert settings.region == "us-west-2"
-    assert settings.chat_model_id == "anthropic.claude-v2"
+    settings = load_settings(BedrockSettings, env_prefix="BEDROCK_")
+    assert settings["region"] == "us-west-2"
+    assert settings["chat_model_id"] == "anthropic.claude-v2"
 
 
 def test_build_request_includes_tool_config() -> None:
@@ -47,7 +47,7 @@ def test_build_request_includes_tool_config() -> None:
         "tools": [tool],
         "tool_choice": {"mode": "required", "required_function_name": "get_weather"},
     }
-    messages = [ChatMessage(role=Role.USER, contents=[Content.from_text(text="hi")])]
+    messages = [Message(role="user", contents=[Content.from_text(text="hi")])]
 
     request = client._prepare_options(messages, options)
 
@@ -59,16 +59,16 @@ def test_build_request_serializes_tool_history() -> None:
     client = _build_client()
     options: ChatOptions = {}
     messages = [
-        ChatMessage(role=Role.USER, contents=[Content.from_text(text="how's weather?")]),
-        ChatMessage(
-            role=Role.ASSISTANT,
+        Message(role="user", contents=[Content.from_text(text="how's weather?")]),
+        Message(
+            role="assistant",
             contents=[
                 Content.from_function_call(call_id="call-1", name="get_weather", arguments='{"location": "SEA"}')
             ],
         ),
-        ChatMessage(
-            role=Role.TOOL,
-            contents=[Content.from_function_result(call_id="call-1", result={"answer": "72F"})],
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call-1", result='{"answer": "72F"}')],
         ),
     ]
 

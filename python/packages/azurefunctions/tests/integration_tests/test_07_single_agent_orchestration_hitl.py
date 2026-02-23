@@ -21,13 +21,11 @@ Usage:
 import time
 
 import pytest
-from testutils import SampleTestHelper, skip_if_azure_functions_integration_tests_disabled
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
     pytest.mark.sample("07_single_agent_orchestration_hitl"),
     pytest.mark.usefixtures("function_app_for_test"),
-    skip_if_azure_functions_integration_tests_disabled,
 ]
 
 
@@ -36,14 +34,15 @@ class TestSampleHITLOrchestration:
     """Tests for 07_single_agent_orchestration_hitl sample."""
 
     @pytest.fixture(autouse=True)
-    def _set_hitl_base_url(self, base_url: str) -> None:
-        """Prepare the HITL API base URL for the module's tests."""
+    def _setup(self, base_url: str, sample_helper) -> None:
+        """Provide the helper and base URL for each test."""
         self.hitl_base_url = f"{base_url}/api/hitl"
+        self.helper = sample_helper
 
     def test_hitl_orchestration_approval(self) -> None:
         """Test HITL orchestration with human approval."""
         # Start orchestration
-        response = SampleTestHelper.post_json(
+        response = self.helper.post_json(
             f"{self.hitl_base_url}/run",
             {"topic": "artificial intelligence", "max_review_attempts": 3, "approval_timeout_hours": 1.0},
         )
@@ -58,13 +57,13 @@ class TestSampleHITLOrchestration:
         time.sleep(5)
 
         # Check status to ensure it's waiting for approval
-        status_response = SampleTestHelper.get(data["statusQueryGetUri"])
+        status_response = self.helper.get(data["statusQueryGetUri"])
         assert status_response.status_code == 200
         status = status_response.json()
         assert status["runtimeStatus"] in ["Running", "Pending"]
 
         # Send approval
-        approval_response = SampleTestHelper.post_json(
+        approval_response = self.helper.post_json(
             f"{self.hitl_base_url}/approve/{instance_id}", {"approved": True, "feedback": ""}
         )
         assert approval_response.status_code == 200
@@ -72,7 +71,7 @@ class TestSampleHITLOrchestration:
         assert approval_data["approved"] is True
 
         # Wait for orchestration to complete
-        status = SampleTestHelper.wait_for_orchestration(data["statusQueryGetUri"])
+        status = self.helper.wait_for_orchestration(data["statusQueryGetUri"])
         assert status["runtimeStatus"] == "Completed"
         assert "output" in status
         assert "content" in status["output"]
@@ -80,7 +79,7 @@ class TestSampleHITLOrchestration:
     def test_hitl_orchestration_rejection_with_feedback(self) -> None:
         """Test HITL orchestration with rejection and subsequent approval."""
         # Start orchestration
-        response = SampleTestHelper.post_json(
+        response = self.helper.post_json(
             f"{self.hitl_base_url}/run",
             {"topic": "machine learning", "max_review_attempts": 3, "approval_timeout_hours": 1.0},
         )
@@ -92,7 +91,7 @@ class TestSampleHITLOrchestration:
         time.sleep(5)
 
         # Send rejection with feedback
-        rejection_response = SampleTestHelper.post_json(
+        rejection_response = self.helper.post_json(
             f"{self.hitl_base_url}/approve/{instance_id}",
             {"approved": False, "feedback": "Please make it more concise and focus on practical applications."},
         )
@@ -102,25 +101,25 @@ class TestSampleHITLOrchestration:
         time.sleep(5)
 
         # Check status - should still be running
-        status_response = SampleTestHelper.get(data["statusQueryGetUri"])
+        status_response = self.helper.get(data["statusQueryGetUri"])
         assert status_response.status_code == 200
         status = status_response.json()
         assert status["runtimeStatus"] in ["Running", "Pending"]
 
         # Now approve the revised content
-        approval_response = SampleTestHelper.post_json(
+        approval_response = self.helper.post_json(
             f"{self.hitl_base_url}/approve/{instance_id}", {"approved": True, "feedback": ""}
         )
         assert approval_response.status_code == 200
 
         # Wait for completion
-        status = SampleTestHelper.wait_for_orchestration(data["statusQueryGetUri"])
+        status = self.helper.wait_for_orchestration(data["statusQueryGetUri"])
         assert status["runtimeStatus"] == "Completed"
         assert "output" in status
 
     def test_hitl_orchestration_missing_topic(self) -> None:
         """Test HITL orchestration with missing topic."""
-        response = SampleTestHelper.post_json(f"{self.hitl_base_url}/run", {"max_review_attempts": 3})
+        response = self.helper.post_json(f"{self.hitl_base_url}/run", {"max_review_attempts": 3})
         assert response.status_code == 400
         data = response.json()
         assert "error" in data
@@ -128,7 +127,7 @@ class TestSampleHITLOrchestration:
     def test_hitl_get_status(self) -> None:
         """Test getting orchestration status."""
         # Start orchestration
-        response = SampleTestHelper.post_json(
+        response = self.helper.post_json(
             f"{self.hitl_base_url}/run",
             {"topic": "quantum computing", "max_review_attempts": 2, "approval_timeout_hours": 1.0},
         )
@@ -137,7 +136,7 @@ class TestSampleHITLOrchestration:
         instance_id = data["instanceId"]
 
         # Get status
-        status_response = SampleTestHelper.get(f"{self.hitl_base_url}/status/{instance_id}")
+        status_response = self.helper.get(f"{self.hitl_base_url}/status/{instance_id}")
         assert status_response.status_code == 200
         status = status_response.json()
         assert "instanceId" in status
@@ -146,12 +145,12 @@ class TestSampleHITLOrchestration:
 
         # Cleanup: approve to complete orchestration
         time.sleep(5)
-        SampleTestHelper.post_json(f"{self.hitl_base_url}/approve/{instance_id}", {"approved": True, "feedback": ""})
+        self.helper.post_json(f"{self.hitl_base_url}/approve/{instance_id}", {"approved": True, "feedback": ""})
 
     def test_hitl_approval_invalid_payload(self) -> None:
         """Test sending approval with invalid payload."""
         # Start orchestration first
-        response = SampleTestHelper.post_json(
+        response = self.helper.post_json(
             f"{self.hitl_base_url}/run",
             {"topic": "test topic", "max_review_attempts": 1, "approval_timeout_hours": 1.0},
         )
@@ -162,7 +161,7 @@ class TestSampleHITLOrchestration:
         time.sleep(3)
 
         # Send approval without 'approved' field
-        approval_response = SampleTestHelper.post_json(
+        approval_response = self.helper.post_json(
             f"{self.hitl_base_url}/approve/{instance_id}", {"feedback": "Some feedback"}
         )
         assert approval_response.status_code == 400
@@ -170,11 +169,11 @@ class TestSampleHITLOrchestration:
         assert "error" in error_data
 
         # Cleanup
-        SampleTestHelper.post_json(f"{self.hitl_base_url}/approve/{instance_id}", {"approved": True, "feedback": ""})
+        self.helper.post_json(f"{self.hitl_base_url}/approve/{instance_id}", {"approved": True, "feedback": ""})
 
     def test_hitl_status_invalid_instance(self) -> None:
         """Test getting status for non-existent instance."""
-        response = SampleTestHelper.get(f"{self.hitl_base_url}/status/invalid-instance-id")
+        response = self.helper.get(f"{self.hitl_base_url}/status/invalid-instance-id")
         assert response.status_code == 404
         data = response.json()
         assert "error" in data

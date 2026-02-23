@@ -48,7 +48,7 @@ public static class Program
             .Build();
 
         // Execute the workflow
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input: "Create a slogan for a new electric SUV that is affordable and fun to drive.");
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input: "Create a slogan for a new electric SUV that is affordable and fun to drive.");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is SloganGeneratedEvent or FeedbackEvent)
@@ -106,7 +106,7 @@ internal sealed class SloganGeneratedEvent(SloganResult sloganResult) : Workflow
 /// 1. HandleAsync(string message): Handles the initial task to create a slogan.
 /// 2. HandleAsync(Feedback message): Handles feedback to improve the slogan.
 /// </summary>
-internal sealed class SloganWriterExecutor : Executor
+internal sealed partial class SloganWriterExecutor : Executor
 {
     private readonly AIAgent _agent;
     private AgentSession? _session;
@@ -130,13 +130,10 @@ internal sealed class SloganWriterExecutor : Executor
         this._agent = new ChatClientAgent(chatClient, agentOptions);
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-        routeBuilder.AddHandler<string, SloganResult>(this.HandleAsync)
-                    .AddHandler<FeedbackResult, SloganResult>(this.HandleAsync);
-
+    [MessageHandler]
     public async ValueTask<SloganResult> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        this._session ??= await this._agent.GetNewSessionAsync(cancellationToken);
+        this._session ??= await this._agent.CreateSessionAsync(cancellationToken);
 
         var result = await this._agent.RunAsync(message, this._session, cancellationToken: cancellationToken);
 
@@ -146,6 +143,7 @@ internal sealed class SloganWriterExecutor : Executor
         return sloganResult;
     }
 
+    [MessageHandler]
     public async ValueTask<SloganResult> HandleAsync(FeedbackResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         var feedbackMessage = $"""
@@ -209,7 +207,7 @@ internal sealed class FeedbackExecutor : Executor<SloganResult>
 
     public override async ValueTask HandleAsync(SloganResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        this._session ??= await this._agent.GetNewSessionAsync(cancellationToken);
+        this._session ??= await this._agent.CreateSessionAsync(cancellationToken);
 
         var sloganMessage = $"""
             Here is a slogan for the task '{message.Task}':

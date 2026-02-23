@@ -110,7 +110,10 @@ static async Task<string> GetWeatherAsync([Description("The location to get the 
     return $"The weather in {location} is cloudy with a high of 15°C.";
 }
 
-using var instrumentedChatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+using var instrumentedChatClient = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
     .GetChatClient(deploymentName)
         .AsIChatClient() // Converts a native OpenAI SDK ChatClient into a Microsoft.Extensions.AI.IChatClient
         .AsBuilder()
@@ -128,7 +131,7 @@ var agent = new ChatClientAgent(instrumentedChatClient,
     .UseOpenTelemetry(SourceName, configure: (cfg) => cfg.EnableSensitiveData = true) // enable telemetry at the agent level
     .Build();
 
-var session = await agent.GetNewSessionAsync();
+var session = await agent.CreateSessionAsync();
 
 appLogger.LogInformation("Agent created successfully with ID: {AgentId}", agent.Id);
 

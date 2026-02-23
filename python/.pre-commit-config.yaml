@@ -1,65 +1,71 @@
-files: ^python/
 fail_fast: true
+exclude: ^scripts/
 repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+  - repo: builtin
     hooks:
       - id: check-toml
         name: Check TOML files
         files: \.toml$
-        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
+        exclude: ^packages/lab/cookiecutter-agent-framework-lab/
       - id: check-yaml
         name: Check YAML files
         files: \.yaml$
       - id: check-json
         name: Check JSON files
         files: \.json$
-        exclude: ^.*\.vscode\/.*|^python/demos/samples/chatkit-integration/frontend/(tsconfig.*\.json|package-lock\.json)$
+        exclude: ^.*\.vscode\/.*|^demos/samples/chatkit-integration/frontend/(tsconfig.*\.json|package-lock\.json)$
       - id: end-of-file-fixer
         name: Fix End of File
         files: \.py$
-        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
+        exclude: ^packages/lab/cookiecutter-agent-framework-lab/
       - id: mixed-line-ending
         name: Check Mixed Line Endings
         files: \.py$
-        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
+        exclude: ^packages/lab/cookiecutter-agent-framework-lab/
+      - id: trailing-whitespace
+        name: Trim Trailing Whitespace
+        exclude: ^packages/lab/cookiecutter-agent-framework-lab/
+      - id: check-merge-conflict
+        name: Check Merge Conflicts
+      - id: detect-private-key
+        name: Detect Private Keys
+      - id: check-added-large-files
+        name: Check Added Large Files
+      - id: no-commit-to-branch
+        name: Protect main branch
+        args: [--branch, main]
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
       - id: check-ast
         name: Check Valid Python Samples
         types: ["python"]
-        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
-  - repo: https://github.com/nbQA-dev/nbQA
-    rev: 1.9.1
-    hooks:
-      - id: nbqa-check-ast
-        name: Check Valid Python Notebooks
-        types: ["jupyter"]
+        exclude: ^packages/lab/cookiecutter-agent-framework-lab/
   - repo: https://github.com/asottile/pyupgrade
-    rev: v3.20.0
+    rev: v3.21.2
     hooks:
       - id: pyupgrade
         name: Upgrade Python syntax
         args: [--py310-plus]
-        exclude: ^python/packages/lab/cookiecutter-agent-framework-lab/
+        exclude: ^packages/lab/cookiecutter-agent-framework-lab/
   - repo: local
     hooks:
       - id: poe-check
         name: Run checks through Poe
-        entry: uv --directory ./python run poe pre-commit-check
+        entry: uv run poe prek-check
         language: system
-        files: ^python/
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.9.3
+    hooks:
+      - id: bandit
+        name: Bandit Security Checks
+        args: ["-c", "pyproject.toml"]
+        additional_dependencies: ["bandit[toml]"]
   - repo: https://github.com/astral-sh/uv-pre-commit
     # uv version.
-    rev: 0.7.18
+    rev: 0.10.0
     hooks:
       # Update the uv lockfile
       - id: uv-lock
         name: Update uv lockfile
-        files: python/pyproject.toml
-        args: [--project, python]
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.8.5
-    hooks:
-      - id: bandit
-        name: Bandit Security Checks
-        args: ["-c", "python/pyproject.toml"]
-        additional_dependencies: ["bandit[toml]"]
+        files: pyproject.toml

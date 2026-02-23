@@ -24,27 +24,31 @@ using HttpClient mem0HttpClient = new();
 mem0HttpClient.BaseAddress = new Uri(mem0ServiceUri);
 mem0HttpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Token", mem0ApiKey);
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions()
     {
         ChatOptions = new() { Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details." },
-        AIContextProviderFactory = (ctx, ct) => new ValueTask<AIContextProvider>(ctx.SerializedState.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined
-            // If each session should have its own Mem0 scope, you can create a new id per session here:
-            // ? new Mem0Provider(mem0HttpClient, new Mem0ProviderScope() { ThreadId = Guid.NewGuid().ToString() })
-            // In this case we are storing memories scoped by application and user instead so that memories are retained across threads.
-            ? new Mem0Provider(mem0HttpClient, new Mem0ProviderScope() { ApplicationId = "getting-started-agents", UserId = "sample-user" })
-            // For cases where we are restoring from serialized state:
-            : new Mem0Provider(mem0HttpClient, ctx.SerializedState, ctx.JsonSerializerOptions))
+        // The stateInitializer can be used to customize the Mem0 scope per session and it will be called each time a session
+        // is encountered by the Mem0Provider that does not already have Mem0Provider state stored on the session.
+        // If each session should have its own Mem0 scope, you can create a new id per session via the stateInitializer, e.g.:
+        // new Mem0Provider(mem0HttpClient, stateInitializer: _ => new(new Mem0ProviderScope() { ThreadId = Guid.NewGuid().ToString() }))
+        // In our case we are storing memories scoped by application and user instead so that memories are retained across threads.
+        AIContextProviders = [new Mem0Provider(mem0HttpClient, stateInitializer: _ => new(new Mem0ProviderScope() { ApplicationId = "getting-started-agents", UserId = "sample-user" }))]
     });
 
-AgentSession session = await agent.GetNewSessionAsync();
+AgentSession session = await agent.CreateSessionAsync();
 
 // Clear any existing memories for this scope to demonstrate fresh behavior.
-Mem0Provider mem0Provider = session.GetService<Mem0Provider>()!;
-await mem0Provider.ClearStoredMemoriesAsync();
+// Note that the ClearStoredMemoriesAsync method will clear memories
+// using the scope stored in the session, or provided via the stateInitializer.
+Mem0Provider mem0Provider = agent.GetService<Mem0Provider>()!;
+await mem0Provider.ClearStoredMemoriesAsync(session);
 
 Console.WriteLine(await agent.RunAsync("Hi there! My name is Taylor and I'm planning a hiking trip to Patagonia in November.", session));
 Console.WriteLine(await agent.RunAsync("I'm travelling with my sister and we love finding scenic viewpoints.", session));
@@ -55,10 +59,10 @@ await Task.Delay(TimeSpan.FromSeconds(2));
 Console.WriteLine(await agent.RunAsync("What do you already know about my upcoming trip?", session));
 
 Console.WriteLine("\n>> Serialize and deserialize the session to demonstrate persisted state\n");
-JsonElement serializedSession = session.Serialize();
+JsonElement serializedSession = await agent.SerializeSessionAsync(session);
 AgentSession restoredSession = await agent.DeserializeSessionAsync(serializedSession);
 Console.WriteLine(await agent.RunAsync("Can you recap the personal details you remember?", restoredSession));
 
 Console.WriteLine("\n>> Start a new session that shares the same Mem0 scope\n");
-AgentSession newSession = await agent.GetNewSessionAsync();
+AgentSession newSession = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Summarize what you already know about me.", newSession));

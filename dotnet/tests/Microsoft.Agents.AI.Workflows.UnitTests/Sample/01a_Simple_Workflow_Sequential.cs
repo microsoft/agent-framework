@@ -8,6 +8,7 @@ namespace Microsoft.Agents.AI.Workflows.Sample;
 
 internal static class Step1aEntryPoint
 {
+    // TODO: Maybe env.CreateRunAsync?
     public static async ValueTask RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment)
     {
         Run run = await environment.RunAsync(WorkflowInstance, "Hello, World!").ConfigureAwait(false);

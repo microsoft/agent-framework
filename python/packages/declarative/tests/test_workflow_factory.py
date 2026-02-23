@@ -145,7 +145,7 @@ actions:
         result = await workflow.run({})
         outputs = result.get_outputs()
 
-        # Check for the expected text in WorkflowOutputEvent
+        # Check for the expected text in output event (type='output')
         _text_outputs = [str(o) for o in outputs if isinstance(o, str) or hasattr(o, "data")]  # noqa: F841
         assert any("Condition was true" in str(o) for o in outputs)
 
