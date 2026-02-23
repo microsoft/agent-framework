@@ -28,7 +28,7 @@ public static class AIAgentExtensions
     /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
     /// <param name="agentSessionStore">The store to store session contents and metadata.</param>
-    /// <param name="runMode">Controls the run behavior.</param>
+    /// <param name="runMode">Controls the response behavior of the agent run.</param>
     /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> for serializing and deserializing continuation tokens. Use this when the agent's continuation token contains custom types not registered in the default options. Falls back to <see cref="A2AHostingJsonUtilities.DefaultOptions"/> if not provided.</param>
     /// <returns>The configured <see cref="TaskManager"/>.</returns>
     public static ITaskManager MapA2A(
@@ -77,7 +77,7 @@ public static class AIAgentExtensions
     /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
     /// <param name="agentSessionStore">The store to store session contents and metadata.</param>
-    /// <param name="runMode">Controls the run behavior.</param>
+    /// <param name="runMode">Controls the response behavior of the agent run.</param>
     /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> for serializing and deserializing continuation tokens. Use this when the agent's continuation token contains custom types not registered in the default options. Falls back to <see cref="A2AHostingJsonUtilities.DefaultOptions"/> if not provided.</param>
     /// <returns>The configured <see cref="TaskManager"/>.</returns>
     public static ITaskManager MapA2A(
