@@ -86,6 +86,8 @@ AzureAIClientOptionsT = TypeVar(
     covariant=True,
 )
 
+_DOC_INDEX_PATTERN = re.compile(r"doc_(\d+)")
+
 
 class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[AzureAIClientOptionsT]):
     """Raw Azure AI client without middleware, telemetry, or function invocation layers.
@@ -665,7 +667,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """
         if not citation_title or not get_urls:
             return None
-        match = re.search(r"doc_(\d+)", citation_title)
+        match = _DOC_INDEX_PATTERN.search(citation_title)
         if not match:
             return None
         doc_index = int(match.group(1))

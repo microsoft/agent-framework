@@ -1934,7 +1934,6 @@ def test_enrich_annotations_empty_get_urls(mock_project_client: MagicMock) -> No
     assert "additional_properties" not in content.annotations[0]
 
 
-@pytest.mark.asyncio
 async def test_inner_get_response_enriches_non_streaming(mock_project_client: MagicMock) -> None:
     """Test _inner_get_response enriches url_citation annotations for non-streaming responses."""
     client = create_test_azure_ai_client(mock_project_client)
@@ -1970,7 +1969,6 @@ async def test_inner_get_response_enriches_non_streaming(mock_project_client: Ma
     )
 
 
-@pytest.mark.asyncio
 async def test_inner_get_response_no_search_output_non_streaming(mock_project_client: MagicMock) -> None:
     """Test _inner_get_response passes through when no search output exists."""
     client = create_test_azure_ai_client(mock_project_client)
