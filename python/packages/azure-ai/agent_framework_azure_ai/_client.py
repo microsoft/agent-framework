@@ -767,13 +767,12 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         as they arrive.  The captured URL state is local to the stream closure, so concurrent
         streams do not interfere.
         """
-        result = super()._inner_get_response(messages=messages, options=options, stream=stream, **kwargs)
-
         if not stream:
-            original_awaitable: Awaitable[ChatResponse] = result  # type: ignore[assignment]
 
             async def _enrich_response() -> ChatResponse:
-                response = await original_awaitable
+                response = await super(RawAzureAIClient, self)._inner_get_response(
+                    messages=messages, options=options, stream=False, **kwargs
+                )
                 raw = getattr(response, "raw_representation", None)
                 get_urls = self._extract_azure_search_urls(getattr(raw, "output", []))
                 if get_urls:
@@ -784,7 +783,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             return _enrich_response()
 
         # Streaming: use a closure-local list so concurrent streams don't interfere
-        stream_result: ResponseStream[ChatResponseUpdate, ChatResponse] = result  # type: ignore[assignment]
+        stream_result = cast(
+            ResponseStream[ChatResponseUpdate, ChatResponse],
+            super()._inner_get_response(messages=messages, options=options, stream=True, **kwargs),
+        )
         search_get_urls: list[str] = []
 
         def _enrich_update(update: ChatResponseUpdate) -> ChatResponseUpdate:
