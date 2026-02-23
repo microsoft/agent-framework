@@ -34,7 +34,7 @@ $env:AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults t
 Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/GettingStarted/FoundryAgents
+cd dotnet/samples/02-agents/FoundryAgents
 dotnet run --project .\FoundryAgents_Step25_WebSearch
 ```
 
