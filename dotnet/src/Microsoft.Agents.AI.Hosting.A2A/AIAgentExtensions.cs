@@ -28,7 +28,7 @@ public static class AIAgentExtensions
     /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
     /// <param name="agentSessionStore">The store to store session contents and metadata.</param>
-    /// <param name="responseMode">Controls whether the A2A response is an <c>AgentMessage</c>, an <c>AgentTask</c>, or determined automatically by the agent.</param>
+    /// <param name="runMode">Controls the run behavior.</param>
     /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> for serializing and deserializing continuation tokens. Use this when the agent's continuation token contains custom types not registered in the default options. Falls back to <see cref="A2AHostingJsonUtilities.DefaultOptions"/> if not provided.</param>
     /// <returns>The configured <see cref="TaskManager"/>.</returns>
     public static ITaskManager MapA2A(
@@ -36,13 +36,13 @@ public static class AIAgentExtensions
         ITaskManager? taskManager = null,
         ILoggerFactory? loggerFactory = null,
         AgentSessionStore? agentSessionStore = null,
-        A2AResponseMode? responseMode = null,
+        AgentRunMode? runMode = null,
         JsonSerializerOptions? jsonSerializerOptions = null)
     {
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentNullException.ThrowIfNull(agent.Name);
 
-        responseMode ??= A2AResponseMode.Message;
+        runMode ??= AgentRunMode.NonBackground;
 
         var hostAgent = new AIHostAgent(
             innerAgent: agent,
@@ -60,7 +60,7 @@ public static class AIAgentExtensions
         // When the agent returns a ContinuationToken (long-running operation), a task is
         // created for stateful tracking. Otherwise a lightweight AgentMessage is returned.
         // See https://github.com/a2aproject/a2a-dotnet/issues/275
-        taskManager.OnMessageReceived += (p, ct) => OnMessageReceivedAsync(p, hostAgent, responseMode, taskManager, continuationTokenJsonOptions, ct);
+        taskManager.OnMessageReceived += (p, ct) => OnMessageReceivedAsync(p, hostAgent, runMode, taskManager, continuationTokenJsonOptions, ct);
 
         // Task flow for subsequent updates and cancellations
         taskManager.OnTaskUpdated += (t, ct) => OnTaskUpdatedAsync(t, hostAgent, taskManager, continuationTokenJsonOptions, ct);
@@ -77,7 +77,7 @@ public static class AIAgentExtensions
     /// <param name="taskManager">Instance of <see cref="TaskManager"/> to configure for A2A messaging. New instance will be created if not passed.</param>
     /// <param name="loggerFactory">The logger factory to use for creating <see cref="ILogger"/> instances.</param>
     /// <param name="agentSessionStore">The store to store session contents and metadata.</param>
-    /// <param name="responseMode">Controls whether the A2A response is an <c>AgentMessage</c>, an <c>AgentTask</c>, or determined automatically by the agent.</param>
+    /// <param name="runMode">Controls the run behavior.</param>
     /// <param name="jsonSerializerOptions">Optional <see cref="JsonSerializerOptions"/> for serializing and deserializing continuation tokens. Use this when the agent's continuation token contains custom types not registered in the default options. Falls back to <see cref="A2AHostingJsonUtilities.DefaultOptions"/> if not provided.</param>
     /// <returns>The configured <see cref="TaskManager"/>.</returns>
     public static ITaskManager MapA2A(
@@ -86,10 +86,10 @@ public static class AIAgentExtensions
         ITaskManager? taskManager = null,
         ILoggerFactory? loggerFactory = null,
         AgentSessionStore? agentSessionStore = null,
-        A2AResponseMode? responseMode = null,
+        AgentRunMode? runMode = null,
         JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        taskManager = agent.MapA2A(taskManager, loggerFactory, agentSessionStore, responseMode, jsonSerializerOptions);
+        taskManager = agent.MapA2A(taskManager, loggerFactory, agentSessionStore, runMode, jsonSerializerOptions);
 
         taskManager.OnAgentCardQuery += (context, query) =>
         {
@@ -108,7 +108,7 @@ public static class AIAgentExtensions
     private static async Task<A2AResponse> OnMessageReceivedAsync(
         MessageSendParams messageSendParams,
         AIHostAgent hostAgent,
-        A2AResponseMode responseMode,
+        AgentRunMode runMode,
         ITaskManager taskManager,
         JsonSerializerOptions continuationTokenJsonOptions,
         CancellationToken cancellationToken)
@@ -116,14 +116,13 @@ public static class AIAgentExtensions
         var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString("N");
         var session = await hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
 
-        // Only enable background responses when the mode allows task-based results.
-        // In Message mode, background responses are never enabled so the agent always completes synchronously.
-        var decisionContext = new A2AResponseDecisionContext(messageSendParams);
-        var shouldReturnAsTask = await responseMode.ShouldReturnAsTaskAsync(decisionContext, cancellationToken).ConfigureAwait(false);
+        // Decide whether to run in background based on user preferences and agent capabilities
+        var decisionContext = new A2ARunDecisionContext(messageSendParams);
+        var allowBackgroundResponses = await runMode.ShouldRunInBackgroundAsync(decisionContext, cancellationToken).ConfigureAwait(false);
 
         var options = messageSendParams.Metadata is not { Count: > 0 }
-            ? new AgentRunOptions { AllowBackgroundResponses = shouldReturnAsTask }
-            : new AgentRunOptions { AllowBackgroundResponses = shouldReturnAsTask, AdditionalProperties = messageSendParams.Metadata.ToAdditionalProperties() };
+            ? new AgentRunOptions { AllowBackgroundResponses = allowBackgroundResponses }
+            : new AgentRunOptions { AllowBackgroundResponses = allowBackgroundResponses, AdditionalProperties = messageSendParams.Metadata.ToAdditionalProperties() };
 
         var response = await hostAgent.RunAsync(
             messageSendParams.ToChatMessages(),
@@ -133,25 +132,17 @@ public static class AIAgentExtensions
 
         await hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
 
-        if (!shouldReturnAsTask)
+#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+        if (response.ContinuationToken is null)
         {
             return CreateMessageFromResponse(contextId, response);
         }
 
         var agentTask = await InitializeTaskAsync(contextId, messageSendParams.Message, taskManager, cancellationToken).ConfigureAwait(false);
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-        if (response.ContinuationToken is not null)
-        {
-            StoreContinuationToken(agentTask, response.ContinuationToken, continuationTokenJsonOptions);
-            await TransitionToWorkingAsync(agentTask.Id, contextId, response, taskManager, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            await CompleteWithArtifactAsync(agentTask.Id, response, taskManager, cancellationToken).ConfigureAwait(false);
-        }
-#pragma warning restore MEAI001
-
+        StoreContinuationToken(agentTask, response.ContinuationToken, continuationTokenJsonOptions);
+        await TransitionToWorkingAsync(agentTask.Id, contextId, response, taskManager, cancellationToken).ConfigureAwait(false);
         return agentTask;
+#pragma warning restore MEAI001
     }
 
     private static async Task OnTaskUpdatedAsync(

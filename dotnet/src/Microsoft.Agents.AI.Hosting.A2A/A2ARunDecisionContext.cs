@@ -5,11 +5,11 @@ using A2A;
 namespace Microsoft.Agents.AI.Hosting.A2A;
 
 /// <summary>
-/// Provides context for a custom A2A response mode decision.
+/// Provides context for a custom A2A run mode decision.
 /// </summary>
-public sealed class A2AResponseDecisionContext
+public sealed class A2ARunDecisionContext
 {
-    internal A2AResponseDecisionContext(MessageSendParams messageSendParams)
+    internal A2ARunDecisionContext(MessageSendParams messageSendParams)
     {
         this.MessageSendParams = messageSendParams;
     }

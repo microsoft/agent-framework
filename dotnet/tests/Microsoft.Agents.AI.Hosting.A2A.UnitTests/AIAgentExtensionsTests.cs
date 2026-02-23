@@ -187,7 +187,7 @@ public sealed class AIAgentExtensionsTests
         // Arrange
         AgentRunOptions? capturedOptions = null;
         ITaskManager taskManager = CreateAgentMock(options => capturedOptions = options)
-            .Object.MapA2A(responseMode: A2AResponseMode.Message);
+            .Object.MapA2A(responseMode: AgentRunMode.Message);
 
         // Act
         A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
@@ -211,7 +211,7 @@ public sealed class AIAgentExtensionsTests
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Done immediately")]);
         ITaskManager taskManager = CreateAgentMockWithResponse(response)
-            .Object.MapA2A(responseMode: A2AResponseMode.Task);
+            .Object.MapA2A(responseMode: AgentRunMode.Task);
 
         // Act
         A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
@@ -238,7 +238,7 @@ public sealed class AIAgentExtensionsTests
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Quick reply")]);
         ITaskManager taskManager = CreateAgentMockWithResponse(response)
-            .Object.MapA2A(responseMode: A2AResponseMode.Dynamic((_, _) => ValueTask.FromResult(false)));
+            .Object.MapA2A(runMode: AgentRunMode.Dynamic((_, _) => ValueTask.FromResult(false)));
 
         // Act
         A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
@@ -366,7 +366,7 @@ public sealed class AIAgentExtensionsTests
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Done!")]);
         ITaskManager taskManager = CreateAgentMockWithResponse(response)
-            .Object.MapA2A(responseMode: A2AResponseMode.Task);
+            .Object.MapA2A(responseMode: AgentRunMode.Task);
         AgentMessage originalMessage = new() { MessageId = "user-msg-2", Role = MessageRole.User, Parts = [new TextPart { Text = "Quick task" }] };
 
         // Act
@@ -570,7 +570,7 @@ public sealed class AIAgentExtensionsTests
             ContinuationToken = CreateTestContinuationToken()
         };
         ITaskManager taskManager = CreateAgentMockWithResponse(response)
-            .Object.MapA2A(responseMode: A2AResponseMode.Task);
+            .Object.MapA2A(responseMode: AgentRunMode.Task);
 
         // Act
         A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
@@ -624,7 +624,7 @@ public sealed class AIAgentExtensionsTests
             new AgentResponse([new ChatMessage(ChatRole.Assistant, "Done immediately")]),
             new AgentResponse([new ChatMessage(ChatRole.Assistant, "Follow-up done!")]),
             ref callCount);
-        ITaskManager taskManager = agentMock.Object.MapA2A(responseMode: A2AResponseMode.Task);
+        ITaskManager taskManager = agentMock.Object.MapA2A(responseMode: AgentRunMode.Task);
 
         // Act — create a completed task (no continuation token)
         A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
