@@ -5,7 +5,14 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import (
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from datetime import datetime, timezone
 from itertools import chain
 from typing import Any, Generic, Literal
@@ -16,7 +23,9 @@ from openai.types import CompletionUsage
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
+from openai.types.chat.chat_completion_message_custom_tool_call import (
+    ChatCompletionMessageCustomToolCall,
+)
 from openai.types.chat.completion_create_params import WebSearchOptions
 from pydantic import BaseModel
 
@@ -395,21 +404,18 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     ) -> ChatResponseUpdate:
         """Parse a streaming response update from OpenAI."""
         chunk_metadata = self._get_metadata_from_streaming_chat_response(chunk)
-        if chunk.usage:
-            return ChatResponseUpdate(
-                role="assistant",
-                contents=[
-                    Content.from_usage(
-                        usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk
-                    )
-                ],
-                model_id=chunk.model,
-                additional_properties=chunk_metadata,
-                response_id=chunk.id,
-                message_id=chunk.id,
-            )
         contents: list[Content] = []
         finish_reason: FinishReason | None = None
+
+        # Process usage data (may coexist with text/tool content in providers like Gemini).
+        # See https://github.com/microsoft/agent-framework/issues/3434
+        if chunk.usage:
+            contents.append(
+                Content.from_usage(
+                    usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk
+                )
+            )
+
         for choice in chunk.choices:
             chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
             contents.extend(self._parse_tool_calls_from_openai(choice))
@@ -532,6 +538,17 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
     def _prepare_message_for_openai(self, message: Message) -> list[dict[str, Any]]:
         """Prepare a chat message for OpenAI."""
+        # System/developer messages must use plain string content because some
+        # OpenAI-compatible endpoints reject list content for non-user roles.
+        if message.role in ("system", "developer"):
+            texts = [content.text for content in message.contents if content.type == "text" and content.text]
+            if texts:
+                sys_args: dict[str, Any] = {"role": message.role, "content": "\n".join(texts)}
+                if message.author_name:
+                    sys_args["name"] = message.author_name
+                return [sys_args]
+            return []
+
         all_messages: list[dict[str, Any]] = []
         for content in message.contents:
             # Skip approval content - it's internal framework state, not for the LLM
@@ -568,6 +585,15 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     args["content"].append(self._prepare_content_for_openai(content))  # type: ignore
             if "content" in args or "tool_calls" in args:
                 all_messages.append(args)
+
+        # Flatten text-only content lists to plain strings for broader
+        # compatibility with OpenAI-like endpoints (e.g. Foundry Local).
+        # See https://github.com/microsoft/agent-framework/issues/4084
+        for msg in all_messages:
+            msg_content: Any = msg.get("content")
+            if isinstance(msg_content, list) and all(isinstance(c, dict) and c.get("type") == "text" for c in msg_content):
+                msg["content"] = "\n".join(c.get("text", "") for c in msg_content)
+
         return all_messages
 
     def _prepare_content_for_openai(self, content: Content) -> dict[str, Any]:

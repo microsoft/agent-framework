@@ -207,6 +207,26 @@ class TestAGUIEventConverter:
         assert update.additional_properties["thread_id"] == "thread_123"
         assert update.additional_properties["run_id"] == "run_456"
 
+    def test_run_finished_event_with_interrupt(self) -> None:
+        """RUN_FINISHED interrupt metadata is preserved in additional_properties."""
+        converter = AGUIEventConverter()
+        converter.thread_id = "thread_123"
+        converter.run_id = "run_456"
+
+        event = {
+            "type": "RUN_FINISHED",
+            "threadId": "thread_123",
+            "runId": "run_456",
+            "interrupt": [{"id": "req_1", "value": {"question": "Continue?"}}],
+            "result": {"status": "paused"},
+        }
+
+        update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.additional_properties["interrupt"] == [{"id": "req_1", "value": {"question": "Continue?"}}]
+        assert update.additional_properties["result"] == {"status": "paused"}
+
     def test_run_error_event(self) -> None:
         """Test conversion of RUN_ERROR event."""
         converter = AGUIEventConverter()
@@ -238,6 +258,37 @@ class TestAGUIEventConverter:
         update = converter.convert_event(event)
 
         assert update is None
+
+    def test_custom_event_conversion(self) -> None:
+        """CUSTOM events are converted to update metadata."""
+        converter = AGUIEventConverter()
+        event = {
+            "type": "CUSTOM",
+            "name": "progress",
+            "value": {"percent": 10},
+        }
+
+        update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.additional_properties["ag_ui_custom_event"]["name"] == "progress"
+        assert update.additional_properties["ag_ui_custom_event"]["value"] == {"percent": 10}
+        assert update.additional_properties["ag_ui_custom_event"]["raw_type"] == "CUSTOM"
+
+    def test_custom_event_alias_conversion(self) -> None:
+        """CUSTOM_EVENT/custom_event aliases map to CUSTOM behavior."""
+        converter = AGUIEventConverter()
+        events = [
+            {"type": "CUSTOM_EVENT", "name": "alias_upper", "value": {"v": 1}},
+            {"type": "custom_event", "name": "alias_lower", "value": {"v": 2}},
+        ]
+
+        updates = [converter.convert_event(event) for event in events]
+
+        assert updates[0] is not None
+        assert updates[1] is not None
+        assert updates[0].additional_properties["ag_ui_custom_event"]["raw_type"] == "CUSTOM_EVENT"
+        assert updates[1].additional_properties["ag_ui_custom_event"]["raw_type"] == "custom_event"
 
     def test_full_conversation_flow(self) -> None:
         """Test complete conversation flow with multiple event types."""
