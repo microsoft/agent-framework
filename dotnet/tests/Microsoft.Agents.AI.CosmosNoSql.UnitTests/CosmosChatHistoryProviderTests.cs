@@ -840,9 +840,11 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
         const string ConversationId = "count-test-conversation";
 
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, ConversationId);
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(ConversationId));
 
         // Add 5 messages
         var messages = new List<ChatMessage>();
@@ -851,14 +853,14 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             messages.Add(new ChatMessage(ChatRole.User, $"Message {i}"));
         }
 
-        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, messages, []);
         await provider.InvokedAsync(context);
 
         // Wait for eventual consistency
         await Task.Delay(100);
 
         // Act
-        var count = await provider.GetMessageCountAsync();
+        var count = await provider.GetMessageCountAsync(session);
 
         // Assert
         Assert.Equal(5, count);
@@ -870,12 +872,14 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
         const string ConversationId = "empty-count-test-conversation";
 
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, ConversationId);
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(ConversationId));
 
         // Act
-        var count = await provider.GetMessageCountAsync();
+        var count = await provider.GetMessageCountAsync(session);
 
         // Assert
         Assert.Equal(0, count);
@@ -887,30 +891,32 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
         const string ConversationId = "clear-test-conversation";
 
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, ConversationId);
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(ConversationId));
 
         // Add 3 messages
         var messages = new List<ChatMessage>
         {
-            new ChatMessage(ChatRole.User, "Message 1"),
-            new ChatMessage(ChatRole.Assistant, "Message 2"),
-            new ChatMessage(ChatRole.User, "Message 3")
+            new(ChatRole.User, "Message 1"),
+            new(ChatRole.Assistant, "Message 2"),
+            new(ChatRole.User, "Message 3")
         };
 
-        var context = new ChatHistoryProvider.InvokedContext(messages, []);
+        var context = new ChatHistoryProvider.InvokedContext(s_mockAgent, session, messages, []);
         await provider.InvokedAsync(context);
 
         // Wait for eventual consistency
         await Task.Delay(100);
 
         // Verify messages exist
-        var countBefore = await provider.GetMessageCountAsync();
+        var countBefore = await provider.GetMessageCountAsync(session);
         Assert.Equal(3, countBefore);
 
         // Act
-        var deletedCount = await provider.ClearMessagesAsync();
+        var deletedCount = await provider.ClearMessagesAsync(session);
 
         // Wait for eventual consistency
         await Task.Delay(100);
@@ -919,10 +925,10 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         Assert.Equal(3, deletedCount);
 
         // Verify messages are deleted
-        var countAfter = await provider.GetMessageCountAsync();
+        var countAfter = await provider.GetMessageCountAsync(session);
         Assert.Equal(0, countAfter);
 
-        var invokingContext = new ChatHistoryProvider.InvokingContext([]);
+        var invokingContext = new ChatHistoryProvider.InvokingContext(s_mockAgent, session, []);
         var retrievedMessages = await provider.InvokingAsync(invokingContext);
         Assert.Empty(retrievedMessages);
     }
@@ -933,12 +939,14 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
     {
         // Arrange
         this.SkipIfEmulatorNotAvailable();
+        var session = CreateMockSession();
         const string ConversationId = "empty-clear-test-conversation";
 
-        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId, ConversationId);
+        using var provider = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, TestContainerId,
+            _ => new CosmosChatHistoryProvider.State(ConversationId));
 
         // Act
-        var deletedCount = await provider.ClearMessagesAsync();
+        var deletedCount = await provider.ClearMessagesAsync(session);
 
         // Assert
         Assert.Equal(0, deletedCount);
