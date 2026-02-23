@@ -140,6 +140,9 @@
     <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step15_ComputerUse/FoundryAgents_Step15_ComputerUse.csproj" />
     <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step18_FileSearch/FoundryAgents_Step18_FileSearch.csproj" />
     <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step19_OpenAPITools/FoundryAgents_Step19_OpenAPITools.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step25_WebSearch/FoundryAgents_Step25_WebSearch.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step26_MemorySearch/FoundryAgents_Step26_MemorySearch.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step27_LocalMCP/FoundryAgents_Step27_LocalMCP.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/ModelContextProtocol/">
     <File Path="samples/02-agents/ModelContextProtocol/README.md" />
@@ -151,7 +154,7 @@
   <Folder Name="/Samples/02-agents/Observability/">
     <Project Path="samples/02-agents/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
   </Folder>
-   <Folder Name="/Samples/03-workflows/">
+  <Folder Name="/Samples/03-workflows/">
     <File Path="samples/03-workflows/README.md" />
   </Folder>
   <Folder Name="/Samples/03-workflows/Concurrent/">

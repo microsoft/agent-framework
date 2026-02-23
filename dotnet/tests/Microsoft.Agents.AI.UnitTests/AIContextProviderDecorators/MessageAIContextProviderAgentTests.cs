@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
 /// Unit tests for the <see cref="MessageAIContextProviderAgent"/> class and
-/// the <see cref="AIAgentBuilder.Use(MessageAIContextProvider[])"/> builder extension.
+/// the <see cref="AIAgentBuilder.UseAIContextProviders(MessageAIContextProvider[])"/> builder extension.
 /// </summary>
 public class MessageAIContextProviderAgentTests
 {
@@ -355,7 +355,7 @@ public class MessageAIContextProviderAgentTests
             });
 
         var pipeline = new AIAgentBuilder(innerAgent)
-            .Use([provider])
+            .UseAIContextProviders([provider])
             .Build();
 
         // Act
@@ -385,7 +385,7 @@ public class MessageAIContextProviderAgentTests
             });
 
         var pipeline = new AIAgentBuilder(innerAgent)
-            .Use([provider1, provider2])
+            .UseAIContextProviders([provider1, provider2])
             .Build();
 
         // Act

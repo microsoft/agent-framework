@@ -32,6 +32,8 @@ def _create_agent() -> Any:
         name="HostedAgent",
         instructions="You are a helpful assistant hosted in Azure Functions.",
     )
+
+
 # </create_agent>
 
 # <host_agent>
