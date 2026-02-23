@@ -198,7 +198,19 @@ def _emit_tool_call(
         events.append(ToolCallArgsEvent(tool_call_id=tool_call_id, delta=delta))
 
         if tool_call_id in flow.tool_calls_by_id:
-            flow.tool_calls_by_id[tool_call_id]["function"]["arguments"] += delta
+            accumulated = flow.tool_calls_by_id[tool_call_id]["function"]["arguments"]
+            # Guard against full-argument replay: if the accumulated arguments
+            # already equal the incoming delta, this is a non-delta replay of
+            # the complete arguments string (some providers send the full
+            # arguments again after streaming deltas). Skip the append to
+            # prevent doubling in MESSAGES_SNAPSHOT.  (Fixes #4194)
+            if accumulated and delta == accumulated:
+                logger.debug(
+                    "Skipping duplicate full-arguments replay for tool_call_id=%s",
+                    tool_call_id,
+                )
+            else:
+                flow.tool_calls_by_id[tool_call_id]["function"]["arguments"] += delta
 
         if predictive_handler and flow.tool_call_name:
             delta_events = predictive_handler.emit_streaming_deltas(flow.tool_call_name, delta)
