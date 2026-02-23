@@ -896,6 +896,25 @@ async def test_azure_ai_chat_client_get_code_interpreter_tool_with_file_ids() ->
     assert "file-def" in tool.file_ids
 
 
+async def test_azure_ai_chat_client_get_code_interpreter_tool_with_data_sources() -> None:
+    """Test get_code_interpreter_tool forwards data_sources to the SDK."""
+    from azure.ai.agents.models import CodeInterpreterTool, VectorStoreDataSource
+
+    ds = VectorStoreDataSource(asset_identifier="test-asset-id", asset_type="id_asset")
+    tool = AzureAIAgentClient.get_code_interpreter_tool(data_sources=[ds])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert "test-asset-id" in tool.data_sources
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_mutually_exclusive() -> None:
+    """Test get_code_interpreter_tool raises ValueError when both file_ids and data_sources are provided."""
+    from azure.ai.agents.models import VectorStoreDataSource
+
+    ds = VectorStoreDataSource(asset_identifier="test-asset-id", asset_type="id_asset")
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        AzureAIAgentClient.get_code_interpreter_tool(file_ids=["file-abc"], data_sources=[ds])
+
+
 async def test_azure_ai_chat_client_create_agent_stream_submit_tool_approvals(
     mock_agents_client: MagicMock,
 ) -> None:
