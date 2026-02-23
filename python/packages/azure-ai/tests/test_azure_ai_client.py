@@ -1784,26 +1784,26 @@ def test_get_image_generation_tool_with_options() -> None:
 
 
 def test_extract_azure_search_urls_with_dict_items(mock_project_client: MagicMock) -> None:
-    """Test _extract_azure_search_urls with dict-style output items."""
+    """Test _extract_azure_search_urls with dict-style output (after JSON parsing)."""
     client = create_test_azure_ai_client(mock_project_client)
-    output_items = [
-        {
-            "type": "azure_ai_search_call",
-            "arguments": '{"query":"test"}',
-        },
-        {
-            "type": "azure_ai_search_call_output",
-            "output": {
-                "documents": [{"id": "1", "url": "https://search.example.com/"}],
-                "get_urls": [
-                    "https://search.example.com/indexes/idx/docs/1?api-version=2024-07-01",
-                    "https://search.example.com/indexes/idx/docs/2?api-version=2024-07-01",
-                ],
-            },
-        },
-        {"type": "message", "content": [{"type": "output_text", "text": "hello"}]},
-    ]
-    urls = client._extract_azure_search_urls(output_items)
+    mock_output = {
+        "documents": [{"id": "1", "url": "https://search.example.com/"}],
+        "get_urls": [
+            "https://search.example.com/indexes/idx/docs/1?api-version=2024-07-01",
+            "https://search.example.com/indexes/idx/docs/2?api-version=2024-07-01",
+        ],
+    }
+    mock_search_item = MagicMock()
+    mock_search_item.type = "azure_ai_search_call_output"
+    mock_search_item.output = mock_output
+
+    mock_call_item = MagicMock()
+    mock_call_item.type = "azure_ai_search_call"
+
+    mock_msg_item = MagicMock()
+    mock_msg_item.type = "message"
+
+    urls = client._extract_azure_search_urls([mock_call_item, mock_search_item, mock_msg_item])
     assert len(urls) == 2
     assert urls[0] == "https://search.example.com/indexes/idx/docs/1?api-version=2024-07-01"
     assert urls[1] == "https://search.example.com/indexes/idx/docs/2?api-version=2024-07-01"
@@ -1825,8 +1825,9 @@ def test_extract_azure_search_urls_with_object_items(mock_project_client: MagicM
 def test_extract_azure_search_urls_no_search_items(mock_project_client: MagicMock) -> None:
     """Test _extract_azure_search_urls with no search output items."""
     client = create_test_azure_ai_client(mock_project_client)
-    output_items = [{"type": "message", "content": []}]
-    urls = client._extract_azure_search_urls(output_items)
+    mock_item = MagicMock()
+    mock_item.type = "message"
+    urls = client._extract_azure_search_urls([mock_item])
     assert urls == []
 
 
@@ -2063,17 +2064,16 @@ def test_streaming_hook_enriches_url_citation(mock_project_client: MagicMock) ->
     raw_output_event.item = mock_item
     hook(ChatResponseUpdate(raw_representation=raw_output_event))
 
-    # Step 2: Feed url_citation annotation event
-    mock_annotation = MagicMock()
-    mock_annotation.type = "url_citation"
-    mock_annotation.title = "doc_0"
-    mock_annotation.url = "https://search.example.com/"
-    mock_annotation.start_index = 100
-    mock_annotation.end_index = 112
-
+    # Step 2: Feed url_citation annotation event (annotation is always a dict in streaming)
     raw_ann_event = MagicMock()
     raw_ann_event.type = "response.output_text.annotation.added"
-    raw_ann_event.annotation = mock_annotation
+    raw_ann_event.annotation = {
+        "type": "url_citation",
+        "title": "doc_0",
+        "url": "https://search.example.com/",
+        "start_index": 100,
+        "end_index": 112,
+    }
     raw_ann_event.annotation_index = 0
 
     result = hook(ChatResponseUpdate(raw_representation=raw_ann_event))
@@ -2097,12 +2097,13 @@ def test_build_url_citation_content(mock_project_client: MagicMock) -> None:
     client = create_test_azure_ai_client(mock_project_client)
     get_urls = ["https://search.example.com/indexes/idx/docs/16?api-version=2024-07-01"]
 
-    annotation_data = MagicMock()
-    annotation_data.type = "url_citation"
-    annotation_data.title = "doc_0"
-    annotation_data.url = "https://search.example.com/"
-    annotation_data.start_index = 100
-    annotation_data.end_index = 112
+    annotation_data = {
+        "type": "url_citation",
+        "title": "doc_0",
+        "url": "https://search.example.com/",
+        "start_index": 100,
+        "end_index": 112,
+    }
 
     raw_event = MagicMock()
     raw_event.annotation_index = 0

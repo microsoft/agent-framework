@@ -636,24 +636,21 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """
         get_urls: list[str] = []
         for item in output_items:
-            item_type = getattr(item, "type", None)
-            if isinstance(item, dict):
-                item_type = item.get("type")
-            if item_type == "azure_ai_search_call_output":
-                output = getattr(item, "output", None)
-                if isinstance(item, dict):
-                    output = item.get("output")
-                if isinstance(output, str):
-                    try:
-                        output = json.loads(output)
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-                if output is not None:
-                    urls = getattr(output, "get_urls", None)
-                    if isinstance(output, dict):
-                        urls = output.get("get_urls")
-                    if urls and isinstance(urls, list):
-                        get_urls.extend(urls)
+            if item.type != "azure_ai_search_call_output":
+                continue
+            output = item.output
+            if isinstance(output, str):
+                try:
+                    output = json.loads(output)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            if isinstance(output, list):
+                # Streaming "added" events send output as an empty list; skip.
+                continue
+            if output is not None:
+                urls = output.get("get_urls") if isinstance(output, dict) else output.get_urls
+                if urls and isinstance(urls, list):
+                    get_urls.extend(urls)
         return get_urls
 
     def _get_search_doc_url(self, citation_title: str | None, get_urls: list[str]) -> str | None:
@@ -701,33 +698,29 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 if doc_url:
                     annotation.setdefault("additional_properties", {})["get_url"] = doc_url
 
-    def _build_url_citation_content(self, annotation_data: Any, get_urls: list[str], raw_event: Any) -> Content:
+    def _build_url_citation_content(
+        self, annotation_data: dict[str, Any], get_urls: list[str], raw_event: Any
+    ) -> Content:
         """Build a Content with a citation Annotation from a url_citation streaming event.
 
         The base class does not handle ``url_citation`` annotations in streaming, so this
         method creates the appropriate framework content for them.
 
         Args:
-            annotation_data: The raw annotation object/dict from the streaming event.
+            annotation_data: The raw annotation dict from the streaming event.
             get_urls: Captured document URLs for enrichment.
             raw_event: The raw streaming event for raw_representation.
 
         Returns:
             A Content object containing the citation annotation.
         """
-
-        def _val(key: str) -> Any:
-            if isinstance(annotation_data, dict):
-                return annotation_data.get(key)
-            return getattr(annotation_data, key, None)
-
-        ann_title = str(_val("title") or "")
-        ann_url = str(_val("url") or "")
-        ann_start = _val("start_index")
-        ann_end = _val("end_index")
+        ann_title = str(annotation_data.get("title") or "")
+        ann_url = str(annotation_data.get("url") or "")
+        ann_start = annotation_data.get("start_index")
+        ann_end = annotation_data.get("end_index")
 
         additional_props: dict[str, Any] = {
-            "annotation_index": getattr(raw_event, "annotation_index", None),
+            "annotation_index": raw_event.annotation_index,
         }
         doc_url = self._get_search_doc_url(ann_title, get_urls)
         if doc_url:
@@ -773,8 +766,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 response = await super(RawAzureAIClient, self)._inner_get_response(
                     messages=messages, options=options, stream=False, **kwargs
                 )
-                raw = getattr(response, "raw_representation", None)
-                get_urls = self._extract_azure_search_urls(getattr(raw, "output", []))
+                get_urls = self._extract_azure_search_urls(response.raw_representation.output)
                 if get_urls:
                     for msg in response.messages:
                         self._enrich_annotations_with_search_urls(list(msg.contents or []), get_urls)
@@ -783,47 +775,42 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             return _enrich_response()
 
         # Streaming: use a closure-local list so concurrent streams don't interfere
-        stream_result = cast(
-            ResponseStream[ChatResponseUpdate, ChatResponse],
-            super()._inner_get_response(messages=messages, options=options, stream=True, **kwargs),
+        stream_result = super()._inner_get_response(  # type: ignore[assignment]
+            messages=messages, options=options, stream=True, **kwargs
         )
         search_get_urls: list[str] = []
 
         def _enrich_update(update: ChatResponseUpdate) -> ChatResponseUpdate:
-            raw = getattr(update, "raw_representation", None)
+            raw = update.raw_representation
             if raw is None:
                 return update
-            event_type = getattr(raw, "type", None)
+            event_type = raw.type
 
             # Capture get_urls from azure_ai_search_call_output items.
             # Check both "added" and "done" events because the output data (including
             # get_urls) may only be fully populated in the "done" event.
             if event_type in ("response.output_item.added", "response.output_item.done"):
-                item = getattr(raw, "item", None)
-                if item is not None:
-                    urls = self._extract_azure_search_urls([item])
-                    if urls:
-                        search_get_urls.extend(urls)
+                urls = self._extract_azure_search_urls([raw.item])
+                if urls:
+                    search_get_urls.extend(urls)
 
             # Handle url_citation annotations (not handled by the base class in streaming)
             if event_type == "response.output_text.annotation.added":
-                ann = getattr(raw, "annotation", None)
-                if ann is not None:
-                    ann_type = ann.get("type") if isinstance(ann, dict) else getattr(ann, "type", None)
-                    if ann_type == "url_citation":
-                        citation_content = self._build_url_citation_content(ann, search_get_urls, raw)
-                        contents_list = list(update.contents or [])
-                        contents_list.append(citation_content)
-                        return ChatResponseUpdate(
-                            contents=contents_list,
-                            conversation_id=update.conversation_id,
-                            response_id=update.response_id,
-                            role=update.role,
-                            model_id=update.model_id,
-                            continuation_token=update.continuation_token,
-                            additional_properties=update.additional_properties,
-                            raw_representation=update.raw_representation,
-                        )
+                ann = raw.annotation
+                if ann.get("type") == "url_citation":
+                    citation_content = self._build_url_citation_content(ann, search_get_urls, raw)
+                    contents_list = list(update.contents or [])
+                    contents_list.append(citation_content)
+                    return ChatResponseUpdate(
+                        contents=contents_list,
+                        conversation_id=update.conversation_id,
+                        response_id=update.response_id,
+                        role=update.role,
+                        model_id=update.model_id,
+                        continuation_token=update.continuation_token,
+                        additional_properties=update.additional_properties,
+                        raw_representation=update.raw_representation,
+                    )
 
             # Enrich any citation annotations already parsed by the base class
             if update.contents and search_get_urls:
