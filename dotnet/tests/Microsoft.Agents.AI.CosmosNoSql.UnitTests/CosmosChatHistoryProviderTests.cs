@@ -43,9 +43,9 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     private static AgentSession CreateMockSession() => new Moq.Mock<AgentSession>().Object;
 
-    // Cosmos DB Emulator connection settings
-    private const string EmulatorEndpoint = "https://localhost:8081";
-    private const string EmulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
+    // Cosmos DB Emulator connection settings (can be overridden via COSMOSDB_ENDPOINT and COSMOSDB_KEY environment variables)
+    private static readonly string s_emulatorEndpoint = Environment.GetEnvironmentVariable("COSMOSDB_ENDPOINT") ?? "https://localhost:8081";
+    private static readonly string s_emulatorKey = Environment.GetEnvironmentVariable("COSMOSDB_KEY") ?? "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
     private const string TestContainerId = "ChatMessages";
     private const string HierarchicalTestContainerId = "HierarchicalChatMessages";
     // Use unique database ID per test class instance to avoid conflicts  
@@ -67,12 +67,12 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         // Set COSMOS_PRESERVE_CONTAINERS=true to keep containers and data for inspection
         this._preserveContainer = string.Equals(Environment.GetEnvironmentVariable("COSMOS_PRESERVE_CONTAINERS"), "true", StringComparison.OrdinalIgnoreCase);
 
-        this._connectionString = $"AccountEndpoint={EmulatorEndpoint};AccountKey={EmulatorKey}";
+        this._connectionString = $"AccountEndpoint={s_emulatorEndpoint};AccountKey={s_emulatorKey}";
 
         try
         {
             // Only create CosmosClient for test setup - the actual tests will use connection string constructors
-            this._setupClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
+            this._setupClient = new CosmosClient(s_emulatorEndpoint, s_emulatorKey);
 
             // Test connection by attempting to create database
             var databaseResponse = await this._setupClient.CreateDatabaseIfNotExistsAsync(s_testDatabaseId);
@@ -497,7 +497,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
         // Act
         TokenCredential credential = new DefaultAzureCredential();
-        using var provider = new CosmosChatHistoryProvider(EmulatorEndpoint, credential, s_testDatabaseId, HierarchicalTestContainerId,
+        using var provider = new CosmosChatHistoryProvider(s_emulatorEndpoint, credential, s_testDatabaseId, HierarchicalTestContainerId,
             _ => new CosmosChatHistoryProvider.State("session-789", "tenant-123", "user-456"));
 
         // Assert
@@ -513,7 +513,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         // Arrange & Act
         this.SkipIfEmulatorNotAvailable();
 
-        using var cosmosClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
+        using var cosmosClient = new CosmosClient(s_emulatorEndpoint, s_emulatorKey);
         using var provider = new CosmosChatHistoryProvider(cosmosClient, s_testDatabaseId, HierarchicalTestContainerId,
             _ => new CosmosChatHistoryProvider.State("session-789", "tenant-123", "user-456"));
 

@@ -28,9 +28,9 @@ namespace Microsoft.Agents.AI.CosmosNoSql.UnitTests;
 [Collection("CosmosDB")]
 public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
 {
-    // Cosmos DB Emulator connection settings
-    private const string EmulatorEndpoint = "https://localhost:8081";
-    private const string EmulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
+    // Cosmos DB Emulator connection settings (can be overridden via COSMOSDB_ENDPOINT and COSMOSDB_KEY environment variables)
+    private static readonly string s_emulatorEndpoint = Environment.GetEnvironmentVariable("COSMOSDB_ENDPOINT") ?? "https://localhost:8081";
+    private static readonly string s_emulatorKey = Environment.GetEnvironmentVariable("COSMOSDB_KEY") ?? "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
     private const string TestContainerId = "Checkpoints";
     // Use unique database ID per test class instance to avoid conflicts
 #pragma warning disable CA1802 // Use literals where appropriate
@@ -64,11 +64,11 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         // Set COSMOS_PRESERVE_CONTAINERS=true to keep containers and data for inspection
         this._preserveContainer = string.Equals(Environment.GetEnvironmentVariable("COSMOS_PRESERVE_CONTAINERS"), "true", StringComparison.OrdinalIgnoreCase);
 
-        this._connectionString = $"AccountEndpoint={EmulatorEndpoint};AccountKey={EmulatorKey}";
+        this._connectionString = $"AccountEndpoint={s_emulatorEndpoint};AccountKey={s_emulatorKey}";
 
         try
         {
-            this._cosmosClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
+            this._cosmosClient = new CosmosClient(s_emulatorEndpoint, s_emulatorKey);
 
             // Test connection by attempting to create database
             this._database = await this._cosmosClient.CreateDatabaseIfNotExistsAsync(s_testDatabaseId);
