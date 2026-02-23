@@ -70,7 +70,7 @@ $env:AZURE_AI_MEMORY_STORE_NAME="your-memory-store-name"  # Required - name of p
 Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/GettingStarted/FoundryAgents
+cd dotnet/samples/02-agents/FoundryAgents
 dotnet run --project .\FoundryAgents_Step26_MemorySearch
 ```
 
