@@ -60,7 +60,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         // Subscribe to events - they will flow directly to the channel as they're raised
         this._stepRunner.OutgoingEvents.EventRaised += OnEventRaisedAsync;
 
-        using Activity? activity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity();
+        Activity? activity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity();
         activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.SessionId, this._stepRunner.SessionId);
 
         try
@@ -93,6 +93,16 @@ internal sealed class StreamingRunEventStream : IRunEventStream
                 RunStatus capturedStatus = this._runStatus;
                 await this._eventChannel.Writer.WriteAsync(new InternalHaltSignal(currentEpoch, capturedStatus), linkedSource.Token).ConfigureAwait(false);
 
+                // Stop the workflow.run Activity when the workflow reaches Idle so the span is
+                // exported to telemetry backends immediately, rather than waiting for the run loop
+                // to be cancelled/disposed.
+                if (activity is not null && capturedStatus == RunStatus.Idle)
+                {
+                    activity.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
+                    activity.Dispose();
+                    activity = null;
+                }
+
                 // Wait for next input from the consumer
                 // Works for both Idle (no work) and PendingRequests (waiting for responses)
                 await this._inputWaiter.WaitForInputAsync(TimeSpan.FromSeconds(1), linkedSource.Token).ConfigureAwait(false);
@@ -124,7 +134,13 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 
             // Mark as ended when run loop exits
             this._runStatus = RunStatus.Ended;
-            activity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
+
+            // Safety net: stop the activity if not already stopped (e.g. on cancellation or error)
+            if (activity is not null)
+            {
+                activity.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
+                activity.Dispose();
+            }
         }
 
         async ValueTask OnEventRaisedAsync(object? sender, WorkflowEvent e)
