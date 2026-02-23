@@ -2,13 +2,6 @@ name: Python - Merge - Tests
 
 on:
   workflow_dispatch:
-  workflow_call:
-    inputs:
-      checkout-ref:
-        description: "Git ref to checkout (e.g., a commit SHA from a PR)"
-        required: false
-        type: string
-        default: ""
   pull_request:
     branches: ["main"]
   merge_group:
@@ -17,7 +10,7 @@ on:
     - cron: "0 0 * * *" # Run at midnight UTC daily
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 env:
@@ -33,11 +26,9 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      pythonChanges: ${{ steps.filter.outputs.python}}
+      pythonChanges: ${{ steps.filter.outputs.python }}
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref }}
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -85,8 +76,6 @@ jobs:
         working-directory: python
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref }}
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -146,8 +135,6 @@ jobs:
         working-directory: python
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.checkout-ref }}
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup

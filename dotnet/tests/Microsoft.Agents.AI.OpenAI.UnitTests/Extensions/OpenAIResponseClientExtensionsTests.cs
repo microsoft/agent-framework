@@ -260,6 +260,38 @@ public sealed class OpenAIResponseClientExtensionsTests
     }
 
     /// <summary>
+    /// Verify that AsIChatClientWithStoredOutputDisabled throws ArgumentNullException when client is null.
+    /// </summary>
+    [Fact]
+    public void AsIChatClientWithStoredOutputDisabled_WithNullClient_ThrowsArgumentNullException()
+    {
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            ((ResponsesClient)null!).AsIChatClientWithStoredOutputDisabled());
+
+        Assert.Equal("responseClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that AsIChatClientWithStoredOutputDisabled wraps the original ResponsesClient,
+    /// which remains accessible via the service chain.
+    /// </summary>
+    [Fact]
+    public void AsIChatClientWithStoredOutputDisabled_InnerResponsesClientIsAccessible()
+    {
+        // Arrange
+        var responseClient = new TestOpenAIResponseClient();
+
+        // Act
+        var chatClient = responseClient.AsIChatClientWithStoredOutputDisabled();
+
+        // Assert - the inner ResponsesClient should be accessible via GetService
+        var innerClient = chatClient.GetService<ResponsesClient>();
+        Assert.NotNull(innerClient);
+        Assert.Same(responseClient, innerClient);
+    }
+
+    /// <summary>
     /// A simple test IServiceProvider implementation for testing.
     /// </summary>
     private sealed class TestServiceProvider : IServiceProvider

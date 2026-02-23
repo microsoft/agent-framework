@@ -151,7 +151,10 @@
   <Folder Name="/Samples/02-agents/Observability/">
     <Project Path="samples/02-agents/AgentOpenTelemetry/AgentOpenTelemetry.csproj" />
   </Folder>
-   <Folder Name="/Samples/03-workflows/">
+  <Folder Name="/Samples/GettingStarted/FoundryAgents/">
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step26_MemorySearch/FoundryAgents_Step26_MemorySearch.csproj" />
+  </Folder>
+  <Folder Name="/Samples/03-workflows/">
     <File Path="samples/03-workflows/README.md" />
   </Folder>
   <Folder Name="/Samples/03-workflows/Concurrent/">
