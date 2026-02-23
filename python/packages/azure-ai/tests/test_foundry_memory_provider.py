@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
-from agent_framework.exceptions import ServiceInitializationError
 
 from agent_framework_azure_ai._foundry_memory_provider import FoundryMemoryProvider
 
@@ -100,7 +99,7 @@ class TestInit:
         with (
             patch("agent_framework_azure_ai._foundry_memory_provider.load_settings") as mock_load_settings,
             patch.dict(os.environ, {}, clear=True),
-            pytest.raises(ServiceInitializationError, match="project endpoint is required"),
+            pytest.raises(ValueError, match="project endpoint is required"),
         ):
             mock_load_settings.return_value = {"project_endpoint": None}
             FoundryMemoryProvider(
@@ -109,7 +108,7 @@ class TestInit:
             )
 
     def test_init_requires_credential_without_project_client(self) -> None:
-        with pytest.raises(ServiceInitializationError, match="Azure credential is required"):
+        with pytest.raises(ValueError, match="Azure credential is required"):
             FoundryMemoryProvider(
                 project_endpoint="https://test.project.endpoint",
                 memory_store_name="test_store",
@@ -117,7 +116,7 @@ class TestInit:
             )
 
     def test_init_requires_memory_store_name(self, mock_project_client: AsyncMock) -> None:
-        with pytest.raises(ServiceInitializationError, match="memory_store_name is required"):
+        with pytest.raises(ValueError, match="memory_store_name is required"):
             FoundryMemoryProvider(
                 project_client=mock_project_client,
                 memory_store_name="",
@@ -125,7 +124,7 @@ class TestInit:
             )
 
     def test_init_requires_scope(self, mock_project_client: AsyncMock) -> None:
-        with pytest.raises(ServiceInitializationError, match="scope is required"):
+        with pytest.raises(ValueError, match="scope is required"):
             FoundryMemoryProvider(
                 project_client=mock_project_client,
                 memory_store_name="test_store",

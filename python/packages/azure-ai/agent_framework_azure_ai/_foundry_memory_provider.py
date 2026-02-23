@@ -2,8 +2,8 @@
 
 """Foundry Memory Context Provider using BaseContextProvider.
 
-This module provides ``FoundryMemoryProvider``, built on the new
-:class:`BaseContextProvider` hooks pattern.
+This module provides ``FoundryMemoryProvider``, built on
+:class:`BaseContextProvider`.
 """
 
 from __future__ import annotations
@@ -16,10 +16,9 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework._settings import load_settings
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import ItemParam, ResponsesAssistantMessageItemParam, ResponsesUserMessageItemParam
-from azure.core.credentials_async import AsyncTokenCredential
 
 from ._shared import AzureAISettings
 
@@ -59,7 +58,7 @@ class FoundryMemoryProvider(BaseContextProvider):
         *,
         project_client: AIProjectClient | None = None,
         project_endpoint: str | None = None,
-        credential: AsyncTokenCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
         memory_store_name: str,
         scope: str | None = None,
         context_prompt: str | None = None,
@@ -73,7 +72,9 @@ class FoundryMemoryProvider(BaseContextProvider):
             source_id: Unique identifier for this provider instance.
             project_client: Azure AI Project client for memory operations.
             project_endpoint: Azure AI project endpoint URL. Used when project_client is not provided.
-            credential: Azure credential for authentication. Required when project_client is not provided.
+            credential: Azure credential for authentication. Accepts a TokenCredential,
+                AsyncTokenCredential, or a callable token provider.
+                Required when project_client is not provided.
             memory_store_name: The name of the memory store to use.
             scope: The namespace that logically groups and isolates memories (e.g., user ID).
                 If None, `session_id` will be used.
@@ -94,22 +95,22 @@ class FoundryMemoryProvider(BaseContextProvider):
         if project_client is None:
             resolved_endpoint = azure_ai_settings.get("project_endpoint")
             if not resolved_endpoint:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
                     "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
                 )
             if not credential:
-                raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
+                raise ValueError("Azure credential is required when project_client is not provided.")
             project_client = AIProjectClient(
                 endpoint=resolved_endpoint,
-                credential=credential,
+                credential=credential,  # type: ignore[arg-type]
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
 
         if not memory_store_name:
-            raise ServiceInitializationError("memory_store_name is required")
+            raise ValueError("memory_store_name is required")
         if not scope:
-            raise ServiceInitializationError("scope is required")
+            raise ValueError("scope is required")
 
         self.project_client = project_client
         self.memory_store_name = memory_store_name
@@ -244,8 +245,6 @@ class FoundryMemoryProvider(BaseContextProvider):
                 previous_update_id=state.get("previous_update_id"),
                 update_delay=self.update_delay,
             )
-            update_result = await update_poller.result()  # Wait for the update to complete
-
             # Store the update_id for next incremental update
             state["previous_update_id"] = update_poller.update_id
 
