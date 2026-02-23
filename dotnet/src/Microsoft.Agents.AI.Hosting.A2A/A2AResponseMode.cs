@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Hosting.A2A;
@@ -11,10 +12,14 @@ namespace Microsoft.Agents.AI.Hosting.A2A;
 /// </summary>
 public sealed class A2AResponseMode : IEquatable<A2AResponseMode>
 {
-    private readonly string _value;
-    private readonly Func<A2AResponseDecisionContext, ValueTask<bool>>? _decide;
+    private const string MessageValue = "message";
+    private const string TaskValue = "task";
+    private const string DynamicValue = "dynamic";
 
-    private A2AResponseMode(string value, Func<A2AResponseDecisionContext, ValueTask<bool>>? decide = null)
+    private readonly string _value;
+    private readonly Func<A2AResponseDecisionContext, CancellationToken, ValueTask<bool>>? _decide;
+
+    private A2AResponseMode(string value, Func<A2AResponseDecisionContext, CancellationToken, ValueTask<bool>>? decide = null)
     {
         this._value = value;
         this._decide = decide;
@@ -24,22 +29,14 @@ public sealed class A2AResponseMode : IEquatable<A2AResponseMode>
     /// Always return an <c>AgentMessage</c>. Background responses are not enabled.
     /// Suitable for lightweight, single-shot request/response interactions.
     /// </summary>
-    public static A2AResponseMode Message { get; } = new("message");
+    public static A2AResponseMode Message { get; } = new(MessageValue);
 
     /// <summary>
     /// Always return an <c>AgentTask</c>. A task is created and tracked for every
     /// request, even if the agent completes immediately. Background responses are enabled
     /// so the agent can signal long-running operations if supported.
     /// </summary>
-    public static A2AResponseMode Task { get; } = new("task");
-
-    /// <summary>
-    /// The response type is decided dynamically using the default heuristic: an
-    /// <c>AgentTask</c> is returned when the agent produces a continuation token
-    /// (indicating a long-running operation); otherwise an <c>AgentMessage</c> is returned.
-    /// Background responses are enabled.
-    /// </summary>
-    public static A2AResponseMode Dynamic() => new("dynamic");
+    public static A2AResponseMode Task { get; } = new(TaskValue);
 
     /// <summary>
     /// The response type is decided by the supplied <paramref name="decideAsTask"/> delegate.
@@ -51,42 +48,36 @@ public sealed class A2AResponseMode : IEquatable<A2AResponseMode>
     /// <param name="decideAsTask">
     /// An async delegate that decides whether the response should be wrapped in an <c>AgentTask</c>.
     /// </param>
-    public static A2AResponseMode Dynamic(Func<A2AResponseDecisionContext, ValueTask<bool>> decideAsTask)
+    public static A2AResponseMode Dynamic(Func<A2AResponseDecisionContext, CancellationToken, ValueTask<bool>> decideAsTask)
     {
         ArgumentNullException.ThrowIfNull(decideAsTask);
-        return new("dynamic", decideAsTask);
+        return new(DynamicValue, decideAsTask);
     }
-
-    /// <summary>
-    /// Gets whether background (long-running) responses are enabled for this mode.
-    /// </summary>
-    internal bool AllowBackgroundResponses =>
-        !string.Equals(this._value, "message", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Determines whether the agent response should be returned as an <c>AgentTask</c>.
     /// </summary>
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-    internal ValueTask<bool> ShouldReturnAsTaskAsync(A2AResponseDecisionContext context)
+    internal ValueTask<bool> ShouldReturnAsTaskAsync(A2AResponseDecisionContext context, CancellationToken cancellationToken)
     {
-        if (string.Equals(this._value, "message", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(this._value, MessageValue, StringComparison.OrdinalIgnoreCase))
         {
             return ValueTask.FromResult(false);
         }
 
-        if (string.Equals(this._value, "task", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(this._value, TaskValue, StringComparison.OrdinalIgnoreCase))
         {
             return ValueTask.FromResult(true);
         }
 
-        // Dynamic: delegate to custom callback if provided, otherwise use the default
-        // heuristic of checking whether the agent returned a continuation token.
+        // Dynamic: delegate to custom callback.
         if (this._decide is not null)
         {
-            return this._decide(context);
+            return this._decide(context, cancellationToken);
         }
 
-        return ValueTask.FromResult(context.AgentResponse.ContinuationToken is not null);
+        // No delegate provided — fall back to task behavior.
+        return ValueTask.FromResult(true);
     }
 #pragma warning restore MEAI001
 

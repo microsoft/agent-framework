@@ -42,7 +42,7 @@ public static class AIAgentExtensions
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentNullException.ThrowIfNull(agent.Name);
 
-        responseMode ??= A2AResponseMode.Dynamic();
+        responseMode ??= A2AResponseMode.Message;
 
         var hostAgent = new AIHostAgent(
             innerAgent: agent,
@@ -118,11 +118,12 @@ public static class AIAgentExtensions
 
         // Only enable background responses when the mode allows task-based results.
         // In Message mode, background responses are never enabled so the agent always completes synchronously.
-        bool allowBackground = responseMode.AllowBackgroundResponses;
+        var decisionContext = new A2AResponseDecisionContext(messageSendParams);
+        var shouldReturnAsTask = await responseMode.ShouldReturnAsTaskAsync(decisionContext, cancellationToken).ConfigureAwait(false);
 
         var options = messageSendParams.Metadata is not { Count: > 0 }
-            ? new AgentRunOptions { AllowBackgroundResponses = allowBackground }
-            : new AgentRunOptions { AllowBackgroundResponses = allowBackground, AdditionalProperties = messageSendParams.Metadata.ToAdditionalProperties() };
+            ? new AgentRunOptions { AllowBackgroundResponses = shouldReturnAsTask }
+            : new AgentRunOptions { AllowBackgroundResponses = shouldReturnAsTask, AdditionalProperties = messageSendParams.Metadata.ToAdditionalProperties() };
 
         var response = await hostAgent.RunAsync(
             messageSendParams.ToChatMessages(),
@@ -132,8 +133,6 @@ public static class AIAgentExtensions
 
         await hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
 
-        var decisionContext = new A2AResponseDecisionContext(messageSendParams, response);
-        var shouldReturnAsTask = await responseMode.ShouldReturnAsTaskAsync(decisionContext).ConfigureAwait(false);
         if (!shouldReturnAsTask)
         {
             return CreateMessageFromResponse(contextId, response);

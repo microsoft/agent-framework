@@ -229,16 +229,16 @@ public sealed class AIAgentExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that when responseMode is Dynamic (default) and the agent completes immediately (no ContinuationToken),
-    /// the result is an AgentMessage (not a task).
+    /// Verifies that a custom Dynamic delegate returning false produces an AgentMessage
+    /// even when the agent completes immediately (no ContinuationToken).
     /// </summary>
     [Fact]
-    public async Task MapA2A_DynamicMode_WhenNoContinuationToken_ReturnsAgentMessageAsync()
+    public async Task MapA2A_DynamicMode_WithFalseCallback_ReturnsAgentMessageAsync()
     {
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Quick reply")]);
         ITaskManager taskManager = CreateAgentMockWithResponse(response)
-            .Object.MapA2A(responseMode: A2AResponseMode.Dynamic());
+            .Object.MapA2A(responseMode: A2AResponseMode.Dynamic((_, _) => ValueTask.FromResult(false)));
 
         // Act
         A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
