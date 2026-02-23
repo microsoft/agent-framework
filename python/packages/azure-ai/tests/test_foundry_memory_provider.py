@@ -140,11 +140,12 @@ class TestBeforeRun:
 
     async def test_retrieves_static_memories_on_first_run(self, mock_project_client: AsyncMock) -> None:
         """First call retrieves static (user profile) memories."""
+        mem1 = Mock()
+        mem1.memory_item.content = "User prefers Python"
+        mem2 = Mock()
+        mem2.memory_item.content = "User is based in Seattle"
         mock_search_result = Mock()
-        mock_search_result.memories = [
-            {"content": "User prefers Python"},
-            {"content": "User is based in Seattle"},
-        ]
+        mock_search_result.memories = [mem1, mem2]
         mock_project_client.memory_stores.search_memories.return_value = mock_search_result
 
         provider = FoundryMemoryProvider(
@@ -168,12 +169,16 @@ class TestBeforeRun:
     async def test_contextual_memories_added_to_context(self, mock_project_client: AsyncMock) -> None:
         """Contextual search returns memories → messages added to context with prompt."""
         # Mock static search (first call)
+        static_mem = Mock()
+        static_mem.memory_item.content = "User prefers Python"
         static_result = Mock()
-        static_result.memories = [{"content": "User prefers Python"}]
+        static_result.memories = [static_mem]
 
         # Mock contextual search (second call)
+        contextual_mem = Mock()
+        contextual_mem.memory_item.content = "Last discussed async patterns"
         contextual_result = Mock()
-        contextual_result.memories = [{"content": "Last discussed async patterns"}]
+        contextual_result.memories = [contextual_mem]
         contextual_result.search_id = "search-123"
 
         mock_project_client.memory_stores.search_memories.side_effect = [static_result, contextual_result]
@@ -243,8 +248,10 @@ class TestBeforeRun:
 
     async def test_static_memories_only_retrieved_once(self, mock_project_client: AsyncMock) -> None:
         """Static memories are only retrieved on the first call."""
+        static_mem = Mock()
+        static_mem.memory_item.content = "Static memory"
         static_result = Mock()
-        static_result.memories = [{"content": "Static memory"}]
+        static_result.memories = [static_mem]
         contextual_result = Mock()
         contextual_result.memories = []
 
@@ -328,8 +335,8 @@ class TestAfterRun:
         assert call_kwargs["name"] == "test_store"
         assert call_kwargs["scope"] == "user_123"
         assert len(call_kwargs["items"]) == 2
-        assert call_kwargs["items"][0]["text"] == "question"
-        assert call_kwargs["items"][1]["text"] == "answer"
+        assert call_kwargs["items"][0]["content"] == "question"
+        assert call_kwargs["items"][1]["content"] == "answer"
         assert session.state[provider.source_id]["previous_update_id"] == "update-456"
 
     async def test_only_stores_user_assistant_system(self, mock_project_client: AsyncMock) -> None:
@@ -359,8 +366,8 @@ class TestAfterRun:
         call_kwargs = mock_project_client.memory_stores.begin_update_memories.call_args.kwargs
         items = call_kwargs["items"]
         assert len(items) == 2
-        assert items[0]["text"] == "hello"
-        assert items[1]["text"] == "reply"
+        assert items[0]["content"] == "hello"
+        assert items[1]["content"] == "reply"
 
     async def test_skips_empty_messages(self, mock_project_client: AsyncMock) -> None:
         """Skips messages with empty text."""
