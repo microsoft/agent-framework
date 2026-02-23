@@ -3310,3 +3310,30 @@ class TestResponseStreamEdgeCases:
 
 
 # endregion
+
+
+# region OAuth Consent Content
+
+
+def test_oauth_consent_request_creation():
+    """Test Content.from_oauth_consent_request creates the correct content."""
+    content = Content.from_oauth_consent_request(
+        consent_link="https://login.microsoftonline.com/common/oauth2/authorize?client_id=abc",
+    )
+    assert content.type == "oauth_consent_request"
+    assert content.consent_link == "https://login.microsoftonline.com/common/oauth2/authorize?client_id=abc"
+    assert content.user_input_request is True
+
+
+def test_oauth_consent_request_serialization_roundtrip():
+    """Test that oauth_consent_request content serializes and includes consent_link."""
+    content = Content.from_oauth_consent_request(
+        consent_link="https://login.microsoftonline.com/consent",
+    )
+    d = content.to_dict()
+    assert d["type"] == "oauth_consent_request"
+    assert d["consent_link"] == "https://login.microsoftonline.com/consent"
+    assert d["user_input_request"] is True
+
+
+# endregion

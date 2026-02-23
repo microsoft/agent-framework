@@ -588,6 +588,61 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """Get the current conversation ID from chat options or kwargs."""
         return options.get("conversation_id") or kwargs.get("conversation_id") or self.conversation_id
 
+    @override
+    def _parse_response_from_openai(
+        self,
+        response: Any,
+        options: dict[str, Any],
+    ) -> ChatResponse:
+        """Parse an Azure AI Responses API response, handling Azure-specific output item types."""
+        result = super()._parse_response_from_openai(response, options)
+
+        for item in response.output:
+            if item.type == "oauth_consent_request":
+                consent_link = item.consent_link
+                if consent_link and result.messages:
+                    result.messages[0].contents.append(
+                        Content.from_oauth_consent_request(
+                            consent_link=consent_link,
+                            raw_representation=item,
+                        )
+                    )
+                elif not consent_link:
+                    logger.warning("Received oauth_consent_request output without consent_link: %s", item)
+
+        return result
+
+    @override
+    def _parse_chunk_from_openai(
+        self,
+        event: Any,
+        options: dict[str, Any],
+        function_call_ids: dict[int, tuple[str, str]],
+    ) -> ChatResponseUpdate:
+        """Parse an Azure AI streaming event, handling Azure-specific event types."""
+        # Intercept output_item.added events for Azure-specific item types
+        if event.type == "response.output_item.added" and event.item.type == "oauth_consent_request":
+            event_item = event.item
+            consent_link = event_item.consent_link
+            contents: list[Content] = []
+            if consent_link:
+                contents.append(
+                    Content.from_oauth_consent_request(
+                        consent_link=consent_link,
+                        raw_representation=event_item,
+                    )
+                )
+            else:
+                logger.warning("Received oauth_consent_request output without consent_link: %s", event_item)
+            return ChatResponseUpdate(
+                contents=contents,
+                role="assistant",
+                model_id=self.model_id,
+                raw_representation=event,
+            )
+
+        return super()._parse_chunk_from_openai(event, options, function_call_ids)
+
     def _prepare_messages_for_azure_ai(self, messages: Sequence[Message]) -> tuple[list[Message], str | None]:
         """Prepare input from messages and convert system/developer messages to instructions."""
         result: list[Message] = []

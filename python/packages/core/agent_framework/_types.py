@@ -342,6 +342,7 @@ ContentType = Literal[
     "mcp_server_tool_result",
     "function_approval_request",
     "function_approval_response",
+    "oauth_consent_request",
 ]
 
 
@@ -485,6 +486,8 @@ class Content:
         function_call: Content | None = None,
         user_input_request: bool | None = None,
         approved: bool | None = None,
+        # OAuth consent fields
+        consent_link: str | None = None,
         # Common fields
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -525,6 +528,7 @@ class Content:
         self.function_call = function_call
         self.user_input_request = user_input_request
         self.approved = approved
+        self.consent_link = consent_link
 
     @classmethod
     def from_text(
@@ -995,6 +999,37 @@ class Content:
             raw_representation=raw_representation,
         )
 
+    @classmethod
+    def from_oauth_consent_request(
+        cls: type[ContentT],
+        consent_link: str,
+        *,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create OAuth consent request content.
+
+        Args:
+            consent_link: The URL the user must visit to complete OAuth consent.
+
+        Keyword Args:
+            annotations: Optional annotations.
+            additional_properties: Optional additional properties.
+            raw_representation: Optional raw representation from the provider.
+
+        Returns:
+            A new Content instance with type ``oauth_consent_request``.
+        """
+        return cls(
+            "oauth_consent_request",
+            consent_link=consent_link,
+            user_input_request=True,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
     def to_function_approval_response(
         self,
         approved: bool,
@@ -1041,6 +1076,7 @@ class Content:
             "user_input_request",
             "approved",
             "id",
+            "consent_link",
             "additional_properties",
         )
 
