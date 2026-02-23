@@ -16,12 +16,12 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
     private const string DynamicValue = "dynamic";
 
     private readonly string _value;
-    private readonly Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>>? _decide;
+    private readonly Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>>? _runInBackground;
 
-    private AgentRunMode(string value, Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>>? decide = null)
+    private AgentRunMode(string value, Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>>? runInBackground = null)
     {
         this._value = value;
-        this._decide = decide;
+        this._runInBackground = runInBackground;
     }
 
     /// <summary>
@@ -37,19 +37,21 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
     public static AgentRunMode BackgroundIfSupported => new(TaskValue);
 
     /// <summary>
-    /// The response type is decided by the supplied <paramref name="decideAsTask"/> delegate.
+    /// The agent run mode is decided by the supplied <paramref name="runInBackground"/> delegate.
     /// The delegate receives an <see cref="A2ARunDecisionContext"/> with the incoming
-    /// message and the agent response, and returns <see langword="true"/> to return an
-    /// <c>AgentTask</c> or <see langword="false"/> to return an <c>AgentMessage</c>.
-    /// Background responses are enabled.
+    /// message and returns a boolean specifying whether to run the agent in background mode.
+    /// <see langword="true"/> indicates that the agent should run in background mode and return an
+    /// <c>AgentTask</c> if the agent supports background mode; otherwise, it returns an <c>AgentMessage</c>
+    /// if the mode is not supported. <see langword="false"/> indicates that the agent should run in
+    /// non-background mode and return an <c>AgentMessage</c>.
     /// </summary>
-    /// <param name="decideAsTask">
+    /// <param name="runInBackground">
     /// An async delegate that decides whether the response should be wrapped in an <c>AgentTask</c>.
     /// </param>
-    public static AgentRunMode Dynamic(Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>> decideAsTask)
+    public static AgentRunMode Dynamic(Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>> runInBackground)
     {
-        ArgumentNullException.ThrowIfNull(decideAsTask);
-        return new(DynamicValue, decideAsTask);
+        ArgumentNullException.ThrowIfNull(runInBackground);
+        return new(DynamicValue, runInBackground);
     }
 
     /// <summary>
@@ -69,9 +71,9 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
         }
 
         // Dynamic: delegate to custom callback.
-        if (this._decide is not null)
+        if (this._runInBackground is not null)
         {
-            return this._decide(context, cancellationToken);
+            return this._runInBackground(context, cancellationToken);
         }
 
         // No delegate provided — fall back to "message" behavior.
