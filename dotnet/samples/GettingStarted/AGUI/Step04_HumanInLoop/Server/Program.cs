@@ -52,6 +52,9 @@ AITool[] tools = [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(Approv
 #pragma warning restore MEAI001
 
 // Create base agent
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 ChatClient openAIChatClient = new AzureOpenAIClient(
         new Uri(endpoint),
         new DefaultAzureCredential())

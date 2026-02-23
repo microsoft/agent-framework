@@ -6,7 +6,6 @@ from typing import Any
 
 import pytest
 from agent_framework import Content, Message
-from agent_framework.exceptions import ServiceInitializationError
 
 from agent_framework_bedrock import BedrockChatClient
 
@@ -64,5 +63,5 @@ def test_build_request_requires_non_system_messages() -> None:
 
     messages = [Message(role="system", contents=[Content.from_text(text="Only system text")])]
 
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         client._prepare_options(messages, {})

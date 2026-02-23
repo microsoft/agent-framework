@@ -10,7 +10,7 @@ import pytest
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     Message,
     SupportsAgentRun,
 )
@@ -203,7 +203,7 @@ class _TestAgent:
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        thread: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
         """Dummy run method."""
@@ -214,9 +214,9 @@ class _TestAgent:
     async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
         yield AgentResponseUpdate(messages=[Message(role="assistant", text="Test response stream")])
 
-    def get_new_thread(self, **kwargs: Any) -> AgentThread:
-        """Creates a new conversation thread for the agent."""
-        return AgentThread(**kwargs)
+    def create_session(self, **kwargs: Any) -> AgentSession:
+        """Creates a new conversation session for the agent."""
+        return AgentSession(**kwargs)
 
 
 class TestAgentApprovalExecutor:

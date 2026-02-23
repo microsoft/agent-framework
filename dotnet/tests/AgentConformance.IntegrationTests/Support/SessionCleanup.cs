@@ -11,7 +11,7 @@ namespace AgentConformance.IntegrationTests.Support;
 /// </summary>
 /// <param name="session">The session to delete.</param>
 /// <param name="fixture">The fixture that provides agent specific capabilities.</param>
-internal sealed class SessionCleanup(AgentSession session, IAgentFixture fixture) : IAsyncDisposable
+public sealed class SessionCleanup(AgentSession session, IAgentFixture fixture) : IAsyncDisposable
 {
     public async ValueTask DisposeAsync() =>
         await fixture.DeleteSessionAsync(session);

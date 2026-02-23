@@ -2,8 +2,7 @@
 
 import importlib.metadata
 
-from ._context_provider import _AzureAISearchContextProvider
-from ._search_provider import AzureAISearchContextProvider, AzureAISearchSettings
+from ._context_provider import AzureAISearchContextProvider, AzureAISearchSettings
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -13,6 +12,5 @@ except importlib.metadata.PackageNotFoundError:
 __all__ = [
     "AzureAISearchContextProvider",
     "AzureAISearchSettings",
-    "_AzureAISearchContextProvider",
     "__version__",
 ]

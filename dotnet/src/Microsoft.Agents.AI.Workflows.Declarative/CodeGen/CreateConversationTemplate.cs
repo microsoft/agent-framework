@@ -32,7 +32,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Model.ConversationId));
             this.Write("\" variable.\n/// </summary>\ninternal sealed class ");
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
-            this.Write("Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExe" +
+            this.Write("Executor(FormulaSession session, ResponseAgentProvider agentProvider) : ActionExe" +
                     "cutor(id: \"");
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             this.Write(@""", session)

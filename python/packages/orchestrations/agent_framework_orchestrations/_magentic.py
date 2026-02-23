@@ -1338,8 +1338,8 @@ class MagenticAgentExecutor(AgentExecutor):
         # Request into related
         self._pending_agent_requests.clear()
         self._pending_responses_to_agent.clear()
-        # Reset threads
-        self._agent_thread = self._agent.get_new_thread()
+        # Reset sessions
+        self._agent_thread = self._agent.create_session()
 
 
 #  endregion Magentic Agent Executor

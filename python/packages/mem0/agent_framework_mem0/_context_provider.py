@@ -2,20 +2,18 @@
 
 """New-pattern Mem0 context provider using BaseContextProvider.
 
-This module provides ``_Mem0ContextProvider``, a side-by-side implementation of
-:class:`Mem0Provider` built on the new :class:`BaseContextProvider` hooks pattern.
-It will be renamed to ``Mem0ContextProvider`` in PR2 when the old class is removed.
+This module provides ``Mem0ContextProvider``, built on the new
+:class:`BaseContextProvider` hooks pattern.
 """
 
 from __future__ import annotations
 
 import sys
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
-from agent_framework.exceptions import ServiceInitializationError
 from mem0 import AsyncMemory, AsyncMemoryClient
 
 if sys.version_info >= (3, 11):
@@ -35,24 +33,19 @@ class _MemorySearchResponse_v1_1(TypedDict):
 _MemorySearchResponse_v2 = list[dict[str, Any]]
 
 
-class _Mem0ContextProvider(BaseContextProvider):
+class Mem0ContextProvider(BaseContextProvider):
     """Mem0 context provider using the new BaseContextProvider hooks pattern.
 
     Integrates Mem0 for persistent semantic memory, searching and storing
-    memories via the Mem0 API. This is the new-pattern equivalent of
-    :class:`Mem0Provider`.
-
-    Note:
-        This class uses a temporary ``_`` prefix to coexist with the existing
-        :class:`Mem0Provider`. It will be renamed to ``Mem0ContextProvider``
-        in PR2.
+    memories via the Mem0 API.
     """
 
     DEFAULT_CONTEXT_PROMPT = "## Memories\nConsider the following memories when answering user questions:"
+    DEFAULT_SOURCE_ID: ClassVar[str] = "mem0"
 
     def __init__(
         self,
-        source_id: str,
+        source_id: str = DEFAULT_SOURCE_ID,
         mem0_client: AsyncMemory | AsyncMemoryClient | None = None,
         api_key: str | None = None,
         application_id: str | None = None,
@@ -113,11 +106,18 @@ class _Mem0ContextProvider(BaseContextProvider):
         if not input_text.strip():
             return
 
-        filters = self._build_filters(session_id=context.session_id)
+        filters = self._build_filters()
+
+        # AsyncMemory (OSS) expects user_id/agent_id/run_id as direct kwargs
+        # AsyncMemoryClient (Platform) expects them in a filters dict
+        search_kwargs: dict[str, Any] = {"query": input_text}
+        if isinstance(self.mem0_client, AsyncMemory):
+            search_kwargs.update(filters)
+        else:
+            search_kwargs["filters"] = filters
 
         search_response: _MemorySearchResponse_v1_1 | _MemorySearchResponse_v2 = await self.mem0_client.search(  # type: ignore[misc]
-            query=input_text,
-            filters=filters,
+            **search_kwargs,
         )
 
         if isinstance(search_response, list):
@@ -163,7 +163,6 @@ class _Mem0ContextProvider(BaseContextProvider):
                 messages=messages,
                 user_id=self.user_id,
                 agent_id=self.agent_id,
-                run_id=context.session_id,
                 metadata={"application_id": self.application_id},
             )
 
@@ -172,22 +171,18 @@ class _Mem0ContextProvider(BaseContextProvider):
     def _validate_filters(self) -> None:
         """Validates that at least one filter is provided."""
         if not self.agent_id and not self.user_id and not self.application_id:
-            raise ServiceInitializationError(
-                "At least one of the filters: agent_id, user_id, or application_id is required."
-            )
+            raise ValueError("At least one of the filters: agent_id, user_id, or application_id is required.")
 
-    def _build_filters(self, *, session_id: str | None = None) -> dict[str, Any]:
+    def _build_filters(self) -> dict[str, Any]:
         """Build search filters from initialization parameters."""
         filters: dict[str, Any] = {}
         if self.user_id:
             filters["user_id"] = self.user_id
         if self.agent_id:
             filters["agent_id"] = self.agent_id
-        if session_id:
-            filters["run_id"] = session_id
         if self.application_id:
             filters["app_id"] = self.application_id
         return filters
 
 
-__all__ = ["_Mem0ContextProvider"]
+__all__ = ["Mem0ContextProvider"]

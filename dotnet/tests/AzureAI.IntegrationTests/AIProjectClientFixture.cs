@@ -48,12 +48,14 @@ public class AIProjectClientFixture : IChatClientAgentFixture
             return await this.GetChatHistoryFromResponsesChainAsync(chatClientSession.ConversationId);
         }
 
-        if (chatClientSession.ChatHistoryProvider is null)
+        var chatHistoryProvider = agent.GetService<ChatHistoryProvider>();
+
+        if (chatHistoryProvider is null)
         {
             return [];
         }
 
-        return (await chatClientSession.ChatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
+        return (await chatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     private async Task<List<ChatMessage>> GetChatHistoryFromResponsesChainAsync(string conversationId)
@@ -119,6 +121,13 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         return await this._client.CreateAIAgentAsync(GenerateUniqueAgentName(name), model: s_config.DeploymentName, instructions: instructions, tools: aiTools);
     }
 
+    public async Task<ChatClientAgent> CreateChatClientAgentAsync(ChatClientAgentOptions options)
+    {
+        options.Name ??= GenerateUniqueAgentName("HelpfulAssistant");
+
+        return await this._client.CreateAIAgentAsync(model: s_config.DeploymentName, options);
+    }
+
     public static string GenerateUniqueAgentName(string baseName) =>
         $"{baseName}-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
 
@@ -159,9 +168,15 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         return Task.CompletedTask;
     }
 
-    public async Task InitializeAsync()
+    public virtual async Task InitializeAsync()
     {
         this._client = new(new Uri(s_config.Endpoint), new AzureCliCredential());
         this._agent = await this.CreateChatClientAgentAsync();
+    }
+
+    public async Task InitializeAsync(ChatClientAgentOptions options)
+    {
+        this._client = new(new Uri(s_config.Endpoint), new AzureCliCredential());
+        this._agent = await this.CreateChatClientAgentAsync(options);
     }
 }

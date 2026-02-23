@@ -7,6 +7,7 @@ GET {{host}}/readiness
 ### Simple string input - Ask about MCP Tools
 POST {{endpoint}}
 Content-Type: application/json
+
 {
     "input": "Please summarize the Azure AI Agent documentation related to MCP Tool calling?"
 }
@@ -14,6 +15,7 @@ Content-Type: application/json
 ### Explicit input - Ask about Agent Framework
 POST {{endpoint}}
 Content-Type: application/json
+
 {
     "input": [
         {

@@ -18,7 +18,7 @@ Durable execution support for long-running agent workflows using Azure Durable F
 ### State Management
 
 - **`DurableAgentState`** - State container for durable agents
-- **`DurableAgentThread`** - Thread management for durable agents
+- **`DurableAgentSession`** - Session management for durable agents
 - **`DurableAIAgentOrchestrationContext`** - Orchestration context
 
 ### Callbacks

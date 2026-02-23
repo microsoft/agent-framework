@@ -14,7 +14,7 @@ public class DeclarativeWorkflowContextTests
     public void InitializeDefaultValues()
     {
         // Act
-        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Strict);
+        Mock<ResponseAgentProvider> mockProvider = new(MockBehavior.Strict);
         DeclarativeWorkflowOptions context = new(mockProvider.Object);
 
         // Assert
@@ -34,7 +34,7 @@ public class DeclarativeWorkflowContextTests
         ILoggerFactory loggerFactory = LoggerFactory.Create(builder => { });
 
         // Act
-        Mock<WorkflowAgentProvider> mockProvider = new(MockBehavior.Strict);
+        Mock<ResponseAgentProvider> mockProvider = new(MockBehavior.Strict);
         DeclarativeWorkflowOptions context = new(mockProvider.Object)
         {
             MaximumCallDepth = MaxCallDepth,

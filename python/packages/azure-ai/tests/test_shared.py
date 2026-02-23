@@ -7,7 +7,7 @@ import pytest
 from agent_framework import (
     FunctionTool,
 )
-from agent_framework.exceptions import ServiceInvalidRequestError
+from agent_framework.exceptions import IntegrationInvalidRequestException
 from azure.ai.agents.models import CodeInterpreterToolDefinition
 from pydantic import BaseModel
 
@@ -387,7 +387,7 @@ def test_create_text_format_config_text() -> None:
 
 def test_create_text_format_config_invalid_raises() -> None:
     """Test invalid response_format raises error."""
-    with pytest.raises(ServiceInvalidRequestError):
+    with pytest.raises(IntegrationInvalidRequestException):
         create_text_format_config({"type": "invalid"})
 
 
@@ -400,7 +400,7 @@ def test_convert_response_format_with_format_key() -> None:
 
 def test_convert_response_format_json_schema_missing_schema_raises() -> None:
     """Test json_schema without schema raises error."""
-    with pytest.raises(ServiceInvalidRequestError, match="requires a schema"):
+    with pytest.raises(IntegrationInvalidRequestException, match="requires a schema"):
         _convert_response_format({"type": "json_schema", "json_schema": {}})
 
 

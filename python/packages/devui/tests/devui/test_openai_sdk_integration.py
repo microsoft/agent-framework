@@ -28,7 +28,7 @@ def devui_server() -> Generator[str, None, None]:
     """
     # Get samples directory
     current_dir = Path(__file__).parent
-    samples_dir = current_dir.parent.parent.parent / "samples" / "getting_started" / "devui"
+    samples_dir = current_dir.parent.parent.parent / "samples" / "02-agents" / "devui"
 
     if not samples_dir.exists():
         pytest.skip(f"Samples directory not found: {samples_dir}")

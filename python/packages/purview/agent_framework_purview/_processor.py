@@ -1,13 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import logging
 import time
 import uuid
 from collections.abc import Iterable, MutableMapping
 from typing import Any
 
 from agent_framework import Message
-from agent_framework._logging import get_logger
 
 from ._cache import CacheProvider, InMemoryCacheProvider, create_protection_scopes_cache_key
 from ._client import PurviewClient
@@ -37,7 +37,7 @@ from ._models import (
 )
 from ._settings import PurviewSettings
 
-logger = get_logger("agent_framework.purview")
+logger = logging.getLogger("agent_framework.purview")
 
 
 def _is_valid_guid(value: str | None) -> bool:

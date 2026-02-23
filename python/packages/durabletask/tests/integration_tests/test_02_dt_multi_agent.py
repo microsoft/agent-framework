@@ -47,9 +47,9 @@ class TestMultiAgent:
     def test_weather_agent_with_tool(self):
         """Test weather agent with weather tool execution."""
         agent = self.agent_client.get_agent(WEATHER_AGENT_NAME)
-        thread = agent.get_new_thread()
+        session = agent.create_session()
 
-        response = agent.run("What's the weather in Seattle?", thread=thread)
+        response = agent.run("What's the weather in Seattle?", session=session)
 
         assert response is not None
         assert response.text is not None
@@ -66,9 +66,9 @@ class TestMultiAgent:
     def test_math_agent_with_tool(self):
         """Test math agent with calculation tool execution."""
         agent = self.agent_client.get_agent(MATH_AGENT_NAME)
-        thread = agent.get_new_thread()
+        session = agent.create_session()
 
-        response = agent.run("Calculate a 20% tip on a $50 bill.", thread=thread)
+        response = agent.run("Calculate a 20% tip on a $50 bill.", session=session)
 
         assert response is not None
         assert response.text is not None
@@ -85,11 +85,11 @@ class TestMultiAgent:
     def test_multiple_calls_to_same_agent(self):
         """Test multiple sequential calls to the same agent."""
         agent = self.agent_client.get_agent(WEATHER_AGENT_NAME)
-        thread = agent.get_new_thread()
+        session = agent.create_session()
 
         # Multiple weather queries
-        response1 = agent.run("What's the weather in Chicago?", thread=thread)
-        response2 = agent.run("And what about Los Angeles?", thread=thread)
+        response1 = agent.run("What's the weather in Chicago?", session=session)
+        response2 = agent.run("And what about Los Angeles?", session=session)
 
         assert response1 is not None
         assert response2 is not None

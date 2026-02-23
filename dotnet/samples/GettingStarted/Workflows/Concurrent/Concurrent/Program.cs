@@ -53,12 +53,12 @@ public static class Program
         // Build the workflow by adding executors and connecting them
         var workflow = new WorkflowBuilder(startExecutor)
             .AddFanOutEdge(startExecutor, [physicist, chemist])
-            .AddFanInEdge([physicist, chemist], aggregationExecutor)
+            .AddFanInBarrierEdge([physicist, chemist], aggregationExecutor)
             .WithOutputFrom(aggregationExecutor)
             .Build();
 
         // Execute the workflow in streaming mode
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input: "What is temperature?");
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input: "What is temperature?");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is WorkflowOutputEvent output)

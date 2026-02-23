@@ -17,9 +17,15 @@ model of choice before running.
 
 import asyncio
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 
 async def run_semantic_kernel() -> None:
     """Call SK's ChatCompletionAgent for a simple question."""
+
     from semantic_kernel.agents import ChatCompletionAgent
     from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion
 

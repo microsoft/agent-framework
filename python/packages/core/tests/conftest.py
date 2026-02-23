@@ -61,7 +61,7 @@ def span_exporter(monkeypatch, enable_instrumentation: bool, enable_sensitive_da
     importlib.reload(observability)
 
     # recreate observability settings with values from above and no file.
-    observability_settings = observability.ObservabilitySettings(env_file_path="test.env")
+    observability_settings = observability.ObservabilitySettings()
 
     # Configure providers manually without calling _configure() to avoid OTLP imports
     if enable_instrumentation or enable_sensitive_data:

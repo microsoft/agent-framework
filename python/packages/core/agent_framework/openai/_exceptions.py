@@ -8,9 +8,7 @@ from typing import Any
 
 from openai import BadRequestError
 
-from ..exceptions import ServiceContentFilterException
-
-__all__ = ["ContentFilterResultSeverity", "OpenAIContentFilterException"]
+from ..exceptions import ChatClientContentFilterException
 
 
 class ContentFilterResultSeverity(Enum):
@@ -56,7 +54,7 @@ class ContentFilterCodes(Enum):
 
 
 @dataclass
-class OpenAIContentFilterException(ServiceContentFilterException):
+class OpenAIContentFilterException(ChatClientContentFilterException):
     """AI exception for an error from Azure OpenAI's content filter."""
 
     # The parameter that caused the error.

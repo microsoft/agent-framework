@@ -13,7 +13,7 @@ import pytest
 from agent_framework import Message, SupportsAgentRun
 from pydantic import BaseModel
 
-from agent_framework_durabletask import DurableAgentThread
+from agent_framework_durabletask import DurableAgentSession
 from agent_framework_durabletask._executors import DurableAgentExecutor
 from agent_framework_durabletask._models import RunRequest
 from agent_framework_durabletask._shim import DurableAgentProvider, DurableAIAgent
@@ -30,7 +30,7 @@ def mock_executor() -> Mock:
     """Create a mock executor for testing."""
     mock = Mock(spec=DurableAgentExecutor)
     mock.run_durable_agent = Mock(return_value=None)
-    mock.get_new_thread = Mock(return_value=DurableAgentThread())
+    mock.get_new_session = Mock(return_value=DurableAgentSession())
 
     # Mock get_run_request to create actual RunRequest objects
     def create_run_request(
@@ -124,14 +124,14 @@ class TestDurableAIAgentMessageNormalization:
 class TestDurableAIAgentParameterFlow:
     """Test that parameters flow correctly through the shim to executor."""
 
-    def test_run_forwards_thread_parameter(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
-        """Verify run forwards thread parameter to executor."""
-        thread = DurableAgentThread(service_thread_id="test-thread")
-        test_agent.run("message", thread=thread)
+    def test_run_forwards_session_parameter(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
+        """Verify run forwards session parameter to executor."""
+        session = DurableAgentSession(service_session_id="test-session")
+        test_agent.run("message", session=session)
 
         mock_executor.run_durable_agent.assert_called_once()
         _, kwargs = mock_executor.run_durable_agent.call_args
-        assert kwargs["thread"] == thread
+        assert kwargs["session"] == session
 
     def test_run_forwards_response_format(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run forwards response_format parameter to executor."""
@@ -171,29 +171,29 @@ class TestDurableAISupportsAgentRunCompliance:
         assert agent.name == "my_agent"
 
 
-class TestDurableAIAgentThreadManagement:
-    """Test thread creation and management."""
+class TestDurableAIAgentSessionManagement:
+    """Test session creation and management."""
 
-    def test_get_new_thread_delegates_to_executor(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
-        """Verify get_new_thread delegates to executor."""
-        mock_thread = DurableAgentThread()
-        mock_executor.get_new_thread.return_value = mock_thread
+    def test_create_session_delegates_to_executor(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
+        """Verify create_session delegates to executor."""
+        mock_session = DurableAgentSession()
+        mock_executor.get_new_session.return_value = mock_session
 
-        thread = test_agent.get_new_thread()
+        session = test_agent.create_session()
 
-        mock_executor.get_new_thread.assert_called_once_with("test_agent")
-        assert thread == mock_thread
+        mock_executor.get_new_session.assert_called_once_with("test_agent")
+        assert session == mock_session
 
-    def test_get_new_thread_forwards_kwargs(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
-        """Verify get_new_thread forwards kwargs to executor."""
-        mock_thread = DurableAgentThread(service_thread_id="thread-123")
-        mock_executor.get_new_thread.return_value = mock_thread
+    def test_create_session_forwards_kwargs(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
+        """Verify create_session forwards kwargs to executor."""
+        mock_session = DurableAgentSession(service_session_id="session-123")
+        mock_executor.get_new_session.return_value = mock_session
 
-        test_agent.get_new_thread(service_thread_id="thread-123")
+        test_agent.create_session(service_session_id="session-123")
 
-        mock_executor.get_new_thread.assert_called_once()
-        _, kwargs = mock_executor.get_new_thread.call_args
-        assert kwargs["service_thread_id"] == "thread-123"
+        mock_executor.get_new_session.assert_called_once()
+        _, kwargs = mock_executor.get_new_session.call_args
+        assert kwargs["service_session_id"] == "session-123"
 
 
 class TestDurableAgentProviderInterface:

@@ -18,7 +18,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Kit;
 public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecutor where TInput : notnull
 {
     private readonly IConfiguration? _configuration;
-    private readonly WorkflowAgentProvider _agentProvider;
+    private readonly ResponseAgentProvider _agentProvider;
     private readonly WorkflowFormulaState _state;
     private readonly Func<TInput, ChatMessage>? _inputTransform;
 
@@ -54,6 +54,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     }
 
     /// <inheritdoc/>
+    [SendsMessage(typeof(ActionExecutorResult))]
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {
         DeclarativeWorkflowContext declarativeContext = new(context, this._state);

@@ -163,17 +163,19 @@ public class ChatClientAgent_ChatHistoryManagementTests
         await agent.RunAsync([new(ChatRole.User, "test")], session);
 
         // Assert
-        InMemoryChatHistoryProvider chatHistoryProvider = Assert.IsType<InMemoryChatHistoryProvider>(session!.ChatHistoryProvider);
-        Assert.Equal(2, chatHistoryProvider.Count);
-        Assert.Equal("test", chatHistoryProvider[0].Text);
-        Assert.Equal("response", chatHistoryProvider[1].Text);
+        var inMemoryProvider = agent.ChatHistoryProvider as InMemoryChatHistoryProvider;
+        Assert.NotNull(inMemoryProvider);
+        var messages = inMemoryProvider.GetMessages(session!);
+        Assert.Equal(2, messages.Count);
+        Assert.Equal("test", messages[0].Text);
+        Assert.Equal("response", messages[1].Text);
     }
 
     /// <summary>
-    /// Verify that RunAsync uses the ChatHistoryProvider factory when the chat client returns no conversation id.
+    /// Verify that RunAsync uses the ChatHistoryProvider when the chat client returns no conversation id.
     /// </summary>
     [Fact]
-    public async Task RunAsync_UsesChatHistoryProviderFactory_WhenProvidedAndNoConversationIdReturnedByChatClientAsync()
+    public async Task RunAsync_UsesChatHistoryProvider_WhenProvidedAndNoConversationIdReturnedByChatClientAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -183,23 +185,21 @@ public class ChatClientAgent_ChatHistoryManagementTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        Mock<ChatHistoryProvider> mockChatHistoryProvider = new();
+        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null);
         mockChatHistoryProvider
             .Protected()
             .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync([new ChatMessage(ChatRole.User, "Existing Chat History")]);
+            .Returns((ChatHistoryProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<IEnumerable<ChatMessage>>(new List<ChatMessage> { new(ChatRole.User, "Existing Chat History") }.Concat(ctx.RequestMessages).ToList()));
         mockChatHistoryProvider
             .Protected()
             .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
             .Returns(new ValueTask());
 
-        Mock<Func<ChatClientAgentOptions.ChatHistoryProviderFactoryContext, CancellationToken, ValueTask<ChatHistoryProvider>>> mockFactory = new();
-        mockFactory.Setup(f => f(It.IsAny<ChatClientAgentOptions.ChatHistoryProviderFactoryContext>(), It.IsAny<CancellationToken>())).ReturnsAsync(mockChatHistoryProvider.Object);
-
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatOptions = new() { Instructions = "test instructions" },
-            ChatHistoryProviderFactory = mockFactory.Object
+            ChatHistoryProvider = mockChatHistoryProvider.Object
         });
 
         // Act
@@ -207,7 +207,7 @@ public class ChatClientAgent_ChatHistoryManagementTests
         await agent.RunAsync([new(ChatRole.User, "test")], session);
 
         // Assert
-        Assert.IsType<ChatHistoryProvider>(session!.ChatHistoryProvider, exactMatch: false);
+        Assert.Same(mockChatHistoryProvider.Object, agent.ChatHistoryProvider);
         mockService.Verify(
             x => x.GetResponseAsync(
                 It.Is<IEnumerable<ChatMessage>>(msgs => msgs.Count() == 2 && msgs.Any(m => m.Text == "Existing Chat History") && msgs.Any(m => m.Text == "test")),
@@ -222,9 +222,8 @@ public class ChatClientAgent_ChatHistoryManagementTests
         mockChatHistoryProvider
             .Protected()
             .Verify<ValueTask>("InvokedCoreAsync", Times.Once(),
-                ItExpr.Is<ChatHistoryProvider.InvokedContext>(x => x.RequestMessages.Count() == 1 && x.ResponseMessages!.Count() == 1),
+                ItExpr.Is<ChatHistoryProvider.InvokedContext>(x => x.RequestMessages.Count() == 2 && x.ResponseMessages!.Count() == 1),
                 ItExpr.IsAny<CancellationToken>());
-        mockFactory.Verify(f => f(It.IsAny<ChatClientAgentOptions.ChatHistoryProviderFactoryContext>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
@@ -241,15 +240,17 @@ public class ChatClientAgent_ChatHistoryManagementTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).Throws(new InvalidOperationException("Test Error"));
 
-        Mock<ChatHistoryProvider> mockChatHistoryProvider = new();
-
-        Mock<Func<ChatClientAgentOptions.ChatHistoryProviderFactoryContext, CancellationToken, ValueTask<ChatHistoryProvider>>> mockFactory = new();
-        mockFactory.Setup(f => f(It.IsAny<ChatClientAgentOptions.ChatHistoryProviderFactoryContext>(), It.IsAny<CancellationToken>())).ReturnsAsync(mockChatHistoryProvider.Object);
+        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null);
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((ChatHistoryProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<IEnumerable<ChatMessage>>(ctx.RequestMessages.ToList()));
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatOptions = new() { Instructions = "test instructions" },
-            ChatHistoryProviderFactory = mockFactory.Object
+            ChatHistoryProvider = mockChatHistoryProvider.Object
         });
 
         // Act
@@ -257,20 +258,19 @@ public class ChatClientAgent_ChatHistoryManagementTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], session));
 
         // Assert
-        Assert.IsType<ChatHistoryProvider>(session!.ChatHistoryProvider, exactMatch: false);
+        Assert.Same(mockChatHistoryProvider.Object, agent.ChatHistoryProvider);
         mockChatHistoryProvider
             .Protected()
             .Verify<ValueTask>("InvokedCoreAsync", Times.Once(),
                 ItExpr.Is<ChatHistoryProvider.InvokedContext>(x => x.RequestMessages.Count() == 1 && x.ResponseMessages == null && x.InvokeException!.Message == "Test Error"),
                 ItExpr.IsAny<CancellationToken>());
-        mockFactory.Verify(f => f(It.IsAny<ChatClientAgentOptions.ChatHistoryProviderFactoryContext>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
-    /// Verify that RunAsync throws when a ChatHistoryProvider Factory is provided and the chat client returns a conversation id.
+    /// Verify that RunAsync throws when a ChatHistoryProvider is provided and the chat client returns a conversation id.
     /// </summary>
     [Fact]
-    public async Task RunAsync_Throws_WhenChatHistoryProviderFactoryProvidedAndConversationIdReturnedByChatClientAsync()
+    public async Task RunAsync_Throws_WhenChatHistoryProviderProvidedAndConversationIdReturnedByChatClientAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -279,18 +279,16 @@ public class ChatClientAgent_ChatHistoryManagementTests
                 It.IsAny<IEnumerable<ChatMessage>>(),
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
-        Mock<Func<ChatClientAgentOptions.ChatHistoryProviderFactoryContext, CancellationToken, ValueTask<ChatHistoryProvider>>> mockFactory = new();
-        mockFactory.Setup(f => f(It.IsAny<ChatClientAgentOptions.ChatHistoryProviderFactoryContext>(), It.IsAny<CancellationToken>())).ReturnsAsync(new InMemoryChatHistoryProvider());
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatOptions = new() { Instructions = "test instructions" },
-            ChatHistoryProviderFactory = mockFactory.Object
+            ChatHistoryProvider = new InMemoryChatHistoryProvider()
         });
 
         // Act & Assert
         ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], session));
-        Assert.Equal("Only the ConversationId or ChatHistoryProvider may be set, but not both and switching from one to another is not supported.", exception.Message);
+        Assert.Equal("Only ConversationId or ChatHistoryProvider may be used, but not both. The service returned a conversation id indicating server-side chat history management, but the agent has a ChatHistoryProvider configured.", exception.Message);
     }
 
     #endregion
@@ -313,35 +311,33 @@ public class ChatClientAgent_ChatHistoryManagementTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
         // Arrange a chat history provider to override the factory provided one.
-        Mock<ChatHistoryProvider> mockOverrideChatHistoryProvider = new();
+        Mock<ChatHistoryProvider> mockOverrideChatHistoryProvider = new(null, null);
         mockOverrideChatHistoryProvider
             .Protected()
             .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync([new ChatMessage(ChatRole.User, "Existing Chat History")]);
+            .Returns((ChatHistoryProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<IEnumerable<ChatMessage>>(new List<ChatMessage> { new(ChatRole.User, "Existing Chat History") }.Concat(ctx.RequestMessages).ToList()));
         mockOverrideChatHistoryProvider
             .Protected()
             .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
             .Returns(new ValueTask());
 
-        // Arrange a chat history provider to provide to the agent via a factory at construction time.
+        // Arrange a chat history provider to provide to the agent at construction time.
         // This one shouldn't be used since it is being overridden.
-        Mock<ChatHistoryProvider> mockFactoryChatHistoryProvider = new();
-        mockFactoryChatHistoryProvider
+        Mock<ChatHistoryProvider> mockAgentOptionsChatHistoryProvider = new(null, null);
+        mockAgentOptionsChatHistoryProvider
             .Protected()
             .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
             .ThrowsAsync(FailException.ForFailure("Base ChatHistoryProvider shouldn't be used."));
-        mockFactoryChatHistoryProvider
+        mockAgentOptionsChatHistoryProvider
             .Protected()
             .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
             .Throws(FailException.ForFailure("Base ChatHistoryProvider shouldn't be used."));
 
-        Mock<Func<ChatClientAgentOptions.ChatHistoryProviderFactoryContext, CancellationToken, ValueTask<ChatHistoryProvider>>> mockFactory = new();
-        mockFactory.Setup(f => f(It.IsAny<ChatClientAgentOptions.ChatHistoryProviderFactoryContext>(), It.IsAny<CancellationToken>())).ReturnsAsync(mockFactoryChatHistoryProvider.Object);
-
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatOptions = new() { Instructions = "test instructions" },
-            ChatHistoryProviderFactory = mockFactory.Object
+            ChatHistoryProvider = mockAgentOptionsChatHistoryProvider.Object
         });
 
         // Act
@@ -351,7 +347,7 @@ public class ChatClientAgent_ChatHistoryManagementTests
         await agent.RunAsync([new(ChatRole.User, "test")], session, options: new AgentRunOptions { AdditionalProperties = additionalProperties });
 
         // Assert
-        Assert.Same(mockFactoryChatHistoryProvider.Object, session!.ChatHistoryProvider);
+        Assert.Same(mockAgentOptionsChatHistoryProvider.Object, agent.ChatHistoryProvider);
         mockService.Verify(
             x => x.GetResponseAsync(
                 It.Is<IEnumerable<ChatMessage>>(msgs => msgs.Count() == 2 && msgs.Any(m => m.Text == "Existing Chat History") && msgs.Any(m => m.Text == "test")),
@@ -366,15 +362,15 @@ public class ChatClientAgent_ChatHistoryManagementTests
         mockOverrideChatHistoryProvider
             .Protected()
             .Verify<ValueTask>("InvokedCoreAsync", Times.Once(),
-                ItExpr.Is<ChatHistoryProvider.InvokedContext>(x => x.RequestMessages.Count() == 1 && x.ResponseMessages!.Count() == 1),
+                ItExpr.Is<ChatHistoryProvider.InvokedContext>(x => x.RequestMessages.Count() == 2 && x.ResponseMessages!.Count() == 1),
                 ItExpr.IsAny<CancellationToken>());
 
-        mockFactoryChatHistoryProvider
+        mockAgentOptionsChatHistoryProvider
             .Protected()
             .Verify<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", Times.Never(),
                 ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(),
                 ItExpr.IsAny<CancellationToken>());
-        mockFactoryChatHistoryProvider
+        mockAgentOptionsChatHistoryProvider
             .Protected()
             .Verify<ValueTask>("InvokedCoreAsync", Times.Never(),
                 ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(),

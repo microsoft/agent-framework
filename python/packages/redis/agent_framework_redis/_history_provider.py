@@ -2,15 +2,14 @@
 
 """New-pattern Redis history provider using BaseHistoryProvider.
 
-This module provides ``_RedisHistoryProvider``, a side-by-side implementation of
-:class:`RedisMessageStore` built on the new :class:`BaseHistoryProvider` hooks pattern.
-It will be renamed to ``RedisHistoryProvider`` in PR2 when the old class is removed.
+This module provides ``RedisHistoryProvider``, built on the new
+:class:`BaseHistoryProvider` hooks pattern.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, ClassVar
 
 import redis.asyncio as redis
 from agent_framework import Message
@@ -18,22 +17,18 @@ from agent_framework._sessions import BaseHistoryProvider
 from redis.credentials import CredentialProvider
 
 
-class _RedisHistoryProvider(BaseHistoryProvider):
+class RedisHistoryProvider(BaseHistoryProvider):
     """Redis-backed history provider using the new BaseHistoryProvider hooks pattern.
 
     Stores conversation history in Redis Lists, with each session isolated by a
-    unique Redis key. This is the new-pattern equivalent of
-    :class:`RedisMessageStore`.
-
-    Note:
-        This class uses a temporary ``_`` prefix to coexist with the existing
-        :class:`RedisMessageStore`. It will be renamed to ``RedisHistoryProvider``
-        in PR2.
+    unique Redis key.
     """
+
+    DEFAULT_SOURCE_ID: ClassVar[str] = "redis_memory"
 
     def __init__(
         self,
-        source_id: str,
+        source_id: str = DEFAULT_SOURCE_ID,
         redis_url: str | None = None,
         credential_provider: CredentialProvider | None = None,
         host: str | None = None,
@@ -181,4 +176,4 @@ class _RedisHistoryProvider(BaseHistoryProvider):
         await self._redis_client.aclose()  # type: ignore[misc]
 
 
-__all__ = ["_RedisHistoryProvider"]
+__all__ = ["RedisHistoryProvider"]

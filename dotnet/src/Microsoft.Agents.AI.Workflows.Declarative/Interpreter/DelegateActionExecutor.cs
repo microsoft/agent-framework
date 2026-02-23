@@ -34,12 +34,28 @@ internal class DelegateActionExecutor<TMessage> : Executor<TMessage>, IResettabl
         this._emitResult = emitResult;
     }
 
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+    {
+        ProtocolBuilder baseBuilder = base.ConfigureProtocol(protocolBuilder);
+
+        if (this._emitResult)
+        {
+            baseBuilder.SendsMessage<TMessage>();
+        }
+
+        // We chain to the provided delegate, so let the protocol know we have additional Send/Yield types that may not be
+        // available on the HandleAsync override.
+        return (this._action != null) ? baseBuilder.AddDelegateAttributeTypes(this._action)
+                                      : baseBuilder;
+    }
+
     /// <inheritdoc/>
     public ValueTask ResetAsync()
     {
         return default;
     }
 
+    [SendsMessage(typeof(ActionExecutorResult))]
     public override async ValueTask HandleAsync(TMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (this._action is not null)

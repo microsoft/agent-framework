@@ -350,7 +350,7 @@ public sealed class ChatMessageExtensionsTests
         ChatMessage message = new(ChatRole.User, "Hello");
 
         // Act
-        ChatMessage result = message.AsAgentRequestMessageSourcedMessage(AgentRequestMessageSourceType.External, "TestSourceId");
+        ChatMessage result = message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.External, "TestSourceId");
 
         // Assert
         Assert.NotSame(message, result);
@@ -368,7 +368,7 @@ public sealed class ChatMessageExtensionsTests
         };
 
         // Act
-        ChatMessage result = message.AsAgentRequestMessageSourcedMessage(AgentRequestMessageSourceType.AIContextProvider, "ProviderSourceId");
+        ChatMessage result = message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.AIContextProvider, "ProviderSourceId");
 
         // Assert
         Assert.NotSame(message, result);
@@ -389,7 +389,7 @@ public sealed class ChatMessageExtensionsTests
         };
 
         // Act
-        ChatMessage result = message.AsAgentRequestMessageSourcedMessage(AgentRequestMessageSourceType.ChatHistory, "HistoryId");
+        ChatMessage result = message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, "HistoryId");
 
         // Assert
         Assert.Same(message, result);
@@ -408,7 +408,7 @@ public sealed class ChatMessageExtensionsTests
         };
 
         // Act
-        ChatMessage result = message.AsAgentRequestMessageSourcedMessage(AgentRequestMessageSourceType.AIContextProvider, "SourceId");
+        ChatMessage result = message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.AIContextProvider, "SourceId");
 
         // Assert
         Assert.NotSame(message, result);
@@ -429,7 +429,7 @@ public sealed class ChatMessageExtensionsTests
         };
 
         // Act
-        ChatMessage result = message.AsAgentRequestMessageSourcedMessage(AgentRequestMessageSourceType.External, "NewId");
+        ChatMessage result = message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.External, "NewId");
 
         // Assert
         Assert.NotSame(message, result);
@@ -444,7 +444,7 @@ public sealed class ChatMessageExtensionsTests
         ChatMessage message = new(ChatRole.User, "Hello");
 
         // Act
-        ChatMessage result = message.AsAgentRequestMessageSourcedMessage(AgentRequestMessageSourceType.ChatHistory);
+        ChatMessage result = message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory);
 
         // Assert
         Assert.NotSame(message, result);
@@ -465,7 +465,7 @@ public sealed class ChatMessageExtensionsTests
         };
 
         // Act
-        ChatMessage result = message.AsAgentRequestMessageSourcedMessage(AgentRequestMessageSourceType.External);
+        ChatMessage result = message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.External);
 
         // Assert
         Assert.Same(message, result);
@@ -478,7 +478,7 @@ public sealed class ChatMessageExtensionsTests
         ChatMessage message = new(ChatRole.User, "Hello");
 
         // Act
-        ChatMessage result = message.AsAgentRequestMessageSourcedMessage(AgentRequestMessageSourceType.AIContextProvider, "ProviderId");
+        ChatMessage result = message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.AIContextProvider, "ProviderId");
 
         // Assert
         Assert.Null(message.AdditionalProperties);
@@ -499,7 +499,7 @@ public sealed class ChatMessageExtensionsTests
         };
 
         // Act
-        ChatMessage result = message.AsAgentRequestMessageSourcedMessage(AgentRequestMessageSourceType.External, "SourceId");
+        ChatMessage result = message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.External, "SourceId");
 
         // Assert
         Assert.NotSame(message, result);
@@ -514,7 +514,7 @@ public sealed class ChatMessageExtensionsTests
         ChatMessage message = new(ChatRole.Assistant, "Test content");
 
         // Act
-        ChatMessage result = message.AsAgentRequestMessageSourcedMessage(AgentRequestMessageSourceType.ChatHistory, "HistoryId");
+        ChatMessage result = message.WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, "HistoryId");
 
         // Assert
         Assert.Equal(ChatRole.Assistant, result.Role);

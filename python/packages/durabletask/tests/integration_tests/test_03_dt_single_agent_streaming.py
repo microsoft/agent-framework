@@ -27,7 +27,7 @@ import pytest
 import redis.asyncio as aioredis
 
 # Add sample directory to path to import RedisStreamResponseHandler
-SAMPLE_DIR = Path(__file__).parents[4] / "samples" / "getting_started" / "durabletask" / "03_single_agent_streaming"
+SAMPLE_DIR = Path(__file__).parents[4] / "samples" / "04-hosting" / "durabletask" / "03_single_agent_streaming"
 sys.path.insert(0, str(SAMPLE_DIR))
 
 from redis_stream_response_handler import RedisStreamResponseHandler  # type: ignore[reportMissingImports] # noqa: E402
@@ -70,7 +70,7 @@ class TestSampleReliableStreaming:
 
     async def _stream_from_redis(
         self,
-        thread_id: str,
+        session_key: str,
         cursor: str | None = None,
         timeout: float = 30.0,
     ) -> tuple[str, bool, str]:
@@ -78,7 +78,7 @@ class TestSampleReliableStreaming:
         Stream responses from Redis using the sample's RedisStreamResponseHandler.
 
         Args:
-            thread_id: The conversation/thread ID to stream from
+            session_key: The conversation/thread ID to stream from
             cursor: Optional cursor to resume from
             timeout: Maximum time to wait for stream completion
 
@@ -92,7 +92,7 @@ class TestSampleReliableStreaming:
 
         async with await self._get_stream_handler() as stream_handler:  # type: ignore[reportUnknownMemberType]
             try:
-                async for chunk in stream_handler.read_stream(thread_id, cursor):  # type: ignore[reportUnknownMemberType]
+                async for chunk in stream_handler.read_stream(session_key, cursor):  # type: ignore[reportUnknownMemberType]
                     if time.time() - start_time > timeout:
                         break
 
@@ -124,15 +124,15 @@ class TestSampleReliableStreaming:
         assert travel_planner is not None
         assert travel_planner.name == "TravelPlanner"
 
-        # Create a new thread
-        thread = travel_planner.get_new_thread()
-        assert thread.session_id is not None
-        assert thread.session_id.key is not None
-        thread_id = str(thread.session_id.key)
+        # Create a new session
+        session = travel_planner.create_session()
+        assert session.durable_session_id is not None
+        assert session.durable_session_id.key is not None
+        session_key = str(session.durable_session_id.key)
 
         # Start agent run with wait_for_response=False for non-blocking execution
         travel_planner.run(
-            "Plan a 1-day trip to Seattle in 1 sentence", thread=thread, options={"wait_for_response": False}
+            "Plan a 1-day trip to Seattle in 1 sentence", session=session, options={"wait_for_response": False}
         )
 
         # Poll Redis stream with retries to handle race conditions
@@ -146,7 +146,7 @@ class TestSampleReliableStreaming:
 
         while retry_count < max_retries and not is_complete:
             text, is_complete, last_cursor = asyncio.run(
-                self._stream_from_redis(thread_id, cursor=cursor, timeout=10.0)
+                self._stream_from_redis(session_key, cursor=cursor, timeout=10.0)
             )
             accumulated_text += text
             cursor = last_cursor  # Resume from last position on next read
@@ -166,7 +166,7 @@ class TestSampleReliableStreaming:
 
         # Verify we got content
         assert len(accumulated_text) > 0, (
-            f"Expected text content but got empty string for thread_id: {thread_id} after {retry_count} retries"
+            f"Expected text content but got empty string for session_key: {session_key} after {retry_count} retries"
         )
         assert "seattle" in accumulated_text.lower(), f"Expected 'seattle' in response but got: {accumulated_text}"
         assert is_complete, "Expected stream to be complete"
@@ -175,13 +175,13 @@ class TestSampleReliableStreaming:
         """Test streaming with cursor-based resumption."""
         # Get the TravelPlanner agent
         travel_planner = self.agent_client.get_agent("TravelPlanner")
-        thread = travel_planner.get_new_thread()
-        assert thread.session_id is not None
-        assert thread.session_id.key is not None
-        thread_id = str(thread.session_id.key)
+        session = travel_planner.create_session()
+        assert session.durable_session_id is not None
+        assert session.durable_session_id.key is not None
+        session_key = str(session.durable_session_id.key)
 
         # Start agent run
-        travel_planner.run("What's the weather like?", thread=thread, options={"wait_for_response": False})
+        travel_planner.run("What's the weather like?", session=session, options={"wait_for_response": False})
 
         # Wait for agent to start writing
         time.sleep(3)
@@ -194,7 +194,7 @@ class TestSampleReliableStreaming:
                 chunk_count = 0
 
                 # Read just first 2 chunks
-                async for chunk in stream_handler.read_stream(thread_id):  # type: ignore[reportUnknownMemberType]
+                async for chunk in stream_handler.read_stream(session_key):  # type: ignore[reportUnknownMemberType]
                     last_entry_id = chunk.entry_id  # type: ignore[reportUnknownMemberType]
                     if chunk.text:  # type: ignore[reportUnknownMemberType]
                         accumulated_text += chunk.text  # type: ignore[reportUnknownMemberType]
@@ -207,7 +207,7 @@ class TestSampleReliableStreaming:
         partial_text, cursor = asyncio.run(get_partial_stream())
 
         # Resume from cursor
-        remaining_text, _, _ = asyncio.run(self._stream_from_redis(thread_id, cursor=cursor))
+        remaining_text, _, _ = asyncio.run(self._stream_from_redis(session_key, cursor=cursor))
 
         # Verify we got some initial content
         assert len(partial_text) > 0

@@ -30,9 +30,9 @@ internal class PurviewAgent : AIAgent, IDisposable
     }
 
     /// <inheritdoc/>
-    protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        return this._innerAgent.SerializeSession(session, jsonSerializerOptions);
+        return this._innerAgent.SerializeSessionAsync(session, jsonSerializerOptions, cancellationToken);
     }
 
     /// <inheritdoc/>

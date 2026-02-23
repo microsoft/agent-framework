@@ -45,7 +45,7 @@ from ._durable_agent_state import (
 )
 from ._entities import AgentEntity, AgentEntityStateProviderMixin
 from ._executors import DurableAgentExecutor
-from ._models import AgentSessionId, DurableAgentThread, RunRequest
+from ._models import AgentSessionId, DurableAgentSession, RunRequest
 from ._orchestration_context import DurableAIAgentOrchestrationContext
 from ._response_utils import ensure_response_format, load_agent_response
 from ._shim import DurableAIAgent
@@ -79,6 +79,7 @@ __all__ = [
     "DurableAIAgentOrchestrationContext",
     "DurableAIAgentWorker",
     "DurableAgentExecutor",
+    "DurableAgentSession",
     "DurableAgentState",
     "DurableAgentStateContent",
     "DurableAgentStateData",
@@ -99,7 +100,6 @@ __all__ = [
     "DurableAgentStateUriContent",
     "DurableAgentStateUsage",
     "DurableAgentStateUsageContent",
-    "DurableAgentThread",
     "DurableStateFields",
     "RunRequest",
     "__version__",

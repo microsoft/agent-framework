@@ -9,10 +9,11 @@ This module implements handlers for:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 
-from agent_framework import get_logger
+from agent_framework.exceptions import WorkflowException
 
 from ._handlers import (
     ActionContext,
@@ -20,10 +21,10 @@ from ._handlers import (
     action_handler,
 )
 
-logger = get_logger("agent_framework.declarative.workflows.actions")
+logger = logging.getLogger("agent_framework.declarative")
 
 
-class WorkflowActionError(Exception):
+class WorkflowActionError(WorkflowException):
     """Exception raised by ThrowException action."""
 
     def __init__(self, message: str, code: str | None = None):

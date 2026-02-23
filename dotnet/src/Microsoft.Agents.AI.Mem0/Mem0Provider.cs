@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,7 +14,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI.Mem0;
 
 /// <summary>
-/// Provides a Mem0 backed <see cref="AIContextProvider"/> that persists conversation messages as memories
+/// Provides a Mem0 backed <see cref="MessageAIContextProvider"/> that persists conversation messages as memories
 /// and retrieves related memories to augment the agent invocation context.
 /// </summary>
 /// <remarks>
@@ -23,27 +22,25 @@ namespace Microsoft.Agents.AI.Mem0;
 /// for new invocations using a semantic search endpoint. Retrieved memories are injected as user messages
 /// to the model, prefixed by a configurable context prompt.
 /// </remarks>
-public sealed class Mem0Provider : AIContextProvider
+public sealed class Mem0Provider : MessageAIContextProvider
 {
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
 
+    private readonly ProviderSessionState<State> _sessionState;
     private readonly string _contextPrompt;
     private readonly bool _enableSensitiveTelemetryData;
 
     private readonly Mem0Client _client;
     private readonly ILogger<Mem0Provider>? _logger;
 
-    private readonly Mem0ProviderScope _storageScope;
-    private readonly Mem0ProviderScope _searchScope;
-
     /// <summary>
     /// Initializes a new instance of the <see cref="Mem0Provider"/> class.
     /// </summary>
     /// <param name="httpClient">Configured <see cref="HttpClient"/> (base address + auth).</param>
-    /// <param name="storageScope">Optional values to scope the memory storage with.</param>
-    /// <param name="searchScope">Optional values to scope the memory search with. Defaults to <paramref name="storageScope"/> if not provided.</param>
+    /// <param name="stateInitializer">A delegate that initializes the provider state on the first invocation, providing the storage and search scopes.</param>
     /// <param name="options">Provider options.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="httpClient"/> or <paramref name="stateInitializer"/> is <see langword="null"/>.</exception>
     /// <remarks>
     /// The base address of the required mem0 service, and any authentication headers, should be set on the <paramref name="httpClient"/>
     /// already, when passed as a parameter here. E.g.:
@@ -51,11 +48,17 @@ public sealed class Mem0Provider : AIContextProvider
     /// using var httpClient = new HttpClient();
     /// httpClient.BaseAddress = new Uri("https://api.mem0.ai");
     /// httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Token", "&lt;Your APIKey&gt;");
-    /// new Mem0AIContextProvider(httpClient);
+    /// new Mem0Provider(httpClient);
     /// </code>
     /// </remarks>
-    public Mem0Provider(HttpClient httpClient, Mem0ProviderScope storageScope, Mem0ProviderScope? searchScope = null, Mem0ProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
+    public Mem0Provider(HttpClient httpClient, Func<AgentSession?, State> stateInitializer, Mem0ProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
     {
+        this._sessionState = new ProviderSessionState<State>(
+            ValidateStateInitializer(Throw.IfNull(stateInitializer)),
+            options?.StateKey ?? this.GetType().Name,
+            Mem0JsonUtilities.DefaultOptions);
+        Throw.IfNull(httpClient);
         if (string.IsNullOrWhiteSpace(httpClient.BaseAddress?.AbsoluteUri))
         {
             throw new ArgumentException("The HttpClient BaseAddress must be set for Mem0 operations.", nameof(httpClient));
@@ -66,89 +69,49 @@ public sealed class Mem0Provider : AIContextProvider
 
         this._contextPrompt = options?.ContextPrompt ?? DefaultContextPrompt;
         this._enableSensitiveTelemetryData = options?.EnableSensitiveTelemetryData ?? false;
-        this._storageScope = new Mem0ProviderScope(Throw.IfNull(storageScope));
-        this._searchScope = searchScope ?? storageScope;
-
-        if (string.IsNullOrWhiteSpace(this._storageScope.ApplicationId)
-            && string.IsNullOrWhiteSpace(this._storageScope.AgentId)
-            && string.IsNullOrWhiteSpace(this._storageScope.ThreadId)
-            && string.IsNullOrWhiteSpace(this._storageScope.UserId))
-        {
-            throw new ArgumentException("At least one of ApplicationId, AgentId, ThreadId, or UserId must be provided for the storage scope.");
-        }
-
-        if (string.IsNullOrWhiteSpace(this._searchScope.ApplicationId)
-            && string.IsNullOrWhiteSpace(this._searchScope.AgentId)
-            && string.IsNullOrWhiteSpace(this._searchScope.ThreadId)
-            && string.IsNullOrWhiteSpace(this._searchScope.UserId))
-        {
-            throw new ArgumentException("At least one of ApplicationId, AgentId, ThreadId, or UserId must be provided for the search scope.");
-        }
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="Mem0Provider"/> class, with existing state from a serialized JSON element.
-    /// </summary>
-    /// <param name="httpClient">Configured <see cref="HttpClient"/> (base address + auth).</param>
-    /// <param name="serializedState">A <see cref="JsonElement"/> representing the serialized state of the store.</param>
-    /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
-    /// <param name="options">Provider options.</param>
-    /// <param name="loggerFactory">Optional logger factory.</param>
-    /// <exception cref="ArgumentException"></exception>
-    /// <remarks>
-    /// The base address of the required mem0 service, and any authentication headers, should be set on the <paramref name="httpClient"/>
-    /// already, when passed as a parameter here. E.g.:
-    /// <code>
-    /// using var httpClient = new HttpClient();
-    /// httpClient.BaseAddress = new Uri("https://api.mem0.ai");
-    /// httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Token", "&lt;Your APIKey&gt;");
-    /// new Mem0AIContextProvider(httpClient, state);
-    /// </code>
-    /// </remarks>
-    public Mem0Provider(HttpClient httpClient, JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, Mem0ProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
-    {
-        if (string.IsNullOrWhiteSpace(httpClient.BaseAddress?.AbsoluteUri))
-        {
-            throw new ArgumentException("The HttpClient BaseAddress must be set for Mem0 operations.", nameof(httpClient));
-        }
-
-        this._logger = loggerFactory?.CreateLogger<Mem0Provider>();
-        this._client = new Mem0Client(httpClient);
-
-        this._contextPrompt = options?.ContextPrompt ?? DefaultContextPrompt;
-        this._enableSensitiveTelemetryData = options?.EnableSensitiveTelemetryData ?? false;
-
-        var jso = jsonSerializerOptions ?? Mem0JsonUtilities.DefaultOptions;
-        var state = serializedState.Deserialize(jso.GetTypeInfo(typeof(Mem0State))) as Mem0State;
-
-        if (state == null || state.StorageScope == null || state.SearchScope == null)
-        {
-            throw new InvalidOperationException("The Mem0Provider state did not contain the required scope properties.");
-        }
-
-        this._storageScope = state.StorageScope;
-        this._searchScope = state.SearchScope;
     }
 
     /// <inheritdoc />
-    protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    public override string StateKey => this._sessionState.StateKey;
+
+    private static Func<AgentSession?, State> ValidateStateInitializer(Func<AgentSession?, State> stateInitializer) =>
+        session =>
+        {
+            var state = stateInitializer(session);
+
+            if (state is null
+                || state.StorageScope is null
+                || (state.StorageScope.AgentId is null && state.StorageScope.ThreadId is null && state.StorageScope.UserId is null && state.StorageScope.ApplicationId is null)
+                || state.SearchScope is null
+                || (state.SearchScope.AgentId is null && state.SearchScope.ThreadId is null && state.SearchScope.UserId is null && state.SearchScope.ApplicationId is null))
+            {
+                throw new InvalidOperationException("State initializer must return a non-null state with valid storage and search scopes, where at least one scoping parameter is set for each.");
+            }
+
+            return state;
+        };
+
+    /// <inheritdoc />
+    protected override async ValueTask<IEnumerable<ChatMessage>> ProvideMessagesAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(context);
 
+        var state = this._sessionState.GetOrInitializeState(context.Session);
+        var searchScope = state.SearchScope;
+
         string queryText = string.Join(
             Environment.NewLine,
-            context.RequestMessages
-                .Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External)
+                context.RequestMessages
                 .Where(m => !string.IsNullOrWhiteSpace(m.Text))
                 .Select(m => m.Text));
 
         try
         {
             var memories = (await this._client.SearchAsync(
-                this._searchScope.ApplicationId,
-                this._searchScope.AgentId,
-                this._searchScope.ThreadId,
-                this._searchScope.UserId,
+                searchScope.ApplicationId,
+                searchScope.AgentId,
+                searchScope.ThreadId,
+                searchScope.UserId,
                 queryText,
                 cancellationToken).ConfigureAwait(false)).ToList();
 
@@ -161,10 +124,10 @@ public sealed class Mem0Provider : AIContextProvider
                 this._logger.LogInformation(
                     "Mem0AIContextProvider: Retrieved {Count} memories. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
                     memories.Count,
-                    this._searchScope.ApplicationId,
-                    this._searchScope.AgentId,
-                    this._searchScope.ThreadId,
-                    this.SanitizeLogData(this._searchScope.UserId));
+                    searchScope.ApplicationId,
+                    searchScope.AgentId,
+                    searchScope.ThreadId,
+                    this.SanitizeLogData(searchScope.UserId));
 
                 if (outputMessageText is not null && this._logger.IsEnabled(LogLevel.Trace))
                 {
@@ -172,17 +135,16 @@ public sealed class Mem0Provider : AIContextProvider
                         "Mem0AIContextProvider: Search Results\nInput:{Input}\nOutput:{MessageText}\nApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
                         this.SanitizeLogData(queryText),
                         this.SanitizeLogData(outputMessageText),
-                        this._searchScope.ApplicationId,
-                        this._searchScope.AgentId,
-                        this._searchScope.ThreadId,
-                        this.SanitizeLogData(this._searchScope.UserId));
+                        searchScope.ApplicationId,
+                        searchScope.AgentId,
+                        searchScope.ThreadId,
+                        this.SanitizeLogData(searchScope.UserId));
                 }
             }
 
-            return new AIContext
-            {
-                Messages = [new ChatMessage(ChatRole.User, outputMessageText)]
-            };
+            return outputMessageText is not null
+                ? [new ChatMessage(ChatRole.User, outputMessageText)]
+                : [];
         }
         catch (ArgumentException)
         {
@@ -195,29 +157,28 @@ public sealed class Mem0Provider : AIContextProvider
                 this._logger.LogError(
                     ex,
                     "Mem0AIContextProvider: Failed to search Mem0 for memories due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
-                    this._searchScope.ApplicationId,
-                    this._searchScope.AgentId,
-                    this._searchScope.ThreadId,
-                    this.SanitizeLogData(this._searchScope.UserId));
+                    searchScope.ApplicationId,
+                    searchScope.AgentId,
+                    searchScope.ThreadId,
+                    this.SanitizeLogData(searchScope.UserId));
             }
-            return new AIContext();
+
+            return [];
         }
     }
 
     /// <inheritdoc />
-    protected override async ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        if (context.InvokeException is not null)
-        {
-            return; // Do not update memory on failed invocations.
-        }
+        var state = this._sessionState.GetOrInitializeState(context.Session);
+        var storageScope = state.StorageScope;
 
         try
         {
             // Persist request and response messages after invocation.
             await this.PersistMessagesAsync(
+                storageScope,
                 context.RequestMessages
-                    .Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External)
                     .Concat(context.ResponseMessages ?? []),
                 cancellationToken).ConfigureAwait(false);
         }
@@ -228,36 +189,34 @@ public sealed class Mem0Provider : AIContextProvider
                 this._logger.LogError(
                     ex,
                     "Mem0AIContextProvider: Failed to send messages to Mem0 due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
-                    this._storageScope.ApplicationId,
-                    this._storageScope.AgentId,
-                    this._storageScope.ThreadId,
-                    this.SanitizeLogData(this._storageScope.UserId));
+                    storageScope.ApplicationId,
+                    storageScope.AgentId,
+                    storageScope.ThreadId,
+                    this.SanitizeLogData(storageScope.UserId));
             }
         }
     }
 
     /// <summary>
-    /// Clears stored memories for the configured scopes.
+    /// Clears stored memories for the specified scope.
     /// </summary>
+    /// <param name="session">The session containing the scope state to clear memories for.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    public Task ClearStoredMemoriesAsync(CancellationToken cancellationToken = default) =>
-        this._client.ClearMemoryAsync(
-            this._storageScope.ApplicationId,
-            this._storageScope.AgentId,
-            this._storageScope.ThreadId,
-            this._storageScope.UserId,
-            cancellationToken);
-
-    /// <inheritdoc />
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    public Task ClearStoredMemoriesAsync(AgentSession session, CancellationToken cancellationToken = default)
     {
-        var state = new Mem0State(this._storageScope, this._searchScope);
+        Throw.IfNull(session);
+        var state = this._sessionState.GetOrInitializeState(session);
+        var storageScope = state.StorageScope;
 
-        var jso = jsonSerializerOptions ?? Mem0JsonUtilities.DefaultOptions;
-        return JsonSerializer.SerializeToElement(state, jso.GetTypeInfo(typeof(Mem0State)));
+        return this._client.ClearMemoryAsync(
+            storageScope.ApplicationId,
+            storageScope.AgentId,
+            storageScope.ThreadId,
+            storageScope.UserId,
+            cancellationToken);
     }
 
-    private async Task PersistMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
+    private async Task PersistMessagesAsync(Mem0ProviderScope storageScope, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
     {
         foreach (var message in messages)
         {
@@ -277,27 +236,42 @@ public sealed class Mem0Provider : AIContextProvider
             }
 
             await this._client.CreateMemoryAsync(
-                this._storageScope.ApplicationId,
-                this._storageScope.AgentId,
-                this._storageScope.ThreadId,
-                this._storageScope.UserId,
+                storageScope.ApplicationId,
+                storageScope.AgentId,
+                storageScope.ThreadId,
+                storageScope.UserId,
                 message.Text,
                 message.Role.Value,
                 cancellationToken).ConfigureAwait(false);
         }
     }
 
-    internal sealed class Mem0State
+    /// <summary>
+    /// Represents the state of a <see cref="Mem0Provider"/> stored in the <see cref="AgentSession.StateBag"/>.
+    /// </summary>
+    public sealed class State
     {
+        /// <summary>
+        /// Initializes a new instance of the <see cref="State"/> class with the specified storage and search scopes.
+        /// </summary>
+        /// <param name="storageScope">The scope to use when storing memories.</param>
+        /// <param name="searchScope">The scope to use when searching for memories. If null, the storage scope will be used for searching as well.</param>
         [JsonConstructor]
-        public Mem0State(Mem0ProviderScope storageScope, Mem0ProviderScope searchScope)
+        public State(Mem0ProviderScope storageScope, Mem0ProviderScope? searchScope = null)
         {
-            this.StorageScope = storageScope;
-            this.SearchScope = searchScope;
+            this.StorageScope = Throw.IfNull(storageScope);
+            this.SearchScope = searchScope ?? storageScope;
         }
 
-        public Mem0ProviderScope StorageScope { get; set; }
-        public Mem0ProviderScope SearchScope { get; set; }
+        /// <summary>
+        /// Gets the scope used when storing memories.
+        /// </summary>
+        public Mem0ProviderScope StorageScope { get; }
+
+        /// <summary>
+        /// Gets the scope used when searching memories.
+        /// </summary>
+        public Mem0ProviderScope SearchScope { get; }
     }
 
     private string? SanitizeLogData(string? data) => this._enableSensitiveTelemetryData ? data : "<redacted>";

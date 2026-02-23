@@ -108,6 +108,90 @@ def test_tool_decorator_with_json_schema_dict():
     assert search("hello") == "Searching for: hello (max 10)"
 
 
+async def test_tool_decorator_with_json_schema_invoke_uses_mapping():
+    """Test that schema-based tools can be invoked directly with mapping arguments."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "max_results": {"type": "integer"},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str, max_results: int = 10) -> str:
+        return f"{query}:{max_results}"
+
+    result = await search.invoke(arguments={"query": "hello", "max_results": 3})
+    assert result == "hello:3"
+
+
+async def test_tool_decorator_with_json_schema_invoke_missing_required():
+    """Test schema-required fields are checked for mapping arguments."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str) -> str:
+        return query
+
+    with pytest.raises(TypeError, match="Missing required argument"):
+        await search.invoke(arguments={})
+
+
+async def test_tool_decorator_with_json_schema_invoke_invalid_type():
+    """Test schema type checks run for mapping arguments."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "max_results": {"type": "integer"},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str, max_results: int = 10) -> str:
+        return f"{query}:{max_results}"
+
+    with pytest.raises(TypeError, match="Invalid type for 'max_results'"):
+        await search.invoke(arguments={"query": "hello", "max_results": "three"})
+
+
+def test_tool_decorator_with_json_schema_preserves_custom_properties():
+    """Test schema passthrough keeps custom JSON schema properties."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "priority": {
+                "type": "string",
+                "enum": ["low", "medium", "high"],
+                "x-custom-field": "custom-value",
+            },
+        },
+        "required": ["priority"],
+        "additionalProperties": False,
+    }
+
+    @tool(name="process", description="Process tool", schema=json_schema)
+    def process(priority: str) -> str:
+        return priority
+
+    params = process.parameters()
+    assert not params.get("additionalProperties")
+    assert params["properties"]["priority"]["x-custom-field"] == "custom-value"
+
+
 def test_tool_decorator_schema_none_default():
     """Test that schema=None (default) still infers from function signature."""
 
@@ -138,7 +222,7 @@ async def test_tool_decorator_with_schema_invoke():
         return a + b
 
     result = await calculate.invoke(arguments=CalcInput(a=3, b=7))
-    assert result == 10
+    assert result == "10"
 
 
 def test_tool_decorator_with_schema_overrides_annotations():
@@ -436,7 +520,7 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == 3
+    assert result == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -480,7 +564,7 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == 3
+    assert result == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -545,7 +629,7 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     result = await pydantic_test_tool.invoke(arguments=args_model, tool_call_id="pydantic_call")
 
     # Verify result
-    assert result == 15
+    assert result == "15"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -555,7 +639,7 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "pydantic_call"
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
     assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool with Pydantic args"
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x":5,"y":10}'
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 5, "y": 10}'
 
 
 async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanExporter):
@@ -613,7 +697,7 @@ async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanE
     result = await async_telemetry_test.invoke(x=3, y=4, tool_call_id="async_call")
 
     # Verify result
-    assert result == 12
+    assert result == "12"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]

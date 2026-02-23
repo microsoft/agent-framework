@@ -54,7 +54,7 @@ public static class ChatMessageExtensions
     /// If the message is already tagged with the provided source type and source id, it is returned as is.
     /// Otherwise, a cloned message is returned with the appropriate tagging in the AdditionalProperties.
     /// </remarks>
-    public static ChatMessage AsAgentRequestMessageSourcedMessage(this ChatMessage message, AgentRequestMessageSourceType sourceType, string? sourceId = null)
+    public static ChatMessage WithAgentRequestMessageSource(this ChatMessage message, AgentRequestMessageSourceType sourceType, string? sourceId = null)
     {
         if (message.AdditionalProperties != null
             // Check if the message was already tagged with the required source type and source id

@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import Mapping, MutableMapping, Sequence
 from typing import Any, cast
 
 from agent_framework import (
     FunctionTool,
-    get_logger,
 )
-from agent_framework.exceptions import ServiceInvalidRequestError
+from agent_framework.exceptions import IntegrationInvalidRequestException
 from azure.ai.agents.models import (
     CodeInterpreterToolDefinition,
     ToolDefinition,
@@ -37,16 +37,15 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-logger = get_logger("agent_framework.azure")
+logger = logging.getLogger("agent_framework.azure")
 
 
 class AzureAISettings(TypedDict, total=False):
     """Azure AI Project settings.
 
-    The settings are first loaded from environment variables with the prefix 'AZURE_AI_'.
-    If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
-    are ignored; however, validation will fail alerting that the settings are missing.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'AZURE_AI_'. If settings are missing after resolution, validation will fail.
 
     Keyword Args:
         project_endpoint: The Azure AI Project endpoint URL.
@@ -126,7 +125,7 @@ def to_azure_ai_agent_tools(
         List of Azure AI V1 SDK tool definitions.
 
     Raises:
-        ServiceInitializationError: If tool configuration is invalid.
+        ValueError: If tool configuration is invalid.
     """
     if not tools:
         return []
@@ -459,7 +458,7 @@ def create_text_format_config(
         if format_type == "text":
             return ResponseTextFormatConfigurationText()
 
-    raise ServiceInvalidRequestError("response_format must be a Pydantic model or mapping.")
+    raise IntegrationInvalidRequestException("response_format must be a Pydantic model or mapping.")
 
 
 def _convert_response_format(response_format: Mapping[str, Any]) -> dict[str, Any]:
@@ -471,11 +470,11 @@ def _convert_response_format(response_format: Mapping[str, Any]) -> dict[str, An
     if format_type == "json_schema":
         schema_section = response_format.get("json_schema", response_format)
         if not isinstance(schema_section, Mapping):
-            raise ServiceInvalidRequestError("json_schema response_format must be a mapping.")
+            raise IntegrationInvalidRequestException("json_schema response_format must be a mapping.")
         schema_section_typed = cast("Mapping[str, Any]", schema_section)
         schema: Any = schema_section_typed.get("schema")
         if schema is None:
-            raise ServiceInvalidRequestError("json_schema response_format requires a schema.")
+            raise IntegrationInvalidRequestException("json_schema response_format requires a schema.")
         name: str = str(
             schema_section_typed.get("name")
             or schema_section_typed.get("title")
@@ -496,4 +495,4 @@ def _convert_response_format(response_format: Mapping[str, Any]) -> dict[str, An
     if format_type in {"json_object", "text"}:
         return {"type": format_type}
 
-    raise ServiceInvalidRequestError("Unsupported response_format provided for Azure AI client.")
+    raise IntegrationInvalidRequestException("Unsupported response_format provided for Azure AI client.")

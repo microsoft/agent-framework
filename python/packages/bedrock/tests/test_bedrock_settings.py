@@ -68,7 +68,7 @@ def test_build_request_serializes_tool_history() -> None:
         ),
         Message(
             role="tool",
-            contents=[Content.from_function_result(call_id="call-1", result={"answer": "72F"})],
+            contents=[Content.from_function_result(call_id="call-1", result='{"answer": "72F"}')],
         ),
     ]
 

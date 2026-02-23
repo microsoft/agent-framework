@@ -3,7 +3,7 @@
 """Tests to ensure PowerFx evaluation supports all expressions used in declarative YAML workflows.
 
 This test suite validates that all PowerFx expressions found in the sample YAML workflows
-under samples/getting_started/workflows/declarative/ work correctly with our implementation.
+under samples/03-workflows/declarative/ work correctly with our implementation.
 
 Coverage includes:
 - Built-in PowerFx functions: Concat, If, IsBlank, Not, Or, Upper, Find

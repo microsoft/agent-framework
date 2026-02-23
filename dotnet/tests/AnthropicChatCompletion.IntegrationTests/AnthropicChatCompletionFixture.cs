@@ -37,14 +37,14 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
-        var typedSession = (ChatClientAgentSession)session;
+        var chatHistoryProvider = agent.GetService<ChatHistoryProvider>();
 
-        if (typedSession.ChatHistoryProvider is null)
+        if (chatHistoryProvider is null)
         {
             return [];
         }
 
-        return (await typedSession.ChatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
+        return (await chatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(

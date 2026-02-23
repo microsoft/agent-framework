@@ -13,7 +13,7 @@ internal sealed class TestAgent(string name, string description) : AIAgent
 
     protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) => new(new DummyAgentSession());
 
-    protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => throw new NotImplementedException();
 
     protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(

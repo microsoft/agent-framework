@@ -19,7 +19,10 @@ const string AssistantInstructions = "You are a helpful assistant that extracts 
 const string AssistantName = "StructuredOutputAssistant";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create ChatClientAgent directly
 ChatClientAgent agent = await aiProjectClient.CreateAIAgentAsync(
@@ -61,7 +64,8 @@ IAsyncEnumerable<AgentResponseUpdate> updates = agentWithPersonInfo.RunStreaming
 
 // Assemble all the parts of the streamed output, since we can only deserialize once we have the full json,
 // then deserialize the response into the PersonInfo class.
-PersonInfo personInfo = (await updates.ToAgentResponseAsync()).Deserialize<PersonInfo>(JsonSerializerOptions.Web);
+PersonInfo personInfo = JsonSerializer.Deserialize<PersonInfo>((await updates.ToAgentResponseAsync()).Text, JsonSerializerOptions.Web)
+    ?? throw new InvalidOperationException("Failed to deserialize the streamed response into PersonInfo.");
 
 Console.WriteLine("Assistant Output:");
 Console.WriteLine($"Name: {personInfo.Name}");

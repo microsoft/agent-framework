@@ -556,6 +556,58 @@ instructions: You are a helpful assistant.
         with pytest.raises(DeclarativeLoaderError, match="ChatClient must be provided"):
             factory.create_agent_from_dict(agent_def)
 
+    def test_create_agent_from_dict_output_schema_in_default_options(self):
+        """Test that outputSchema is passed as response_format in Agent.default_options."""
+        from unittest.mock import MagicMock
+
+        from pydantic import BaseModel
+
+        from agent_framework_declarative import AgentFactory
+
+        agent_def = {
+            "kind": "Prompt",
+            "name": "TestAgent",
+            "instructions": "You are helpful.",
+            "outputSchema": {
+                "properties": {
+                    "answer": {"type": "string", "required": True, "description": "The answer."},
+                },
+            },
+        }
+
+        mock_client = MagicMock()
+        factory = AgentFactory(client=mock_client)
+        agent = factory.create_agent_from_dict(agent_def)
+
+        assert "response_format" in agent.default_options
+        assert isinstance(agent.default_options["response_format"], type)
+        assert issubclass(agent.default_options["response_format"], BaseModel)
+
+    def test_create_agent_from_dict_chat_options_in_default_options(self):
+        """Test that chat options (temperature, top_p) are in Agent.default_options."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        agent_def = {
+            "kind": "Prompt",
+            "name": "TestAgent",
+            "instructions": "You are helpful.",
+            "model": {
+                "options": {
+                    "temperature": 0.7,
+                    "topP": 0.9,
+                },
+            },
+        }
+
+        mock_client = MagicMock()
+        factory = AgentFactory(client=mock_client)
+        agent = factory.create_agent_from_dict(agent_def)
+
+        assert agent.default_options.get("temperature") == 0.7
+        assert agent.default_options.get("top_p") == 0.9
+
 
 class TestAgentFactorySafeMode:
     """Tests for AgentFactory safe_mode parameter."""

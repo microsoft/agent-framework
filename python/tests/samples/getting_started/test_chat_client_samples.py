@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 from pytest import MonkeyPatch, mark, param
-
 from samples.getting_started.client.azure_ai_chat_client import (
     main as azure_ai_chat_client,
 )

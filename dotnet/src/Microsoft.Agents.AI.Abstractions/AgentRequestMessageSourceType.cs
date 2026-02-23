@@ -59,6 +59,12 @@ public readonly struct AgentRequestMessageSourceType : IEquatable<AgentRequestMe
     public override bool Equals(object? obj) => obj is AgentRequestMessageSourceType other && this.Equals(other);
 
     /// <summary>
+    /// Returns the string representation of this instance.
+    /// </summary>
+    /// <returns>The string value representing the source of the agent request message.</returns>
+    public override string ToString() => this.Value;
+
+    /// <summary>
     /// Returns the hash code for this instance.
     /// </summary>
     /// <returns>A 32-bit signed integer hash code.</returns>

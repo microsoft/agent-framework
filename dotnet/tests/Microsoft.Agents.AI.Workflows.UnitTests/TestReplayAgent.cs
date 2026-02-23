@@ -51,7 +51,7 @@ public class TestReplayAgent(List<ChatMessage>? messages = null, string? id = nu
     protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => new(new ReplayAgentSession());
 
-    protected override JsonElement SerializeSessionCore(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null)
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => default;
 
     public static TestReplayAgent FromStrings(params string[] messages) =>
@@ -104,5 +104,5 @@ public class TestReplayAgent(List<ChatMessage>? messages = null, string? id = nu
         return candidateMessages;
     }
 
-    private sealed class ReplayAgentSession() : InMemoryAgentSession();
+    private sealed class ReplayAgentSession() : AgentSession();
 }

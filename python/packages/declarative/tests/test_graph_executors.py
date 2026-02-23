@@ -415,8 +415,9 @@ class TestAgentExecutors:
     @pytest.mark.asyncio
     async def test_invoke_agent_not_found(self, mock_context, mock_state):
         """Test InvokeAzureAgentExecutor raises error when agent not found."""
+        from agent_framework.exceptions import AgentInvalidRequestException
+
         from agent_framework_declarative._workflows import (
-            AgentInvocationError,
             InvokeAzureAgentExecutor,
         )
 
@@ -430,8 +431,8 @@ class TestAgentExecutors:
         }
         executor = InvokeAzureAgentExecutor(action_def)
 
-        # Execute - should raise AgentInvocationError
-        with pytest.raises(AgentInvocationError) as exc_info:
+        # Execute - should raise AgentInvalidRequestException
+        with pytest.raises(AgentInvalidRequestException) as exc_info:
             await executor.handle_action(ActionTrigger(), mock_context)
 
         assert "non_existent_agent" in str(exc_info.value)

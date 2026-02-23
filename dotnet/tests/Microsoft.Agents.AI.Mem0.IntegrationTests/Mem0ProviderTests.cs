@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading;
@@ -19,7 +21,6 @@ public sealed class Mem0ProviderTests : IDisposable
     private const string SkipReason = "Requires a Mem0 service configured"; // Set to null to enable.
 
     private static readonly AIAgent s_mockAgent = new Moq.Mock<AIAgent>().Object;
-    private static readonly AgentSession s_mockSession = new Moq.Mock<AgentSession>().Object;
 
     private readonly HttpClient _httpClient;
 
@@ -49,21 +50,22 @@ public sealed class Mem0ProviderTests : IDisposable
         var question = new ChatMessage(ChatRole.User, "What is my name?");
         var input = new ChatMessage(ChatRole.User, "Hello, my name is Caoimhe.");
         var storageScope = new Mem0ProviderScope { ThreadId = "it-thread-1", UserId = "it-user-1" };
-        var sut = new Mem0Provider(this._httpClient, storageScope);
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope));
 
-        await sut.ClearStoredMemoriesAsync();
-        var ctxBefore = await sut.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [question]));
-        Assert.DoesNotContain("Caoimhe", ctxBefore.Messages?[0].Text ?? string.Empty);
+        await sut.ClearStoredMemoriesAsync(mockSession);
+        var ctxBefore = await sut.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, mockSession, new AIContext { Messages = new List<ChatMessage> { question } }));
+        Assert.DoesNotContain("Caoimhe", ctxBefore.Messages?.LastOrDefault()?.Text ?? string.Empty);
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, [input]));
-        var ctxAfterAdding = await GetContextWithRetryAsync(sut, question);
-        await sut.ClearStoredMemoriesAsync();
-        var ctxAfterClearing = await sut.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [question]));
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, mockSession, [input], []));
+        var ctxAfterAdding = await GetContextWithRetryAsync(sut, mockSession, question);
+        await sut.ClearStoredMemoriesAsync(mockSession);
+        var ctxAfterClearing = await sut.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, mockSession, new AIContext { Messages = new List<ChatMessage> { question } }));
 
         // Assert
-        Assert.Contains("Caoimhe", ctxAfterAdding.Messages?[0].Text ?? string.Empty);
-        Assert.DoesNotContain("Caoimhe", ctxAfterClearing.Messages?[0].Text ?? string.Empty);
+        Assert.Contains("Caoimhe", ctxAfterAdding.Messages?.LastOrDefault()?.Text ?? string.Empty);
+        Assert.DoesNotContain("Caoimhe", ctxAfterClearing.Messages?.LastOrDefault()?.Text ?? string.Empty);
     }
 
     [Fact(Skip = SkipReason)]
@@ -73,21 +75,22 @@ public sealed class Mem0ProviderTests : IDisposable
         var question = new ChatMessage(ChatRole.User, "What is your name?");
         var assistantIntro = new ChatMessage(ChatRole.Assistant, "Hello, I'm a friendly assistant and my name is Caoimhe.");
         var storageScope = new Mem0ProviderScope { AgentId = "it-agent-1" };
-        var sut = new Mem0Provider(this._httpClient, storageScope);
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope));
 
-        await sut.ClearStoredMemoriesAsync();
-        var ctxBefore = await sut.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [question]));
-        Assert.DoesNotContain("Caoimhe", ctxBefore.Messages?[0].Text ?? string.Empty);
+        await sut.ClearStoredMemoriesAsync(mockSession);
+        var ctxBefore = await sut.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, mockSession, new AIContext { Messages = new List<ChatMessage> { question } }));
+        Assert.DoesNotContain("Caoimhe", ctxBefore.Messages?.LastOrDefault()?.Text ?? string.Empty);
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, [assistantIntro]));
-        var ctxAfterAdding = await GetContextWithRetryAsync(sut, question);
-        await sut.ClearStoredMemoriesAsync();
-        var ctxAfterClearing = await sut.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [question]));
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, mockSession, [assistantIntro], []));
+        var ctxAfterAdding = await GetContextWithRetryAsync(sut, mockSession, question);
+        await sut.ClearStoredMemoriesAsync(mockSession);
+        var ctxAfterClearing = await sut.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, mockSession, new AIContext { Messages = new List<ChatMessage> { question } }));
 
         // Assert
-        Assert.Contains("Caoimhe", ctxAfterAdding.Messages?[0].Text ?? string.Empty);
-        Assert.DoesNotContain("Caoimhe", ctxAfterClearing.Messages?[0].Text ?? string.Empty);
+        Assert.Contains("Caoimhe", ctxAfterAdding.Messages?.LastOrDefault()?.Text ?? string.Empty);
+        Assert.DoesNotContain("Caoimhe", ctxAfterClearing.Messages?.LastOrDefault()?.Text ?? string.Empty);
     }
 
     [Fact(Skip = SkipReason)]
@@ -96,38 +99,42 @@ public sealed class Mem0ProviderTests : IDisposable
         // Arrange
         var question = new ChatMessage(ChatRole.User, "What is your name?");
         var assistantIntro = new ChatMessage(ChatRole.Assistant, "I'm an AI tutor and my name is Caoimhe.");
-        var sut1 = new Mem0Provider(this._httpClient, new Mem0ProviderScope { AgentId = "it-agent-a" });
-        var sut2 = new Mem0Provider(this._httpClient, new Mem0ProviderScope { AgentId = "it-agent-b" });
+        var storageScope1 = new Mem0ProviderScope { AgentId = "it-agent-a" };
+        var storageScope2 = new Mem0ProviderScope { AgentId = "it-agent-b" };
+        var mockSession1 = new TestAgentSession();
+        var mockSession2 = new TestAgentSession();
+        var sut1 = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope1));
+        var sut2 = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope2));
 
-        await sut1.ClearStoredMemoriesAsync();
-        await sut2.ClearStoredMemoriesAsync();
+        await sut1.ClearStoredMemoriesAsync(mockSession1);
+        await sut2.ClearStoredMemoriesAsync(mockSession2);
 
-        var ctxBefore1 = await sut1.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [question]));
-        var ctxBefore2 = await sut2.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [question]));
-        Assert.DoesNotContain("Caoimhe", ctxBefore1.Messages?[0].Text ?? string.Empty);
-        Assert.DoesNotContain("Caoimhe", ctxBefore2.Messages?[0].Text ?? string.Empty);
+        var ctxBefore1 = await sut1.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, mockSession1, new AIContext { Messages = new List<ChatMessage> { question } }));
+        var ctxBefore2 = await sut2.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, mockSession2, new AIContext { Messages = new List<ChatMessage> { question } }));
+        Assert.DoesNotContain("Caoimhe", ctxBefore1.Messages?.LastOrDefault()?.Text ?? string.Empty);
+        Assert.DoesNotContain("Caoimhe", ctxBefore2.Messages?.LastOrDefault()?.Text ?? string.Empty);
 
         // Act
-        await sut1.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, [assistantIntro]));
-        var ctxAfterAdding1 = await GetContextWithRetryAsync(sut1, question);
-        var ctxAfterAdding2 = await GetContextWithRetryAsync(sut2, question);
+        await sut1.InvokedAsync(new AIContextProvider.InvokedContext(s_mockAgent, mockSession1, [assistantIntro], []));
+        var ctxAfterAdding1 = await GetContextWithRetryAsync(sut1, mockSession1, question);
+        var ctxAfterAdding2 = await GetContextWithRetryAsync(sut2, mockSession2, question);
 
         // Assert
-        Assert.Contains("Caoimhe", ctxAfterAdding1.Messages?[0].Text ?? string.Empty);
-        Assert.DoesNotContain("Caoimhe", ctxAfterAdding2.Messages?[0].Text ?? string.Empty);
+        Assert.Contains("Caoimhe", ctxAfterAdding1.Messages?.LastOrDefault()?.Text ?? string.Empty);
+        Assert.DoesNotContain("Caoimhe", ctxAfterAdding2.Messages?.LastOrDefault()?.Text ?? string.Empty);
 
         // Cleanup
-        await sut1.ClearStoredMemoriesAsync();
-        await sut2.ClearStoredMemoriesAsync();
+        await sut1.ClearStoredMemoriesAsync(mockSession1);
+        await sut2.ClearStoredMemoriesAsync(mockSession2);
     }
 
-    private static async Task<AIContext> GetContextWithRetryAsync(Mem0Provider provider, ChatMessage question, int attempts = 5, int delayMs = 1000)
+    private static async Task<AIContext> GetContextWithRetryAsync(Mem0Provider provider, AgentSession session, ChatMessage question, int attempts = 5, int delayMs = 1000)
     {
         AIContext? ctx = null;
         for (int i = 0; i < attempts; i++)
         {
-            ctx = await provider.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, [question]), CancellationToken.None);
-            var text = ctx.Messages?[0].Text;
+            ctx = await provider.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, session, new AIContext { Messages = new List<ChatMessage> { question } }), CancellationToken.None);
+            var text = ctx.Messages?.LastOrDefault()?.Text;
             if (!string.IsNullOrEmpty(text) && text.IndexOf("Caoimhe", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 break;
@@ -140,5 +147,13 @@ public sealed class Mem0ProviderTests : IDisposable
     public void Dispose()
     {
         this._httpClient.Dispose();
+    }
+
+    private sealed class TestAgentSession : AgentSession
+    {
+        public TestAgentSession()
+        {
+            this.StateBag = new AgentSessionStateBag();
+        }
     }
 }

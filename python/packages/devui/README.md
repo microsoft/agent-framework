@@ -373,7 +373,7 @@ This restricts developer APIs (reload, deployment, entity details) and requires 
 
 ## Examples
 
-See working implementations in `python/samples/getting_started/devui/`
+See working implementations in `python/samples/02-agents/devui/`
 
 ## License
 

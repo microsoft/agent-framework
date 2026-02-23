@@ -1851,9 +1851,10 @@ class TestAgentExternalLoopCoverage:
         assert request.agent_name == "TestAgent"
 
     async def test_agent_executor_agent_error_handling(self, mock_context, mock_state):
-        """Test agent executor raises AgentInvocationError on failure."""
+        """Test agent executor raises AgentInvalidResponseException on failure."""
+        from agent_framework.exceptions import AgentInvalidResponseException
+
         from agent_framework_declarative._workflows._executors_agents import (
-            AgentInvocationError,
             InvokeAzureAgentExecutor,
         )
 
@@ -1871,7 +1872,7 @@ class TestAgentExternalLoopCoverage:
         }
         executor = InvokeAzureAgentExecutor(action_def, agents={"TestAgent": mock_agent})
 
-        with pytest.raises(AgentInvocationError) as exc_info:
+        with pytest.raises(AgentInvalidResponseException) as exc_info:
             await executor.handle_action(ActionTrigger(), mock_context)
 
         assert "TestAgent" in str(exc_info.value)
@@ -2375,11 +2376,12 @@ class TestAgentExecutorExternalLoop:
 
     async def test_handle_external_input_response_agent_not_found(self, mock_context, mock_state):
         """Test handling external input raises error when agent not found during resumption."""
+        from agent_framework.exceptions import AgentInvalidRequestException
+
         from agent_framework_declarative._workflows._executors_agents import (
             EXTERNAL_LOOP_STATE_KEY,
             AgentExternalInputRequest,
             AgentExternalInputResponse,
-            AgentInvocationError,
             ExternalLoopState,
             InvokeAzureAgentExecutor,
         )
@@ -2411,7 +2413,7 @@ class TestAgentExecutorExternalLoop:
         )
         response = AgentExternalInputResponse(user_input="continue")
 
-        with pytest.raises(AgentInvocationError) as exc_info:
+        with pytest.raises(AgentInvalidRequestException) as exc_info:
             await executor.handle_external_input_response(original_request, response, mock_context)
 
         assert "NonExistentAgent" in str(exc_info.value)

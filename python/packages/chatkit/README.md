@@ -124,4 +124,4 @@ async def chatkit_endpoint(request: Request):
         return Response(content=result.json, media_type="application/json")  # type: ignore[union-attr]
 ```
 
-For a complete end-to-end example with a full frontend, see the [weather agent sample](../../samples/demos/chatkit-integration/README.md).
+For a complete end-to-end example with a full frontend, see the [weather agent sample](../../samples/05-end-to-end/chatkit-integration/README.md).

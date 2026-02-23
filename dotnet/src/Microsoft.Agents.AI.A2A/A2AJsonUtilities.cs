@@ -74,7 +74,7 @@ public static partial class A2AJsonUtilities
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
 
     // A2A agent types
-    [JsonSerializable(typeof(A2AAgentSession.A2AAgentSessionState))]
+    [JsonSerializable(typeof(A2AAgentSession))]
     [ExcludeFromCodeCoverage]
     private sealed partial class JsonContext : JsonSerializerContext;
 }

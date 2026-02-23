@@ -85,6 +85,7 @@ Complete examples for all AG-UI features are available:
 - `document_writer_agent(client)` - Predictive state updates (Feature 7)
 - `research_assistant_agent(client)` - Research with progress events
 - `task_planner_agent(client)` - Task planning with approvals
+- `subgraphs_agent()` - Deterministic travel-planning subgraphs flow (Dojo `subgraphs` feature)
 
 ### Using Example Agents
 
@@ -130,6 +131,7 @@ The server exposes endpoints at:
 - `/tool_based_generative_ui` - Custom UI components with `ui_generator_agent`
 - `/shared_state` - Recipe management with `recipe_agent`
 - `/predictive_state_updates` - Document writing with `document_writer_agent`
+- `/subgraphs` - Travel planner with interrupt-driven flight/hotel choices via `subgraphs_agent`
 
 ### Complete FastAPI Example
 
@@ -145,6 +147,7 @@ from agent_framework_ag_ui_examples.agents import (
     ui_generator_agent,
     recipe_agent,
     document_writer_agent,
+    subgraphs_agent,
 )
 
 app = FastAPI(title="AG-UI Examples")
@@ -160,6 +163,7 @@ add_agent_framework_fastapi_endpoint(app, task_steps_agent_wrapped(client), "/ag
 add_agent_framework_fastapi_endpoint(app, ui_generator_agent(client), "/tool_based_generative_ui")
 add_agent_framework_fastapi_endpoint(app, recipe_agent(client), "/shared_state")
 add_agent_framework_fastapi_endpoint(app, document_writer_agent(client), "/predictive_state_updates")
+add_agent_framework_fastapi_endpoint(app, subgraphs_agent(), "/subgraphs")
 ```
 
 ## Architecture

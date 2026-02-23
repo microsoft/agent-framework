@@ -27,9 +27,12 @@ var mcpTool = new HostedMcpServerTool(
 };
 
 // Create an agent based on Azure OpenAI Responses as the backend.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
      .GetResponsesClient(deploymentName)
      .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",
@@ -56,7 +59,7 @@ var mcpToolWithApproval = new HostedMcpServerTool(
 // Create an agent based on Azure OpenAI Responses as the backend.
 AIAgent agentWithRequiredApproval = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetResponsesClient(deploymentName)
     .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",

@@ -35,7 +35,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
             this.Write("\n/// <summary>\n/// Adds a new message to the specified agent conversation\n/// </s" +
                     "ummary>\ninternal sealed class ");
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Name));
-            this.Write("Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExe" +
+            this.Write("Executor(FormulaSession session, ResponseAgentProvider agentProvider) : ActionExe" +
                     "cutor(id: \"");
             this.Write(this.ToStringHelper.ToStringWithCulture(this.Id));
             this.Write("\", session)\n{\n    // <inheritdoc />\n    protected override async ValueTask<object" +

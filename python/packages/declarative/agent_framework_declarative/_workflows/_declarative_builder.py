@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_framework._workflows import (
+from agent_framework import (
     Workflow,
     WorkflowBuilder,
 )

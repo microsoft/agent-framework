@@ -18,11 +18,11 @@ public abstract class JsonCheckpointStore : ICheckpointStore<JsonElement>
     protected static JsonTypeInfo<CheckpointInfo> KeyTypeInfo => WorkflowsJsonUtilities.JsonContext.Default.CheckpointInfo;
 
     /// <inheritdoc/>
-    public abstract ValueTask<CheckpointInfo> CreateCheckpointAsync(string runId, JsonElement value, CheckpointInfo? parent = null);
+    public abstract ValueTask<CheckpointInfo> CreateCheckpointAsync(string sessionId, JsonElement value, CheckpointInfo? parent = null);
 
     /// <inheritdoc/>
-    public abstract ValueTask<JsonElement> RetrieveCheckpointAsync(string runId, CheckpointInfo key);
+    public abstract ValueTask<JsonElement> RetrieveCheckpointAsync(string sessionId, CheckpointInfo key);
 
     /// <inheritdoc/>
-    public abstract ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string runId, CheckpointInfo? withParent = null);
+    public abstract ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent = null);
 }

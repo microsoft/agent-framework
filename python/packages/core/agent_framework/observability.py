@@ -1,5 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Observability and OpenTelemetry helpers for Agent Framework.
+
+Commonly used exports:
+- enable_instrumentation
+- configure_otel_providers
+- AgentTelemetryLayer
+- ChatTelemetryLayer
+- get_tracer
+- get_meter
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -17,10 +28,9 @@ from dotenv import load_dotenv
 from opentelemetry import metrics, trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.semconv.attributes import service_attributes
-from opentelemetry.semconv_ai import Meters, SpanAttributes
+from opentelemetry.semconv_ai import Meters
 
 from . import __version__ as version_info
-from ._logging import get_logger
 from ._settings import load_settings
 
 if sys.version_info >= (3, 13):
@@ -39,11 +49,12 @@ if TYPE_CHECKING:  # pragma: no cover
 
     from ._agents import SupportsAgentRun
     from ._clients import SupportsChatGetResponse
-    from ._threads import AgentThread
+    from ._sessions import AgentSession
     from ._tools import FunctionTool
     from ._types import (
         AgentResponse,
         AgentResponseUpdate,
+        AgentRunInputs,
         ChatOptions,
         ChatResponse,
         ChatResponseUpdate,
@@ -73,7 +84,7 @@ AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 
 
-logger = get_logger()
+logger = logging.getLogger("agent_framework")
 
 
 OTEL_METRICS: Final[str] = "__otel_metrics__"
@@ -192,6 +203,14 @@ class OtelAttr(str, Enum):
     INPUT_MESSAGES = "gen_ai.input.messages"
     OUTPUT_MESSAGES = "gen_ai.output.messages"
     SYSTEM_INSTRUCTIONS = "gen_ai.system_instructions"
+    # Attributes previously from opentelemetry-semantic-conventions-ai SpanAttributes,
+    # removed in v0.4.14. Defined here for forward compatibility.
+    SYSTEM = "gen_ai.system"
+    REQUEST_MAX_TOKENS = "gen_ai.request.max_tokens"
+    REQUEST_TEMPERATURE = "gen_ai.request.temperature"
+    REQUEST_TOP_P = "gen_ai.request.top_p"
+    REQUEST_MODEL = "gen_ai.request.model"
+    RESPONSE_MODEL = "gen_ai.response.model"
 
     # Workflow attributes
     WORKFLOW_ID = "workflow.id"
@@ -429,7 +448,7 @@ def _get_exporters_from_env(
 
     Args:
         env_file_path: Path to a .env file to load environment variables from.
-            Default is None, which loads from '.env' if present.
+            Default is None, which does not load a .env file.
         env_file_encoding: Encoding to use when reading the .env file.
             Default is None, which uses the system default encoding.
 
@@ -440,8 +459,9 @@ def _get_exporters_from_env(
         - https://opentelemetry.io/docs/languages/sdk-configuration/general/
         - https://opentelemetry.io/docs/languages/sdk-configuration/otlp-exporter/
     """
-    # Load environment variables from .env file if present
-    load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
+    # Load environment variables from a .env file only when explicitly provided
+    if env_file_path is not None:
+        load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
 
     # Get base endpoint
     base_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
@@ -502,7 +522,7 @@ def create_resource(
         service_version: Override the service version. If not provided, reads from
             OTEL_SERVICE_VERSION environment variable or defaults to the package version.
         env_file_path: Path to a .env file to load environment variables from.
-            Default is None, which loads from '.env' if present.
+            Default is None, which does not load a .env file.
         env_file_encoding: Encoding to use when reading the .env file.
             Default is None, which uses the system default encoding.
         **attributes: Additional resource attributes to include. These will be merged
@@ -530,8 +550,9 @@ def create_resource(
             # Load from custom .env file
             resource = create_resource(env_file_path="config/.env")
     """
-    # Load environment variables from .env file if present
-    load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
+    # Load environment variables from a .env file only when explicitly provided
+    if env_file_path is not None:
+        load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
 
     # Start with provided attributes
     resource_attributes: dict[str, Any] = dict(attributes)
@@ -747,7 +768,6 @@ class ObservabilitySettings:
             for log_exporter in log_exporters:
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
             # Attach a handler with the provider to the root logger
-            logger = logging.getLogger()
             handler = LoggingHandler(logger_provider=logger_provider)
             logger.addHandler(handler)
             set_logger_provider(logger_provider)
@@ -1084,7 +1104,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -1094,7 +1114,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
@@ -1104,7 +1124,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1113,7 +1133,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -1129,11 +1149,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(self.otel_provider_name)
         model_id = kwargs.get("model_id") or opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
-        service_url = str(
-            service_url_func()
-            if (service_url_func := getattr(self, "service_url", None)) and callable(service_url_func)
-            else "unknown"
-        )
+        service_url_func = getattr(self, "service_url", None)
+        service_url = str(service_url_func() if callable(service_url_func) else "unknown")
         attributes = _get_span_attributes(
             operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
             provider_name=provider_name,
@@ -1158,7 +1175,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             # in a different async context than creation — using use_span() would
             # cause "Failed to detach context" errors from OpenTelemetry.
             operation = attributes.get(OtelAttr.OPERATION, "operation")
-            span_name = attributes.get(SpanAttributes.LLM_REQUEST_MODEL, "unknown")
+            span_name = attributes.get(OtelAttr.REQUEST_MODEL, "unknown")
             span = get_tracer().start_span(f"{operation} {span_name}")
             span.set_attributes(attributes)
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1220,7 +1237,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             return wrapped_stream
 
         async def _get_response() -> ChatResponse:
-            with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
+            with _get_span(attributes=attributes, span_name_attribute=OtelAttr.REQUEST_MODEL) as span:
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                     _capture_messages(
                         span=span,
@@ -1277,29 +1294,29 @@ class AgentTelemetryLayer:
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Trace agent runs with OpenTelemetry spans and metrics."""
@@ -1312,7 +1329,7 @@ class AgentTelemetryLayer:
             return super_run(  # type: ignore[no-any-return]
                 messages=messages,
                 stream=stream,
-                thread=thread,
+                session=session,
                 **kwargs,
             )
 
@@ -1327,7 +1344,7 @@ class AgentTelemetryLayer:
             agent_id=getattr(self, "id", "unknown"),
             agent_name=getattr(self, "name", None) or getattr(self, "id", "unknown"),
             agent_description=getattr(self, "description", None),
-            thread_id=thread.service_thread_id if thread else None,
+            thread_id=session.service_session_id if session else None,
             all_options=merged_options,
             **kwargs,
         )
@@ -1336,7 +1353,7 @@ class AgentTelemetryLayer:
             run_result = super_run(
                 messages=messages,
                 stream=True,
-                thread=thread,
+                session=session,
                 **kwargs,
             )
             if isinstance(run_result, ResponseStream):
@@ -1359,7 +1376,7 @@ class AgentTelemetryLayer:
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=_get_instructions_from_options(options),
+                    system_instructions=_get_instructions_from_options(merged_options),
                 )
 
             span_state = {"closed": False}
@@ -1416,14 +1433,14 @@ class AgentTelemetryLayer:
                         span=span,
                         provider_name=provider_name,
                         messages=messages,
-                        system_instructions=_get_instructions_from_options(options),
+                        system_instructions=_get_instructions_from_options(merged_options),
                     )
                 start_time_stamp = perf_counter()
                 try:
                     response = await super_run(
                         messages=messages,
                         stream=False,
-                        thread=thread,
+                        session=session,
                         **kwargs,
                     )
                 except Exception as exception:
@@ -1448,7 +1465,7 @@ class AgentTelemetryLayer:
 # region Otel Helpers
 
 
-def get_function_span_attributes(function: FunctionTool[Any, Any], tool_call_id: str | None = None) -> dict[str, str]:
+def get_function_span_attributes(function: FunctionTool, tool_call_id: str | None = None) -> dict[str, str]:
     """Get the span attributes for the given function.
 
     Args:
@@ -1530,16 +1547,16 @@ def _get_instructions_from_options(options: Any) -> str | None:
 OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | None, bool, Any]] = {
     "choice_count": (OtelAttr.CHOICE_COUNT, None, False, 1),
     "operation_name": (OtelAttr.OPERATION, None, False, None),
-    "system_name": (SpanAttributes.LLM_SYSTEM, None, False, None),
+    "system_name": (OtelAttr.SYSTEM, None, False, None),
     "provider_name": (OtelAttr.PROVIDER_NAME, None, False, None),
     "service_url": (OtelAttr.ADDRESS, None, False, None),
     "conversation_id": (OtelAttr.CONVERSATION_ID, None, True, None),
     "seed": (OtelAttr.SEED, None, True, None),
     "frequency_penalty": (OtelAttr.FREQUENCY_PENALTY, None, True, None),
-    "max_tokens": (SpanAttributes.LLM_REQUEST_MAX_TOKENS, None, True, None),
+    "max_tokens": (OtelAttr.REQUEST_MAX_TOKENS, None, True, None),
     "stop": (OtelAttr.STOP_SEQUENCES, None, True, None),
-    "temperature": (SpanAttributes.LLM_REQUEST_TEMPERATURE, None, True, None),
-    "top_p": (SpanAttributes.LLM_REQUEST_TOP_P, None, True, None),
+    "temperature": (OtelAttr.REQUEST_TEMPERATURE, None, True, None),
+    "top_p": (OtelAttr.REQUEST_TOP_P, None, True, None),
     "presence_penalty": (OtelAttr.PRESENCE_PENALTY, None, True, None),
     "top_k": (OtelAttr.TOP_K, None, True, None),
     "encoding_formats": (
@@ -1552,12 +1569,12 @@ OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | Non
     "agent_name": (OtelAttr.AGENT_NAME, None, False, None),
     "agent_description": (OtelAttr.AGENT_DESCRIPTION, None, False, None),
     # Multiple source keys - checks model_id in options, then model in kwargs, then model_id in kwargs
-    ("model_id", "model"): (SpanAttributes.LLM_REQUEST_MODEL, None, True, None),
+    ("model_id", "model"): (OtelAttr.REQUEST_MODEL, None, True, None),
     # Tools with validation - returns None if no valid tools
     "tools": (
         OtelAttr.TOOL_DEFINITIONS,
         lambda tools: (
-            json.dumps(tools_dict)
+            json.dumps(tools_dict, ensure_ascii=False)
             if (tools_dict := __import__("agent_framework._tools", fromlist=["_tools_to_dict"])._tools_to_dict(tools))
             else None
         ),
@@ -1614,15 +1631,15 @@ def capture_exception(span: trace.Span, exception: Exception, timestamp: int | N
 def _capture_messages(
     span: trace.Span,
     provider_name: str,
-    messages: str | Message | Sequence[str | Message],
+    messages: AgentRunInputs,
     system_instructions: str | list[str] | None = None,
     output: bool = False,
     finish_reason: FinishReason | None = None,
 ) -> None:
     """Log messages with extra information."""
-    from ._types import prepare_messages
+    from ._types import normalize_messages, prepend_instructions_to_messages
 
-    prepped = prepare_messages(messages, system_instructions=system_instructions)
+    prepped = prepend_instructions_to_messages(normalize_messages(messages), system_instructions)
     otel_messages: list[dict[str, Any]] = []
     for index, message in enumerate(prepped):
         # Reuse the otel message representation for logging instead of calling to_dict()
@@ -1639,12 +1656,14 @@ def _capture_messages(
         )
     if finish_reason:
         otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
-    span.set_attribute(OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES, json.dumps(otel_messages))
+    span.set_attribute(
+        OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES, json.dumps(otel_messages, ensure_ascii=False)
+    )
     if system_instructions:
         if not isinstance(system_instructions, list):
             system_instructions = [system_instructions]
         otel_sys_instructions = [{"type": "text", "content": instruction} for instruction in system_instructions]
-        span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions))
+        span.set_attribute(OtelAttr.SYSTEM_INSTRUCTIONS, json.dumps(otel_sys_instructions, ensure_ascii=False))
 
 
 def _to_otel_message(message: Message) -> dict[str, Any]:
@@ -1678,12 +1697,10 @@ def _to_otel_part(content: Content) -> dict[str, Any] | None:
         case "function_call":
             return {"type": "tool_call", "id": content.call_id, "name": content.name, "arguments": content.arguments}
         case "function_result":
-            from ._types import prepare_function_call_results
-
             return {
                 "type": "tool_call_response",
                 "id": content.call_id,
-                "response": prepare_function_call_results(content),
+                "response": content.result if content.result is not None else "",
             }
         case _:
             # GenericPart in otel output messages json spec.
@@ -1709,7 +1726,7 @@ def _get_response_attributes(
     if finish_reason:
         attributes[OtelAttr.FINISH_REASONS] = json.dumps([finish_reason])
     if model_id := getattr(response, "model_id", None):
-        attributes[SpanAttributes.LLM_RESPONSE_MODEL] = model_id
+        attributes[OtelAttr.RESPONSE_MODEL] = model_id
     if capture_usage and (usage := response.usage_details):
         if usage.get("input_token_count"):
             attributes[OtelAttr.INPUT_TOKENS] = usage["input_token_count"]
@@ -1721,8 +1738,8 @@ def _get_response_attributes(
 GEN_AI_METRIC_ATTRIBUTES = (
     OtelAttr.OPERATION,
     OtelAttr.PROVIDER_NAME,
-    SpanAttributes.LLM_REQUEST_MODEL,
-    SpanAttributes.LLM_RESPONSE_MODEL,
+    OtelAttr.REQUEST_MODEL,
+    OtelAttr.RESPONSE_MODEL,
     OtelAttr.ADDRESS,
     OtelAttr.PORT,
 )
@@ -1739,11 +1756,9 @@ def _capture_response(
     span.set_attributes(attributes)
     attrs: dict[str, Any] = {k: v for k, v in attributes.items() if k in GEN_AI_METRIC_ATTRIBUTES}
     if token_usage_histogram and (input_tokens := attributes.get(OtelAttr.INPUT_TOKENS)):
-        token_usage_histogram.record(
-            input_tokens, attributes={**attrs, SpanAttributes.LLM_TOKEN_TYPE: OtelAttr.T_TYPE_INPUT}
-        )
+        token_usage_histogram.record(input_tokens, attributes={**attrs, OtelAttr.T_TYPE: OtelAttr.T_TYPE_INPUT})
     if token_usage_histogram and (output_tokens := attributes.get(OtelAttr.OUTPUT_TOKENS)):
-        token_usage_histogram.record(output_tokens, {**attrs, SpanAttributes.LLM_TOKEN_TYPE: OtelAttr.T_TYPE_OUTPUT})
+        token_usage_histogram.record(output_tokens, {**attrs, OtelAttr.T_TYPE: OtelAttr.T_TYPE_OUTPUT})
     if operation_duration_histogram and duration is not None:
         if OtelAttr.ERROR_TYPE in attributes:
             attrs[OtelAttr.ERROR_TYPE] = attributes[OtelAttr.ERROR_TYPE]

@@ -26,9 +26,12 @@ AgentCard agentCard = await agentCardResolver.GetAgentCardAsync();
 AIAgent a2aAgent = agentCard.AsAIAgent();
 
 // Create the main agent, and provide the a2a agent skills as a function tools.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName)
     .AsAIAgent(
         instructions: "You are a helpful assistant that helps people with travel planning.",

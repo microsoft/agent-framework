@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from decimal import Decimal as _Decimal
 from typing import Any, Literal, cast
 
-from agent_framework._workflows import (
+from agent_framework import (
     Executor,
     WorkflowContext,
 )

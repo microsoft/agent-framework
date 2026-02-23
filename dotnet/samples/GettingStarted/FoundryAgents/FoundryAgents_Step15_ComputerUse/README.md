@@ -2,6 +2,17 @@
 
 This sample demonstrates how to use the computer use tool with AI agents. The computer use tool allows agents to interact with a computer environment by viewing the screen, controlling the mouse and keyboard, and performing various actions to help complete tasks.
 
+> [!NOTE]
+> **Azure Agents API vs. vanilla OpenAI Responses API behavior:**
+> The Azure Agents API rejects requests that include `previous_response_id` alongside
+> `computer_call_output` items — unlike the vanilla OpenAI Responses API, which accepts them.
+> This sample works around the limitation by creating a **fresh session for each follow-up call**
+> (so no `previous_response_id` is carried over) and re-sending all prior response output items
+> (reasoning, computer_call, etc.) as input items to preserve full conversation context.
+> Additionally, the sample uses the **current** `CallId` from each computer call response
+> (not the initial one) and clears the `ContinuationToken` after polling completes to prevent
+> stale tokens from affecting subsequent requests.
+
 ## What this sample demonstrates
 
 - Creating agents with computer use capabilities
