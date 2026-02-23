@@ -20,12 +20,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.Core" />
     <PackageReference Include="Microsoft.Agents.ObjectModel" />
     <PackageReference Include="Microsoft.Agents.ObjectModel.Json" />
     <PackageReference Include="Microsoft.Agents.ObjectModel.PowerFx" />
     <PackageReference Include="Microsoft.PowerFx.Interpreter" />
     <PackageReference Include="Microsoft.Extensions.Configuration" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="System.CodeDom" />
     <PackageReference Include="System.Collections.Immutable" />
   </ItemGroup>
