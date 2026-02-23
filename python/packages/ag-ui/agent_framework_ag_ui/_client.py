@@ -439,6 +439,11 @@ class AGUIChatClient(
             messages=agui_messages,
             state=state,
             tools=agui_tools,
+            available_interrupts=cast(
+                list[dict[str, Any]] | None,
+                options.get("available_interrupts") or options.get("availableInterrupts"),
+            ),
+            resume=cast(dict[str, Any] | None, options.get("resume")),
         ):
             logger.debug(f"[AGUIChatClient] Raw AG-UI event: {event}")
             update = converter.convert_event(event)

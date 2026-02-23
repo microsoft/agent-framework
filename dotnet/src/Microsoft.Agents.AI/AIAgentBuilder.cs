@@ -172,7 +172,7 @@ public sealed class AIAgentBuilder
     /// context enrichment, not just agents that natively support <see cref="AIContextProvider"/> instances.
     /// </para>
     /// </remarks>
-    public AIAgentBuilder Use(MessageAIContextProvider[] providers)
+    public AIAgentBuilder UseAIContextProviders(params MessageAIContextProvider[] providers)
     {
         return this.Use((innerAgent, _) => new MessageAIContextProviderAgent(innerAgent, providers));
     }

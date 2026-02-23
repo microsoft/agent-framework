@@ -203,6 +203,14 @@ class OtelAttr(str, Enum):
     INPUT_MESSAGES = "gen_ai.input.messages"
     OUTPUT_MESSAGES = "gen_ai.output.messages"
     SYSTEM_INSTRUCTIONS = "gen_ai.system_instructions"
+    # Attributes previously from opentelemetry-semantic-conventions-ai SpanAttributes,
+    # removed in v0.4.14. Defined here for forward compatibility.
+    SYSTEM = "gen_ai.system"
+    REQUEST_MAX_TOKENS = "gen_ai.request.max_tokens"
+    REQUEST_TEMPERATURE = "gen_ai.request.temperature"
+    REQUEST_TOP_P = "gen_ai.request.top_p"
+    REQUEST_MODEL = "gen_ai.request.model"
+    RESPONSE_MODEL = "gen_ai.response.model"
 
     # Workflow attributes
     WORKFLOW_ID = "workflow.id"
@@ -1167,7 +1175,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             # in a different async context than creation — using use_span() would
             # cause "Failed to detach context" errors from OpenTelemetry.
             operation = attributes.get(OtelAttr.OPERATION, "operation")
-            span_name = attributes.get(SpanAttributes.LLM_REQUEST_MODEL, "unknown")
+            span_name = attributes.get(OtelAttr.REQUEST_MODEL, "unknown")
             span = get_tracer().start_span(f"{operation} {span_name}")
             span.set_attributes(attributes)
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1229,7 +1237,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             return wrapped_stream
 
         async def _get_response() -> ChatResponse:
-            with _get_span(attributes=attributes, span_name_attribute=SpanAttributes.LLM_REQUEST_MODEL) as span:
+            with _get_span(attributes=attributes, span_name_attribute=OtelAttr.REQUEST_MODEL) as span:
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                     _capture_messages(
                         span=span,
@@ -1539,16 +1547,16 @@ def _get_instructions_from_options(options: Any) -> str | None:
 OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | None, bool, Any]] = {
     "choice_count": (OtelAttr.CHOICE_COUNT, None, False, 1),
     "operation_name": (OtelAttr.OPERATION, None, False, None),
-    "system_name": (SpanAttributes.LLM_SYSTEM, None, False, None),
+    "system_name": (OtelAttr.SYSTEM, None, False, None),
     "provider_name": (OtelAttr.PROVIDER_NAME, None, False, None),
     "service_url": (OtelAttr.ADDRESS, None, False, None),
     "conversation_id": (OtelAttr.CONVERSATION_ID, None, True, None),
     "seed": (OtelAttr.SEED, None, True, None),
     "frequency_penalty": (OtelAttr.FREQUENCY_PENALTY, None, True, None),
-    "max_tokens": (SpanAttributes.LLM_REQUEST_MAX_TOKENS, None, True, None),
+    "max_tokens": (OtelAttr.REQUEST_MAX_TOKENS, None, True, None),
     "stop": (OtelAttr.STOP_SEQUENCES, None, True, None),
-    "temperature": (SpanAttributes.LLM_REQUEST_TEMPERATURE, None, True, None),
-    "top_p": (SpanAttributes.LLM_REQUEST_TOP_P, None, True, None),
+    "temperature": (OtelAttr.REQUEST_TEMPERATURE, None, True, None),
+    "top_p": (OtelAttr.REQUEST_TOP_P, None, True, None),
     "presence_penalty": (OtelAttr.PRESENCE_PENALTY, None, True, None),
     "top_k": (OtelAttr.TOP_K, None, True, None),
     "encoding_formats": (
@@ -1561,7 +1569,7 @@ OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | Non
     "agent_name": (OtelAttr.AGENT_NAME, None, False, None),
     "agent_description": (OtelAttr.AGENT_DESCRIPTION, None, False, None),
     # Multiple source keys - checks model_id in options, then model in kwargs, then model_id in kwargs
-    ("model_id", "model"): (SpanAttributes.LLM_REQUEST_MODEL, None, True, None),
+    ("model_id", "model"): (OtelAttr.REQUEST_MODEL, None, True, None),
     # Tools with validation - returns None if no valid tools
     "tools": (
         OtelAttr.TOOL_DEFINITIONS,
@@ -1718,7 +1726,7 @@ def _get_response_attributes(
     if finish_reason:
         attributes[OtelAttr.FINISH_REASONS] = json.dumps([finish_reason])
     if model_id := getattr(response, "model_id", None):
-        attributes[SpanAttributes.LLM_RESPONSE_MODEL] = model_id
+        attributes[OtelAttr.RESPONSE_MODEL] = model_id
     if capture_usage and (usage := response.usage_details):
         if usage.get("input_token_count"):
             attributes[OtelAttr.INPUT_TOKENS] = usage["input_token_count"]
@@ -1730,8 +1738,8 @@ def _get_response_attributes(
 GEN_AI_METRIC_ATTRIBUTES = (
     OtelAttr.OPERATION,
     OtelAttr.PROVIDER_NAME,
-    SpanAttributes.LLM_REQUEST_MODEL,
-    SpanAttributes.LLM_RESPONSE_MODEL,
+    OtelAttr.REQUEST_MODEL,
+    OtelAttr.RESPONSE_MODEL,
     OtelAttr.ADDRESS,
     OtelAttr.PORT,
 )
@@ -1749,10 +1757,10 @@ def _capture_response(
     attrs: dict[str, Any] = {k: v for k, v in attributes.items() if k in GEN_AI_METRIC_ATTRIBUTES}
     if token_usage_histogram and (input_tokens := attributes.get(OtelAttr.INPUT_TOKENS)):
         token_usage_histogram.record(
-            input_tokens, attributes={**attrs, SpanAttributes.LLM_TOKEN_TYPE: OtelAttr.T_TYPE_INPUT}
+            input_tokens, attributes={**attrs, OtelAttr.T_TYPE: OtelAttr.T_TYPE_INPUT}
         )
     if token_usage_histogram and (output_tokens := attributes.get(OtelAttr.OUTPUT_TOKENS)):
-        token_usage_histogram.record(output_tokens, {**attrs, SpanAttributes.LLM_TOKEN_TYPE: OtelAttr.T_TYPE_OUTPUT})
+        token_usage_histogram.record(output_tokens, {**attrs, OtelAttr.T_TYPE: OtelAttr.T_TYPE_OUTPUT})
     if operation_duration_histogram and duration is not None:
         if OtelAttr.ERROR_TYPE in attributes:
             attrs[OtelAttr.ERROR_TYPE] = attributes[OtelAttr.ERROR_TYPE]

@@ -66,7 +66,7 @@ def test_convert_approval_results_to_tool_messages() -> None:
     results ended up in user messages instead of tool messages, causing OpenAI to
     reject the request with 'tool_call_ids did not have response messages'.
     """
-    from agent_framework_ag_ui._run import _convert_approval_results_to_tool_messages
+    from agent_framework_ag_ui._agent_run import _convert_approval_results_to_tool_messages
 
     # Simulate what happens after _resolve_approval_responses:
     # A user message contains function_result content (the executed tool result)
@@ -106,7 +106,7 @@ def test_convert_approval_results_preserves_other_user_content() -> None:
     the function_result content should be extracted to a tool message while the
     remaining content stays in the user message.
     """
-    from agent_framework_ag_ui._run import _convert_approval_results_to_tool_messages
+    from agent_framework_ag_ui._agent_run import _convert_approval_results_to_tool_messages
 
     messages = [
         Message(
