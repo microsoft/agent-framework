@@ -766,7 +766,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 response = await super(RawAzureAIClient, self)._inner_get_response(
                     messages=messages, options=options, stream=False, **kwargs
                 )
-                get_urls = self._extract_azure_search_urls(response.raw_representation.output)
+                get_urls = self._extract_azure_search_urls(response.raw_representation.output)  # type: ignore[union-attr]
                 if get_urls:
                     for msg in response.messages:
                         self._enrich_annotations_with_search_urls(list(msg.contents or []), get_urls)
@@ -818,7 +818,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
 
             return update
 
-        stream_result.with_transform_hook(_enrich_update)
+        stream_result.with_transform_hook(_enrich_update)  # type: ignore[union-attr]
         return stream_result
 
     # endregion
