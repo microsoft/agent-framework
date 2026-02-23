@@ -151,7 +151,7 @@ class FoundryMemoryProvider(BaseContextProvider):
             try:
                 static_search_result = await self.project_client.memory_stores.search_memories(
                     name=self.memory_store_name,
-                    scope=self.scope or context.session_id,
+                    scope=self.scope or context.session_id,  # type: ignore[arg-type]
                 )
                 static_memories = [{"content": memory.memory_item.content} for memory in static_search_result.memories]
                 state["static_memories"] = static_memories
@@ -179,7 +179,7 @@ class FoundryMemoryProvider(BaseContextProvider):
         try:
             search_result = await self.project_client.memory_stores.search_memories(
                 name=self.memory_store_name,
-                scope=self.scope or context.session_id,
+                scope=self.scope or context.session_id,  # type: ignore[arg-type]
                 items=items,
                 previous_search_id=state.get("previous_search_id"),
             )
@@ -240,8 +240,8 @@ class FoundryMemoryProvider(BaseContextProvider):
             # Fire and forget - don't wait for the update to complete
             update_poller = await self.project_client.memory_stores.begin_update_memories(
                 name=self.memory_store_name,
-                scope=self.scope or context.session_id,
-                items=items,
+                scope=self.scope or context.session_id,  # type: ignore[arg-type]
+                items=items,  # type: ignore[arg-type]
                 previous_update_id=state.get("previous_update_id"),
                 update_delay=self.update_delay,
             )
