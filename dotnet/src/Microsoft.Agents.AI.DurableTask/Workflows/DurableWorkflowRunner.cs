@@ -200,10 +200,15 @@ internal sealed class DurableWorkflowRunner
         // Return wrapper with both result and events so streaming clients can
         // retrieve events from SerializedOutput after the orchestration completes
         // (SerializedCustomStatus is cleared by the framework on completion).
+        // SentMessages carries the final result so parent workflows can route it
+        // to connected executors, matching the in-process WorkflowHostExecutor behavior.
         DurableWorkflowResult workflowResult = new()
         {
             Result = finalResult,
-            Events = state.AccumulatedEvents
+            Events = state.AccumulatedEvents,
+            SentMessages = !string.IsNullOrEmpty(finalResult)
+                ? [new TypedPayload { Data = finalResult }]
+                : []
         };
 
         return JsonSerializer.Serialize(workflowResult, DurableWorkflowJsonContext.Default.DurableWorkflowResult);
@@ -600,10 +605,10 @@ internal sealed class DurableWorkflowRunner
     private static bool HasMeaningfulContent(DurableExecutorOutput output)
     {
         return output.Result is not null
-            || output.SentMessages.Count > 0
-            || output.Events.Count > 0
-            || output.StateUpdates.Count > 0
-            || output.ClearedScopes.Count > 0
+            || output.SentMessages?.Count > 0
+            || output.Events?.Count > 0
+            || output.StateUpdates?.Count > 0
+            || output.ClearedScopes?.Count > 0
             || output.HaltRequested;
     }
 }
