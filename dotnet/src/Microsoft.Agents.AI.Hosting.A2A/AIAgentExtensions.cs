@@ -158,8 +158,8 @@ public static class AIAgentExtensions
         try
         {
             // Discard any stale continuation token — the incoming user message supersedes
-            // any previous background operation. AF agents do not support resuming a
-            // background run while injecting new messages; we start a fresh run from the
+            // any previous background operation. AF agents don't support updating existing 
+            // background responses (long-running operations); we start a fresh run from the
             // existing session using the full chat history (which includes the new message).
             agentTask.Metadata?.Remove(ContinuationTokenMetadataKey);
 
