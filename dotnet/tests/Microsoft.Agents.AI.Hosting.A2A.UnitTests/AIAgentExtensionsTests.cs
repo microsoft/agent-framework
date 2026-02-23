@@ -178,7 +178,7 @@ public sealed class AIAgentExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that when responseMode is Message, the result is always an AgentMessage even when
+    /// Verifies that when runMode is Message, the result is always an AgentMessage even when
     /// the agent would otherwise support background responses.
     /// </summary>
     [Fact]
