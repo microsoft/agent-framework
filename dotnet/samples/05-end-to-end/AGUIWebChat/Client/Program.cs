@@ -9,7 +9,7 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
-string serverUrl = builder.Configuration["SERVER_URL"] ?? "http://localhost:5100";
+string serverUrl = builder.Configuration["AGUI_SERVER_URL"] ?? "http://localhost:5100";
 
 builder.Services.AddHttpClient("aguiserver", httpClient => httpClient.BaseAddress = new Uri(serverUrl));
 

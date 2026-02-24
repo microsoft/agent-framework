@@ -7,7 +7,7 @@ using Anthropic.Foundry;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 
-string deploymentName = Environment.GetEnvironmentVariable("ANTHROPIC_DEPLOYMENT_NAME") ?? "claude-haiku-4-5";
+string deploymentName = Environment.GetEnvironmentVariable("ANTHROPIC_CHAT_MODEL_NAME") ?? "claude-haiku-4-5";
 
 // The resource is the subdomain name / first name coming before '.services.ai.azure.com' in the endpoint Uri
 // ie: https://(resource name).services.ai.azure.com/anthropic/v1/chat/completions

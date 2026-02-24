@@ -57,18 +57,18 @@ More information on how to configure RBAC permissions for Azure OpenAI can be fo
 
 ### Setting an API key for the Azure OpenAI service
 
-As an alternative to configuring Azure RBAC permissions, you can set an API key for the Azure OpenAI service by setting the `AZURE_OPENAI_KEY` environment variable.
+As an alternative to configuring Azure RBAC permissions, you can set an API key for the Azure OpenAI service by setting the `AZURE_OPENAI_API_KEY` environment variable.
 
 Bash (Linux/macOS/WSL):
 
 ```bash
-export AZURE_OPENAI_KEY="your-api-key"
+export AZURE_OPENAI_API_KEY="your-api-key"
 ```
 
 PowerShell:
 
 ```powershell
-$env:AZURE_OPENAI_KEY="your-api-key"
+$env:AZURE_OPENAI_API_KEY="your-api-key"
 ```
 
 ### Start Durable Task Scheduler
@@ -110,7 +110,7 @@ Each sample has its own `local.settings.json` file that contains the environment
 {
   "Values": {
     "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
-    "AZURE_OPENAI_DEPLOYMENT": "your-deployment-name"
+    "AZURE_OPENAI_DEPLOYMENT_NAME": "your-deployment-name"
   }
 }
 ```
@@ -121,14 +121,14 @@ Alternatively, you can set the environment variables in the command line.
 
 ```bash
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-export AZURE_OPENAI_DEPLOYMENT="your-deployment-name"
+export AZURE_OPENAI_DEPLOYMENT_NAME="your-deployment-name"
 ```
 
 ### PowerShell
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-$env:AZURE_OPENAI_DEPLOYMENT="your-deployment-name"
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="your-deployment-name"
 ```
 
 These environment variables, when set, will override the values in the `local.settings.json` file, making it convenient to test the sample without having to update the `local.settings.json` file.

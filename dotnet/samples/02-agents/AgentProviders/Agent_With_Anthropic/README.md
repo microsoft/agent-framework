@@ -22,7 +22,7 @@ Set the following environment variables:
 
 ```powershell
 $env:ANTHROPIC_API_KEY="your-anthropic-api-key"  # Replace with your Anthropic API key
-$env:ANTHROPIC_DEPLOYMENT_NAME="claude-haiku-4-5"  # Optional, defaults to claude-haiku-4-5
+$env:ANTHROPIC_CHAT_MODEL_NAME="claude-haiku-4-5"  # Optional, defaults to claude-haiku-4-5
 ```
 
 ### For Azure Foundry with API Key
@@ -35,7 +35,7 @@ Set the following environment variables:
 ```powershell
 $env:ANTHROPIC_RESOURCE="your-foundry-resource-name"  # Replace with your Azure Foundry resource name (subdomain before .services.ai.azure.com)
 $env:ANTHROPIC_API_KEY="your-anthropic-api-key"  # Replace with your Anthropic API key
-$env:ANTHROPIC_DEPLOYMENT_NAME="claude-haiku-4-5"  # Optional, defaults to claude-haiku-4-5
+$env:ANTHROPIC_CHAT_MODEL_NAME="claude-haiku-4-5"  # Optional, defaults to claude-haiku-4-5
 ```
 
 ### For Azure Foundry with Azure CLI
@@ -47,7 +47,7 @@ Set the following environment variables:
 
 ```powershell
 $env:ANTHROPIC_RESOURCE="your-foundry-resource-name"  # Replace with your Azure Foundry resource name (subdomain before .services.ai.azure.com)
-$env:ANTHROPIC_DEPLOYMENT_NAME="claude-haiku-4-5"  # Optional, defaults to claude-haiku-4-5
+$env:ANTHROPIC_CHAT_MODEL_NAME="claude-haiku-4-5"  # Optional, defaults to claude-haiku-4-5
 ```
 
 **Note**: When using Azure Foundry with Azure CLI, make sure you're logged in with `az login` and have access to the Azure Foundry resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).

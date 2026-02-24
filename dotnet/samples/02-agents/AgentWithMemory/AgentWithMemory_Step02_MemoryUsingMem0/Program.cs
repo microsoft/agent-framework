@@ -17,7 +17,7 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? th
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 var mem0ServiceUri = Environment.GetEnvironmentVariable("MEM0_ENDPOINT") ?? throw new InvalidOperationException("MEM0_ENDPOINT is not set.");
-var mem0ApiKey = Environment.GetEnvironmentVariable("MEM0_APIKEY") ?? throw new InvalidOperationException("MEM0_APIKEY is not set.");
+var mem0ApiKey = Environment.GetEnvironmentVariable("MEM0_API_KEY") ?? throw new InvalidOperationException("MEM0_API_KEY is not set.");
 
 // Create an HttpClient for Mem0 with the required base address and authentication.
 using HttpClient mem0HttpClient = new();

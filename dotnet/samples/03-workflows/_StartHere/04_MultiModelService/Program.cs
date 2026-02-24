@@ -10,13 +10,13 @@ const string Topic = "Goldendoodles make the best pets.";
 
 // Create the IChatClients to talk to different services.
 IChatClient aws = new AmazonBedrockRuntimeClient(
-    Environment.GetEnvironmentVariable("BEDROCK_ACCESSKEY"!),
-    Environment.GetEnvironmentVariable("BEDROCK_SECRETACCESSKEY")!,
+    Environment.GetEnvironmentVariable("BEDROCK_ACCESS_KEY"!),
+    Environment.GetEnvironmentVariable("BEDROCK_SECRET_KEY")!,
     Amazon.RegionEndpoint.USEast1)
     .AsIChatClient("amazon.nova-pro-v1:0");
 
 IChatClient anthropic = new Anthropic.AnthropicClient(
-    new() { ApiKey = Environment.GetEnvironmentVariable("ANTHROPIC_APIKEY") })
+    new() { ApiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") })
     .AsIChatClient("claude-sonnet-4-20250514");
 
 IChatClient openai = new OpenAI.OpenAIClient(

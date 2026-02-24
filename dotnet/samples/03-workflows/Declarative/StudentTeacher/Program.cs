@@ -63,7 +63,7 @@ internal sealed class Program
     }
 
     private static PromptAgentDefinition DefineStudentAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -76,7 +76,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineTeacherAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """

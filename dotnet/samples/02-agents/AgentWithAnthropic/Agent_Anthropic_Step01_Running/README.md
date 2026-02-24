@@ -21,7 +21,7 @@ Set the following environment variables:
 
 ```powershell
 $env:ANTHROPIC_API_KEY="your-anthropic-api-key"  # Replace with your Anthropic API key
-$env:ANTHROPIC_MODEL="your-anthropic-model"  # Replace with your Anthropic model
+$env:ANTHROPIC_CHAT_MODEL_NAME="your-anthropic-model"  # Replace with your Anthropic model
 ```
 
 ## Run the sample

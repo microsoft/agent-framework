@@ -22,12 +22,12 @@ This sample demonstrates how to create and run an agent that uses Azure AI Found
 
 ```bash
 # Azure AI Foundry project endpoint and memory store name
-export FOUNDRY_PROJECT_ENDPOINT="https://your-account.services.ai.azure.com/api/projects/your-project"
-export FOUNDRY_PROJECT_MEMORY_STORE_NAME="my_memory_store"
+export AZURE_AI_PROJECT_ENDPOINT="https://your-account.services.ai.azure.com/api/projects/your-project"
+export AZURE_AI_MEMORY_STORE_ID="my_memory_store"
 
 # Model deployment names (models deployed in your Foundry project)
-export FOUNDRY_PROJECT_MODEL="gpt-4o-mini"
-export FOUNDRY_PROJECT_EMBEDDING_MODEL="text-embedding-ada-002"
+export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
+export AZURE_AI_EMBEDDING_DEPLOYMENT_NAME="text-embedding-ada-002"
 ```
 
 ## Run the Sample

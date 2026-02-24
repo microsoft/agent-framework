@@ -68,7 +68,7 @@ internal sealed class Program
     }
 
     private static PromptAgentDefinition DefineAnalystAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelFull))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -86,7 +86,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineWriterAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelFull))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -97,7 +97,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineEditorAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelFull))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
