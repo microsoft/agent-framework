@@ -35,6 +35,10 @@ from ._tools import (
 from ._types import (
     ChatResponse,
     ChatResponseUpdate,
+    EmbeddingGenerationOptions,
+    EmbeddingInputT,
+    EmbeddingT,
+    GeneratedEmbeddings,
     Message,
     ResponseStream,
     validate_chat_options,
@@ -56,7 +60,6 @@ if TYPE_CHECKING:
 
 InputT = TypeVar("InputT", contravariant=True)
 
-EmbeddingT = TypeVar("EmbeddingT")
 BaseChatClientT = TypeVar("BaseChatClientT", bound="BaseChatClient")
 
 logger = logging.getLogger("agent_framework")
@@ -655,6 +658,143 @@ class SupportsFileSearchTool(Protocol):
 
         Returns:
             A tool configuration ready to pass to ChatAgent.
+        """
+        ...
+
+
+# endregion
+
+
+# region SupportsGetEmbeddings Protocol
+
+# Contravariant/covariant TypeVars for the Protocol
+EmbeddingInputContraT = TypeVar(
+    "EmbeddingInputContraT",
+    default="str",
+    contravariant=True,
+)
+EmbeddingCoT = TypeVar(
+    "EmbeddingCoT",
+    default="list[float]",
+)
+EmbeddingOptionsContraT = TypeVar(
+    "EmbeddingOptionsContraT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="EmbeddingGenerationOptions",
+    contravariant=True,
+)
+
+
+@runtime_checkable
+class SupportsGetEmbeddings(Protocol[EmbeddingInputContraT, EmbeddingCoT, EmbeddingOptionsContraT]):
+    """Protocol for an embedding client that can generate embeddings.
+
+    This protocol enables duck-typing for embedding generation. Any class that
+    implements ``get_embeddings`` with a compatible signature satisfies this protocol.
+
+    Generic over the input type (defaults to ``str``), output embedding type
+    (defaults to ``list[float]``), and options type.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsGetEmbeddings
+
+
+            async def use_embeddings(client: SupportsGetEmbeddings) -> None:
+                result = await client.get_embeddings(["Hello, world!"])
+                for embedding in result:
+                    print(embedding.vector)
+    """
+
+    additional_properties: dict[str, Any]
+
+    def get_embeddings(
+        self,
+        values: Sequence[EmbeddingInputContraT],
+        *,
+        options: EmbeddingOptionsContraT | None = None,
+    ) -> Awaitable[GeneratedEmbeddings[EmbeddingCoT]]:
+        """Generate embeddings for the given values.
+
+        Args:
+            values: The values to generate embeddings for.
+            options: Optional embedding generation options.
+
+        Returns:
+            Generated embeddings with metadata.
+        """
+        ...
+
+
+# endregion
+
+
+# region BaseEmbeddingClient
+
+# Covariant for the BaseEmbeddingClient
+EmbeddingOptionsCoT = TypeVar(
+    "EmbeddingOptionsCoT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="EmbeddingGenerationOptions",
+    covariant=True,
+)
+
+
+class BaseEmbeddingClient(SerializationMixin, ABC, Generic[EmbeddingInputT, EmbeddingT, EmbeddingOptionsCoT]):
+    """Abstract base class for embedding clients.
+
+    Subclasses implement ``get_embeddings`` to provide the actual
+    embedding generation logic.
+
+    Generic over the input type (defaults to ``str``), output embedding type
+    (defaults to ``list[float]``), and options type.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import BaseEmbeddingClient, Embedding, GeneratedEmbeddings
+            from collections.abc import Sequence
+
+
+            class CustomEmbeddingClient(BaseEmbeddingClient):
+                async def get_embeddings(self, values, *, options=None):
+                    return GeneratedEmbeddings([Embedding(vector=[0.1, 0.2, 0.3]) for _ in values])
+    """
+
+    OTEL_PROVIDER_NAME: ClassVar[str] = "unknown"
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
+
+    def __init__(
+        self,
+        *,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize a BaseEmbeddingClient instance.
+
+        Args:
+            additional_properties: Additional properties to pass to the client.
+            **kwargs: Additional keyword arguments passed to parent classes (for MRO).
+        """
+        self.additional_properties = additional_properties or {}
+        super().__init__(**kwargs)
+
+    @abstractmethod
+    async def get_embeddings(
+        self,
+        values: Sequence[EmbeddingInputT],
+        *,
+        options: EmbeddingOptionsCoT | None = None,
+    ) -> GeneratedEmbeddings[EmbeddingT]:
+        """Generate embeddings for the given values.
+
+        Args:
+            values: The values to generate embeddings for.
+            options: Optional embedding generation options.
+
+        Returns:
+            Generated embeddings with metadata.
         """
         ...
 

@@ -158,7 +158,28 @@ class Runner:
             self._running = False
 
     async def _run_iteration(self) -> None:
-        async def _deliver_messages(source_executor_id: str, messages: list[WorkflowMessage]) -> None:
+        """Run a single iteration of the workflow.
+
+        Messages are delivered through edge runners. A source executor may have multiple outgoing edge
+        runners. All edge runners run concurrently, but messages sent through the same edge runner are
+        delivered in the order they were sent to preserve message ordering guarantees per edge.
+
+        What this means in practice:
+        - A message from a source to multiple target is delivered to all targets concurrently.
+        - Multiple messages from a source to the same target are delivered in the order they were sent.
+        - Multiple messages from different sources to the same target can be delivered to the target one
+          at a time in any order, because true parallelism is not realized in Python.
+        - Multiple message from different sources to different targets are delivered concurrently to all
+          targets, assuming each message is targeting a unique target, or it falls back to the previous
+          rules if there are multiple messages targeting the same target.
+        - Special case: if using a fan-out edge runner (or derived edge runner that replicates messages
+          to multiple targets such as multi-selection or switch-case) to send messages to targets from
+          a source by specifying the target, the messages will be delivered to the specified targets
+          in the order they were sent. This is because all messages go through the same edge runner instance
+          which preserves message order.
+        """
+
+        async def _deliver_messages(source_executor_id: str, source_messages: list[WorkflowMessage]) -> None:
             """Outer loop to concurrently deliver messages from all sources to their targets."""
 
             async def _deliver_message_inner(edge_runner: EdgeRunner, message: WorkflowMessage) -> bool:
@@ -172,13 +193,20 @@ class Runner:
                 logger.debug(f"No outgoing edges found for executor {source_executor_id}; dropping messages.")
                 return
 
-            for message in messages:
-                # Deliver a message through all edge runners associated with the source executor concurrently.
-                tasks = [_deliver_message_inner(edge_runner, message) for edge_runner in associated_edge_runners]
-                await asyncio.gather(*tasks)
+            async def _deliver_messages_for_edge_runner(edge_runner: EdgeRunner) -> None:
+                # Preserve message order per edge runner (and therefore per routed target path)
+                # while still allowing parallelism across different edge runners.
+                for message in source_messages:
+                    await _deliver_message_inner(edge_runner, message)
 
-        messages = await self._ctx.drain_messages()
-        tasks = [_deliver_messages(source_executor_id, messages) for source_executor_id, messages in messages.items()]
+            tasks = [_deliver_messages_for_edge_runner(edge_runner) for edge_runner in associated_edge_runners]
+            await asyncio.gather(*tasks)
+
+        message_batches = await self._ctx.drain_messages()
+        tasks = [
+            _deliver_messages(source_executor_id, source_messages)
+            for source_executor_id, source_messages in message_batches.items()
+        ]
         await asyncio.gather(*tasks)
 
     async def _create_checkpoint_if_enabled(self, previous_checkpoint_id: CheckpointID | None) -> CheckpointID | None:

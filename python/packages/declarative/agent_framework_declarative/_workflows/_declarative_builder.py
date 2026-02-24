@@ -49,7 +49,17 @@ ALL_ACTION_EXECUTORS = {
 
 # Action kinds that terminate control flow (no fall-through to successor)
 # These actions transfer control elsewhere and should not have sequential edges to the next action
-TERMINATOR_ACTIONS = frozenset({"Goto", "GotoAction", "BreakLoop", "ContinueLoop", "EndWorkflow", "EndDialog"})
+TERMINATOR_ACTIONS = frozenset({
+    "Goto",
+    "GotoAction",
+    "BreakLoop",
+    "ContinueLoop",
+    "EndWorkflow",
+    "EndDialog",
+    "EndConversation",
+    "CancelDialog",
+    "CancelAllDialogs",
+})
 
 # Required fields for specific action kinds (schema validation)
 # Each action needs at least one of the listed fields (checked with alternates)
@@ -110,6 +120,7 @@ class DeclarativeWorkflowBuilder:
         agents: dict[str, Any] | None = None,
         checkpoint_storage: Any | None = None,
         validate: bool = True,
+        max_iterations: int | None = None,
     ):
         """Initialize the builder.
 
@@ -119,6 +130,8 @@ class DeclarativeWorkflowBuilder:
             agents: Registry of agent instances by name (for InvokeAzureAgent actions)
             checkpoint_storage: Optional checkpoint storage for pause/resume support
             validate: Whether to validate the workflow definition before building (default: True)
+            max_iterations: Maximum runner supersteps. Falls back to the YAML ``maxTurns``
+                field, then to the core default (100).
         """
         self._yaml_def = yaml_definition
         self._workflow_id = workflow_id or yaml_definition.get("name", "declarative_workflow")
@@ -129,6 +142,11 @@ class DeclarativeWorkflowBuilder:
         self._pending_gotos: list[tuple[Any, str]] = []  # (goto_executor, target_id)
         self._validate = validate
         self._seen_explicit_ids: set[str] = set()  # Track explicit IDs for duplicate detection
+        # Resolve max_iterations: explicit arg > YAML maxTurns > core default
+        resolved = max_iterations if max_iterations is not None else yaml_definition.get("maxTurns")
+        if resolved is not None and (not isinstance(resolved, int) or resolved <= 0):
+            raise ValueError(f"Invalid max_iterations/maxTurns value: {resolved!r}. Expected a positive integer.")
+        self._max_iterations: int | None = resolved
 
     def build(self) -> Workflow:
         """Build the workflow graph.
@@ -153,11 +171,14 @@ class DeclarativeWorkflowBuilder:
         # _create_executors_for_actions runs (which itself needs the builder to add edges).
         entry_node = JoinExecutor({"kind": "Entry"}, id="_workflow_entry")
         self._executors[entry_node.id] = entry_node
-        builder = WorkflowBuilder(
-            start_executor=entry_node,
-            name=self._workflow_id,
-            checkpoint_storage=self._checkpoint_storage,
-        )
+        builder_kwargs: dict[str, Any] = {
+            "start_executor": entry_node,
+            "name": self._workflow_id,
+            "checkpoint_storage": self._checkpoint_storage,
+        }
+        if self._max_iterations is not None:
+            builder_kwargs["max_iterations"] = self._max_iterations
+        builder = WorkflowBuilder(**builder_kwargs)
 
         # Create all executors and wire sequential edges
         first_executor = self._create_executors_for_actions(actions, builder)
@@ -943,6 +964,11 @@ class DeclarativeWorkflowBuilder:
         chain = getattr(branch_entry, "_chain_executors", [branch_entry])
 
         last_executor = chain[-1]
+
+        # Skip terminators — they handle their own control flow
+        action_def = getattr(last_executor, "_action_def", {})
+        if isinstance(action_def, dict) and action_def.get("kind", "") in TERMINATOR_ACTIONS:
+            return None
 
         # Check if last executor is a structure with branch_exits
         # In that case, we return the structure so its exits can be collected

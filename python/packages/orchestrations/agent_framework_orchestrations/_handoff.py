@@ -440,9 +440,9 @@ class HandoffAgentExecutor(AgentExecutor):
         # results, so the function body never actually runs in practice.
 
         @tool(name=tool_name, description=doc, approval_mode="never_require")
-        def _handoff_tool(context: str | None = None) -> str:
-            """Return a deterministic acknowledgement that encodes the target alias."""
-            return f"Handoff to {target_id}"
+        def _handoff_tool() -> None:
+            """This function will be intercepted by the auto-handoff middleware thus the body will never execute."""
+            pass
 
         return _handoff_tool
 
@@ -538,7 +538,8 @@ class HandoffAgentExecutor(AgentExecutor):
                 )
 
             await cast(WorkflowContext[AgentExecutorRequest], ctx).send_message(
-                AgentExecutorRequest(messages=[], should_respond=True), target_id=handoff_target
+                AgentExecutorRequest(messages=[], should_respond=True),
+                target_id=handoff_target,
             )
             await ctx.add_event(
                 WorkflowEvent("handoff_sent", data=HandoffSentEvent(source=self.id, target=handoff_target))
