@@ -880,6 +880,143 @@ async def test_max_iterations_limit(chat_client_base: SupportsChatGetResponse):
     assert response.messages[-1].text == "I broke out of the function invocation loop..."  # Failsafe response
 
 
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_max_function_calls_limits_parallel_invocations(chat_client_base: SupportsChatGetResponse):
+    """Test that max_function_calls caps total function invocations across iterations with parallel calls."""
+    exec_counter = 0
+
+    @tool(name="search", approval_mode="never_require")
+    def search_func(query: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Result for {query}"
+
+    # Each iteration returns 3 parallel tool calls
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1a", name="search", arguments='{"query": "q1"}'),
+                    Content.from_function_call(call_id="1b", name="search", arguments='{"query": "q2"}'),
+                    Content.from_function_call(call_id="1c", name="search", arguments='{"query": "q3"}'),
+                ],
+            )
+        ),
+        # Second iteration: 3 more parallel calls (total would be 6, exceeding limit of 5)
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="2a", name="search", arguments='{"query": "q4"}'),
+                    Content.from_function_call(call_id="2b", name="search", arguments='{"query": "q5"}'),
+                    Content.from_function_call(call_id="2c", name="search", arguments='{"query": "q6"}'),
+                ],
+            )
+        ),
+        # Final response after tool_choice="none" is forced
+        ChatResponse(messages=Message(role="assistant", text="done")),
+    ]
+
+    # Allow many iterations but cap total function calls at 5
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 5
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="search")], options={"tool_choice": "auto", "tools": [search_func]}
+    )
+
+    # First iteration executes 3 calls (total=3, under limit).
+    # Second iteration executes 3 more (total=6, reaches limit) then forces tool_choice="none".
+    # The loop completes the current batch before stopping.
+    assert exec_counter == 6
+    assert "broke out" in response.messages[-1].text
+
+
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_max_function_calls_single_calls_per_iteration(chat_client_base: SupportsChatGetResponse):
+    """Test that max_function_calls works with single tool calls per iteration."""
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="lookup", arguments='{"key": "a"}'),
+                ],
+            )
+        ),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="2", name="lookup", arguments='{"key": "b"}'),
+                ],
+            )
+        ),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="3", name="lookup", arguments='{"key": "c"}'),
+                ],
+            )
+        ),
+        # After limit is reached
+        ChatResponse(messages=Message(role="assistant", text="all done")),
+    ]
+
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 2
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="look up keys")], options={"tool_choice": "auto", "tools": [lookup_func]}
+    )
+
+    # 2 single calls executed, then limit reached, tool_choice="none" forced
+    assert exec_counter == 2
+    assert "broke out" in response.messages[-1].text
+
+
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_max_function_calls_none_means_unlimited(chat_client_base: SupportsChatGetResponse):
+    """Test that max_function_calls=None (default) allows unlimited function calls."""
+    exec_counter = 0
+
+    @tool(name="do_thing", approval_mode="never_require")
+    def do_thing_func(arg: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Done {arg}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id=str(i), name="do_thing", arguments=f'{{"arg": "v{i}"}}'),
+                ],
+            )
+        )
+        for i in range(5)
+    ] + [ChatResponse(messages=Message(role="assistant", text="finished"))]
+
+    # Explicitly set to None (default) — should not limit
+    chat_client_base.function_invocation_configuration["max_function_calls"] = None
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="do things")], options={"tool_choice": "auto", "tools": [do_thing_func]}
+    )
+
+    assert exec_counter == 5
+    assert response.messages[-1].text == "finished"
+
+
 async def test_function_invocation_config_enabled_false(chat_client_base: SupportsChatGetResponse):
     """Test that setting enabled=False disables function invocation."""
     exec_counter = 0
@@ -1234,6 +1371,33 @@ async def test_function_invocation_config_validation_max_consecutive_errors():
     # Invalid value (less than 0)
     with pytest.raises(ValueError, match="max_consecutive_errors_per_request must be 0 or more"):
         normalize_function_invocation_configuration({"max_consecutive_errors_per_request": -1})
+
+
+async def test_function_invocation_config_validation_max_function_calls():
+    """Test that max_function_calls validation works correctly."""
+    from agent_framework import normalize_function_invocation_configuration
+
+    # Default is None (unlimited)
+    config = normalize_function_invocation_configuration(None)
+    assert config["max_function_calls"] is None
+
+    # Valid values
+    config = normalize_function_invocation_configuration({"max_function_calls": 1})
+    assert config["max_function_calls"] == 1
+
+    config = normalize_function_invocation_configuration({"max_function_calls": 100})
+    assert config["max_function_calls"] == 100
+
+    # None is valid (unlimited)
+    config = normalize_function_invocation_configuration({"max_function_calls": None})
+    assert config["max_function_calls"] is None
+
+    # Invalid value (less than 1)
+    with pytest.raises(ValueError, match="max_function_calls must be at least 1 or None"):
+        normalize_function_invocation_configuration({"max_function_calls": 0})
+
+    with pytest.raises(ValueError, match="max_function_calls must be at least 1 or None"):
+        normalize_function_invocation_configuration({"max_function_calls": -1})
 
 
 async def test_argument_validation_error_with_detailed_errors(chat_client_base: SupportsChatGetResponse):
