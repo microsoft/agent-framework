@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using A2A;
 using A2A.AspNetCore;
 using Microsoft.Agents.AI;
@@ -10,12 +11,14 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.AspNetCore.Builder;
 
 /// <summary>
 /// Provides extension methods for configuring A2A (Agent2Agent) communication in a host application builder.
 /// </summary>
+[Experimental(DiagnosticIds.Experiments.AIResponseContinuations)]
 public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
 {
     /// <summary>

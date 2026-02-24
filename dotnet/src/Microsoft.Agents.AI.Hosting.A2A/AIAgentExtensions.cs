@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,12 +10,14 @@ using A2A;
 using Microsoft.Agents.AI.Hosting.A2A.Converters;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Hosting.A2A;
 
 /// <summary>
 /// Provides extension methods for attaching A2A (Agent2Agent) messaging capabilities to an <see cref="AIAgent"/>.
 /// </summary>
+[Experimental(DiagnosticIds.Experiments.AIResponseContinuations)]
 public static class AIAgentExtensions
 {
     // Metadata key used to store continuation tokens for long-running background operations
@@ -132,7 +135,6 @@ public static class AIAgentExtensions
 
         await hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
 
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         if (response.ContinuationToken is null)
         {
             return CreateMessageFromResponse(contextId, response);
@@ -142,7 +144,6 @@ public static class AIAgentExtensions
         StoreContinuationToken(agentTask, response.ContinuationToken, continuationTokenJsonOptions);
         await TransitionToWorkingAsync(agentTask.Id, contextId, response, taskManager, cancellationToken).ConfigureAwait(false);
         return agentTask;
-#pragma warning restore MEAI001
     }
 
     private static async Task OnTaskUpdatedAsync(
@@ -173,7 +174,6 @@ public static class AIAgentExtensions
 
             await hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
 
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
             if (response.ContinuationToken is not null)
             {
                 StoreContinuationToken(agentTask, response.ContinuationToken, continuationTokenJsonOptions);
@@ -183,7 +183,6 @@ public static class AIAgentExtensions
             {
                 await CompleteWithArtifactAsync(agentTask.Id, response, taskManager, cancellationToken).ConfigureAwait(false);
             }
-#pragma warning restore MEAI001
         }
         catch (OperationCanceledException)
         {
@@ -247,7 +246,6 @@ public static class AIAgentExtensions
         return agentTask;
     }
 
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
     private static void StoreContinuationToken(
         AgentTask agentTask,
         ResponseContinuationToken token,
@@ -260,7 +258,6 @@ public static class AIAgentExtensions
             token,
             continuationTokenJsonOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
     }
-#pragma warning restore MEAI001
 
     private static async Task TransitionToWorkingAsync(
         string taskId,

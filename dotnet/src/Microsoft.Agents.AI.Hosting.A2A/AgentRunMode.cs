@@ -1,14 +1,17 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Hosting.A2A;
 
 /// <summary>
 /// Specifies how the A2A hosting layer determines whether to run <see cref="AIAgent"/> in background or not.
 /// </summary>
+[Experimental(DiagnosticIds.Experiments.AIResponseContinuations)]
 public sealed class AgentRunMode : IEquatable<AgentRunMode>
 {
     private const string MessageValue = "message";
@@ -57,7 +60,6 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
     /// <summary>
     /// Determines whether the agent response should be returned as an <c>AgentTask</c>.
     /// </summary>
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
     internal ValueTask<bool> ShouldRunInBackgroundAsync(A2ARunDecisionContext context, CancellationToken cancellationToken)
     {
         if (string.Equals(this._value, MessageValue, StringComparison.OrdinalIgnoreCase))
@@ -79,7 +81,6 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
         // No delegate provided — fall back to "message" behavior.
         return ValueTask.FromResult(true);
     }
-#pragma warning restore MEAI001
 
     /// <inheritdoc/>
     public bool Equals(AgentRunMode? other) =>
