@@ -10,6 +10,7 @@ from typing import Any
 
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
 # Ensure local package can be imported when running as a script.
 _SAMPLES_ROOT = Path(__file__).resolve().parents[3]
@@ -54,6 +55,9 @@ Prerequisites:
 - (Optional) Review of reflection and escalation patterns, such as those in
   workflow_as_agent_reflection.py.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @dataclass

@@ -272,7 +272,7 @@ class AgentFunctionApp(DFAppBase):
             Note: We use str type annotations instead of dict to work around
             Azure Functions worker type validation issues with dict[str, Any].
             """
-            from agent_framework._workflows import State
+            from agent_framework._workflows._state import State
 
             data = json.loads(inputData)
             message_data = data["message"]

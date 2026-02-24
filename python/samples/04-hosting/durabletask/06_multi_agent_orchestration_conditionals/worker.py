@@ -21,9 +21,13 @@ from typing import Any, cast
 from agent_framework import Agent, AgentResponse
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.task import ActivityContext, OrchestrationContext, Task
 from pydantic import BaseModel, ValidationError
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,17 +40,20 @@ EMAIL_AGENT_NAME = "EmailAssistantAgent"
 
 class SpamDetectionResult(BaseModel):
     """Result from spam detection agent."""
+
     is_spam: bool
     reason: str
 
 
 class EmailResponse(BaseModel):
     """Result from email assistant agent."""
+
     response: str
 
 
 class EmailPayload(BaseModel):
     """Input payload for the orchestration."""
+
     email_id: str
     email_content: str
 
@@ -195,9 +202,7 @@ def spam_detection_orchestration(context: OrchestrationContext, payload_raw: Any
 
 
 def get_worker(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
 
@@ -222,7 +227,7 @@ def get_worker(
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
 
@@ -257,7 +262,7 @@ def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
 
     # Register the orchestration function
     logger.debug("Registering orchestration function...")
-    worker.add_orchestrator(spam_detection_orchestration)   # type: ignore[arg-type]
+    worker.add_orchestrator(spam_detection_orchestration)  # type: ignore[arg-type]
     logger.debug(f"✓ Registered orchestration: {spam_detection_orchestration.__name__}")
 
     return agent_worker

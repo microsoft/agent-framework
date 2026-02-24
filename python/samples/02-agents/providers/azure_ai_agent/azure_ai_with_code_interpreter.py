@@ -8,6 +8,10 @@ from azure.ai.agents.models import (
     RunStepDeltaCodeInterpreterDetailItemObject,
 )
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Azure AI Agent with Code Interpreter Example

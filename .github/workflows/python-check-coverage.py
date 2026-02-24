@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # Copyright (c) Microsoft. All rights reserved.
-"""Check Python test coverage against threshold for enforced modules.
+"""Check Python test coverage against threshold for enforced targets.
 
 This script parses a Cobertura XML coverage report and enforces a minimum
-coverage threshold on specific modules. Non-enforced modules are reported
-for visibility but don't block the build.
+coverage threshold on specific targets. Targets can be package names
+(e.g., "packages.core.agent_framework") or individual Python file paths
+(e.g., "packages/core/agent_framework/observability.py").
+
+Non-enforced targets are reported for visibility but don't block the build.
 
 Usage:
     python python-check-coverage.py <coverage-xml-path> <threshold>
@@ -18,24 +21,31 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
 # =============================================================================
-# ENFORCED MODULES CONFIGURATION
+# ENFORCED TARGETS CONFIGURATION
 # =============================================================================
-# Add or remove modules from this set to control which packages must meet
-# the coverage threshold. Only these modules will fail the build if below
-# threshold. Other modules are reported for visibility only.
+# Add or remove entries from this set to control which targets must meet
+# the coverage threshold. Only these targets will fail the build if below
+# threshold. Other targets are reported for visibility only.
 #
-# Module paths should match the package paths as they appear in the coverage
-# report (e.g., "packages.azure-ai.agent_framework_azure_ai" for packages/azure-ai).
-# Sub-modules can be included by specifying their full path.
+# Target values can be:
+# - Package paths as they appear in the coverage report
+#   (e.g., "packages.azure-ai.agent_framework_azure_ai")
+# - Python source file paths as they appear in the coverage report
+#   (e.g., "packages/core/agent_framework/observability.py")
 # =============================================================================
-ENFORCED_MODULES: set[str] = {
+ENFORCED_TARGETS: set[str] = {
+    # Packages
     "packages.azure-ai.agent_framework_azure_ai",
     "packages.core.agent_framework",
     "packages.core.agent_framework._workflows",
     "packages.purview.agent_framework_purview",
     "packages.anthropic.agent_framework_anthropic",
     "packages.azure-ai-search.agent_framework_azure_ai_search",
-    # Add more modules here as coverage improves
+    "packages.core.agent_framework.azure",
+    "packages.core.agent_framework.openai",
+    # Individual files (if you want to enforce specific files instead of whole packages)
+    "packages/core/agent_framework/observability.py",
+    # Add more targets here as coverage improves
 }
 
 
@@ -62,16 +72,21 @@ class PackageCoverage:
         return self.branch_rate * 100
 
 
+def normalize_coverage_path(path: str) -> str:
+    """Normalize coverage paths for reliable matching."""
+    return path.replace("\\", "/").lstrip("./")
+
+
 def parse_coverage_xml(
     xml_path: str,
-) -> tuple[dict[str, PackageCoverage], float, float]:
+) -> tuple[dict[str, PackageCoverage], dict[str, PackageCoverage], float, float]:
     """Parse Cobertura XML and extract per-package coverage data.
 
     Args:
         xml_path: Path to the Cobertura XML coverage report.
 
     Returns:
-        A tuple of (packages_dict, overall_line_rate, overall_branch_rate).
+        A tuple of (packages_dict, files_dict, overall_line_rate, overall_branch_rate).
     """
     tree = ET.parse(xml_path)
     root = tree.getroot()
@@ -81,6 +96,7 @@ def parse_coverage_xml(
     overall_branch_rate = float(root.get("branch-rate", 0))
 
     packages: dict[str, PackageCoverage] = {}
+    file_stats: dict[str, dict[str, int]] = {}
 
     for package in root.findall(".//package"):
         package_path = package.get("name", "unknown")
@@ -95,10 +111,25 @@ def parse_coverage_xml(
         branches_covered = 0
 
         for class_elem in package.findall(".//class"):
+            file_path = normalize_coverage_path(class_elem.get("filename", ""))
+            if file_path and file_path not in file_stats:
+                file_stats[file_path] = {
+                    "lines_valid": 0,
+                    "lines_covered": 0,
+                    "branches_valid": 0,
+                    "branches_covered": 0,
+                }
+
             for line in class_elem.findall(".//line"):
                 lines_valid += 1
                 if int(line.get("hits", 0)) > 0:
                     lines_covered += 1
+
+                if file_path:
+                    file_stats[file_path]["lines_valid"] += 1
+                    if int(line.get("hits", 0)) > 0:
+                        file_stats[file_path]["lines_covered"] += 1
+
                 # Branch coverage from line elements
                 if line.get("branch") == "true":
                     condition_coverage = line.get("condition-coverage", "")
@@ -110,6 +141,13 @@ def parse_coverage_xml(
                             )
                             branches_covered += int(coverage_parts[0])
                             branches_valid += int(coverage_parts[1])
+                            if file_path:
+                                file_stats[file_path]["branches_covered"] += int(
+                                    coverage_parts[0]
+                                )
+                                file_stats[file_path]["branches_valid"] += int(
+                                    coverage_parts[1]
+                                )
                         except (IndexError, ValueError):
                             # Ignore malformed condition-coverage strings; treat this line as having no branch data.
                             pass
@@ -127,7 +165,24 @@ def parse_coverage_xml(
             branches_covered=branches_covered,
         )
 
-    return packages, overall_line_rate, overall_branch_rate
+    files: dict[str, PackageCoverage] = {}
+    for file_path, stats in file_stats.items():
+        lines_valid = stats["lines_valid"]
+        lines_covered = stats["lines_covered"]
+        branches_valid = stats["branches_valid"]
+        branches_covered = stats["branches_covered"]
+
+        files[file_path] = PackageCoverage(
+            name=file_path,
+            line_rate=0 if lines_valid == 0 else lines_covered / lines_valid,
+            branch_rate=0 if branches_valid == 0 else branches_covered / branches_valid,
+            lines_valid=lines_valid,
+            lines_covered=lines_covered,
+            branches_valid=branches_valid,
+            branches_covered=branches_covered,
+        )
+
+    return packages, files, overall_line_rate, overall_branch_rate
 
 
 def format_coverage_value(coverage: float, threshold: float, is_enforced: bool) -> str:
@@ -136,7 +191,7 @@ def format_coverage_value(coverage: float, threshold: float, is_enforced: bool) 
     Args:
         coverage: Coverage percentage (0-100).
         threshold: Minimum required coverage percentage.
-        is_enforced: Whether this module is enforced.
+        is_enforced: Whether this target is enforced.
 
     Returns:
         Formatted string like "85.5%" or "85.5% ✅" or "75.0% ❌".
@@ -150,6 +205,7 @@ def format_coverage_value(coverage: float, threshold: float, is_enforced: bool) 
 
 def print_coverage_table(
     packages: dict[str, PackageCoverage],
+    files: dict[str, PackageCoverage],
     threshold: float,
     overall_line_rate: float,
     overall_branch_rate: float,
@@ -158,6 +214,7 @@ def print_coverage_table(
 
     Args:
         packages: Dictionary of package name to coverage data.
+        files: Dictionary of file path to coverage data, used for per-file enforcement.
         threshold: Minimum required coverage percentage.
         overall_line_rate: Overall line coverage rate (0-1).
         overall_branch_rate: Overall branch coverage rate (0-1).
@@ -171,19 +228,21 @@ def print_coverage_table(
     print(f"Overall Branch Coverage: {overall_branch_rate * 100:.1f}%")
     print(f"Threshold:               {threshold}%")
 
+    enforced_targets = {normalize_coverage_path(t) for t in ENFORCED_TARGETS}
+
     # Package table
     print("\n" + "-" * 110)
     print(f"{'Package':<80} {'Lines':<15} {'Line Cov':<15}")
     print("-" * 110)
 
-    # Sort: enforced modules first, then alphabetically
+    # Sort: enforced package targets first, then alphabetically
     sorted_packages = sorted(
         packages.values(),
-        key=lambda p: (p.name not in ENFORCED_MODULES, p.name),
+        key=lambda p: (p.name not in ENFORCED_TARGETS, p.name),
     )
 
     for pkg in sorted_packages:
-        is_enforced = pkg.name in ENFORCED_MODULES
+        is_enforced = normalize_coverage_path(pkg.name) in enforced_targets
         enforced_marker = "[ENFORCED] " if is_enforced else ""
         line_cov = format_coverage_value(
             pkg.line_coverage_percent, threshold, is_enforced
@@ -195,55 +254,97 @@ def print_coverage_table(
 
     print("-" * 110)
 
+    # Enforced file/model entries (if configured)
+    enforced_files = [
+        files[target]
+        for target in sorted(enforced_targets)
+        if target in files and target.endswith(".py")
+    ]
+
+    if enforced_files:
+        print("\nEnforced Files/Models")
+        print("-" * 110)
+        print(f"{'File':<80} {'Lines':<15} {'Line Cov':<15}")
+        print("-" * 110)
+
+        for file_cov in enforced_files:
+            line_cov = format_coverage_value(
+                file_cov.line_coverage_percent, threshold, True
+            )
+            lines_info = f"{file_cov.lines_covered}/{file_cov.lines_valid}"
+            print(f"[ENFORCED] {file_cov.name:<69} {lines_info:<15} {line_cov:<15}")
+
+        print("-" * 110)
+
 
 def check_coverage(xml_path: str, threshold: float) -> bool:
-    """Check if all enforced modules meet the coverage threshold.
+    """Check if all enforced targets meet the coverage threshold.
 
     Args:
         xml_path: Path to the Cobertura XML coverage report.
         threshold: Minimum required coverage percentage.
 
     Returns:
-        True if all enforced modules pass, False otherwise.
+        True if all enforced targets pass, False otherwise.
     """
-    packages, overall_line_rate, overall_branch_rate = parse_coverage_xml(xml_path)
+    packages, files, overall_line_rate, overall_branch_rate = parse_coverage_xml(
+        xml_path
+    )
 
-    print_coverage_table(packages, threshold, overall_line_rate, overall_branch_rate)
+    print_coverage_table(
+        packages, files, threshold, overall_line_rate, overall_branch_rate
+    )
 
-    # Check enforced modules
-    failed_modules: list[str] = []
-    missing_modules: list[str] = []
+    # Check enforced targets
+    failed_targets: list[str] = []
+    missing_targets: list[str] = []
 
-    for module_name in ENFORCED_MODULES:
-        if module_name not in packages:
-            missing_modules.append(module_name)
+    for target_name in ENFORCED_TARGETS:
+        normalized_target = normalize_coverage_path(target_name)
+        package_alias = normalized_target.replace("/", ".")
+
+        target_coverage = None
+        if target_name in packages:
+            target_coverage = packages[target_name]
+        elif normalized_target in files:
+            target_coverage = files[normalized_target]
+        elif package_alias in packages:
+            target_coverage = packages[package_alias]
+
+        if target_coverage is None:
+            missing_targets.append(target_name)
             continue
 
-        pkg = packages[module_name]
-        if pkg.line_coverage_percent < threshold:
-            failed_modules.append(f"{module_name} ({pkg.line_coverage_percent:.1f}%)")
+        if target_coverage.line_coverage_percent < threshold:
+            failed_targets.append(
+                f"{target_name} ({target_coverage.line_coverage_percent:.1f}%)"
+            )
 
     # Report results
-    if missing_modules:
+    if missing_targets:
         print(
-            f"\n❌ FAILED: Enforced modules not found in coverage report: {', '.join(missing_modules)}"
+            f"\n❌ FAILED: Enforced targets not found in coverage report: {', '.join(missing_targets)}"
         )
         return False
 
-    if failed_modules:
+    if failed_targets:
         print(
-            f"\n❌ FAILED: The following enforced modules are below {threshold}% coverage threshold:"
+            f"\n❌ FAILED: The following enforced targets are below {threshold}% coverage threshold:"
         )
-        for module in failed_modules:
-            print(f"   - {module}")
-        print("\nTo fix: Add more tests to improve coverage for the failing modules.")
+        for target in failed_targets:
+            print(f"   - {target}")
+        print("\nTo fix: Add more tests to improve coverage for the failing targets.")
         return False
 
-    if ENFORCED_MODULES:
-        found_enforced = [m for m in ENFORCED_MODULES if m in packages]
+    if ENFORCED_TARGETS:
+        found_enforced = [
+            target
+            for target in ENFORCED_TARGETS
+            if target in packages or normalize_coverage_path(target) in files
+        ]
         if found_enforced:
             print(
-                f"\n✅ PASSED: All enforced modules meet the {threshold}% coverage threshold."
+                f"\n✅ PASSED: All enforced targets meet the {threshold}% coverage threshold."
             )
 
     return True

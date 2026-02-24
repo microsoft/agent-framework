@@ -16,7 +16,6 @@ from .._agents import Agent
 from .._middleware import MiddlewareTypes
 from .._sessions import BaseContextProvider
 from .._tools import FunctionTool, ToolTypes, normalize_tools
-from ..exceptions import ServiceInitializationError
 from ._assistants_client import OpenAIAssistantsClient
 from ._shared import OpenAISettings, from_assistant_tools, to_assistant_tools
 
@@ -120,7 +119,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             env_file_encoding: Encoding of the .env file.
 
         Raises:
-            ServiceInitializationError: If no client is provided and API key is missing.
+            ValueError: If no client is provided and API key is missing.
 
         Examples:
             .. code-block:: python
@@ -151,7 +150,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             )
 
             if not settings["api_key"]:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
                 )
 
@@ -227,7 +226,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             A Agent instance wrapping the created assistant.
 
         Raises:
-            ServiceInitializationError: If assistant creation fails.
+            ValueError: If assistant creation fails.
 
         Examples:
             .. code-block:: python
@@ -286,7 +285,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
 
         # Create the assistant
         if not self._client:
-            raise ServiceInitializationError("OpenAI client is not initialized.")
+            raise RuntimeError("OpenAI client is not initialized.")
 
         assistant = await self._client.beta.assistants.create(**create_params)
 
@@ -333,7 +332,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             A Agent instance wrapping the retrieved assistant.
 
         Raises:
-            ServiceInitializationError: If the assistant cannot be retrieved.
+            RuntimeError: If the assistant cannot be retrieved.
             ValueError: If required function tools are missing.
 
         Examples:
@@ -352,7 +351,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         """
         # Fetch the assistant
         if not self._client:
-            raise ServiceInitializationError("OpenAI client is not initialized.")
+            raise RuntimeError("OpenAI client is not initialized.")
 
         assistant = await self._client.beta.assistants.retrieve(assistant_id)
 

@@ -37,7 +37,7 @@ def search_hotels(
                 "distance_to_eiffel_tower": "0.3 miles",
                 "amenities": ["WiFi", "Breakfast", "Eiffel Tower View", "Concierge"],
                 "availability": "Available",
-                "address": "35 Rue Benjamin Franklin, 16th arr., Paris"
+                "address": "35 Rue Benjamin Franklin, 16th arr., Paris",
             },
             {
                 "name": "Mercure Paris Centre Tour Eiffel",
@@ -47,7 +47,7 @@ def search_hotels(
                 "distance_to_eiffel_tower": "0.5 miles",
                 "amenities": ["WiFi", "Restaurant", "Bar", "Gym", "Air Conditioning"],
                 "availability": "Available",
-                "address": "20 Rue Jean Rey, 15th arr., Paris"
+                "address": "20 Rue Jean Rey, 15th arr., Paris",
             },
             {
                 "name": "Pullman Paris Tour Eiffel",
@@ -57,8 +57,8 @@ def search_hotels(
                 "distance_to_eiffel_tower": "0.2 miles",
                 "amenities": ["WiFi", "Spa", "Gym", "Restaurant", "Rooftop Bar", "Concierge"],
                 "availability": "Limited",
-                "address": "18 Avenue de Suffren, 15th arr., Paris"
-            }
+                "address": "18 Avenue de Suffren, 15th arr., Paris",
+            },
         ]
     else:
         mock_hotels = [
@@ -67,7 +67,7 @@ def search_hotels(
                 "rating": 4.5,
                 "price_per_night": "$150",
                 "amenities": ["WiFi", "Pool", "Gym", "Restaurant"],
-                "availability": "Available"
+                "availability": "Available",
             }
         ]
 
@@ -78,7 +78,7 @@ def search_hotels(
         "guests": guests,
         "hotels_found": len(mock_hotels),
         "hotels": mock_hotels,
-        "note": "Hotel search results matching your query"
+        "note": "Hotel search results matching your query",
     })
 
 
@@ -104,10 +104,10 @@ def get_hotel_details(
                 "recent_comments": [
                     "Amazing location! Walked to Eiffel Tower in 5 minutes.",
                     "Staff was incredibly helpful with restaurant recommendations.",
-                    "Rooms are cozy and clean with great views."
-                ]
+                    "Rooms are cozy and clean with great views.",
+                ],
             },
-            "nearby_attractions": ["Eiffel Tower (0.3 mi)", "Trocadéro Gardens (0.2 mi)", "Seine River (0.4 mi)"]
+            "nearby_attractions": ["Eiffel Tower (0.3 mi)", "Trocadéro Gardens (0.2 mi)", "Seine River (0.4 mi)"],
         },
         "Mercure Paris Centre Tour Eiffel": {
             "description": "Modern hotel with contemporary rooms and excellent dining options. Close to metro stations.",
@@ -119,10 +119,10 @@ def get_hotel_details(
                 "recent_comments": [
                     "Great value for money, clean and comfortable.",
                     "Restaurant had excellent French cuisine.",
-                    "Easy access to public transportation."
-                ]
+                    "Easy access to public transportation.",
+                ],
             },
-            "nearby_attractions": ["Eiffel Tower (0.5 mi)", "Champ de Mars (0.4 mi)", "Les Invalides (0.8 mi)"]
+            "nearby_attractions": ["Eiffel Tower (0.5 mi)", "Champ de Mars (0.4 mi)", "Les Invalides (0.8 mi)"],
         },
         "Pullman Paris Tour Eiffel": {
             "description": "Luxury hotel offering panoramic views, upscale amenities, and exceptional service. Ideal for a premium experience.",
@@ -134,27 +134,27 @@ def get_hotel_details(
                 "recent_comments": [
                     "Rooftop bar has the best Eiffel Tower views in Paris!",
                     "Luxurious rooms with every amenity you could want.",
-                    "Worth the price for the location and service."
-                ]
+                    "Worth the price for the location and service.",
+                ],
             },
-            "nearby_attractions": ["Eiffel Tower (0.2 mi)", "Seine River Cruise Dock (0.3 mi)", "Trocadéro (0.5 mi)"]
-        }
+            "nearby_attractions": ["Eiffel Tower (0.2 mi)", "Seine River Cruise Dock (0.3 mi)", "Trocadéro (0.5 mi)"],
+        },
     }
 
-    details = hotel_details.get(hotel_name, {
-        "name": hotel_name,
-        "description": "Comfortable hotel with modern amenities",
-        "check_in_time": "3:00 PM",
-        "check_out_time": "11:00 AM",
-        "cancellation_policy": "Standard cancellation policy applies",
-        "reviews": {"total": 0, "recent_comments": []},
-        "nearby_attractions": []
-    })
+    details = hotel_details.get(
+        hotel_name,
+        {
+            "name": hotel_name,
+            "description": "Comfortable hotel with modern amenities",
+            "check_in_time": "3:00 PM",
+            "check_out_time": "11:00 AM",
+            "cancellation_policy": "Standard cancellation policy applies",
+            "reviews": {"total": 0, "recent_comments": []},
+            "nearby_attractions": [],
+        },
+    )
 
-    return json.dumps({
-        "hotel_name": hotel_name,
-        "details": details
-    })
+    return json.dumps({"hotel_name": hotel_name, "details": details})
 
 
 # Mock flight search tool
@@ -185,7 +185,7 @@ def search_flights(
                         "duration": "7h 45m",
                         "aircraft": "Boeing 777-300ER",
                         "class": "Economy",
-                        "price": "$520"
+                        "price": "$520",
                     },
                     "return": {
                         "flight_number": "AF008",
@@ -195,11 +195,11 @@ def search_flights(
                         "duration": "8h 15m",
                         "aircraft": "Airbus A350-900",
                         "class": "Economy",
-                        "price": "Included"
+                        "price": "Included",
                     },
                     "total_price": "$520",
                     "stops": "Nonstop",
-                    "baggage": "1 checked bag included"
+                    "baggage": "1 checked bag included",
                 },
                 {
                     "outbound": {
@@ -210,7 +210,7 @@ def search_flights(
                         "duration": "7h 50m",
                         "aircraft": "Airbus A330-900neo",
                         "class": "Economy",
-                        "price": "$485"
+                        "price": "$485",
                     },
                     "return": {
                         "flight_number": "DL265",
@@ -220,11 +220,11 @@ def search_flights(
                         "duration": "8h 15m",
                         "aircraft": "Airbus A330-900neo",
                         "class": "Economy",
-                        "price": "Included"
+                        "price": "Included",
                     },
                     "total_price": "$485",
                     "stops": "Nonstop",
-                    "baggage": "1 checked bag included"
+                    "baggage": "1 checked bag included",
                 },
                 {
                     "outbound": {
@@ -235,7 +235,7 @@ def search_flights(
                         "duration": "7h 50m",
                         "aircraft": "Boeing 767-400ER",
                         "class": "Economy",
-                        "price": "$560"
+                        "price": "$560",
                     },
                     "return": {
                         "flight_number": "UA58",
@@ -245,15 +245,17 @@ def search_flights(
                         "duration": "8h 15m",
                         "aircraft": "Boeing 787-10",
                         "class": "Economy",
-                        "price": "Included"
+                        "price": "Included",
                     },
                     "total_price": "$560",
                     "stops": "Nonstop",
-                    "baggage": "1 checked bag included"
-                }
+                    "baggage": "1 checked bag included",
+                },
             ]
         else:
-            mock_flights = [{"flight_number": "XX123", "airline": "Generic Air", "price": "$400", "note": "Generic route"}]
+            mock_flights = [
+                {"flight_number": "XX123", "airline": "Generic Air", "price": "$400", "note": "Generic route"}
+            ]
     else:
         mock_flights = [
             {
@@ -264,10 +266,10 @@ def search_flights(
                     "arrival": f"{departure_date} at 2:30 PM",
                     "duration": "5h 30m",
                     "class": "Economy",
-                    "price": "$350"
+                    "price": "$350",
                 },
                 "total_price": "$350",
-                "stops": "Nonstop"
+                "stops": "Nonstop",
             }
         ]
 
@@ -279,7 +281,7 @@ def search_flights(
         "passengers": passengers,
         "flights_found": len(mock_flights),
         "flights": mock_flights,
-        "note": "Flight search results for JFK to Paris CDG"
+        "note": "Flight search results for JFK to Paris CDG",
     })
 
 
@@ -302,25 +304,20 @@ def get_flight_details(
             "airport": "JFK International Airport",
             "terminal": "Terminal 4",
             "gate": "B23",
-            "time": "08:00 AM"
+            "time": "08:00 AM",
         },
         "arrival": {
             "airport": "Charles de Gaulle Airport",
             "terminal": "Terminal 2E",
             "gate": "K15",
-            "time": "11:30 AM local time"
+            "time": "11:30 AM local time",
         },
         "duration": "3h 30m",
-        "baggage_allowance": {
-            "carry_on": "1 bag (10kg)",
-            "checked": "1 bag (23kg)"
-        },
-        "amenities": ["WiFi", "In-flight entertainment", "Meals included"]
+        "baggage_allowance": {"carry_on": "1 bag (10kg)", "checked": "1 bag (23kg)"},
+        "amenities": ["WiFi", "In-flight entertainment", "Meals included"],
     }
 
-    return json.dumps({
-        "flight_details": mock_details
-    })
+    return json.dumps({"flight_details": mock_details})
 
 
 # Mock activity search tool
@@ -328,7 +325,9 @@ def get_flight_details(
 def search_activities(
     location: Annotated[str, Field(description="City or region to search for activities.")],
     date: Annotated[str | None, Field(description="Date for the activity (e.g., 'December 16, 2025').")] = None,
-    category: Annotated[str | None, Field(description="Activity category (e.g., 'Sightseeing', 'Culture', 'Culinary').")] = None,
+    category: Annotated[
+        str | None, Field(description="Activity category (e.g., 'Sightseeing', 'Culture', 'Culinary').")
+    ] = None,
 ) -> str:
     """Search for available activities and attractions at a destination.
 
@@ -348,7 +347,7 @@ def search_activities(
                 "description": "Skip-the-line access to all three levels including the summit. Best views of Paris!",
                 "availability": "Daily 9:30 AM - 11:00 PM",
                 "best_time": "Early morning or sunset",
-                "booking_required": True
+                "booking_required": True,
             },
             {
                 "name": "Louvre Museum Guided Tour",
@@ -359,7 +358,7 @@ def search_activities(
                 "description": "Expert-guided tour covering masterpieces including Mona Lisa and Venus de Milo.",
                 "availability": "Daily except Tuesdays, 9:00 AM entry",
                 "best_time": "Morning entry recommended",
-                "booking_required": True
+                "booking_required": True,
             },
             {
                 "name": "Seine River Cruise",
@@ -370,7 +369,7 @@ def search_activities(
                 "description": "Scenic cruise past Notre-Dame, Eiffel Tower, and historic bridges.",
                 "availability": "Every 30 minutes, 10:00 AM - 10:00 PM",
                 "best_time": "Evening for illuminated monuments",
-                "booking_required": False
+                "booking_required": False,
             },
             {
                 "name": "Musée d'Orsay Visit",
@@ -381,7 +380,7 @@ def search_activities(
                 "description": "Impressionist masterpieces in a stunning Beaux-Arts railway station.",
                 "availability": "Tuesday-Sunday 9:30 AM - 6:00 PM",
                 "best_time": "Weekday mornings",
-                "booking_required": True
+                "booking_required": True,
             },
             {
                 "name": "Versailles Palace Day Trip",
@@ -392,7 +391,7 @@ def search_activities(
                 "description": "Explore the opulent palace and stunning gardens of Louis XIV (includes transport).",
                 "availability": "Daily except Mondays, 8:00 AM departure",
                 "best_time": "Full day trip",
-                "booking_required": True
+                "booking_required": True,
             },
             {
                 "name": "Montmartre Walking Tour",
@@ -403,7 +402,7 @@ def search_activities(
                 "description": "Discover the artistic heart of Paris, including Sacré-Cœur and artists' square.",
                 "availability": "Daily at 10:00 AM and 2:00 PM",
                 "best_time": "Morning or late afternoon",
-                "booking_required": False
+                "booking_required": False,
             },
             {
                 "name": "French Cooking Class",
@@ -414,7 +413,7 @@ def search_activities(
                 "description": "Learn to make classic French dishes like coq au vin and crème brûlée, then enjoy your creations.",
                 "availability": "Tuesday-Saturday, 10:00 AM and 6:00 PM sessions",
                 "best_time": "Morning or evening sessions",
-                "booking_required": True
+                "booking_required": True,
             },
             {
                 "name": "Wine & Cheese Tasting",
@@ -425,7 +424,7 @@ def search_activities(
                 "description": "Sample French wines and artisanal cheeses with expert sommelier guidance.",
                 "availability": "Daily at 5:00 PM and 7:30 PM",
                 "best_time": "Evening sessions",
-                "booking_required": True
+                "booking_required": True,
             },
             {
                 "name": "Food Market Tour",
@@ -436,8 +435,8 @@ def search_activities(
                 "description": "Explore authentic Parisian markets and taste local specialties like cheeses, pastries, and charcuterie.",
                 "availability": "Tuesday, Thursday, Saturday mornings",
                 "best_time": "Morning (markets are freshest)",
-                "booking_required": False
-            }
+                "booking_required": False,
+            },
         ]
 
         activities = [act for act in all_activities if act["category"] == category] if category else all_activities
@@ -450,7 +449,7 @@ def search_activities(
                 "price": "$45",
                 "rating": 4.7,
                 "description": "Explore the historic downtown area with an expert guide",
-                "availability": "Daily at 10:00 AM and 2:00 PM"
+                "availability": "Daily at 10:00 AM and 2:00 PM",
             }
         ]
 
@@ -460,7 +459,7 @@ def search_activities(
         "category": category,
         "activities_found": len(activities),
         "activities": activities,
-        "note": "Activity search results for Paris with sightseeing, culture, and culinary options"
+        "note": "Activity search results for Paris with sightseeing, culture, and culinary options",
     })
 
 
@@ -489,56 +488,68 @@ def get_activity_details(
             "languages": ["English", "French", "Spanish", "German", "Italian"],
             "max_group_size": "No limit",
             "rating": 4.8,
-            "reviews_count": 15234
+            "reviews_count": 15234,
         },
         "Louvre Museum Guided Tour": {
             "name": "Louvre Museum Guided Tour",
             "description": "Expert-guided tour of the world's largest art museum, focusing on must-see masterpieces including Mona Lisa, Venus de Milo, and Winged Victory.",
             "duration": "3 hours",
             "price": "$55 per person",
-            "included": ["Skip-the-line entry", "Expert art historian guide", "Headsets for groups over 6", "Museum highlights map"],
+            "included": [
+                "Skip-the-line entry",
+                "Expert art historian guide",
+                "Headsets for groups over 6",
+                "Museum highlights map",
+            ],
             "meeting_point": "Glass Pyramid main entrance, look for guide with 'Louvre Tours' sign",
             "what_to_bring": ["Photo ID", "Comfortable shoes", "Camera (no flash)", "Water bottle"],
             "cancellation_policy": "Free cancellation up to 48 hours in advance",
             "languages": ["English", "French", "Spanish"],
             "max_group_size": 20,
             "rating": 4.7,
-            "reviews_count": 8921
+            "reviews_count": 8921,
         },
         "French Cooking Class": {
             "name": "French Cooking Class",
             "description": "Hands-on cooking experience where you'll learn to prepare classic French dishes like coq au vin, ratatouille, and crème brûlée under expert chef guidance.",
             "duration": "3 hours",
             "price": "$120 per person",
-            "included": ["All ingredients", "Chef instruction", "Apron and recipe booklet", "Wine pairing", "Lunch/dinner of your creations"],
+            "included": [
+                "All ingredients",
+                "Chef instruction",
+                "Apron and recipe booklet",
+                "Wine pairing",
+                "Lunch/dinner of your creations",
+            ],
             "meeting_point": "Le Chef Cooking Studio, 15 Rue du Bac, 7th arrondissement",
             "what_to_bring": ["Appetite", "Camera for food photos"],
             "cancellation_policy": "Free cancellation up to 72 hours in advance",
             "languages": ["English", "French"],
             "max_group_size": 12,
             "rating": 4.9,
-            "reviews_count": 2341
-        }
+            "reviews_count": 2341,
+        },
     }
 
-    details = activity_details_map.get(activity_name, {
-        "name": activity_name,
-        "description": "An immersive experience that showcases the best of local culture and attractions.",
-        "duration": "3 hours",
-        "price": "$45 per person",
-        "included": ["Professional guide", "Entry fees"],
-        "meeting_point": "Central meeting location",
-        "what_to_bring": ["Comfortable shoes", "Camera"],
-        "cancellation_policy": "Free cancellation up to 24 hours in advance",
-        "languages": ["English"],
-        "max_group_size": 15,
-        "rating": 4.5,
-        "reviews_count": 100
-    })
+    details = activity_details_map.get(
+        activity_name,
+        {
+            "name": activity_name,
+            "description": "An immersive experience that showcases the best of local culture and attractions.",
+            "duration": "3 hours",
+            "price": "$45 per person",
+            "included": ["Professional guide", "Entry fees"],
+            "meeting_point": "Central meeting location",
+            "what_to_bring": ["Comfortable shoes", "Camera"],
+            "cancellation_policy": "Free cancellation up to 24 hours in advance",
+            "languages": ["English"],
+            "max_group_size": 15,
+            "rating": 4.5,
+            "reviews_count": 100,
+        },
+    )
 
-    return json.dumps({
-        "activity_details": details
-    })
+    return json.dumps({"activity_details": details})
 
 
 # Mock booking confirmation tool
@@ -566,13 +577,11 @@ def confirm_booking(
         "next_steps": [
             "Check your email for booking details",
             "Arrive 30 minutes before scheduled time",
-            "Bring confirmation number and valid ID"
-        ]
+            "Bring confirmation number and valid ID",
+        ],
     }
 
-    return json.dumps({
-        "confirmation": confirmation_data
-    })
+    return json.dumps({"confirmation": confirmation_data})
 
 
 # Mock hotel availability check tool
@@ -602,12 +611,10 @@ def check_hotel_availability(
         "status": availability_status,
         "available_rooms": 8,
         "price_per_night": "$185",
-        "last_checked": datetime.now().isoformat()
+        "last_checked": datetime.now().isoformat(),
     }
 
-    return json.dumps({
-        "availability": availability_data
-    })
+    return json.dumps({"availability": availability_data})
 
 
 # Mock flight availability check tool
@@ -635,12 +642,10 @@ def check_flight_availability(
         "status": availability_status,
         "available_seats": 45,
         "price_per_passenger": "$520",
-        "last_checked": datetime.now().isoformat()
+        "last_checked": datetime.now().isoformat(),
     }
 
-    return json.dumps({
-        "availability": availability_data
-    })
+    return json.dumps({"availability": availability_data})
 
 
 # Mock activity availability check tool
@@ -668,12 +673,10 @@ def check_activity_availability(
         "status": availability_status,
         "available_spots": 15,
         "price_per_person": "$45",
-        "last_checked": datetime.now().isoformat()
+        "last_checked": datetime.now().isoformat(),
     }
 
-    return json.dumps({
-        "availability": availability_data
-    })
+    return json.dumps({"availability": availability_data})
 
 
 # Mock payment processing tool
@@ -701,12 +704,10 @@ def process_payment(
         "last_4_digits": payment_method.get("last_4", "****"),
         "booking_reference": booking_reference,
         "timestamp": datetime.now().isoformat(),
-        "receipt_url": f"https://payments.travelagency.com/receipt/{transaction_id}"
+        "receipt_url": f"https://payments.travelagency.com/receipt/{transaction_id}",
     }
 
-    return json.dumps({
-        "payment_result": payment_result
-    })
+    return json.dumps({"payment_result": payment_result})
 
 
 # Mock payment validation tool
@@ -742,9 +743,7 @@ def validate_payment_method(
         "payment_method_type": method_type,
         "validation_messages": validation_messages if not is_valid else ["Payment method is valid"],
         "supported_currencies": ["USD", "EUR", "GBP", "JPY"],
-        "processing_fee": "2.5%"
+        "processing_fee": "2.5%",
     }
 
-    return json.dumps({
-        "validation_result": validation_result
-    })
+    return json.dumps({"validation_result": validation_result})

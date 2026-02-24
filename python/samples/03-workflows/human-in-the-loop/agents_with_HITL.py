@@ -20,7 +20,11 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from typing_extensions import Never
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Azure AI Agents in workflow with human feedback
@@ -119,7 +123,8 @@ class Coordinator(Executor):
         )
         conversation.append(Message("user", text=instruction))
         await ctx.send_message(
-            AgentExecutorRequest(messages=conversation, should_respond=True), target_id=self.writer_name
+            AgentExecutorRequest(messages=conversation, should_respond=True),
+            target_id=self.writer_name,
         )
 
 

@@ -61,7 +61,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         this._stepRunner.OutgoingEvents.EventRaised += OnEventRaisedAsync;
 
         using Activity? activity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity();
-        activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.RunId, this._stepRunner.RunId);
+        activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.SessionId, this._stepRunner.SessionId);
 
         try
         {

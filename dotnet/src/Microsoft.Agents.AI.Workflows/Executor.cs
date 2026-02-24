@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,6 +15,128 @@ using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Agents.AI.Workflows.Reflection;
 
 namespace Microsoft.Agents.AI.Workflows;
+
+internal sealed class DelayedExternalRequestContext : IExternalRequestContext
+{
+    public DelayedExternalRequestContext(IExternalRequestContext? targetContext = null)
+    {
+        this._targetContext = targetContext;
+    }
+
+    private sealed class DelayRegisteredSink : IExternalRequestSink
+    {
+        internal IExternalRequestSink? TargetSink { get; set; }
+
+        public ValueTask PostAsync(ExternalRequest request) =>
+            this.TargetSink is null
+                ? throw new InvalidOperationException("The external request sink has not been registered yet.")
+                : this.TargetSink.PostAsync(request);
+    }
+
+    private readonly Dictionary<string, (RequestPort Port, DelayRegisteredSink Sink)> _requestPorts = [];
+    private IExternalRequestContext? _targetContext;
+
+    public void ApplyPortRegistrations(IExternalRequestContext targetContext)
+    {
+        this._targetContext = targetContext;
+
+        foreach ((RequestPort requestPort, DelayRegisteredSink? sink) in this._requestPorts.Values)
+        {
+            sink?.TargetSink = targetContext.RegisterPort(requestPort);
+        }
+    }
+
+    public IExternalRequestSink RegisterPort(RequestPort port)
+    {
+        DelayRegisteredSink delaySink = new()
+        {
+            TargetSink = this._targetContext?.RegisterPort(port),
+        };
+
+        this._requestPorts.Add(port.Id, (port, delaySink));
+
+        return delaySink;
+    }
+}
+
+internal sealed class MessageTypeTranslator
+{
+    private readonly Dictionary<TypeId, Type> _typeLookupMap = [];
+    private readonly Dictionary<Type, TypeId> _declaredTypeMap = [];
+
+    // The types that can always be sent; this is a very inelegant solution to the following problem:
+    //   Even with code analysis it is impossible to statically know all of the types that get sent via SendMessage, because
+    //   IWorkflowContext can always be sent out of the current assembly (to say nothing of Reflection). This means at some
+    //   level we have to register all the types being sent somewhere. Since we have to do dynamic serialization/deserialization
+    //   at runtime with dependency-defined types (which we do not statically know) we need to have these types at runtime.
+    //   At the same time, we should not force users to declare types to interact with core system concepts like RequestInfo.
+    //   So the solution for now is to register a set of known types, at the cost of duplicating this per Executor.
+    //
+    //     - TODO: Create a static translation map, and keep a set of "allowed" TypeIds per Excutor.
+    private static IEnumerable<Type> KnownSentTypes =>
+        [
+            typeof(ExternalRequest),
+            typeof(ExternalResponse),
+
+            // TurnToken?
+        ];
+
+    public MessageTypeTranslator(ISet<Type> types)
+    {
+        foreach (Type type in KnownSentTypes.Concat(types))
+        {
+            TypeId typeId = new(type);
+            if (this._typeLookupMap.ContainsKey(typeId))
+            {
+                continue;
+            }
+
+            this._typeLookupMap[typeId] = type;
+            this._declaredTypeMap[type] = typeId;
+        }
+    }
+
+    public TypeId? GetDeclaredType(Type messageType)
+    {
+        // If the user declares a base type, the user is expected to set up any serialization to be able to deal with
+        // the polymorphism transparently to the framework, or be expecting to deal with the appropriate truncation.
+        for (Type? candidateType = messageType; candidateType != null; candidateType = candidateType.BaseType)
+        {
+            if (this._declaredTypeMap.TryGetValue(candidateType, out TypeId? declaredTypeId))
+            {
+                if (candidateType != messageType)
+                {
+                    // Add an entry for the derived type to speed up future lookups.
+                    this._declaredTypeMap[messageType] = declaredTypeId;
+                }
+
+                return declaredTypeId;
+            }
+        }
+
+        return null;
+    }
+
+    public Type? MapTypeId(TypeId candidateTypeId) =>
+        this._typeLookupMap.TryGetValue(candidateTypeId, out Type? mappedType)
+            ? mappedType
+            : null;
+}
+
+internal sealed class ExecutorProtocol(MessageRouter router, ISet<Type> sendTypes, ISet<Type> yieldTypes)
+{
+    private readonly HashSet<TypeId> _yieldTypes = new(yieldTypes.Select(type => new TypeId(type)));
+
+    public MessageTypeTranslator SendTypeTranslator => field ??= new MessageTypeTranslator(sendTypes);
+
+    internal MessageRouter Router => router;
+
+    public bool CanHandle(Type type) => router.CanHandle(type);
+
+    public bool CanOutput(Type type) => this._yieldTypes.Contains(new(type));
+
+    public ProtocolDescriptor Describe() => new(this.Router.IncomingTypes, yieldTypes, sendTypes, this.Router.HasCatchAll);
+}
 
 /// <summary>
 /// A component that processes messages in a <see cref="Workflow"/>.
@@ -50,6 +173,10 @@ public abstract class Executor : IIdentified
         this.IsCrossRunShareable = declareCrossRunShareable;
     }
 
+    private DelayedExternalRequestContext DelayedPortRegistrations { get; } = new();
+
+    internal ExecutorProtocol Protocol => field ??= this.ConfigureProtocol(new(this.DelayedPortRegistrations)).Build(this.Options);
+
     internal bool IsCrossRunShareable { get; }
 
     /// <summary>
@@ -57,28 +184,29 @@ public abstract class Executor : IIdentified
     /// </summary>
     protected ExecutorOptions Options { get; }
 
-    /// <summary>
-    /// Override this method to register handlers for the executor.
-    /// </summary>
-    protected abstract RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder);
+    //private bool _configuringProtocol;
 
-    internal void Configure(IExternalRequestContext externalRequestContext)
+    /// <summary>
+    /// Configures the protocol by setting up routes and declaring the message types used for sending and yielding
+    /// output.
+    /// </summary>
+    /// <remarks>This method serves as the primary entry point for protocol configuration. It integrates route
+    /// setup and message type declarations. For backward compatibility, it is currently invoked from the
+    /// RouteBuilder.</remarks>
+    /// <returns>An instance of <see cref="ExecutorProtocol"/> that represents the fully configured protocol.</returns>
+    protected abstract ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder);
+
+    internal void AttachRequestContext(IExternalRequestContext externalRequestContext)
     {
         // TODO: This is an unfortunate pattern (pending the ability to rework the Configure APIs a bit):
         // new()
-        // >>> will throw InvalidOperationException if Configure() is not invoked when using PortHandlers
-        //   .Configure()
+        // >>> will throw InvalidOperationException if AttachRequestContext() is not invoked when using PortHandlers
+        //   .AttachRequestContext()
         // >>> only usable now
-        // The fix would be to change the API surface of Executor to have Configure return the contract that the workflow
-        // will use to invoke the executor (currently the MessageRouter). (Ideally we would rename Executor to Node or similar,
-        // and the actual Executor class will represent that Contract object)
-        // Not a terrible issue right now because only InProcessExecution exists right now, and the InProccessRunContext centralizes
-        // executor instantiation in EnsureExecutorAsync.
-        this.Router = this.CreateRouter(externalRequestContext);
-    }
 
-    private MessageRouter CreateRouter(IExternalRequestContext? externalRequestContext = null)
-        => this.ConfigureRoutes(new RouteBuilder(externalRequestContext)).Build();
+        this.DelayedPortRegistrations.ApplyPortRegistrations(externalRequestContext);
+        _ = this.Protocol; // Force protocol to be built if not already done.
+    }
 
     /// <summary>
     /// Perform any asynchronous initialization required by the executor. This method is called once per executor instance,
@@ -90,42 +218,7 @@ public abstract class Executor : IIdentified
     protected internal virtual ValueTask InitializeAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
         => default;
 
-    /// <summary>
-    /// Override this method to declare the types of messages this executor can send.
-    /// </summary>
-    /// <returns></returns>
-    protected virtual ISet<Type> ConfigureSentTypes() => new HashSet<Type>([typeof(object)]);
-
-    /// <summary>
-    /// Override this method to declare the types of messages this executor can yield as workflow outputs.
-    /// </summary>
-    /// <returns></returns>
-    protected virtual ISet<Type> ConfigureYieldTypes()
-    {
-        if (this.Options.AutoYieldOutputHandlerResultObject)
-        {
-            return this.Router.DefaultOutputTypes;
-        }
-
-        return new HashSet<Type>();
-    }
-
-    internal MessageRouter Router
-    {
-        get
-        {
-            if (field is null)
-            {
-                field = this.CreateRouter();
-            }
-
-            return field;
-        }
-        private set
-        {
-            field = value;
-        }
-    }
+    internal MessageRouter Router => this.Protocol.Router;
 
     /// <summary>
     /// Process an incoming message using the registered handlers.
@@ -139,10 +232,10 @@ public abstract class Executor : IIdentified
     /// <returns>A ValueTask representing the asynchronous operation, wrapping the output from the executor.</returns>
     /// <exception cref="NotSupportedException">No handler found for the message type.</exception>
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
-    public ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, CancellationToken cancellationToken = default)
-        => this.ExecuteAsync(message, messageType, context, WorkflowTelemetryContext.Disabled, cancellationToken);
+    public ValueTask<object?> ExecuteCoreAsync(object message, TypeId messageType, IWorkflowContext context, CancellationToken cancellationToken = default)
+        => this.ExecuteCoreAsync(message, messageType, context, WorkflowTelemetryContext.Disabled, cancellationToken);
 
-    internal async ValueTask<object?> ExecuteAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, CancellationToken cancellationToken = default)
+    internal async ValueTask<object?> ExecuteCoreAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, CancellationToken cancellationToken = default)
     {
         using var activity = telemetryContext.StartExecutorProcessActivity(this.Id, this.GetType().FullName, messageType.TypeName, message);
         activity?.CreateSourceLinks(context.TraceContext);
@@ -224,41 +317,22 @@ public abstract class Executor : IIdentified
     /// <summary>
     /// A set of <see cref="Type"/>s, representing the messages this executor can produce as output.
     /// </summary>
-    public ISet<Type> OutputTypes { get; } = new HashSet<Type>([typeof(object)]);
+    public ISet<Type> OutputTypes => field ??= new HashSet<Type>(this.Protocol.Describe().Yields);
 
     /// <summary>
     /// Describes the protocol for communication with this <see cref="Executor"/>.
     /// </summary>
     /// <returns></returns>
-    public ProtocolDescriptor DescribeProtocol()
-    {
-        // TODO: Once burden of annotating yield/output messages becomes easier for the non-Auto case,
-        // we should (1) start checking for validity on output/send side, and (2) add the Yield/Send
-        // types to the ProtocolDescriptor.
-        return new(this.InputTypes, this.Router.HasCatchAll);
-    }
+    public ProtocolDescriptor DescribeProtocol() => this.Protocol.Describe();
 
     /// <summary>
     /// Checks if the executor can handle a specific message type.
     /// </summary>
     /// <param name="messageType"></param>
     /// <returns></returns>
-    public bool CanHandle(Type messageType) => this.Router.CanHandle(messageType);
+    public bool CanHandle(Type messageType) => this.Protocol.CanHandle(messageType);
 
-    internal bool CanHandle(TypeId messageType) => this.Router.CanHandle(messageType);
-
-    internal bool CanOutput(Type messageType)
-    {
-        foreach (Type type in this.OutputTypes)
-        {
-            if (type.IsAssignableFrom(messageType))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    internal bool CanOutput(Type messageType) => this.Protocol.CanOutput(messageType);
 }
 
 /// <summary>
@@ -272,8 +346,14 @@ public abstract class Executor<TInput>(string id, ExecutorOptions? options = nul
     : Executor(id, options, declareCrossRunShareable), IMessageHandler<TInput>
 {
     /// <inheritdoc/>
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-        routeBuilder.AddHandler<TInput>(this.HandleAsync);
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+    {
+        Func<TInput, IWorkflowContext, CancellationToken, ValueTask> handlerDelegate = this.HandleAsync;
+
+        return protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler(handlerDelegate))
+                              .AddMethodAttributeTypes(handlerDelegate.Method)
+                              .AddClassAttributeTypes(this.GetType());
+    }
 
     /// <inheritdoc/>
     public abstract ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default);
@@ -292,8 +372,14 @@ public abstract class Executor<TInput, TOutput>(string id, ExecutorOptions? opti
       IMessageHandler<TInput, TOutput>
 {
     /// <inheritdoc/>
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-        routeBuilder.AddHandler<TInput, TOutput>(this.HandleAsync);
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+    {
+        Func<TInput, IWorkflowContext, CancellationToken, ValueTask<TOutput>> handlerDelegate = this.HandleAsync;
+
+        return protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler(handlerDelegate))
+                              .AddMethodAttributeTypes(handlerDelegate.Method)
+                              .AddClassAttributeTypes(this.GetType());
+    }
 
     /// <inheritdoc/>
     public abstract ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default);

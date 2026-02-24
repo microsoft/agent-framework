@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from enum import Enum
 from typing import Any
 
+from ..exceptions import WorkflowException
 from ._edge import Edge, EdgeGroup, FanInEdgeGroup, InternalEdgeGroup
 from ._executor import Executor
 from ._typing_utils import is_type_compatible
@@ -26,7 +27,7 @@ class ValidationTypeEnum(Enum):
     OUTPUT_VALIDATION = "OUTPUT_VALIDATION"
 
 
-class WorkflowValidationError(Exception):
+class WorkflowValidationError(WorkflowException):
     """Base exception for workflow validation errors."""
 
     def __init__(self, message: str, validation_type: ValidationTypeEnum):

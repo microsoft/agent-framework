@@ -13,6 +13,7 @@ from agent_framework import (
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatRequestSentEvent, MagenticBuilder, MagenticProgressLedger
+from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -41,6 +42,9 @@ events, and prints the final answer. The workflow completes when idle.
 Prerequisites:
 - OpenAI credentials configured for `OpenAIChatClient` and `OpenAIResponsesClient`.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

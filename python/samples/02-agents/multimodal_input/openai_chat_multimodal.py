@@ -7,6 +7,10 @@ from pathlib import Path
 
 from agent_framework import Content, Message
 from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 ASSETS_DIR = Path(__file__).resolve().parents[2] / "shared" / "sample_assets"
 

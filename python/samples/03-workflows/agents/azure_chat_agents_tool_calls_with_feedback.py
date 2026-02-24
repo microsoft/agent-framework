@@ -24,8 +24,12 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
 from typing_extensions import Never
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Tool-enabled agents with human feedback
@@ -149,7 +153,7 @@ class Coordinator(Executor):
             # Human approved the draft as-is; forward it unchanged.
             await ctx.send_message(
                 AgentExecutorRequest(
-                    messages=original_request.conversation + [Message("user", text="The draft is approved as-is.")],
+                    messages=[*original_request.conversation, *[Message("user", text="The draft is approved as-is.")]],
                     should_respond=True,
                 ),
                 target_id=self.final_editor_id,
@@ -157,16 +161,15 @@ class Coordinator(Executor):
             return
 
         # Human provided feedback; prompt the writer to revise.
-        conversation: list[Message] = list(original_request.conversation)
         instruction = (
             "A human reviewer shared the following guidance:\n"
             f"{note or 'No specific guidance provided.'}\n\n"
             "Rewrite the draft from the previous assistant message into a polished final version. "
             "Keep the response under 120 words and reflect any requested tone adjustments."
         )
-        conversation.append(Message("user", text=instruction))
         await ctx.send_message(
-            AgentExecutorRequest(messages=conversation, should_respond=True), target_id=self.writer_id
+            AgentExecutorRequest(messages=[Message("user", text=instruction)], should_respond=True),
+            target_id=self.writer_id,
         )
 
 
@@ -174,6 +177,8 @@ def create_writer_agent() -> Agent:
     """Creates a writer agent with tools."""
     return AzureOpenAIResponsesClient(
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        # This sample has been tested only on `gpt-5.1` and may not work as intended on other models
+        # This sample is known to fail on `gpt-5-mini` reasoning input (GH issue #4059)
         deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(

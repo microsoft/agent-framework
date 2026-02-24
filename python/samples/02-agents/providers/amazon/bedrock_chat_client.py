@@ -5,7 +5,11 @@ from typing import Annotated
 
 from agent_framework import Agent, tool
 from agent_framework.amazon import BedrockChatClient
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Bedrock Chat Client Example

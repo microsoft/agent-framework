@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
-from agent_framework.exceptions import ServiceInitializationError
 
 from agent_framework_mem0._context_provider import Mem0ContextProvider
 
@@ -136,15 +135,13 @@ class TestBeforeRun:
         assert "mem0" not in ctx.context_messages
 
     async def test_validates_filters_before_search(self, mock_mem0_client: AsyncMock) -> None:
-        """Raises ServiceInitializationError when no filters."""
+        """Raises ValueError when no filters."""
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(input_messages=[Message(role="user", text="test")], session_id="s1")
 
-        with pytest.raises(ServiceInitializationError, match="At least one of the filters"):
-            await provider.before_run(
-                agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-            )  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="At least one of the filters"):
+            await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
     async def test_v1_1_response_format(self, mock_mem0_client: AsyncMock) -> None:
         """Search response in v1.1 dict format with 'results' key."""
@@ -312,16 +309,14 @@ class TestAfterRun:
         assert "run_id" not in mock_mem0_client.add.call_args.kwargs
 
     async def test_validates_filters(self, mock_mem0_client: AsyncMock) -> None:
-        """Raises ServiceInitializationError when no filters."""
+        """Raises ValueError when no filters."""
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(input_messages=[Message(role="user", text="hi")], session_id="s1")
         ctx._response = AgentResponse(messages=[Message(role="assistant", text="hey")])
 
-        with pytest.raises(ServiceInitializationError, match="At least one of the filters"):
-            await provider.after_run(
-                agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
-            )  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="At least one of the filters"):
+            await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
 
     async def test_stores_with_application_id_metadata(self, mock_mem0_client: AsyncMock) -> None:
         """application_id is passed in metadata."""
@@ -347,7 +342,7 @@ class TestValidateFilters:
 
     def test_raises_when_no_filters(self, mock_mem0_client: AsyncMock) -> None:
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
-        with pytest.raises(ServiceInitializationError, match="At least one of the filters"):
+        with pytest.raises(ValueError, match="At least one of the filters"):
             provider._validate_filters()
 
     def test_passes_with_user_id(self, mock_mem0_client: AsyncMock) -> None:

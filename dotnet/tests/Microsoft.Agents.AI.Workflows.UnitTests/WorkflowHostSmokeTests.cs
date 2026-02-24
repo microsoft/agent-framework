@@ -92,7 +92,7 @@ public class WorkflowHostSmokeTests
         Workflow workflow = CreateWorkflow(failByThrowing);
 
         // Act
-        List<AgentResponseUpdate> updates = await workflow.AsAgent("WorkflowAgent", includeExceptionDetails: includeExceptionDetails)
+        List<AgentResponseUpdate> updates = await workflow.AsAIAgent("WorkflowAgent", includeExceptionDetails: includeExceptionDetails)
                                                              .RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"))
                                                              .ToListAsync();
 

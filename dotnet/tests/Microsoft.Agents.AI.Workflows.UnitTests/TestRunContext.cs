@@ -27,7 +27,7 @@ public class TestRunContext : IRunnerContext
 
     internal TestRunContext ConfigureExecutor(Executor executor, EdgeMap? map = null)
     {
-        executor.Configure(new TestExternalRequestContext(this, executor.Id, map));
+        executor.AttachRequestContext(new TestExternalRequestContext(this, executor.Id, map));
         this.Executors.Add(executor.Id, executor);
         return this;
     }
@@ -144,7 +144,7 @@ public class TestRunContext : IRunnerContext
     public Dictionary<string, Executor> Executors { get; set; } = [];
     public string StartingExecutorId { get; set; } = string.Empty;
 
-    public bool WithCheckpointing => false;
+    public bool IsCheckpointingEnabled => false;
     public bool ConcurrentRunsEnabled => false;
 
     WorkflowTelemetryContext IRunnerContext.TelemetryContext => WorkflowTelemetryContext.Disabled;

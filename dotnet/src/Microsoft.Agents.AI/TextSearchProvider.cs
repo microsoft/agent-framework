@@ -32,7 +32,7 @@ namespace Microsoft.Agents.AI;
 /// multi-turn context to the retrieval layer without permanently altering the conversation history.
 /// </para>
 /// </remarks>
-public sealed class TextSearchProvider : AIContextProvider
+public sealed class TextSearchProvider : MessageAIContextProvider
 {
     private const string DefaultPluginSearchFunctionName = "Search";
     private const string DefaultPluginSearchFunctionDescription = "Allows searching for additional information to help answer the user question.";
@@ -91,7 +91,7 @@ public sealed class TextSearchProvider : AIContextProvider
     public override string StateKey => this._sessionState.StateKey;
 
     /// <inheritdoc />
-    protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<AIContext> ProvideAIContextAsync(AIContextProvider.InvokingContext context, CancellationToken cancellationToken = default)
     {
         if (this._searchTime != TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke)
         {
@@ -102,6 +102,30 @@ public sealed class TextSearchProvider : AIContextProvider
             };
         }
 
+        return new AIContext
+        {
+            Messages = await this.ProvideMessagesAsync(
+                new InvokingContext(context.Agent, context.Session, context.AIContext.Messages ?? []),
+                cancellationToken).ConfigureAwait(false)
+        };
+    }
+
+    /// <inheritdoc />
+    protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
+        // This code path is invoked using InvokingAsync on MessageAIContextProvider, which does not support tools and instructions,
+        // and OnDemandFunctionCalling requires tools.
+        if (this._searchTime != TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke)
+        {
+            throw new InvalidOperationException($"Using the {nameof(TextSearchProvider)} as a {nameof(MessageAIContextProvider)} is not supported when {nameof(TextSearchProviderOptions.SearchTime)} is set to {TextSearchProviderOptions.TextSearchBehavior.OnDemandFunctionCalling}.");
+        }
+
+        return base.InvokingCoreAsync(context, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    protected override async ValueTask<IEnumerable<ChatMessage>> ProvideMessagesAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
         // Retrieve recent messages from the session state.
         var recentMessagesText = this._sessionState.GetOrInitializeState(context.Session).RecentMessagesText
             ?? [];
@@ -109,7 +133,7 @@ public sealed class TextSearchProvider : AIContextProvider
         // Aggregate text from memory + current request messages.
         var sbInput = new StringBuilder();
         var requestMessagesText =
-            (context.AIContext.Messages ?? [])
+            (context.RequestMessages ?? [])
             .Where(x => !string.IsNullOrWhiteSpace(x?.Text)).Select(x => x.Text);
         foreach (var messageText in recentMessagesText.Concat(requestMessagesText))
         {
@@ -135,7 +159,7 @@ public sealed class TextSearchProvider : AIContextProvider
 
             if (materialized.Count == 0)
             {
-                return new AIContext();
+                return [];
             }
 
             // Format search results
@@ -146,15 +170,12 @@ public sealed class TextSearchProvider : AIContextProvider
                 this._logger.LogTrace("TextSearchProvider: Search Results\nInput:{Input}\nOutput:{MessageText}", input, formatted);
             }
 
-            return new AIContext
-            {
-                Messages = [new ChatMessage(ChatRole.User, formatted)]
-            };
+            return [new ChatMessage(ChatRole.User, formatted)];
         }
         catch (Exception ex)
         {
             this._logger?.LogError(ex, "TextSearchProvider: Failed to search for data due to error");
-            return new AIContext();
+            return [];
         }
     }
 

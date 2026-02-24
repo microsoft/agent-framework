@@ -54,6 +54,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     }
 
     /// <inheritdoc/>
+    [SendsMessage(typeof(ActionExecutorResult))]
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {
         DeclarativeWorkflowContext declarativeContext = new(context, this._state);

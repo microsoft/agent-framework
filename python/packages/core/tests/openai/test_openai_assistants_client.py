@@ -22,7 +22,6 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
-from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIAssistantsClient
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
@@ -145,7 +144,7 @@ def test_init_auto_create_client(
 
 def test_init_validation_fail() -> None:
     """Test OpenAIAssistantsClient initialization with validation failure."""
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         # Force failure by providing invalid model ID type
         OpenAIAssistantsClient(model_id=123, api_key="valid-key")  # type: ignore
 
@@ -153,14 +152,14 @@ def test_init_validation_fail() -> None:
 @pytest.mark.parametrize("exclude_list", [["OPENAI_CHAT_MODEL_ID"]], indirect=True)
 def test_init_missing_model_id(openai_unit_test_env: dict[str, str]) -> None:
     """Test OpenAIAssistantsClient initialization with missing model ID."""
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         OpenAIAssistantsClient(api_key=openai_unit_test_env.get("OPENAI_API_KEY", "test-key"))
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
 def test_init_missing_api_key(openai_unit_test_env: dict[str, str]) -> None:
     """Test OpenAIAssistantsClient initialization with missing API key."""
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         OpenAIAssistantsClient(model_id="gpt-4")
 
 

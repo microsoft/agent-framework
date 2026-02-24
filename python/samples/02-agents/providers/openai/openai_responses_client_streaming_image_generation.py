@@ -8,6 +8,10 @@ from pathlib import Path
 import anyio
 from agent_framework import Content
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """OpenAI Responses Client Streaming Image Generation Example
 
@@ -75,10 +79,7 @@ async def main():
             # represents a progressive refinement, with the last one being the finished result.
             if content.type == "image_generation_tool_result" and isinstance(content.outputs, Content):
                 image_output: Content = content.outputs
-                if (
-                    image_output.type == "data"
-                    and image_output.additional_properties.get("is_partial_image")
-                ):
+                if image_output.type == "data" and image_output.additional_properties.get("is_partial_image"):
                     print(f"     Image {image_count} received")
 
                     # Extract file extension from media_type (e.g., "image/png" -> "png")

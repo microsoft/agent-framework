@@ -50,10 +50,7 @@ public static class Program
         // Set up the Azure OpenAI client
         string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-        IChatClient chatClient = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential()).GetChatClient(deploymentName).AsIChatClient();
+        IChatClient chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
         // Create executors for content creation and review
         WriterExecutor writer = new(chatClient);
@@ -92,7 +89,7 @@ public static class Program
     private static async Task ExecuteWorkflowAsync(Workflow workflow, string input)
     {
         // Execute in streaming mode to see real-time progress
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input);
 
         // Watch the workflow events
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
@@ -196,7 +193,7 @@ internal sealed class CriticDecision
 /// Executor that creates or revises content based on user requests or critic feedback.
 /// This executor demonstrates multiple message handlers for different input types.
 /// </summary>
-internal sealed class WriterExecutor : Executor
+internal sealed partial class WriterExecutor : Executor
 {
     private readonly AIAgent _agent;
 
@@ -213,15 +210,11 @@ internal sealed class WriterExecutor : Executor
         );
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-        routeBuilder
-            .AddHandler<string, ChatMessage>(this.HandleInitialRequestAsync)
-            .AddHandler<CriticDecision, ChatMessage>(this.HandleRevisionRequestAsync);
-
     /// <summary>
     /// Handles the initial writing request from the user.
     /// </summary>
-    private async ValueTask<ChatMessage> HandleInitialRequestAsync(
+    [MessageHandler]
+    public async ValueTask<ChatMessage> HandleInitialRequestAsync(
         string message,
         IWorkflowContext context,
         CancellationToken cancellationToken = default)
@@ -232,7 +225,8 @@ internal sealed class WriterExecutor : Executor
     /// <summary>
     /// Handles revision requests from the critic with feedback.
     /// </summary>
-    private async ValueTask<ChatMessage> HandleRevisionRequestAsync(
+    [MessageHandler]
+    public async ValueTask<ChatMessage> HandleRevisionRequestAsync(
         CriticDecision decision,
         IWorkflowContext context,
         CancellationToken cancellationToken = default)

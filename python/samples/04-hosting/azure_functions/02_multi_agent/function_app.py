@@ -16,15 +16,20 @@ from typing import Any
 from agent_framework import tool
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(location: str) -> dict[str, Any]:
     """Get current weather for a location."""
-
     logger.info(f"🔧 [TOOL CALLED] get_weather(location={location})")
     result = {
         "location": location,
@@ -40,9 +45,7 @@ def get_weather(location: str) -> dict[str, Any]:
 def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str, Any]:
     """Calculate tip amount and total bill."""
 
-    logger.info(
-        f"🔧 [TOOL CALLED] calculate_tip(bill_amount={bill_amount}, tip_percentage={tip_percentage})"
-    )
+    logger.info(f"🔧 [TOOL CALLED] calculate_tip(bill_amount={bill_amount}, tip_percentage={tip_percentage})")
     tip = bill_amount * (tip_percentage / 100)
     total = bill_amount + tip
     result = {

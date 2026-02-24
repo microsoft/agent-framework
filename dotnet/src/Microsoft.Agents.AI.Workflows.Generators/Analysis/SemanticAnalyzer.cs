@@ -68,7 +68,7 @@ internal static class SemanticAnalyzer
         string classKey = GetClassKey(classSymbol);
         bool isPartialClass = IsPartialClass(classSymbol, cancellationToken);
         bool derivesFromExecutor = DerivesFromExecutor(classSymbol);
-        bool hasManualConfigureRoutes = HasConfigureRoutesDefined(classSymbol);
+        bool configureProtocol = HasConfigureProtocolDefined(classSymbol);
 
         // Extract class metadata
         string? @namespace = classSymbol.ContainingNamespace?.IsGlobalNamespace == true
@@ -78,7 +78,7 @@ internal static class SemanticAnalyzer
         string? genericParameters = GetGenericParameters(classSymbol);
         bool isNested = classSymbol.ContainingType != null;
         string containingTypeChain = GetContainingTypeChain(classSymbol);
-        bool baseHasConfigureRoutes = BaseHasConfigureRoutes(classSymbol);
+        bool baseHasConfigureProtocol = BaseHasConfigureProtocol(classSymbol);
         ImmutableEquatableArray<string> classSendTypes = GetClassLevelTypes(classSymbol, SendsMessageAttributeName);
         ImmutableEquatableArray<string> classYieldTypes = GetClassLevelTypes(classSymbol, YieldsOutputAttributeName);
 
@@ -96,8 +96,8 @@ internal static class SemanticAnalyzer
 
         return new MethodAnalysisResult(
             classKey, @namespace, className, genericParameters, isNested, containingTypeChain,
-            baseHasConfigureRoutes, classSendTypes, classYieldTypes,
-            isPartialClass, derivesFromExecutor, hasManualConfigureRoutes,
+            baseHasConfigureProtocol, classSendTypes, classYieldTypes,
+            isPartialClass, derivesFromExecutor, configureProtocol,
             classLocation,
             handler,
             Diagnostics: new ImmutableEquatableArray<DiagnosticInfo>(methodDiagnostics.ToImmutable()));
@@ -152,7 +152,7 @@ internal static class SemanticAnalyzer
         if (first.HasManualConfigureRoutes)
         {
             allDiagnostics.Add(Diagnostic.Create(
-                DiagnosticDescriptors.ConfigureRoutesAlreadyDefined,
+                DiagnosticDescriptors.ConfigureProtocolAlreadyDefined,
                 classLocation,
                 first.ClassName));
             return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());
@@ -175,7 +175,7 @@ internal static class SemanticAnalyzer
             first.GenericParameters,
             first.IsNested,
             first.ContainingTypeChain,
-            first.BaseHasConfigureRoutes,
+            first.BaseHasConfigureProtocol,
             new ImmutableEquatableArray<HandlerInfo>(handlers),
             first.ClassSendTypes,
             first.ClassYieldTypes);
@@ -211,7 +211,7 @@ internal static class SemanticAnalyzer
         string classKey = GetClassKey(classSymbol);
         bool isPartialClass = IsPartialClass(classSymbol, cancellationToken);
         bool derivesFromExecutor = DerivesFromExecutor(classSymbol);
-        bool hasManualConfigureRoutes = HasConfigureRoutesDefined(classSymbol);
+        bool hasManualConfigureProtocol = HasConfigureProtocolDefined(classSymbol);
 
         string? @namespace = classSymbol.ContainingNamespace?.IsGlobalNamespace == true
             ? null
@@ -240,7 +240,7 @@ internal static class SemanticAnalyzer
                     containingTypeChain,
                     isPartialClass,
                     derivesFromExecutor,
-                    hasManualConfigureRoutes,
+                    hasManualConfigureProtocol,
                     classLocation,
                     typeName,
                     attributeKind));
@@ -251,12 +251,16 @@ internal static class SemanticAnalyzer
     }
 
     /// <summary>
-    /// Combines ClassProtocolInfo results into an AnalysisResult for classes that only have protocol attributes
-    /// (no [MessageHandler] methods). This generates only ConfigureSentTypes/ConfigureYieldTypes overrides.
+    /// Combines ClassProtocolInfo results into an AnalysisResult for classes that only have IO attributes
+    /// (no [MessageHandler] methods). This generates only .SendsMessage/.YieldsMessage calls in the protocol
+    /// configuration.
     /// </summary>
+    /// <remarks>
+    /// This is likely to be seen combined with the basic one-method <c>Executor%lt;TIn&gt;</c> or <c>Executor&lt;TIn, TOut&gt;</c>
+    /// </remarks>
     /// <param name="protocolInfos">The protocol info entries for the class.</param>
     /// <returns>The combined analysis result.</returns>
-    public static AnalysisResult CombineProtocolOnlyResults(IEnumerable<ClassProtocolInfo> protocolInfos)
+    public static AnalysisResult CombineOutputOnlyResults(IEnumerable<ClassProtocolInfo> protocolInfos)
     {
         List<ClassProtocolInfo> protocols = protocolInfos.ToList();
         if (protocols.Count == 0)
@@ -317,7 +321,7 @@ internal static class SemanticAnalyzer
             first.GenericParameters,
             first.IsNested,
             first.ContainingTypeChain,
-            BaseHasConfigureRoutes: false, // Not relevant for protocol-only
+            BaseHasConfigureProtocol: false, // Not relevant for protocol-only
             Handlers: ImmutableEquatableArray<HandlerInfo>.Empty,
             ClassSendTypes: new ImmutableEquatableArray<string>(sendTypes.ToImmutable()),
             ClassYieldTypes: new ImmutableEquatableArray<string>(yieldTypes.ToImmutable()));
@@ -394,12 +398,12 @@ internal static class SemanticAnalyzer
     }
 
     /// <summary>
-    /// Checks if this class directly defines ConfigureRoutes (not inherited).
+    /// Checks if this class directly defines ConfigureProtocol (not inherited).
     /// If so, we skip generation to avoid conflicting with user's manual implementation.
     /// </summary>
-    private static bool HasConfigureRoutesDefined(INamedTypeSymbol classSymbol)
+    private static bool HasConfigureProtocolDefined(INamedTypeSymbol classSymbol)
     {
-        foreach (var member in classSymbol.GetMembers("ConfigureRoutes"))
+        foreach (var member in classSymbol.GetMembers("ConfigureProtocol"))
         {
             if (member is IMethodSymbol method && !method.IsAbstract &&
                 SymbolEqualityComparer.Default.Equals(method.ContainingType, classSymbol))
@@ -412,22 +416,22 @@ internal static class SemanticAnalyzer
     }
 
     /// <summary>
-    /// Checks if any base class (between this class and Executor) defines ConfigureRoutes.
-    /// If so, generated code should call base.ConfigureRoutes() to preserve inherited handlers.
+    /// Checks if any base class (between this class and Executor) defines ConfigureProtocol.
+    /// If so, generated code should call base.ConfigureProtocol() to preserve inherited handlers.
     /// </summary>
-    private static bool BaseHasConfigureRoutes(INamedTypeSymbol classSymbol)
+    private static bool BaseHasConfigureProtocol(INamedTypeSymbol classSymbol)
     {
         INamedTypeSymbol? baseType = classSymbol.BaseType;
         while (baseType != null)
         {
             string fullName = baseType.OriginalDefinition.ToDisplayString();
-            // Stop at Executor - its ConfigureRoutes is abstract/empty
+            // Stop at Executor - its ConfigureProtocol is abstract/empty
             if (fullName == ExecutorTypeName)
             {
                 return false;
             }
 
-            foreach (var member in baseType.GetMembers("ConfigureRoutes"))
+            foreach (var member in baseType.GetMembers("ConfigureProtocol"))
             {
                 if (member is IMethodSymbol method && !method.IsAbstract)
                 {

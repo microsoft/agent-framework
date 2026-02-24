@@ -51,7 +51,7 @@ from ._types import (
     map_chat_to_agent_update,
     normalize_messages,
 )
-from .exceptions import AgentExecutionException
+from .exceptions import AgentInvalidResponseException
 from .observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 13):
@@ -843,7 +843,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 )
 
                 if not response:
-                    raise AgentExecutionException("Chat client did not return a response.")
+                    raise AgentInvalidResponseException("Chat client did not return a response.")
 
                 await self._finalize_response(
                     response=response,

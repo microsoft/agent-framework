@@ -245,9 +245,8 @@ class TestOverrideTypeValidation:
     """Test override type validation."""
 
     def test_invalid_type_raises(self) -> None:
-        from agent_framework.exceptions import ServiceInitializationError
 
-        with pytest.raises(ServiceInitializationError, match="Invalid type for setting 'api_key'"):
+        with pytest.raises(ValueError, match="Invalid type for setting 'api_key'"):
             load_settings(SimpleSettings, env_prefix="TEST_", api_key={"bad": "type"})
 
     def test_valid_types_accepted(self) -> None:

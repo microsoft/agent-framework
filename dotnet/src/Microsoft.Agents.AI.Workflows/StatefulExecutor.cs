@@ -3,6 +3,7 @@
 #pragma warning disable CS0618 // Type or member is obsolete - Internal use of obsolete types for backward compatibility
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Reflection;
@@ -136,7 +137,7 @@ public abstract class StatefulExecutor<TState> : Executor
     }
 
     /// <inheritdoc cref="IResettableExecutor.ResetAsync"/>
-    protected ValueTask ResetAsync()
+    protected virtual ValueTask ResetAsync()
     {
         this._stateCache = this._initialStateFactory();
 
@@ -153,13 +154,25 @@ public abstract class StatefulExecutor<TState> : Executor
 /// <param name="id">A unique identifier for the executor.</param>
 /// <param name="initialStateFactory">A factory to initialize the state value to be used by the executor.</param>
 /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+/// <param name="sentMessageTypes">Message types sent by the handler. Defaults to empty, and will filter out non-matching messages.</param>
+/// <param name="outputTypes">Message types yielded as output by the handler. Defaults to empty.</param>
 /// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
-public abstract class StatefulExecutor<TState, TInput>(string id, Func<TState> initialStateFactory, StatefulExecutorOptions? options = null, bool declareCrossRunShareable = false)
+public abstract class StatefulExecutor<TState, TInput>(string id,
+    Func<TState> initialStateFactory,
+    StatefulExecutorOptions? options = null,
+    IEnumerable<Type>? sentMessageTypes = null,
+    IEnumerable<Type>? outputTypes = null,
+    bool declareCrossRunShareable = false)
     : StatefulExecutor<TState>(id, initialStateFactory, options, declareCrossRunShareable), IMessageHandler<TInput>
 {
     /// <inheritdoc/>
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-        routeBuilder.AddHandler<TInput>(this.HandleAsync);
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+    {
+        protocolBuilder.RouteBuilder.AddHandler<TInput>(this.HandleAsync);
+
+        return protocolBuilder.SendsMessageTypes(sentMessageTypes ?? [])
+                              .YieldsOutputTypes(outputTypes ?? []);
+    }
 
     /// <inheritdoc/>
     public abstract ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default);
@@ -175,13 +188,35 @@ public abstract class StatefulExecutor<TState, TInput>(string id, Func<TState> i
 /// <param name="id">A unique identifier for the executor.</param>
 /// <param name="initialStateFactory">A factory to initialize the state value to be used by the executor.</param>
 /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+/// <param name="sentMessageTypes">Message types sent by the handler. Defaults to empty, and will filter out non-matching messages.</param>
+/// <param name="outputTypes">Message types yielded as output by the handler. Defaults to empty.</param>
 /// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
-public abstract class StatefulExecutor<TState, TInput, TOutput>(string id, Func<TState> initialStateFactory, StatefulExecutorOptions? options = null, bool declareCrossRunShareable = false)
+public abstract class StatefulExecutor<TState, TInput, TOutput>(string id,
+    Func<TState> initialStateFactory,
+    StatefulExecutorOptions? options = null,
+    IEnumerable<Type>? sentMessageTypes = null,
+    IEnumerable<Type>? outputTypes = null,
+    bool declareCrossRunShareable = false)
     : StatefulExecutor<TState>(id, initialStateFactory, options, declareCrossRunShareable), IMessageHandler<TInput, TOutput>
+    where TOutput : notnull
 {
     /// <inheritdoc/>
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-        routeBuilder.AddHandler<TInput, TOutput>(this.HandleAsync);
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+    {
+        protocolBuilder.RouteBuilder.AddHandler<TInput, TOutput>(this.HandleAsync);
+
+        if (this.Options.AutoSendMessageHandlerResultObject)
+        {
+            protocolBuilder.SendsMessage<TOutput>();
+        }
+
+        if (this.Options.AutoYieldOutputHandlerResultObject)
+        {
+            protocolBuilder.YieldsOutput<TOutput>();
+        }
+
+        return protocolBuilder.SendsMessageTypes(sentMessageTypes ?? []).YieldsOutputTypes(outputTypes ?? []);
+    }
 
     /// <inheritdoc/>
     public abstract ValueTask<TOutput> HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default);

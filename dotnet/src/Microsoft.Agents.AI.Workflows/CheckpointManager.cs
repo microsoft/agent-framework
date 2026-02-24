@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
@@ -49,9 +50,12 @@ public sealed class CheckpointManager : ICheckpointManager
         return new(CreateImpl(marshaller, store));
     }
 
-    ValueTask<CheckpointInfo> ICheckpointManager.CommitCheckpointAsync(string runId, Checkpoint checkpoint)
-        => this._impl.CommitCheckpointAsync(runId, checkpoint);
+    ValueTask<CheckpointInfo> ICheckpointManager.CommitCheckpointAsync(string sessionId, Checkpoint checkpoint)
+        => this._impl.CommitCheckpointAsync(sessionId, checkpoint);
 
-    ValueTask<Checkpoint> ICheckpointManager.LookupCheckpointAsync(string runId, CheckpointInfo checkpointInfo)
-        => this._impl.LookupCheckpointAsync(runId, checkpointInfo);
+    ValueTask<Checkpoint> ICheckpointManager.LookupCheckpointAsync(string sessionId, CheckpointInfo checkpointInfo)
+        => this._impl.LookupCheckpointAsync(sessionId, checkpointInfo);
+
+    ValueTask<IEnumerable<CheckpointInfo>> ICheckpointManager.RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent)
+        => this._impl.RetrieveIndexAsync(sessionId, withParent);
 }

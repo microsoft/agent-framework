@@ -118,7 +118,7 @@ def _coerce_value(value: str, target_type: type) -> Any:
 def _check_override_type(value: Any, field_type: type, field_name: str) -> None:
     """Validate that *value* is compatible with *field_type*.
 
-    Raises ``ServiceInitializationError`` when the override is clearly
+    Raises ``ValueError`` when the override is clearly
     incompatible (e.g. a ``dict`` passed where ``str`` is expected).
     Callable values and ``None`` are always accepted.
     """
@@ -155,10 +155,8 @@ def _check_override_type(value: Any, field_type: type, field_name: str) -> None:
         if isinstance(value, int) and float in allowed:
             return
 
-        from .exceptions import ServiceInitializationError
-
         allowed_names = ", ".join(t.__name__ for t in allowed)
-        raise ServiceInitializationError(
+        raise ValueError(
             f"Invalid type for setting '{field_name}': expected {allowed_names}, got {type(value).__name__}."
         )
 
@@ -207,7 +205,7 @@ def load_settings(
         FileNotFoundError: If *env_file_path* was provided but the file does not exist.
         SettingNotFoundError: If a required field could not be resolved from any
             source, or if a mutually exclusive constraint is violated.
-        ServiceInitializationError: If an override value has an incompatible type.
+        ValueError: If an override value has an incompatible type.
     """
     encoding = env_file_encoding or "utf-8"
 

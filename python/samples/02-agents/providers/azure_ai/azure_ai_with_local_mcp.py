@@ -5,6 +5,10 @@ import asyncio
 from agent_framework import MCPStreamableHTTPTool
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Azure AI Agent with Local MCP Example

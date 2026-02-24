@@ -28,7 +28,7 @@ from agent_framework import (
 )
 from agent_framework._telemetry import USER_AGENT_KEY
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
+from agent_framework.exceptions import ChatClientException
 from agent_framework.openai import (
     ContentFilterResultSeverity,
     OpenAIContentFilterException,
@@ -93,13 +93,13 @@ def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
 def test_init_with_empty_deployment_name(azure_openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         AzureOpenAIChatClient()
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL"]], indirect=True)
 def test_init_with_empty_endpoint_and_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         AzureOpenAIChatClient()
 
 
@@ -554,7 +554,7 @@ async def test_bad_request_non_content_filter(
 
     azure_chat_client = AzureOpenAIChatClient()
 
-    with pytest.raises(ServiceResponseException, match="service failed to complete the prompt"):
+    with pytest.raises(ChatClientException, match="service failed to complete the prompt"):
         await azure_chat_client.get_response(
             messages=chat_history,
         )

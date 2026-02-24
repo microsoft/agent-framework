@@ -4,6 +4,10 @@ from pathlib import Path
 
 from agent_framework.declarative import AgentFactory
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main():

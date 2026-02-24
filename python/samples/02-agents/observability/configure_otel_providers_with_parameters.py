@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Annotated, Literal
 from agent_framework import Message, tool
 from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 from opentelemetry import trace
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
@@ -27,6 +28,9 @@ and allows you to add multiple exporters programmatically.
 For standard OTLP setup, it's recommended to use environment variables (see configure_otel_providers_with_env_var.py).
 Use this approach when you need custom exporter configuration beyond what environment variables provide.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Define the scenarios that can be run to show the telemetry data collected by the SDK
 SCENARIOS = ["client", "client_stream", "tool", "all"]

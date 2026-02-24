@@ -18,10 +18,15 @@ which agent should speak next based on the conversation context.
 import asyncio
 
 from agent_framework import Message
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def run_autogen() -> None:
     """AutoGen's SelectorGroupChat with LLM-based speaker selection."""
+
     from autogen_agentchat.agents import AssistantAgent
     from autogen_agentchat.conditions import MaxMessageTermination
     from autogen_agentchat.teams import SelectorGroupChat

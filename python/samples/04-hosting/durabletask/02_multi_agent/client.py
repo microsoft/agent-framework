@@ -19,7 +19,11 @@ import os
 
 from agent_framework.azure import DurableAIAgentClient
 from azure.identity import DefaultAzureCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,9 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_client(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableAIAgentClient:
     """Create a configured DurableAIAgentClient.
 
@@ -54,7 +56,7 @@ def get_client(
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
     return DurableAIAgentClient(dts_client)

@@ -34,9 +34,6 @@ public abstract class AIContextProvider
     private static IEnumerable<ChatMessage> DefaultExternalOnlyFilter(IEnumerable<ChatMessage> messages)
         => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External);
 
-    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> _provideInputMessageFilter;
-    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> _storeInputMessageFilter;
-
     /// <summary>
     /// Initializes a new instance of the <see cref="AIContextProvider"/> class.
     /// </summary>
@@ -46,9 +43,19 @@ public abstract class AIContextProvider
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideInputMessageFilter = null,
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputMessageFilter = null)
     {
-        this._provideInputMessageFilter = provideInputMessageFilter ?? DefaultExternalOnlyFilter;
-        this._storeInputMessageFilter = storeInputMessageFilter ?? DefaultExternalOnlyFilter;
+        this.ProvideInputMessageFilter = provideInputMessageFilter ?? DefaultExternalOnlyFilter;
+        this.StoreInputMessageFilter = storeInputMessageFilter ?? DefaultExternalOnlyFilter;
     }
+
+    /// <summary>
+    /// Gets the filter function to apply to input messages before providing context via <see cref="ProvideAIContextAsync"/>.
+    /// </summary>
+    protected Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> ProvideInputMessageFilter { get; }
+
+    /// <summary>
+    /// Gets the filter function to apply to request messages before storing context via <see cref="StoreAIContextAsync"/>.
+    /// </summary>
+    protected Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> StoreInputMessageFilter { get; }
 
     /// <summary>
     /// Gets the key used to store the provider state in the <see cref="AgentSession.StateBag"/>.
@@ -120,7 +127,7 @@ public abstract class AIContextProvider
             new AIContext
             {
                 Instructions = inputContext.Instructions,
-                Messages = inputContext.Messages is not null ? this._provideInputMessageFilter(inputContext.Messages) : null,
+                Messages = inputContext.Messages is not null ? this.ProvideInputMessageFilter(inputContext.Messages) : null,
                 Tools = inputContext.Tools
             });
 
@@ -254,7 +261,7 @@ public abstract class AIContextProvider
             return default;
         }
 
-        var subContext = new InvokedContext(context.Agent, context.Session, this._storeInputMessageFilter(context.RequestMessages), context.ResponseMessages!);
+        var subContext = new InvokedContext(context.Agent, context.Session, this.StoreInputMessageFilter(context.RequestMessages), context.ResponseMessages!);
         return this.StoreAIContextAsync(subContext, cancellationToken);
     }
 

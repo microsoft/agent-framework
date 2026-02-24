@@ -23,6 +23,10 @@ from typing import Annotated
 
 from agent_framework import Agent, tool
 from agent_framework.azure import AzureOpenAIResponsesClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 

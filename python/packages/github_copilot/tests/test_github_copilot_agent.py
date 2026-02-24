@@ -14,7 +14,7 @@ from agent_framework import (
     Content,
     Message,
 )
-from agent_framework.exceptions import ServiceException
+from agent_framework.exceptions import AgentException
 from copilot.generated.session_events import Data, SessionEvent, SessionEventType
 
 from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
@@ -430,7 +430,7 @@ class TestGitHubCopilotAgentRunStreaming:
 
         agent = GitHubCopilotAgent(client=mock_client)
 
-        with pytest.raises(ServiceException, match="session error"):
+        with pytest.raises(AgentException, match="session error"):
             async for _ in agent.run("Hello", stream=True):
                 pass
 
@@ -835,12 +835,12 @@ class TestGitHubCopilotAgentErrorHandling:
     """Test cases for error handling."""
 
     async def test_start_raises_on_client_error(self, mock_client: MagicMock) -> None:
-        """Test that start raises ServiceException when client fails to start."""
+        """Test that start raises AgentException when client fails to start."""
         mock_client.start.side_effect = Exception("Connection failed")
 
         agent = GitHubCopilotAgent(client=mock_client)
 
-        with pytest.raises(ServiceException, match="Failed to start GitHub Copilot client"):
+        with pytest.raises(AgentException, match="Failed to start GitHub Copilot client"):
             await agent.start()
 
     async def test_run_raises_on_send_error(
@@ -848,33 +848,33 @@ class TestGitHubCopilotAgentErrorHandling:
         mock_client: MagicMock,
         mock_session: MagicMock,
     ) -> None:
-        """Test that run raises ServiceException when send_and_wait fails."""
+        """Test that run raises AgentException when send_and_wait fails."""
         mock_session.send_and_wait.side_effect = Exception("Request timeout")
 
         agent = GitHubCopilotAgent(client=mock_client)
 
-        with pytest.raises(ServiceException, match="GitHub Copilot request failed"):
+        with pytest.raises(AgentException, match="GitHub Copilot request failed"):
             await agent.run("Hello")
 
     async def test_get_or_create_session_raises_on_create_error(
         self,
         mock_client: MagicMock,
     ) -> None:
-        """Test that _get_or_create_session raises ServiceException when create_session fails."""
+        """Test that _get_or_create_session raises AgentException when create_session fails."""
         mock_client.create_session.side_effect = Exception("Session creation failed")
 
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
-        with pytest.raises(ServiceException, match="Failed to create GitHub Copilot session"):
+        with pytest.raises(AgentException, match="Failed to create GitHub Copilot session"):
             await agent._get_or_create_session(AgentSession())  # type: ignore
 
     async def test_get_or_create_session_raises_when_client_not_initialized(self) -> None:
-        """Test that _get_or_create_session raises ServiceException when client is not initialized."""
+        """Test that _get_or_create_session raises RuntimeError when client is not initialized."""
         agent = GitHubCopilotAgent()
         # Don't call start() - client remains None
 
-        with pytest.raises(ServiceException, match="GitHub Copilot client not initialized"):
+        with pytest.raises(RuntimeError, match="GitHub Copilot client not initialized"):
             await agent._get_or_create_session(AgentSession())  # type: ignore
 
 

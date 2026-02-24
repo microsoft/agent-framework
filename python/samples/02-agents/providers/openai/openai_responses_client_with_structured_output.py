@@ -4,7 +4,11 @@ import asyncio
 
 from agent_framework import AgentResponse
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 from pydantic import BaseModel
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 OpenAI Responses Client with Structured Output Example

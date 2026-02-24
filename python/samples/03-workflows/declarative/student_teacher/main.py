@@ -26,6 +26,10 @@ from pathlib import Path
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.declarative import WorkflowFactory
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 STUDENT_INSTRUCTIONS = """You are a curious math student working on understanding mathematical concepts.
 When given a problem:

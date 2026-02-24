@@ -13,11 +13,11 @@
 
 import asyncio
 from collections.abc import Sequence
-from typing import cast
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 from agent_framework.orchestrations import MagenticBuilder
+from dotenv import load_dotenv
 from semantic_kernel.agents import (
     ChatCompletionAgent,
     MagenticOrchestration,
@@ -27,6 +27,9 @@ from semantic_kernel.agents import (
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion, OpenAISettings
 from semantic_kernel.contents import ChatMessageContent
+
+# Load environment variables from .env file
+load_dotenv()
 
 PROMPT = (
     "I am preparing a report on the energy efficiency of different machine learning model architectures. "
@@ -157,9 +160,7 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         client=OpenAIChatClient(),
     )
 
-    workflow = MagenticBuilder(
-        participants=[researcher, coder], manager_agent=manager_agent
-    ).build()
+    workflow = MagenticBuilder(participants=[researcher, coder], manager_agent=manager_agent).build()
 
     final_text: str | None = None
     async for event in workflow.run(prompt, stream=True):

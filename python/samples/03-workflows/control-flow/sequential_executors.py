@@ -66,9 +66,7 @@ async def main() -> None:
     reverse_text_executor = ReverseTextExecutor(id="reverse_text_executor")
 
     workflow = (
-        WorkflowBuilder(start_executor=upper_case_executor)
-        .add_edge(upper_case_executor, reverse_text_executor)
-        .build()
+        WorkflowBuilder(start_executor=upper_case_executor).add_edge(upper_case_executor, reverse_text_executor).build()
     )
 
     # Step 2: Stream events for a single input.

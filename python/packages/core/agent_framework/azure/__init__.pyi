@@ -21,7 +21,7 @@ from agent_framework_durabletask import (
 
 from agent_framework.azure._assistants_client import AzureOpenAIAssistantsClient
 from agent_framework.azure._chat_client import AzureOpenAIChatClient
-from agent_framework.azure._entra_id_authentication import get_entra_auth_token
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
 from agent_framework.azure._responses_client import AzureOpenAIResponsesClient
 from agent_framework.azure._shared import AzureOpenAISettings
 
@@ -37,13 +37,14 @@ __all__ = [
     "AzureAISearchContextProvider",
     "AzureAISearchSettings",
     "AzureAISettings",
+    "AzureCredentialTypes",
     "AzureOpenAIAssistantsClient",
     "AzureOpenAIChatClient",
     "AzureOpenAIResponsesClient",
     "AzureOpenAISettings",
+    "AzureTokenProvider",
     "DurableAIAgent",
     "DurableAIAgentClient",
     "DurableAIAgentOrchestrationContext",
     "DurableAIAgentWorker",
-    "get_entra_auth_token",
 ]

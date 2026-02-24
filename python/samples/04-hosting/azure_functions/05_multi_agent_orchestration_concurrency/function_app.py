@@ -20,6 +20,10 @@ from agent_framework import AgentResponse
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +60,6 @@ app.add_agent(agents[1])
 @app.orchestration_trigger(context_name="context")
 def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext) -> Generator[Any, Any, dict[str, str]]:
     """Fan out to two domain-specific agents and aggregate their responses."""
-
     prompt = context.get_input()
     if not prompt or not str(prompt).strip():
         raise ValueError("Prompt is required")

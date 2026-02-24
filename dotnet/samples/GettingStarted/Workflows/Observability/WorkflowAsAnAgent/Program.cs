@@ -73,10 +73,7 @@ public static class Program
         // Set up the Azure OpenAI client
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
+        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
             .GetChatClient(deploymentName)
             .AsIChatClient()
             .AsBuilder()
@@ -89,7 +86,7 @@ public static class Program
 
         // Create the workflow and turn it into an agent with OpenTelemetry instrumentation
         var workflow = WorkflowHelper.GetWorkflow(chatClient, SourceName);
-        var agent = new OpenTelemetryAgent(workflow.AsAgent("workflow-agent", "Workflow Agent"), SourceName)
+        var agent = new OpenTelemetryAgent(workflow.AsAIAgent("workflow-agent", "Workflow Agent"), SourceName)
         {
             EnableSensitiveData = true  // enable sensitive data at the agent level such as prompts and responses
         };

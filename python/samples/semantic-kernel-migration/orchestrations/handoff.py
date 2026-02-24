@@ -22,6 +22,7 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from semantic_kernel.agents import Agent, ChatCompletionAgent, HandoffOrchestration, OrchestrationHandoffs
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
@@ -39,6 +40,8 @@ if sys.version_info >= (3, 12):
 else:
     pass  # pragma: no cover
 
+# Load environment variables from .env file
+load_dotenv()
 
 CUSTOMER_PROMPT = "I need help with order 12345. I want a replacement and need to know when it will arrive."
 SCRIPTED_RESPONSES = [
@@ -125,6 +128,7 @@ _sk_new_message = True
 
 def _sk_streaming_callback(message: StreamingChatMessageContent, is_final: bool) -> None:
     """Display SK agent messages as they stream."""
+
     global _sk_new_message
     if _sk_new_message:
         print(f"{message.name}: ", end="", flush=True)

@@ -18,10 +18,15 @@ the task in a round-robin fashion.
 import asyncio
 
 from agent_framework import Message
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def run_autogen() -> None:
     """AutoGen's RoundRobinGroupChat for sequential agent orchestration."""
+
     from autogen_agentchat.agents import AssistantAgent
     from autogen_agentchat.conditions import TextMentionTermination
     from autogen_agentchat.teams import RoundRobinGroupChat
@@ -139,7 +144,9 @@ async def run_agent_framework_with_cycle() -> None:
         if last_message and "APPROVED" in last_message.text:
             await context.yield_output("Content approved.")
         else:
-            await context.send_message(AgentExecutorRequest(messages=response.full_conversation, should_respond=True))
+            await context.send_message(
+                AgentExecutorRequest(messages=response.full_conversation, should_respond=True)
+            )
 
     workflow = (
         WorkflowBuilder(start_executor=researcher)

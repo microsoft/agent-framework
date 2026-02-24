@@ -7,8 +7,12 @@ from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.openai import OpenAIAssistantProvider
+from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 OpenAI Assistants with Existing Assistant Example
@@ -18,7 +22,9 @@ using the provider's get_agent() and as_agent() methods.
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

@@ -165,6 +165,105 @@ The package follows a flat import structure:
   from agent_framework.azure import AzureOpenAIChatClient
   ```
 
+## Exception Hierarchy
+
+The Agent Framework defines a structured exception hierarchy rooted at `AgentFrameworkException`. Every AF-specific
+exception inherits from this base, so callers can catch `AgentFrameworkException` as a broad fallback. The hierarchy
+is organized into domain-specific L1 branches, each with a consistent set of leaf exceptions where applicable.
+
+### Design Principles
+
+- **Domain-scoped branches**: Exceptions are grouped by the subsystem that raises them (agent, chat client,
+  integration, workflow, content, tool, middleware), not by HTTP status code or generic error category.
+- **Consistent suberror pattern**: The `AgentException`, `ChatClientException`, and `IntegrationException` branches
+  share a parallel set of leaf exceptions (`InvalidAuth`, `InvalidRequest`, `InvalidResponse`, `ContentFilter`) so
+  that callers can handle the same failure mode uniformly across domains.
+- **Built-ins for validation**: Configuration/parameter validation errors use Python built-in exceptions
+  (`ValueError`, `TypeError`, `RuntimeError`) rather than AF-specific classes. AF exceptions are reserved for
+  domain-level failures that callers may want to catch and handle distinctly from programming errors.
+- **No compatibility aliases**: When exceptions are renamed or removed, the old names are not kept as aliases.
+  This is a deliberate trade-off for hierarchy clarity over backward compatibility.
+- **Suffix convention**: L1 branch classes use `...Exception` (e.g., `AgentException`). Leaf classes may use
+  either `...Exception` or `...Error` depending on the domain convention (e.g., `ContentError`,
+  `WorkflowValidationError`). Within a branch, the suffix is consistent.
+
+### Full Hierarchy
+
+```
+AgentFrameworkException                          # Base for all AF exceptions
+├── AgentException                               # Agent-scoped failures
+│   ├── AgentInvalidAuthException                # Agent auth failures
+│   ├── AgentInvalidRequestException             # Invalid request to agent (e.g., agent not found, bad input)
+│   ├── AgentInvalidResponseException            # Invalid/unexpected response from agent
+│   └── AgentContentFilterException              # Agent content filter triggered
+│
+├── ChatClientException                          # Chat client lifecycle and communication failures
+│   ├── ChatClientInvalidAuthException           # Chat client auth failures
+│   ├── ChatClientInvalidRequestException        # Invalid request to chat client
+│   ├── ChatClientInvalidResponseException       # Invalid/unexpected response from chat client
+│   └── ChatClientContentFilterException         # Chat client content filter triggered
+│
+├── IntegrationException                         # External service/dependency integration failures
+│   ├── IntegrationInitializationError           # Wrapped dependency lifecycle failure during setup
+│   ├── IntegrationInvalidAuthException          # Integration auth failures (e.g., 401/403)
+│   ├── IntegrationInvalidRequestException       # Invalid request to integration
+│   ├── IntegrationInvalidResponseException      # Invalid/unexpected response from integration
+│   └── IntegrationContentFilterException        # Integration content filter triggered
+│
+├── ContentError                                 # Content processing/validation failures
+│   └── AdditionItemMismatch                     # Type mismatch when merging content items
+│
+├── WorkflowException                            # Workflow engine failures
+│   ├── WorkflowRunnerException                  # Runtime execution failures
+│   │   ├── WorkflowConvergenceException         # Runner exceeded max iterations
+│   │   └── WorkflowCheckpointException          # Checkpoint save/restore/decode failures
+│   ├── WorkflowValidationError                  # Graph validation errors
+│   │   ├── EdgeDuplicationError                 # Duplicate edge in workflow graph
+│   │   ├── TypeCompatibilityError               # Type mismatch between connected executors
+│   │   └── GraphConnectivityError               # Graph connectivity issues
+│   ├── WorkflowActionError                      # User-level error from declarative ThrowException action
+│   └── DeclarativeWorkflowError                 # Declarative workflow definition/YAML errors
+│
+├── ToolException                                # Tool-related failures
+│   └── ToolExecutionException                   # Failure during tool execution
+│
+├── MiddlewareException                          # Middleware failures
+│   └── MiddlewareTermination                    # Control-flow: early middleware termination
+│
+└── SettingNotFoundError                         # Required setting not resolved from any source
+```
+
+### When to Use AF Exceptions vs Built-ins
+
+| Scenario | Exception to use |
+|---|---|
+| Missing or invalid constructor argument (e.g., `api_key` is `None`) | `ValueError` or `TypeError` |
+| Object in wrong state (e.g., client not initialized) | `RuntimeError` |
+| External service returns 401/403 | `IntegrationInvalidAuthException` (or `ChatClient`/`Agent` variant) |
+| External service returns unexpected response | `IntegrationInvalidResponseException` (or variant) |
+| Content filter blocks a request | `IntegrationContentFilterException` (or variant) |
+| Request validation fails before sending to service | `IntegrationInvalidRequestException` (or variant) |
+| Agent not found in registry | `AgentInvalidRequestException` |
+| Agent returned no/bad response | `AgentInvalidResponseException` |
+| Workflow runner exceeds max iterations | `WorkflowConvergenceException` |
+| Checkpoint serialization/deserialization failure | `WorkflowCheckpointException` |
+| Workflow graph has invalid structure | `WorkflowValidationError` (or specific subclass) |
+| Declarative YAML definition error | `DeclarativeWorkflowError` |
+| Tool execution failure | `ToolExecutionException` |
+| Content merge type mismatch | `AdditionItemMismatch` |
+
+### Choosing Between Agent, ChatClient, and Integration Branches
+
+- **`AgentException`**: The failure is scoped to agent-level logic — agent lookup, agent response handling,
+  agent content filtering. Use when the agent itself is the source of the problem.
+- **`ChatClientException`**: The failure is scoped to the chat client (the LLM provider connection) — auth with
+  the LLM provider, request/response format issues specific to the chat protocol, chat-level content filtering.
+- **`IntegrationException`**: The failure is in a non-chat external dependency — search services, vector stores,
+  Purview, custom APIs, or any service that is not the primary LLM chat provider.
+
+When in doubt: if the code is in a chat client constructor or method, use `ChatClient*`. If it's in an agent
+method, use `Agent*`. If it's talking to an external service that isn't the chat LLM, use `Integration*`.
+
 ## Package Structure
 
 The project uses a monorepo structure with separate packages for each connector/extension:
@@ -299,7 +398,7 @@ They should contain:
 - Returns are specified after a header called `Returns:` or `Yields:`, with the return type and explanation of the return value.
 - Keyword arguments are specified after a header called `Keyword Args:`, with each argument being specified in the same format as `Args:`.
 - A header for exceptions can be added, called `Raises:`, following these guidelines:
-  - **Always document** Agent Framework specific exceptions (e.g., `AgentInitializationError`, `AgentExecutionException`)
+  - **Always document** Agent Framework specific exceptions (e.g., `AgentInvalidRequestException`, `IntegrationInvalidAuthException`)
   - **Only document** standard Python exceptions (TypeError, ValueError, KeyError, etc.) when the condition is non-obvious or provides value to API users
   - Format: `ExceptionType`: Explanation of the exception.
   - If a longer explanation is needed, it should be placed on the next line, indented by 4 spaces.

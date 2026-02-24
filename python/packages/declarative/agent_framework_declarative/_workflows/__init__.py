@@ -31,7 +31,6 @@ from ._executors_agents import (
     TOOL_REGISTRY_KEY,
     AgentExternalInputRequest,
     AgentExternalInputResponse,
-    AgentInvocationError,
     AgentResult,
     ExternalLoopState,
     InvokeAzureAgentExecutor,
@@ -41,6 +40,7 @@ from ._executors_basic import (
     BASIC_ACTION_EXECUTORS,
     AppendValueExecutor,
     ClearAllVariablesExecutor,
+    CreateConversationExecutor,
     EmitEventExecutor,
     ResetVariableExecutor,
     SendActivityExecutor,
@@ -69,13 +69,6 @@ from ._executors_external_input import (
     WaitForInputExecutor,
 )
 from ._factory import DeclarativeWorkflowError, WorkflowFactory
-from ._handlers import ActionHandler, action_handler, get_action_handler
-from ._human_input import (
-    ExternalLoopEvent,
-    QuestionRequest,
-    process_external_loop,
-    validate_input_response,
-)
 from ._state import WorkflowState
 
 __all__ = [
@@ -88,11 +81,9 @@ __all__ = [
     "EXTERNAL_INPUT_EXECUTORS",
     "TOOL_REGISTRY_KEY",
     "ActionComplete",
-    "ActionHandler",
     "ActionTrigger",
     "AgentExternalInputRequest",
     "AgentExternalInputResponse",
-    "AgentInvocationError",
     "AgentResult",
     "AppendValueExecutor",
     "BreakLoopExecutor",
@@ -100,6 +91,7 @@ __all__ = [
     "ConfirmationExecutor",
     "ContinueLoopExecutor",
     "ConversationData",
+    "CreateConversationExecutor",
     "DeclarativeActionExecutor",
     "DeclarativeMessage",
     "DeclarativeStateData",
@@ -111,7 +103,6 @@ __all__ = [
     "EndWorkflowExecutor",
     "ExternalInputRequest",
     "ExternalInputResponse",
-    "ExternalLoopEvent",
     "ExternalLoopState",
     "ForeachInitExecutor",
     "ForeachNextExecutor",
@@ -121,7 +112,6 @@ __all__ = [
     "LoopControl",
     "LoopIterationResult",
     "QuestionExecutor",
-    "QuestionRequest",
     "RequestExternalInputExecutor",
     "ResetVariableExecutor",
     "SendActivityExecutor",
@@ -132,8 +122,4 @@ __all__ = [
     "WaitForInputExecutor",
     "WorkflowFactory",
     "WorkflowState",
-    "action_handler",
-    "get_action_handler",
-    "process_external_loop",
-    "validate_input_response",
 ]

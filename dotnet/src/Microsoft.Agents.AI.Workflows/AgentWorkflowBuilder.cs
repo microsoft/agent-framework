@@ -135,7 +135,7 @@ public static partial class AgentWorkflowBuilder
 
         ExecutorBinding end = endFactory.BindExecutor(ConcurrentEndExecutor.ExecutorId);
 
-        builder.AddFanInEdge(accumulators, end);
+        builder.AddFanInBarrierEdge(accumulators, end);
 
         builder = builder.WithOutputFrom(end);
         if (workflowName is not null)

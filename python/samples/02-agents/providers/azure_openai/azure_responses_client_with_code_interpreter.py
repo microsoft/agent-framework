@@ -5,8 +5,12 @@ import asyncio
 from agent_framework import Agent, ChatResponse
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_code_interpreter_tool_call import ResponseCodeInterpreterToolCall
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Azure OpenAI Responses Client with Code Interpreter Example

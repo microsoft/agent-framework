@@ -11,6 +11,9 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
 Azure OpenAI Responses Client with Foundry Project Example
 
@@ -23,9 +26,7 @@ This requires:
 - The `azure-ai-projects` package to be installed.
 - The `AZURE_AI_PROJECT_ENDPOINT` environment variable set to your Foundry project endpoint.
 - The `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` environment variable set to the model deployment name.
-"""
-
-load_dotenv()  # Load environment variables from .env file if present
+"""  # Load environment variables from .env file if present
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.

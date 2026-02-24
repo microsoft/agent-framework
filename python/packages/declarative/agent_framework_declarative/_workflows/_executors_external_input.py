@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_framework._workflows import (
+from agent_framework import (
     WorkflowContext,
     handler,
     response_handler,

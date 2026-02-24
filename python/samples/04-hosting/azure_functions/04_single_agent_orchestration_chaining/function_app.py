@@ -19,6 +19,10 @@ import azure.functions as func
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +33,6 @@ WRITER_AGENT_NAME = "WriterAgent"
 # 2. Create the writer agent that will be invoked twice within the orchestration.
 def _create_writer_agent() -> Any:
     """Create the writer agent with the same persona as the C# sample."""
-
     instructions = (
         "You refine short pieces of text. When given an initial sentence you enhance it;\n"
         "when given an improved sentence you polish it further."
@@ -58,10 +61,7 @@ def single_agent_orchestration(context: DurableOrchestrationContext) -> Generato
         session=writer_session,
     )
 
-    improved_prompt = (
-        "Improve this further while keeping it under 25 words: "
-        f"{initial.text}"
-    )
+    improved_prompt = f"Improve this further while keeping it under 25 words: {initial.text}"
 
     refined = yield writer.run(
         messages=improved_prompt,

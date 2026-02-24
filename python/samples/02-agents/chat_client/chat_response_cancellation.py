@@ -3,6 +3,10 @@
 import asyncio
 
 from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Chat Response Cancellation Example
