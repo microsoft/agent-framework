@@ -8,6 +8,9 @@ on:
 env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
+  # setting GH_TOKEN for the entire workflow
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
 jobs:
   validate-01-get-started:
@@ -38,8 +41,6 @@ jobs:
         with:
           python-version: "3.12"
           os: ${{ runner.os }}
-        env:
-          UV_CACHE_DIR: /tmp/.uv-cache
 
       - name: Run sample validation
         run: |
