@@ -980,6 +980,51 @@ class TestEmitMcpToolResult:
         assert isinstance(result_event.content, str)
         assert '"key": "value"' in result_event.content
 
+    def test_resets_flow_state_like_emit_tool_result(self):
+        """MCP tool result performs same FlowState cleanup as _emit_tool_result.
+
+        Mirrors _emit_tool_result behavior: resets tool_call_id, tool_call_name,
+        closes any open text message, and resets accumulated_text.
+        """
+        flow = FlowState()
+        flow.tool_call_id = "mcp_call_7"
+        flow.tool_call_name = "brave/search"
+        flow.message_id = "open-msg-456"
+        flow.accumulated_text = "Let me search for that..."
+
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_call_7",
+            output="search results",
+        )
+
+        events = _emit_mcp_tool_result(content, flow)
+
+        # Verify FlowState cleanup
+        assert flow.tool_call_id is None
+        assert flow.tool_call_name is None
+        assert flow.message_id is None
+        assert flow.accumulated_text == ""
+
+        # Verify TextMessageEndEvent was emitted for the open message
+        text_end_events = [e for e in events if isinstance(e, TextMessageEndEvent)]
+        assert len(text_end_events) == 1
+        assert text_end_events[0].message_id == "open-msg-456"
+
+    def test_no_open_message_skips_text_end(self):
+        """MCP tool result without open text message skips TextMessageEndEvent."""
+        flow = FlowState()
+        flow.message_id = None
+
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_call_8",
+            output="result",
+        )
+
+        events = _emit_mcp_tool_result(content, flow)
+
+        text_end_events = [e for e in events if isinstance(e, TextMessageEndEvent)]
+        assert len(text_end_events) == 0
+
 
 class TestEmitTextReasoning:
     """Tests for _emit_text_reasoning function."""
@@ -1000,8 +1045,22 @@ class TestEmitTextReasoning:
         assert events[0].value["text"] == "The user is asking about weather, so I should call the weather tool."
         assert events[0].value["id"] == "reason_1"
 
-    def test_uses_protected_data_fallback(self):
-        """Falls back to protected_data when text is None."""
+    def test_protected_data_as_separate_key(self):
+        """protected_data is exposed under its own key, not conflated with text."""
+        flow = FlowState()
+        content = Content.from_text_reasoning(
+            text="visible reasoning",
+            protected_data="encrypted metadata",
+        )
+
+        events = _emit_text_reasoning(content, flow)
+
+        assert len(events) == 1
+        assert events[0].value["text"] == "visible reasoning"
+        assert events[0].value["protected_data"] == "encrypted metadata"
+
+    def test_protected_data_only_emits_event(self):
+        """Content with only protected_data (no text) still emits an event."""
         flow = FlowState()
         content = Content.from_text_reasoning(
             protected_data="encrypted reasoning content",
@@ -1010,9 +1069,10 @@ class TestEmitTextReasoning:
         events = _emit_text_reasoning(content, flow)
 
         assert len(events) == 1
-        assert events[0].value["text"] == "encrypted reasoning content"
+        assert events[0].value["text"] == ""
+        assert events[0].value["protected_data"] == "encrypted reasoning content"
 
-    def test_empty_text_returns_empty(self):
+    def test_empty_text_and_no_protected_data_returns_empty(self):
         """Empty text and no protected_data returns no events."""
         flow = FlowState()
         content = Content.from_text_reasoning()
