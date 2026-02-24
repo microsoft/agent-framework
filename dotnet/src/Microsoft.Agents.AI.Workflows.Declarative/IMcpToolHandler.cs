@@ -28,7 +28,7 @@ public interface IMcpToolHandler
     /// <param name="cancellationToken">A token to observe cancellation.</param>
     /// <returns>
     /// A task representing the asynchronous operation. The result contains a <see cref="McpServerToolResultContent"/>
-    /// with the tool invocation output, or <see langword="null"/> if the tool produced no result.
+    /// with the tool invocation output.
     /// </returns>
     Task<McpServerToolResultContent> InvokeToolAsync(
         string serverUrl,

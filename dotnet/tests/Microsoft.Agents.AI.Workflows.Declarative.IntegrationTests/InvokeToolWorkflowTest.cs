@@ -39,7 +39,7 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
 
     [Theory]
     [InlineData("InvokeMcpToolWithApproval.yaml", "Azure OpenAI", true)]
-    [InlineData("InvokeMcpToolWithApproval.yaml", null, false)]
+    [InlineData("InvokeMcpToolWithApproval.yaml", "MCP tool invocation was not approved by user", false)]
     public Task ValidateInvokeMcpToolWithApprovalAsync(string workflowFileName, string? expectedResultContains, bool approveRequest) =>
         this.RunInvokeMcpToolTestAsync(workflowFileName, expectedResultContains, requireApproval: true, approveRequest: approveRequest);
 
@@ -180,7 +180,6 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
 
         Workflow workflow = DeclarativeWorkflowBuilder.Build<string>(workflowPath, workflowOptions);
         WorkflowHarness harness = new(workflow, runId: Path.GetFileNameWithoutExtension(workflowPath));
-        bool toolInvoked = false;
 
         // Act - Run workflow and handle MCP tool invocations
         WorkflowEvents workflowEvents = await harness.RunWorkflowAsync("start").ConfigureAwait(false);
@@ -193,8 +192,7 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
 
             IList<AIContent> mcpResults = this.ProcessMcpToolRequests(
                 toolRequest,
-                approveRequest,
-                ref toolInvoked);
+                approveRequest);
 
             ChatMessage resultMessage = new(ChatRole.Tool, mcpResults);
             WorkflowEvents resumeEvents = await harness.ResumeAsync(
@@ -218,12 +216,6 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
             AssertResultContains(workflowEvents, expectedResultContains);
         }
 
-        // Assert - If approval was required and rejected, tool should not have been invoked
-        if (requireApproval && !approveRequest)
-        {
-            Assert.False(toolInvoked, "Tool should not have been invoked when approval was rejected");
-        }
-
         // Cleanup
         await mcpToolProvider.DisposeAsync().ConfigureAwait(false);
     }
@@ -234,8 +226,7 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
     /// </summary>
     private List<AIContent> ProcessMcpToolRequests(
         ExternalInputRequest toolRequest,
-        bool approveRequest,
-        ref bool toolInvoked)
+        bool approveRequest)
     {
         List<AIContent> results = [];
 
@@ -251,23 +242,6 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
                 results.Add(response);
 
                 this.Output.WriteLine($"MCP APPROVAL RESPONSE: {(approveRequest ? "Approved" : "Rejected")}");
-            }
-
-            // Handle MCP tool result content (when tool was invoked directly without approval)
-            foreach (McpServerToolResultContent resultContent in message.Contents.OfType<McpServerToolResultContent>())
-            {
-                toolInvoked = true;
-                this.Output.WriteLine($"MCP TOOL RESULT: {resultContent.CallId}");
-                if (resultContent.Output is not null)
-                {
-                    foreach (AIContent content in resultContent.Output)
-                    {
-                        if (content is TextContent textContent)
-                        {
-                            this.Output.WriteLine($"  Content: {textContent.Text?.Substring(0, Math.Min(textContent.Text.Length, 200))}...");
-                        }
-                    }
-                }
             }
         }
 
