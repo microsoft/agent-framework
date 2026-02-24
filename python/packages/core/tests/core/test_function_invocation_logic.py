@@ -831,8 +831,6 @@ async def test_rejection_result_uses_function_call_id(chat_client_base: Supports
     assert "rejected" in rejection_result.result.lower()
 
 
-@pytest.mark.skip(reason="Failsafe behavior with max_iterations needs investigation in unified API")
-@pytest.mark.skip(reason="Failsafe behavior with max_iterations needs investigation in unified API")
 async def test_max_iterations_limit(chat_client_base: SupportsChatGetResponse):
     """Test that MAX_ITERATIONS in additional_properties limits function call loops."""
     exec_counter = 0
@@ -2248,7 +2246,6 @@ async def test_streaming_approval_request_generated(chat_client_base: SupportsCh
     assert exec_counter == 0  # Function not executed yet due to approval requirement
 
 
-@pytest.mark.skip(reason="Failsafe behavior with max_iterations needs investigation in unified API")
 async def test_streaming_max_iterations_limit(chat_client_base: SupportsChatGetResponse):
     """Test that MAX_ITERATIONS in streaming mode limits function call loops."""
     exec_counter = 0
