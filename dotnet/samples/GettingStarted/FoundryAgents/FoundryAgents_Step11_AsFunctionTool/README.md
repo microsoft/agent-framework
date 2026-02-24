@@ -2,6 +2,8 @@
 
 This sample demonstrates how to expose an AI agent as a function tool, enabling nested agent scenarios where one agent can invoke another agent as a tool.
 
+Function tools are ideal for scenarios requiring deterministic and predictable behavior, such as API integrations with validation and transformations, database operations, or payment processing. Using .`AsAIFunction()` converts agents into function tools, enabling agent composition and the construction of advanced workflows with reliable execution.
+
 ## What this sample demonstrates
 
 - Creating an AI agent that can be used as a function tool
