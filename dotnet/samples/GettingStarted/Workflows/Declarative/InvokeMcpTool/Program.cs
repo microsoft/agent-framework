@@ -6,6 +6,7 @@
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
+using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Extensions.Configuration;
@@ -50,21 +51,65 @@ internal sealed class Program
         // Get input from command line or console
         string workflowInput = Application.GetInput(args);
 
-        // Create the MCP tool provider for invoking MCP server tools
-        DefaultMcpToolHandler mcpToolProvider = new(tokenCredential: new DefaultAzureCredential(), tokenScopes: ["https://mcp.ai.azure.com"]);
+        // Create the MCP tool provider for invoking MCP server tools.
+        // The httpClientProvider delegate allows configuring authentication per MCP server.
+        // Different MCP servers may require different authentication configurations.
+        // For Production scenarios, consider implementing a more robust HttpClient management strategy to reuse HttpClient instances and manage their lifetimes appropriately.
+        List<HttpClient> createdHttpClients = [];
+        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+        DefaultAzureCredential credential = new();
+        DefaultMcpToolHandler mcpToolProvider = new(
+            httpClientProvider: async (serverUrl, cancellationToken) =>
+            {
+                if (serverUrl.StartsWith("https://mcp.ai.azure.com", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Acquire token for the Azure MCP server
+                    AccessToken token = await credential.GetTokenAsync(
+                        new TokenRequestContext(["https://mcp.ai.azure.com/.default"]),
+                        cancellationToken);
 
-        // Create the workflow factory with MCP tool provider
-        WorkflowFactory workflowFactory = new("InvokeMcpTool.yaml", foundryEndpoint)
+                    // Create HttpClient with Authorization header
+                    HttpClient httpClient = new();
+                    httpClient.DefaultRequestHeaders.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token.Token);
+                    createdHttpClients.Add(httpClient);
+                    return httpClient;
+                }
+
+                if (serverUrl.StartsWith("https://learn.microsoft.com", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Microsoft Learn MCP server does not require authentication
+                    HttpClient httpClient = new();
+                    createdHttpClients.Add(httpClient);
+                    return httpClient;
+                }
+
+                // Return null for unknown servers to use the default HttpClient
+                return null;
+            });
+
+        try
         {
-            McpToolHandler = mcpToolProvider
-        };
+            // Create the workflow factory with MCP tool provider
+            WorkflowFactory workflowFactory = new("InvokeMcpTool.yaml", foundryEndpoint)
+            {
+                McpToolHandler = mcpToolProvider
+            };
 
-        // Execute the workflow
-        WorkflowRunner runner = new() { UseJsonCheckpoints = true };
-        await runner.ExecuteAsync(workflowFactory.CreateWorkflow, workflowInput);
+            // Execute the workflow
+            WorkflowRunner runner = new() { UseJsonCheckpoints = true };
+            await runner.ExecuteAsync(workflowFactory.CreateWorkflow, workflowInput);
+        }
+        finally
+        {
+            // Clean up connections and dispose created HttpClients
+            await mcpToolProvider.DisposeAsync();
 
-        // Clean up MCP connections
-        await mcpToolProvider.DisposeAsync();
+            foreach (HttpClient httpClient in createdHttpClients)
+            {
+                httpClient.Dispose();
+            }
+        }
     }
 
     private static async Task CreateAgentAsync(Uri foundryEndpoint, IConfiguration configuration)

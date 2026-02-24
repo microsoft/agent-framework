@@ -5,9 +5,7 @@ using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.Core;
 using Microsoft.Extensions.AI;
-using ModelContextProtocol.Authentication;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -17,86 +15,28 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// Default implementation of <see cref="IMcpToolHandler"/> using the MCP C# SDK.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This provider supports multiple authentication strategies:
-/// </para>
-/// <list type="bullet">
-/// <item>
-/// <description>
-/// <b>TokenCredential (silent auth)</b>: Uses Azure.Core <see cref="TokenCredential"/> to acquire tokens silently.
-/// This is the preferred method for Azure Managed Identity, Service Principal, or any Azure AD-based auth.
-/// </description>
-/// </item>
-/// <item>
-/// <description>
-/// <b>AuthorizationRedirectDelegate (interactive auth)</b>: Falls back to OAuth redirect flow if silent auth fails
-/// or if <see cref="TokenCredential"/> is not provided.
-/// </description>
-/// </item>
-/// <item>
-/// <description>
-/// <b>Pre-configured HttpClient</b>: If the supplied <see cref="HttpClient"/> has authentication already configured
-/// (e.g., via a <see cref="DelegatingHandler"/>), it will be used directly for MCP server calls.
-/// </description>
-/// </item>
-/// </list>
+/// This provider supports per-server authentication via the <c>httpClientProvider</c> callback.
+/// The callback allows different MCP servers to use different authentication configurations by returning
+/// a pre-configured <see cref="HttpClient"/> for each server.
 /// </remarks>
 public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 {
-    private readonly TokenCredential? _tokenCredential;
-    private readonly string[]? _tokenScopes;
-    private readonly AuthorizationRedirectDelegate? _authorizationHandler;
-    private readonly HttpClient? _httpClient;
-    private readonly bool _disposeHttpClient;
-    private readonly bool _httpClientHasAuth;
+    private readonly Func<string, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
     private readonly Dictionary<string, McpClient> _clients = [];
+    private readonly Dictionary<string, HttpClient> _ownedHttpClients = [];
     private readonly SemaphoreSlim _clientLock = new(1, 1);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DefaultMcpToolHandler"/> class.
     /// </summary>
-    /// <param name="tokenCredential">
-    /// An optional <see cref="TokenCredential"/> for silent token acquisition (e.g., DefaultAzureCredential, ManagedIdentityCredential).
-    /// If provided, tokens will be acquired silently before falling back to the redirect handler.
+    /// <param name="httpClientProvider">
+    /// An optional callback that provides an <see cref="HttpClient"/> for each MCP server.
+    /// The callback receives (serverUrl, cancellationToken) and should return an HttpClient
+    /// configured with any required authentication. Return <see langword="null"/> to use a default HttpClient with no auth.
     /// </param>
-    /// <param name="tokenScopes">
-    /// The scopes to request when acquiring tokens. Required if <paramref name="tokenCredential"/> is provided.
-    /// For example: <c>new[] { "https://api.example.com/.default" }</c>
-    /// </param>
-    /// <param name="authorizationHandler">
-    /// An optional delegate to handle OAuth authorization redirect flows. Used as a fallback if silent auth fails.
-    /// Use the MCP SDK's <see cref="AuthorizationRedirectDelegate"/> type.
-    /// </param>
-    /// <param name="httpClient">
-    /// An optional HTTP client to use for connections. If not provided, a default client will be created.
-    /// </param>
-    /// <param name="httpClientHasAuth">
-    /// Set to <c>true</c> if the supplied <paramref name="httpClient"/> already has authentication configured
-    /// (e.g., via a <see cref="DelegatingHandler"/> that adds Authorization headers). When <c>true</c>, the provider
-    /// will not configure any additional authentication and will rely on the client's existing auth setup.
-    /// </param>
-    public DefaultMcpToolHandler(
-        TokenCredential? tokenCredential = null,
-        string[]? tokenScopes = null,
-        AuthorizationRedirectDelegate? authorizationHandler = null,
-        HttpClient? httpClient = null,
-        bool httpClientHasAuth = false)
+    public DefaultMcpToolHandler(Func<string, CancellationToken, Task<HttpClient?>>? httpClientProvider = null)
     {
-        this._tokenCredential = tokenCredential;
-        this._tokenScopes = tokenScopes;
-        this._authorizationHandler = authorizationHandler;
-        this._httpClientHasAuth = httpClientHasAuth;
-
-        if (httpClient is not null)
-        {
-            this._httpClient = httpClient;
-            this._disposeHttpClient = false;
-        }
-        else
-        {
-            this._httpClient = new HttpClient();
-            this._disposeHttpClient = true;
-        }
+        this._httpClientProvider = httpClientProvider;
     }
 
     /// <inheritdoc/>
@@ -109,8 +49,9 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         string? connectionName,
         CancellationToken cancellationToken = default)
     {
+        //TODO: Handle connectionName and server label appropriately when Hosted scenario supports them. For now, ignore
         McpServerToolResultContent resultContent = new("McpServerToolcallId");
-        McpClient client = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, connectionName, cancellationToken).ConfigureAwait(false);
+        McpClient client = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, cancellationToken).ConfigureAwait(false);
 
         // Convert IDictionary to IReadOnlyDictionary for CallToolAsync
         IReadOnlyDictionary<string, object?>? readOnlyArguments = arguments is null
@@ -140,15 +81,18 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             }
 
             this._clients.Clear();
+
+            // Dispose only HttpClients that the handler created (not user-provided ones)
+            foreach (HttpClient httpClient in this._ownedHttpClients.Values)
+            {
+                httpClient.Dispose();
+            }
+
+            this._ownedHttpClients.Clear();
         }
         finally
         {
             this._clientLock.Release();
-        }
-
-        if (this._disposeHttpClient)
-        {
-            this._httpClient?.Dispose();
         }
 
         this._clientLock.Dispose();
@@ -158,10 +102,9 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         string serverUrl,
         string? serverLabel,
         IDictionary<string, string>? headers,
-        string? connectionName,
         CancellationToken cancellationToken)
     {
-        string cacheKey = $"{serverUrl}|{serverLabel}|{connectionName}";
+        string cacheKey = $"{serverUrl.Trim().ToUpperInvariant()}";
 
         await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -171,7 +114,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
                 return existingClient;
             }
 
-            McpClient newClient = await this.CreateClientAsync(serverUrl, serverLabel, headers, cancellationToken).ConfigureAwait(false);
+            McpClient newClient = await this.CreateClientAsync(serverUrl, serverLabel, headers, cacheKey, cancellationToken).ConfigureAwait(false);
             this._clients[cacheKey] = newClient;
             return newClient;
         }
@@ -185,70 +128,34 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         string serverUrl,
         string? serverLabel,
         IDictionary<string, string>? headers,
+        string cacheKey,
         CancellationToken cancellationToken)
     {
-        // Merge headers with token if using TokenCredential
-        IDictionary<string, string>? effectiveHeaders = headers;
-        if (this._tokenCredential is not null && this._tokenScopes is not null && !this._httpClientHasAuth)
+        // Get HttpClient from provider or create a default one
+        HttpClient? httpClient = null;
+
+        if (this._httpClientProvider is not null)
         {
-            effectiveHeaders = await this.AddTokenToHeadersAsync(headers, cancellationToken).ConfigureAwait(false);
+            httpClient = await this._httpClientProvider(serverUrl, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (httpClient is null)
+        {
+            httpClient = new HttpClient();
+            this._ownedHttpClients[cacheKey] = httpClient;
         }
 
         HttpClientTransportOptions transportOptions = new()
         {
             Endpoint = new Uri(serverUrl),
             Name = serverLabel ?? "McpClient",
-            AdditionalHeaders = effectiveHeaders,
+            AdditionalHeaders = headers,
             TransportMode = HttpTransportMode.AutoDetect
         };
 
-        // Configure OAuth redirect handler if provided and not using pre-configured HttpClient auth
-        if (this._authorizationHandler is not null && !this._httpClientHasAuth)
-        {
-            transportOptions.OAuth = new()
-            {
-                DynamicClientRegistration = new()
-                {
-                    ClientName = serverLabel ?? "WorkflowMcpClient",
-                },
-                RedirectUri = new Uri("http://localhost:0/callback"),
-                AuthorizationRedirectDelegate = this._authorizationHandler,
-            };
-        }
-
-        HttpClientTransport transport = new(transportOptions, this._httpClient!);
+        HttpClientTransport transport = new(transportOptions, httpClient);
 
         return await McpClient.CreateAsync(transport, cancellationToken: cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<IDictionary<string, string>?> AddTokenToHeadersAsync(
-        IDictionary<string, string>? existingHeaders,
-        CancellationToken cancellationToken)
-    {
-        if (this._tokenCredential is null || this._tokenScopes is null)
-        {
-            return existingHeaders;
-        }
-
-        try
-        {
-            // Acquire token silently
-            TokenRequestContext context = new(this._tokenScopes);
-            AccessToken token = await this._tokenCredential.GetTokenAsync(context, cancellationToken).ConfigureAwait(false);
-
-            // Create or copy headers and add Authorization
-            Dictionary<string, string> headers = existingHeaders is not null
-                ? new Dictionary<string, string>(existingHeaders)
-                : [];
-
-            headers["Authorization"] = $"Bearer {token.Token}";
-            return headers;
-        }
-        catch (Exception)
-        {
-            // If silent auth fails, return original headers and let OAuth redirect handle it
-            return existingHeaders;
-        }
     }
 
     private static void PopulateResultContent(McpServerToolResultContent resultContent, CallToolResult result)
