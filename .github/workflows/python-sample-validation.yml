@@ -40,7 +40,7 @@ jobs:
 
       - name: Test Copilot CLI
         run: |
-          copilot -p "What can you do?""
+          copilot -p "What can you do?"
 
       - name: Set up python and install the project
         uses: ./.github/actions/python-setup
