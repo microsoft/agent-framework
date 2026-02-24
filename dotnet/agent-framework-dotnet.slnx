@@ -233,13 +233,14 @@
   <Folder Name="/Samples/04-hosting/DurableAgents/AzureFunctions/">
     <File Path="samples/04-hosting/DurableAgents/AzureFunctions/.editorconfig" />
     <File Path="samples/04-hosting/DurableAgents/AzureFunctions/README.md" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/01_AgentOrchestration_Chaining/01_AgentOrchestration_Chaining.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/02_AgentOrchestration_Concurrency/02_AgentOrchestration_Concurrency.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/03_AgentOrchestration_Conditionals/03_AgentOrchestration_Conditionals.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/04_AgentOrchestration_HITL/04_AgentOrchestration_HITL.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/05_LongRunningTools/05_LongRunningTools.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/06_AgentAsMcpTool/06_AgentAsMcpTool.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/07_ReliableStreaming/07_ReliableStreaming.csproj" />
+    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/01_SingleAgent/01_SingleAgent.csproj" />
+    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/02_AgentOrchestration_Chaining/02_AgentOrchestration_Chaining.csproj" />
+    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/03_AgentOrchestration_Concurrency/03_AgentOrchestration_Concurrency.csproj" />
+    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/04_AgentOrchestration_Conditionals/04_AgentOrchestration_Conditionals.csproj" />
+    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/05_AgentOrchestration_HITL/05_AgentOrchestration_HITL.csproj" />
+    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/06_LongRunningTools/06_LongRunningTools.csproj" />
+    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/07_AgentAsMcpTool/07_AgentAsMcpTool.csproj" />
+    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/08_ReliableStreaming/08_ReliableStreaming.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/DurableAgents/ConsoleApps/">
     <File Path="samples/04-hosting/DurableAgents/ConsoleApps/README.md" />
