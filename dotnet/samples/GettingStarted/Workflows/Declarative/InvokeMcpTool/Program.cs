@@ -30,7 +30,9 @@ namespace Demo.Workflows.Declarative.InvokeMcpTool;
 /// <item>Integrating with MCP-compatible services</item>
 /// </list>
 /// <para>
-/// This sample uses the Microsoft Learn MCP server to search Azure documentation.
+/// This sample uses the Microsoft Learn MCP server to search Azure documentation and the Azure foundry MCP server to get AI model details.
+/// When you run the sample, provide an AI model (e.g. gpt-4.1-mini) as input,
+/// The workflow will use the MCP tools to find relevant information about the model from Microsoft Learn and foundry, then an agent will summarize the results.
 /// </para>
 /// <para>
 /// See the README.md file in the parent folder (../README.md) for detailed
@@ -51,14 +53,14 @@ internal sealed class Program
         // Get input from command line or console
         string workflowInput = Application.GetInput(args);
 
-        // Create the MCP tool provider for invoking MCP server tools.
-        // The httpClientProvider delegate allows configuring authentication per MCP server.
+        // Create the MCP tool handler for invoking MCP server tools.
+        // The HttpClient callback allows configuring authentication per MCP server.
         // Different MCP servers may require different authentication configurations.
         // For Production scenarios, consider implementing a more robust HttpClient management strategy to reuse HttpClient instances and manage their lifetimes appropriately.
         List<HttpClient> createdHttpClients = [];
         // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
         DefaultAzureCredential credential = new();
-        DefaultMcpToolHandler mcpToolProvider = new(
+        DefaultMcpToolHandler mcpToolHandler = new(
             httpClientProvider: async (serverUrl, cancellationToken) =>
             {
                 if (serverUrl.StartsWith("https://mcp.ai.azure.com", StringComparison.OrdinalIgnoreCase))
@@ -84,7 +86,7 @@ internal sealed class Program
                     return httpClient;
                 }
 
-                // Return null for unknown servers to use the default HttpClient
+                // Return null for unknown servers to use the default HttpClient without auth.
                 return null;
             });
 
@@ -93,7 +95,7 @@ internal sealed class Program
             // Create the workflow factory with MCP tool provider
             WorkflowFactory workflowFactory = new("InvokeMcpTool.yaml", foundryEndpoint)
             {
-                McpToolHandler = mcpToolProvider
+                McpToolHandler = mcpToolHandler
             };
 
             // Execute the workflow
@@ -103,7 +105,7 @@ internal sealed class Program
         finally
         {
             // Clean up connections and dispose created HttpClients
-            await mcpToolProvider.DisposeAsync();
+            await mcpToolHandler.DisposeAsync();
 
             foreach (HttpClient httpClient in createdHttpClients)
             {
