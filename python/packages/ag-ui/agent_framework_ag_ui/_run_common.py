@@ -356,12 +356,14 @@ def _emit_usage(content: Content) -> list[BaseEvent]:
 
 
 def _emit_mcp_tool_call(content: Content, flow: FlowState) -> list[BaseEvent]:
-    """Emit ToolCall events for MCP server tool call content.
+    """Emit ToolCall start/args events for MCP server tool call content.
 
-    MCP tool calls arrive as complete items (not streamed deltas), so we emit
-    the full start -> args -> end sequence immediately.  This maps MCP-specific
-    fields (tool_name, server_name) to the same AG-UI ToolCall* events used by
-    regular function calls, making MCP tool execution visible to AG-UI consumers.
+    MCP tool calls arrive as complete items (not streamed deltas), so we emit a
+    ``ToolCallStartEvent`` (and, when arguments are present, a ``ToolCallArgsEvent``)
+    immediately. This maps MCP-specific fields (tool_name, server_name) to the
+    same AG-UI ToolCall* events used by regular function calls, making MCP tool
+    execution visible to AG-UI consumers. Completion/end events are handled
+    separately by ``_emit_mcp_tool_result``.
 
     Fixes #4213.
     """
@@ -410,6 +412,10 @@ def _emit_mcp_tool_result(content: Content, flow: FlowState) -> list[BaseEvent]:
     used by regular function results.  Uses ``content.output`` (the MCP-specific
     result field) instead of ``content.result``.
 
+    Mirrors the FlowState cleanup performed by ``_emit_tool_result`` (resetting
+    tool_call_id/tool_call_name, closing any open text message) so MCP results
+    behave consistently with standard tool results.
+
     Fixes #4213.
     """
     events: list[BaseEvent] = []
@@ -441,6 +447,16 @@ def _emit_mcp_tool_result(content: Content, flow: FlowState) -> list[BaseEvent]:
         }
     )
 
+    # Mirror _emit_tool_result cleanup so MCP results behave consistently
+    flow.tool_call_id = None
+    flow.tool_call_name = None
+
+    if flow.message_id:
+        logger.debug("Closing text message for MCP tool result: message_id=%s", flow.message_id)
+        events.append(TextMessageEndEvent(message_id=flow.message_id))
+    flow.message_id = None
+    flow.accumulated_text = ""
+
     return events
 
 
@@ -454,11 +470,18 @@ def _emit_text_reasoning(content: Content, flow: FlowState) -> list[BaseEvent]:
 
     Fixes #4213.
     """
-    text = content.text or content.protected_data or ""
-    if not text:
+    # Only emit user-visible text from content.text. Do not fall back to
+    # protected_data as text, since protected_data may contain non-display
+    # payloads such as provider-specific reasoning metadata.
+    text = content.text or ""
+    if not text and content.protected_data is None:
         return []
 
     value: dict[str, Any] = {"text": text}
+    # Expose protected_data under a separate key so consumers can decide
+    # whether/how to render it, without conflating it with display text.
+    if content.protected_data is not None:
+        value["protected_data"] = content.protected_data
     if content.id:
         value["id"] = content.id
 
