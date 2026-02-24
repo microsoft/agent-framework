@@ -132,7 +132,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
             {
                 runActivity.AddEvent(new ActivityEvent(EventNames.WorkflowError, tags: new() {
                              { Tags.ErrorType, ex.GetType().FullName },
-                             { Tags.BuildErrorMessage, ex.Message },
+                             { Tags.ErrorMessage, ex.Message },
                         }));
                 runActivity.CaptureException(ex);
             }
@@ -142,7 +142,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
             {
                 sessionActivity.AddEvent(new ActivityEvent(EventNames.SessionError, tags: new() {
                              { Tags.ErrorType, ex.GetType().FullName },
-                             { Tags.BuildErrorMessage, ex.Message },
+                             { Tags.ErrorMessage, ex.Message },
                         }));
                 sessionActivity.CaptureException(ex);
             }
@@ -157,7 +157,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
             // Mark as ended when run loop exits
             this._runStatus = RunStatus.Ended;
 
-            // Safety net: stop the run-stage activity if not already stopped (e.g. on cancellation or error)
+            // Stop the run-stage activity if not already stopped (e.g. on cancellation or error)
             if (runActivity is not null)
             {
                 runActivity.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));

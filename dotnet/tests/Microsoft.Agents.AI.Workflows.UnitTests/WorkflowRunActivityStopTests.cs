@@ -2,12 +2,10 @@
 
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using FluentAssertions;
-using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Observability;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -166,11 +164,16 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
 
         // Act - use streaming path (WatchStreamAsync), which is the pattern from the issue
         var workflow = CreateWorkflow();
-        await using StreamingRun run = await InProcessExecution.OffThread.RunStreamingAsync(workflow, "Hello, World!");
+        StreamingRun run = await InProcessExecution.OffThread.RunStreamingAsync(workflow, "Hello, World!");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             // Consume all events
         }
+
+        // Dispose the run before asserting — the run Activity is disposed when the
+        // run loop exits, which happens during DisposeAsync. Without this, assertions
+        // can race against the background run loop's finally block.
+        await run.DisposeAsync();
 
         // Assert - workflow.session should have been started
         var startedSessions = this._startedActivities

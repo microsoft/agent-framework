@@ -277,6 +277,9 @@ public sealed class ObservabilityTests : IDisposable
         capturedActivities.Should().NotContain(
             a => a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal),
             "WorkflowRun activity should be disabled.");
+        capturedActivities.Should().NotContain(
+            a => a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal),
+            "WorkflowSession activity should also be disabled when DisableWorkflowRun is true.");
         capturedActivities.Should().Contain(
             a => a.OperationName.StartsWith(ActivityNames.WorkflowBuild, StringComparison.Ordinal),
             "Other activities should still be created.");

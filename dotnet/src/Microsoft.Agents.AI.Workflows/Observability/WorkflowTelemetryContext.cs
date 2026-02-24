@@ -88,9 +88,10 @@ internal sealed class WorkflowTelemetryContext
     }
 
     /// <summary>
-    /// Starts a workflow session activity if enabled. This is a root-level span
+    /// Starts a workflow session activity if enabled. This is the outer/parent span
     /// that represents the entire lifetime of a workflow execution (from start
-    /// until stop, cancellation, or error). Individual run stages are nested within it.
+    /// until stop, cancellation, or error) within the current trace.
+    /// Individual run stages are typically nested within it.
     /// </summary>
     /// <returns>An activity if workflow run telemetry is enabled, otherwise null.</returns>
     public Activity? StartWorkflowSessionActivity()

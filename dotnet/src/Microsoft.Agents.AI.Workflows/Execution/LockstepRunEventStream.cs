@@ -56,7 +56,11 @@ internal sealed class LockstepRunEventStream : IRunEventStream
 
         this._stepRunner.OutgoingEvents.EventRaised += OnWorkflowEventAsync;
 
-        using Activity? activity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity();
+        // Do NOT use a 'using' declaration for the Activity inside an async iterator.
+        // In compiled async iterator state machines, 'using' locals are only disposed when
+        // DisposeAsync() is called on the enumerator. Activity.Stop (fired by Dispose) is
+        // time-sensitive for OpenTelemetry export, so we dispose explicitly in the finally block.
+        Activity? activity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity();
         activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.SessionId, this._stepRunner.SessionId);
 
         try
@@ -85,7 +89,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                     {
                         activity.AddEvent(new ActivityEvent(EventNames.WorkflowError, tags: new() {
                              { Tags.ErrorType, ex.GetType().FullName },
-                             { Tags.BuildErrorMessage, ex.Message },
+                             { Tags.ErrorMessage, ex.Message },
                         }));
                         activity.CaptureException(ex);
                         throw;
@@ -141,6 +145,11 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         {
             this.RunStatus = this._stepRunner.HasUnservicedRequests ? RunStatus.PendingRequests : RunStatus.Idle;
             this._stepRunner.OutgoingEvents.EventRaised -= OnWorkflowEventAsync;
+
+            // Explicitly dispose the Activity so Activity.Stop fires deterministically,
+            // regardless of how the async iterator enumerator is disposed.
+            activity?.Dispose();
+            linkedSource.Dispose();
         }
 
         ValueTask OnWorkflowEventAsync(object? sender, WorkflowEvent e)
