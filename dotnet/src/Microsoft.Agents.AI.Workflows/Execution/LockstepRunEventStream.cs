@@ -18,6 +18,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
     private int _isDisposed;
 
     private readonly ISuperStepRunner _stepRunner;
+    private Activity? _sessionActivity;
 
     public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellationToken = default) => new(this.RunStatus);
 
@@ -30,7 +31,12 @@ internal sealed class LockstepRunEventStream : IRunEventStream
 
     public void Start()
     {
-        // No-op for lockstep execution
+        // Start the session-level activity that spans the entire lockstep execution lifetime.
+        // Individual run-stage activities are nested within this session activity.
+        this._sessionActivity = this._stepRunner.TelemetryContext.StartWorkflowSessionActivity();
+        this._sessionActivity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId)
+                              .SetTag(Tags.SessionId, this._stepRunner.SessionId);
+        this._sessionActivity?.AddEvent(new ActivityEvent(EventNames.SessionStarted));
     }
 
     public async IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(bool blockOnPendingRequest, [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -171,6 +177,14 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         if (Interlocked.Exchange(ref this._isDisposed, 1) == 0)
         {
             this._stopCancellation.Cancel();
+
+            // Stop the session activity — the session ends when the stream is disposed
+            if (this._sessionActivity is not null)
+            {
+                this._sessionActivity.AddEvent(new ActivityEvent(EventNames.SessionCompleted));
+                this._sessionActivity.Dispose();
+                this._sessionActivity = null;
+            }
 
             this._stopCancellation.Dispose();
             this._inputWaiter.Dispose();

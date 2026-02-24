@@ -70,7 +70,7 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
     /// disposed because yield break in async iterators does not trigger using disposal.
     /// </summary>
     [Fact]
-    public async Task WorkflowRunActivity_IsStopped_Lockstep()
+    public async Task WorkflowRunActivity_IsStopped_LockstepAsync()
     {
         // Arrange
         using var testActivity = new Activity("WorkflowRunStopTest_Lockstep").Start();
@@ -80,15 +80,27 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
         Run run = await InProcessExecution.Lockstep.RunAsync(workflow, "Hello, World!");
         await run.DisposeAsync();
 
-        // Assert - workflow.run should have been started
+        // Assert - workflow.session should have been started and stopped
+        var startedSessions = this._startedActivities
+            .Where(a => a.RootId == testActivity.RootId &&
+                        a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
+            .ToList();
+        startedSessions.Should().HaveCount(1, "workflow.session Activity should be started");
+
+        var stoppedSessions = this._stoppedActivities
+            .Where(a => a.RootId == testActivity.RootId &&
+                        a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
+            .ToList();
+        stoppedSessions.Should().HaveCount(1,
+            "workflow.session Activity should be stopped/disposed so it is exported to telemetry backends");
+
+        // Assert - workflow.run should have been started and stopped
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal))
             .ToList();
         startedWorkflowRuns.Should().HaveCount(1, "workflow.run Activity should be started");
 
-        // Assert - workflow.run should have been stopped (i.e., Dispose/Stop was called)
-        // This is the core assertion for issue #4155: the ActivityStopped callback must fire
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal))
@@ -102,7 +114,7 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
     /// execution environment (StreamingRunEventStream).
     /// </summary>
     [Fact]
-    public async Task WorkflowRunActivity_IsStopped_OffThread()
+    public async Task WorkflowRunActivity_IsStopped_OffThreadAsync()
     {
         // Arrange
         using var testActivity = new Activity("WorkflowRunStopTest_OffThread").Start();
@@ -112,14 +124,27 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
         Run run = await InProcessExecution.OffThread.RunAsync(workflow, "Hello, World!");
         await run.DisposeAsync();
 
-        // Assert - workflow.run should have been started
+        // Assert - workflow.session should have been started and stopped
+        var startedSessions = this._startedActivities
+            .Where(a => a.RootId == testActivity.RootId &&
+                        a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
+            .ToList();
+        startedSessions.Should().HaveCount(1, "workflow.session Activity should be started");
+
+        var stoppedSessions = this._stoppedActivities
+            .Where(a => a.RootId == testActivity.RootId &&
+                        a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
+            .ToList();
+        stoppedSessions.Should().HaveCount(1,
+            "workflow.session Activity should be stopped/disposed so it is exported to telemetry backends");
+
+        // Assert - workflow.run should have been started and stopped
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal))
             .ToList();
         startedWorkflowRuns.Should().HaveCount(1, "workflow.run Activity should be started");
 
-        // Assert - workflow.run should have been stopped
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal))
@@ -134,7 +159,7 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
     /// This matches the exact usage pattern described in the issue.
     /// </summary>
     [Fact]
-    public async Task WorkflowRunActivity_IsStopped_Streaming_OffThread()
+    public async Task WorkflowRunActivity_IsStopped_Streaming_OffThreadAsync()
     {
         // Arrange
         using var testActivity = new Activity("WorkflowRunStopTest_Streaming_OffThread").Start();
@@ -146,6 +171,13 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
         {
             // Consume all events
         }
+
+        // Assert - workflow.session should have been started
+        var startedSessions = this._startedActivities
+            .Where(a => a.RootId == testActivity.RootId &&
+                        a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
+            .ToList();
+        startedSessions.Should().HaveCount(1, "workflow.session Activity should be started");
 
         // Assert - workflow.run should have been started
         var startedWorkflowRuns = this._startedActivities
@@ -164,11 +196,73 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
     }
 
     /// <summary>
+    /// Verifies that a new workflow.run activity is started and stopped for each
+    /// streaming invocation, even when using the same workflow in a multi-turn pattern,
+    /// and that each session gets its own session activity.
+    /// </summary>
+    [Fact]
+    public async Task WorkflowRunActivity_IsStopped_Streaming_OffThread_MultiTurnAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("WorkflowRunStopTest_Streaming_OffThread_MultiTurn").Start();
+
+        var workflow = CreateWorkflow();
+
+        // Act - first streaming run
+        await using (StreamingRun run1 = await InProcessExecution.OffThread.RunStreamingAsync(workflow, "Hello, World!"))
+        {
+            await foreach (WorkflowEvent evt in run1.WatchStreamAsync())
+            {
+                // Consume all events from first turn
+            }
+        }
+
+        // Act - second streaming run (multi-turn scenario with same workflow)
+        await using (StreamingRun run2 = await InProcessExecution.OffThread.RunStreamingAsync(workflow, "Second turn!"))
+        {
+            await foreach (WorkflowEvent evt in run2.WatchStreamAsync())
+            {
+                // Consume all events from second turn
+            }
+        }
+
+        // Assert - two workflow.session activities should have been started and stopped
+        var startedSessions = this._startedActivities
+            .Where(a => a.RootId == testActivity.RootId &&
+                        a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
+            .ToList();
+        startedSessions.Should().HaveCount(2,
+            "each streaming invocation should start its own workflow.session Activity");
+
+        var stoppedSessions = this._stoppedActivities
+            .Where(a => a.RootId == testActivity.RootId &&
+                        a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
+            .ToList();
+        stoppedSessions.Should().HaveCount(2,
+            "each workflow.session Activity should be stopped/disposed so it is exported to telemetry backends");
+
+        // Assert - two workflow.run activities should have been started and stopped
+        var startedWorkflowRuns = this._startedActivities
+            .Where(a => a.RootId == testActivity.RootId &&
+                        a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal))
+            .ToList();
+        startedWorkflowRuns.Should().HaveCount(2,
+            "each streaming invocation should start its own workflow.run Activity");
+
+        var stoppedWorkflowRuns = this._stoppedActivities
+            .Where(a => a.RootId == testActivity.RootId &&
+                        a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal))
+            .ToList();
+        stoppedWorkflowRuns.Should().HaveCount(2,
+            "each workflow.run Activity should be stopped/disposed so it is exported to telemetry backends in multi-turn scenarios");
+    }
+
+    /// <summary>
     /// Verifies that all started activities (not just workflow.run) are properly stopped.
     /// This ensures no spans are "leaked" without being exported.
     /// </summary>
     [Fact]
-    public async Task AllActivities_AreStopped_AfterWorkflowCompletion()
+    public async Task AllActivities_AreStopped_AfterWorkflowCompletionAsync()
     {
         // Arrange
         using var testActivity = new Activity("AllActivitiesStopTest").Start();

@@ -43,15 +43,16 @@ public sealed class ObservabilityTests : IDisposable
     /// Create a sample workflow for testing.
     /// </summary>
     /// <remarks>
-    /// This workflow is expected to create 8 activities that will be captured by the tests
+    /// This workflow is expected to create 9 activities that will be captured by the tests
     /// - ActivityNames.WorkflowBuild
-    /// - ActivityNames.WorkflowRun
-    /// -- ActivityNames.EdgeGroupProcess
-    /// -- ActivityNames.ExecutorProcess (UppercaseExecutor)
-    /// --- ActivityNames.MessageSend
-    /// ---- ActivityNames.EdgeGroupProcess
-    /// -- ActivityNames.ExecutorProcess (ReverseTextExecutor)
-    /// --- ActivityNames.MessageSend
+    /// - ActivityNames.WorkflowSession
+    /// -- ActivityNames.WorkflowRun
+    /// --- ActivityNames.EdgeGroupProcess
+    /// --- ActivityNames.ExecutorProcess (UppercaseExecutor)
+    /// ---- ActivityNames.MessageSend
+    /// ----- ActivityNames.EdgeGroupProcess
+    /// --- ActivityNames.ExecutorProcess (ReverseTextExecutor)
+    /// ---- ActivityNames.MessageSend
     /// </remarks>
     /// <returns>The created workflow.</returns>
     private static Workflow CreateWorkflow()
@@ -74,6 +75,7 @@ public sealed class ObservabilityTests : IDisposable
         new()
         {
             { ActivityNames.WorkflowBuild, 1 },
+            { ActivityNames.WorkflowSession, 1 },
             { ActivityNames.WorkflowRun, 1 },
             { ActivityNames.EdgeGroupProcess, 2 },
             { ActivityNames.ExecutorProcess, 2 },
@@ -113,7 +115,7 @@ public sealed class ObservabilityTests : IDisposable
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        capturedActivities.Should().HaveCount(8, "Exactly 8 activities should be created.");
+        capturedActivities.Should().HaveCount(9, "Exactly 9 activities should be created.");
 
         // Make sure all expected activities exist and have the correct count
         foreach (var kvp in GetExpectedActivityNameCounts())

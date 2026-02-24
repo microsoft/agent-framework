@@ -5,6 +5,7 @@ namespace Microsoft.Agents.AI.Workflows.Observability;
 internal static class ActivityNames
 {
     public const string WorkflowBuild = "workflow.build";
+    public const string WorkflowSession = "workflow.session";
     public const string WorkflowRun = "workflow_invoke";
     public const string MessageSend = "message.send";
     public const string ExecutorProcess = "executor.process";

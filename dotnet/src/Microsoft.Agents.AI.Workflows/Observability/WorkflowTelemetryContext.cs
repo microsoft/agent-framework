@@ -88,7 +88,24 @@ internal sealed class WorkflowTelemetryContext
     }
 
     /// <summary>
-    /// Starts a workflow run activity if enabled.
+    /// Starts a workflow session activity if enabled. This is a root-level span
+    /// that represents the entire lifetime of a workflow execution (from start
+    /// until stop, cancellation, or error). Individual run stages are nested within it.
+    /// </summary>
+    /// <returns>An activity if workflow run telemetry is enabled, otherwise null.</returns>
+    public Activity? StartWorkflowSessionActivity()
+    {
+        if (!this.IsEnabled || this.Options.DisableWorkflowRun)
+        {
+            return null;
+        }
+
+        return this.ActivitySource.StartActivity(ActivityNames.WorkflowSession);
+    }
+
+    /// <summary>
+    /// Starts a workflow run activity if enabled. This represents a single
+    /// input-to-halt cycle within a workflow session.
     /// </summary>
     /// <returns>An activity if workflow run telemetry is enabled, otherwise null.</returns>
     public Activity? StartWorkflowRunActivity()
