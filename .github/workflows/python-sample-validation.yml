@@ -38,6 +38,10 @@ jobs:
       - name: Install Copilot CLI
         run: npm install -g @github/copilot
 
+      - name: Test Copilot CLI
+        run: |
+          copilot -p "What can you do?""
+
       - name: Set up python and install the project
         uses: ./.github/actions/python-setup
         with:
