@@ -31,7 +31,7 @@ $env:ANTHROPIC_CHAT_MODEL_NAME="your-anthropic-model"  # Replace with your Anthr
 Navigate to the AgentWithAnthropic sample directory and run:
 
 ```powershell
-cd dotnet\samples/02-agents/AgentWithAnthropic
+cd dotnet\samples\02-agents\AgentWithAnthropic
 dotnet run --project .\Agent_Anthropic_Step03_UsingFunctionTools
 ```
 

@@ -411,9 +411,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         # See https://github.com/microsoft/agent-framework/issues/3434
         if chunk.usage:
             contents.append(
-                Content.from_usage(
-                    usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk
-                )
+                Content.from_usage(usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk)
             )
 
         for choice in chunk.choices:
@@ -591,7 +589,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         # See https://github.com/microsoft/agent-framework/issues/4084
         for msg in all_messages:
             msg_content: Any = msg.get("content")
-            if isinstance(msg_content, list) and all(isinstance(c, dict) and c.get("type") == "text" for c in msg_content):
+            if isinstance(msg_content, list) and all(
+                isinstance(c, dict) and c.get("type") == "text" for c in msg_content
+            ):
                 msg["content"] = "\n".join(c.get("text", "") for c in msg_content)
 
         return all_messages

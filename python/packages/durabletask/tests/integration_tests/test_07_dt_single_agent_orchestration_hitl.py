@@ -24,6 +24,8 @@ logging.basicConfig(level=logging.WARNING)
 
 # Module-level markers
 pytestmark = [
+    pytest.mark.flaky,
+    pytest.mark.integration,
     pytest.mark.sample("07_single_agent_orchestration_hitl"),
     pytest.mark.integration_test,
     pytest.mark.requires_dts,

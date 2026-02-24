@@ -618,11 +618,23 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         """
         response = ResponseStream(
             self._get_stream(messages, session=session, options=options, **kwargs),
-            finalizer=AgentResponse.from_updates,
+            finalizer=self._finalize_response,
         )
         if stream:
             return response
         return response.get_final_response()
+
+    def _finalize_response(self, updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
+        """Build AgentResponse and propagate structured_output as value.
+
+        Args:
+            updates: The collected stream updates.
+
+        Returns:
+            An AgentResponse with structured_output set as value if present.
+        """
+        structured_output = getattr(self, "_structured_output", None)
+        return AgentResponse.from_updates(updates, value=structured_output)
 
     async def _get_stream(
         self,
@@ -647,6 +659,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         await self._apply_runtime_options(dict(options) if options else None)
 
         session_id: str | None = None
+        structured_output: Any = None
 
         await self._client.query(prompt)
         async for message in self._client.receive_response():
@@ -700,7 +713,11 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
                     error_msg = message.result or "Unknown error from Claude API"
                     raise AgentException(f"Claude API error: {error_msg}")
                 session_id = message.session_id
+                structured_output = message.structured_output
 
         # Update session with session ID
         if session_id:
             session.service_session_id = session_id
+
+        # Store structured output for the finalizer
+        self._structured_output = structured_output

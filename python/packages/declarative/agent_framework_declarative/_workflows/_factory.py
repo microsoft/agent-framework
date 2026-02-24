@@ -91,6 +91,7 @@ class WorkflowFactory:
         bindings: Mapping[str, Any] | None = None,
         env_file: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
+        max_iterations: int | None = None,
     ) -> None:
         """Initialize the workflow factory.
 
@@ -101,6 +102,9 @@ class WorkflowFactory:
             bindings: Optional function bindings for tool calls within workflow actions.
             env_file: Optional path to .env file for environment variables used in agent creation.
             checkpoint_storage: Optional checkpoint storage enabling pause/resume functionality.
+            max_iterations: Optional maximum runner supersteps.  Overrides the YAML ``maxTurns``
+                field and the core default (100).  Workflows with ``GotoAction`` loops (e.g.
+                DeepResearch) typically need a higher value.
 
         Examples:
             .. code-block:: python
@@ -138,6 +142,7 @@ class WorkflowFactory:
         self._agents: dict[str, SupportsAgentRun | AgentExecutor] = dict(agents) if agents else {}
         self._bindings: dict[str, Any] = dict(bindings) if bindings else {}
         self._checkpoint_storage = checkpoint_storage
+        self._max_iterations = max_iterations
 
     def create_workflow_from_yaml_path(
         self,
@@ -379,6 +384,7 @@ class WorkflowFactory:
                 workflow_id=name,
                 agents=agents,
                 checkpoint_storage=self._checkpoint_storage,
+                max_iterations=self._max_iterations,
             )
             workflow = graph_builder.build()
         except ValueError as e:

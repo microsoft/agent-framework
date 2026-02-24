@@ -121,9 +121,17 @@ client = OpenAIChatClient(env_file_path="openai.env")
 
 ## Tests
 
-All the tests are located in the `tests` folder of each package. There are tests that are marked with a `@skip_if_..._integration_tests_disabled` decorator, these are integration tests that require an external service to be running, like OpenAI or Azure OpenAI.
+All the tests are located in the `tests` folder of each package. Tests marked with `@pytest.mark.integration` and `@skip_if_..._integration_tests_disabled` are integration tests that require external services (e.g., OpenAI, Azure OpenAI). They are automatically skipped when the required API keys or service endpoints are not configured in your environment or `.env` file.
 
-If you want to run these tests, you need to set the environment variable `RUN_INTEGRATION_TESTS` to `true` and have the appropriate key per services set in your environment or in a `.env` file.
+You can select or exclude integration tests using pytest markers:
+
+```bash
+# Run only unit tests (exclude integration tests)
+uv run poe all-tests -m "not integration"
+
+# Run only integration tests
+uv run poe all-tests -m integration
+```
 
 Alternatively, you can run them using VSCode Tasks. Open the command palette
 (`Ctrl+Shift+P`) and type `Tasks: Run Task`. Select `Test` from the list.
@@ -133,6 +141,8 @@ If you want to run the tests for a single package, you can use the `uv run poe t
 ```bash
 uv run poe --directory packages/core test
 ```
+
+Large packages (core, ag-ui, orchestrations, anthropic) use `pytest-xdist` for parallel test execution within the package. The `all-tests` task also uses xdist across all packages.
 
 These commands also output the coverage report.
 
