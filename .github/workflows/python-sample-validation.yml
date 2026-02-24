@@ -16,16 +16,22 @@ jobs:
     permissions:
       contents: read
     env:
-      # Azure AI configuration for get-started samples
-      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ secrets.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
-      # GitHub Copilot configuration
-      GITHUB_COPILOT_MODEL: ${{ vars.GITHUB_COPILOT_MODEL }}
+      # Required configuration for get-started samples
+      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
+      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
     defaults:
       run:
         working-directory: python
     steps:
       - uses: actions/checkout@v6
+
+      - name: Set up Node.js environment
+        uses: actions/setup-node@v4
+
+      - name: Install Copilot CLI
+        run: npm install -g @github/copilot
 
       - name: Set up python and install the project
         uses: ./.github/actions/python-setup
