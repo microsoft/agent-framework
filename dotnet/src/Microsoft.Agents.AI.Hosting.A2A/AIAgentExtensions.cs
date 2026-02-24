@@ -116,6 +116,15 @@ public static class AIAgentExtensions
         JsonSerializerOptions continuationTokenJsonOptions,
         CancellationToken cancellationToken)
     {
+        // AIAgent does not support resuming from arbitrary prior tasks.
+        // Throw explicitly so the client gets a clear error rather than a response
+        // that silently ignores the referenced task context.
+        // Follow-ups on the *same* task are handled via OnTaskUpdated instead.
+        if (messageSendParams.Message.ReferenceTaskIds is { Count: > 0 })
+        {
+            throw new NotSupportedException("ReferenceTaskIds is not supported. AIAgent cannot resume from arbitrary prior task context. Use OnTaskUpdated for follow-ups on the same task.");
+        }
+
         var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString("N");
         var session = await hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
 
