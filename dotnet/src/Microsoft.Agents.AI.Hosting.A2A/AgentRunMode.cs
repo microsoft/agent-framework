@@ -28,13 +28,13 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
     /// Dissallows the background responses from the agent. Is equivalent to configuring <see cref="AgentRunOptions.AllowBackgroundResponses"/> as <c>false</c>.
     /// In the A2A protocol terminology will make responses be returned as <c>AgentMessage</c>.
     /// </summary>
-    public static AgentRunMode NonBackground => new(MessageValue);
+    public static AgentRunMode DisallowBackground => new(MessageValue);
 
     /// <summary>
     /// Allows the background responses from the agent. Is equivalent to configuring <see cref="AgentRunOptions.AllowBackgroundResponses"/> as <c>true</c>.
     /// In the A2A protocol terminology will make responses be returned as <c>AgentTask</c> if the agent supports background responses, and as <c>AgentMessage</c> otherwise.
     /// </summary>
-    public static AgentRunMode BackgroundIfSupported => new(TaskValue);
+    public static AgentRunMode AllowBackgroundIfSupported => new(TaskValue);
 
     /// <summary>
     /// The agent run mode is decided by the supplied <paramref name="runInBackground"/> delegate.
@@ -48,7 +48,7 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
     /// <param name="runInBackground">
     /// An async delegate that decides whether the response should be wrapped in an <c>AgentTask</c>.
     /// </param>
-    public static AgentRunMode Dynamic(Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>> runInBackground)
+    public static AgentRunMode AllowBackgroundWhen(Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>> runInBackground)
     {
         ArgumentNullException.ThrowIfNull(runInBackground);
         return new(DynamicValue, runInBackground);

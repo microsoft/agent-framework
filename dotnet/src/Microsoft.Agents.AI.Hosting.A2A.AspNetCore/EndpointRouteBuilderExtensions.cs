@@ -204,7 +204,7 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     /// discovery mechanism.
     /// </remarks>
     public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, string agentName, string path, AgentCard agentCard, Action<ITaskManager> configureTaskManager)
-        => endpoints.MapA2A(agentName, path, agentCard, configureTaskManager, AgentRunMode.NonBackground);
+        => endpoints.MapA2A(agentName, path, agentCard, configureTaskManager, AgentRunMode.DisallowBackground);
 
     /// <summary>
     /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
@@ -258,7 +258,7 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     /// <param name="configureTaskManager">The callback to configure <see cref="ITaskManager"/>.</param>
     /// <returns>Configured <see cref="ITaskManager"/> for A2A integration.</returns>
     public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, AIAgent agent, string path, Action<ITaskManager> configureTaskManager)
-        => endpoints.MapA2A(agent, path, configureTaskManager, AgentRunMode.NonBackground);
+        => endpoints.MapA2A(agent, path, configureTaskManager, AgentRunMode.DisallowBackground);
 
     /// <summary>
     /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.
@@ -331,7 +331,7 @@ public static class MicrosoftAgentAIHostingA2AEndpointRouteBuilderExtensions
     /// discovery mechanism.
     /// </remarks>
     public static IEndpointConventionBuilder MapA2A(this IEndpointRouteBuilder endpoints, AIAgent agent, string path, AgentCard agentCard, Action<ITaskManager> configureTaskManager)
-        => endpoints.MapA2A(agent, path, agentCard, configureTaskManager, AgentRunMode.NonBackground);
+        => endpoints.MapA2A(agent, path, agentCard, configureTaskManager, AgentRunMode.DisallowBackground);
 
     /// <summary>
     /// Attaches A2A (Agent2Agent) communication capabilities via Message processing to the specified web application.

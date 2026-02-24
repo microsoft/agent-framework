@@ -42,7 +42,7 @@ public static class AIAgentExtensions
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentNullException.ThrowIfNull(agent.Name);
 
-        runMode ??= AgentRunMode.NonBackground;
+        runMode ??= AgentRunMode.DisallowBackground;
 
         var hostAgent = new AIHostAgent(
             innerAgent: agent,
