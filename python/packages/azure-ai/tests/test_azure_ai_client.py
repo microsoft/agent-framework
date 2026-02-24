@@ -1685,6 +1685,35 @@ def test_get_code_interpreter_tool_with_file_ids() -> None:
     assert tool["container"]["file_ids"] == ["file-123", "file-456"]
 
 
+def test_get_code_interpreter_tool_with_content() -> None:
+    """Test get_code_interpreter_tool accepts Content.from_hosted_file in file_ids."""
+    from agent_framework import Content
+
+    content = Content.from_hosted_file("file-content-123")
+    tool = AzureAIClient.get_code_interpreter_tool(file_ids=[content])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert tool["container"]["file_ids"] == ["file-content-123"]
+
+
+def test_get_code_interpreter_tool_with_mixed_file_ids() -> None:
+    """Test get_code_interpreter_tool accepts a mix of strings and Content objects."""
+    from agent_framework import Content
+
+    content = Content.from_hosted_file("file-from-content")
+    tool = AzureAIClient.get_code_interpreter_tool(file_ids=["file-plain", content])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert sorted(tool["container"]["file_ids"]) == ["file-from-content", "file-plain"]
+
+
+def test_get_code_interpreter_tool_content_unsupported_type() -> None:
+    """Test get_code_interpreter_tool raises ValueError for unsupported Content types."""
+    from agent_framework import Content
+
+    content = Content.from_hosted_vector_store("vs-123")
+    with pytest.raises(ValueError, match="Unsupported Content type"):
+        AzureAIClient.get_code_interpreter_tool(file_ids=[content])
+
+
 def test_get_file_search_tool_basic() -> None:
     """Test get_file_search_tool returns FileSearchTool."""
     tool = AzureAIClient.get_file_search_tool(vector_store_ids=["vs-123"])

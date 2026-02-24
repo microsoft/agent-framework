@@ -50,7 +50,7 @@ from azure.ai.projects.models import (
 from azure.ai.projects.models import FileSearchTool as ProjectsFileSearchTool
 from azure.core.exceptions import ResourceNotFoundError
 
-from ._shared import AzureAISettings, create_text_format_config
+from ._shared import AzureAISettings, create_text_format_config, resolve_file_ids
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -830,14 +830,16 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
     @staticmethod
     def get_code_interpreter_tool(  # type: ignore[override]
         *,
-        file_ids: list[str] | None = None,
+        file_ids: list[str | Content] | None = None,
         container: Literal["auto"] | dict[str, Any] = "auto",
         **kwargs: Any,
     ) -> CodeInterpreterTool:
         """Create a code interpreter tool configuration for Azure AI Projects.
 
         Keyword Args:
-            file_ids: Optional list of file IDs to make available to the code interpreter.
+            file_ids: Optional list of file IDs or Content objects to make available to
+                the code interpreter. Accepts plain strings or Content.from_hosted_file()
+                instances.
             container: Container configuration. Use "auto" for automatic container management.
                 Note: Custom container settings from this parameter are not used by Azure AI Projects;
                 use file_ids instead.
@@ -857,7 +859,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         # Extract file_ids from container if provided as dict and file_ids not explicitly set
         if file_ids is None and isinstance(container, dict):
             file_ids = container.get("file_ids")
-        tool_container = CodeInterpreterToolAuto(file_ids=file_ids if file_ids else None)
+        resolved = resolve_file_ids(file_ids)
+        tool_container = CodeInterpreterToolAuto(file_ids=resolved)
         return CodeInterpreterTool(container=tool_container, **kwargs)
 
     @staticmethod

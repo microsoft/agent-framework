@@ -912,6 +912,38 @@ async def test_azure_ai_chat_client_get_code_interpreter_tool_mutually_exclusive
         AzureAIAgentClient.get_code_interpreter_tool(file_ids=["file-abc"], data_sources=[ds])
 
 
+async def test_azure_ai_chat_client_get_code_interpreter_tool_with_content() -> None:
+    """Test get_code_interpreter_tool accepts Content.from_hosted_file in file_ids."""
+    from agent_framework import Content
+    from azure.ai.agents.models import CodeInterpreterTool
+
+    content = Content.from_hosted_file("file-content-123")
+    tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=[content])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert "file-content-123" in tool.file_ids
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_with_mixed_file_ids() -> None:
+    """Test get_code_interpreter_tool accepts a mix of strings and Content objects."""
+    from agent_framework import Content
+    from azure.ai.agents.models import CodeInterpreterTool
+
+    content = Content.from_hosted_file("file-from-content")
+    tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=["file-plain", content])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert "file-plain" in tool.file_ids
+    assert "file-from-content" in tool.file_ids
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_content_unsupported_type() -> None:
+    """Test get_code_interpreter_tool raises ValueError for unsupported Content types."""
+    from agent_framework import Content
+
+    content = Content.from_hosted_vector_store("vs-123")
+    with pytest.raises(ValueError, match="Unsupported Content type"):
+        AzureAIAgentClient.get_code_interpreter_tool(file_ids=[content])
+
+
 async def test_azure_ai_chat_client_create_agent_stream_submit_tool_approvals(
     mock_agents_client: MagicMock,
 ) -> None:
