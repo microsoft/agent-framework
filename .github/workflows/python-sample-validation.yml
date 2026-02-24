@@ -1,0 +1,304 @@
+name: Python - Sample Validation
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *" # Run at midnight UTC daily
+
+env:
+  # Configure a constant location for the uv cache
+  UV_CACHE_DIR: /tmp/.uv-cache
+
+jobs:
+  validate-01-get-started:
+    name: Validate 01-get-started
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Azure AI configuration for get-started samples
+      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ secrets.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
+      # GitHub Copilot configuration
+      GITHUB_COPILOT_MODEL: ${{ vars.GITHUB_COPILOT_MODEL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: "3.12"
+          os: ${{ runner.os }}
+        env:
+          UV_CACHE_DIR: /tmp/.uv-cache
+
+      - name: Run sample validation
+        run: |
+          cd samples && uv run python -m _sample_validation --subdir 01-get-started --save-report --report-name 01-get-started
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-report-01-get-started
+          path: python/samples/_sample_validation/reports/
+
+  validate-02-agents:
+    name: Validate 02-agents
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Azure AI configuration
+      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ secrets.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
+      # Azure OpenAI configuration
+      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_CHAT_DEPLOYMENT_NAME }}
+      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME }}
+      # OpenAI configuration
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI_CHAT_MODEL_ID }}
+      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI_RESPONSES_MODEL_ID }}
+      # Observability
+      ENABLE_INSTRUMENTATION: "true"
+      # GitHub Copilot configuration
+      GITHUB_COPILOT_MODEL: ${{ vars.GITHUB_COPILOT_MODEL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: "3.12"
+          os: ${{ runner.os }}
+        env:
+          UV_CACHE_DIR: /tmp/.uv-cache
+
+      - name: Run sample validation
+        run: |
+          cd samples && uv run python -m _sample_validation --subdir 02-agents --save-report --report-name 02-agents
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-report-02-agents
+          path: python/samples/_sample_validation/reports/
+
+  validate-03-workflows:
+    name: Validate 03-workflows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Azure AI configuration
+      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ secrets.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
+      # Azure OpenAI configuration
+      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_CHAT_DEPLOYMENT_NAME }}
+      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME }}
+      # GitHub Copilot configuration
+      GITHUB_COPILOT_MODEL: ${{ vars.GITHUB_COPILOT_MODEL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: "3.12"
+          os: ${{ runner.os }}
+        env:
+          UV_CACHE_DIR: /tmp/.uv-cache
+
+      - name: Run sample validation
+        run: |
+          cd samples && uv run python -m _sample_validation --subdir 03-workflows --save-report --report-name 03-workflows
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-report-03-workflows
+          path: python/samples/_sample_validation/reports/
+
+  validate-04-hosting:
+    name: Validate 04-hosting
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Azure AI configuration
+      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ secrets.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
+      # Azure OpenAI configuration
+      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME }}
+      # GitHub Copilot configuration
+      GITHUB_COPILOT_MODEL: ${{ vars.GITHUB_COPILOT_MODEL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: "3.12"
+          os: ${{ runner.os }}
+        env:
+          UV_CACHE_DIR: /tmp/.uv-cache
+
+      - name: Run sample validation
+        run: |
+          cd samples && uv run python -m _sample_validation --subdir 04-hosting --save-report --report-name 04-hosting
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-report-04-hosting
+          path: python/samples/_sample_validation/reports/
+
+  validate-05-end-to-end:
+    name: Validate 05-end-to-end
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Azure AI configuration
+      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ secrets.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
+      # Azure OpenAI configuration
+      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_CHAT_DEPLOYMENT_NAME }}
+      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME }}
+      # Azure AI Search (for evaluation samples)
+      AZURE_SEARCH_ENDPOINT: ${{ secrets.AZURE_SEARCH_ENDPOINT }}
+      AZURE_SEARCH_API_KEY: ${{ secrets.AZURE_SEARCH_API_KEY }}
+      AZURE_SEARCH_INDEX_NAME: ${{ secrets.AZURE_SEARCH_INDEX_NAME }}
+      # GitHub Copilot configuration
+      GITHUB_COPILOT_MODEL: ${{ vars.GITHUB_COPILOT_MODEL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: "3.12"
+          os: ${{ runner.os }}
+        env:
+          UV_CACHE_DIR: /tmp/.uv-cache
+
+      - name: Run sample validation
+        run: |
+          cd samples && uv run python -m _sample_validation --subdir 05-end-to-end --save-report --report-name 05-end-to-end
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-report-05-end-to-end
+          path: python/samples/_sample_validation/reports/
+
+  validate-autogen-migration:
+    name: Validate autogen-migration
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Azure AI configuration
+      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ secrets.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
+      # Azure OpenAI configuration
+      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_CHAT_DEPLOYMENT_NAME }}
+      # GitHub Copilot configuration
+      GITHUB_COPILOT_MODEL: ${{ vars.GITHUB_COPILOT_MODEL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: "3.12"
+          os: ${{ runner.os }}
+        env:
+          UV_CACHE_DIR: /tmp/.uv-cache
+
+      - name: Run sample validation
+        run: |
+          cd samples && uv run python -m _sample_validation --subdir autogen-migration --save-report --report-name autogen-migration
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-report-autogen-migration
+          path: python/samples/_sample_validation/reports/
+
+  validate-semantic-kernel-migration:
+    name: Validate semantic-kernel-migration
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Azure AI configuration
+      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ secrets.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
+      # Azure OpenAI configuration
+      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_CHAT_DEPLOYMENT_NAME }}
+      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME }}
+      # OpenAI configuration
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI_CHAT_MODEL_ID }}
+      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI_RESPONSES_MODEL_ID }}
+      # Copilot Studio
+      COPILOTSTUDIOAGENT__ENVIRONMENTID: ${{ secrets.COPILOTSTUDIOAGENT__ENVIRONMENTID }}
+      COPILOTSTUDIOAGENT__SCHEMANAME: ${{ secrets.COPILOTSTUDIOAGENT__SCHEMANAME }}
+      COPILOTSTUDIOAGENT__TENANTID: ${{ secrets.COPILOTSTUDIOAGENT__TENANTID }}
+      COPILOTSTUDIOAGENT__AGENTAPPID: ${{ secrets.COPILOTSTUDIOAGENT__AGENTAPPID }}
+      # GitHub Copilot configuration
+      GITHUB_COPILOT_MODEL: ${{ vars.GITHUB_COPILOT_MODEL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: "3.12"
+          os: ${{ runner.os }}
+        env:
+          UV_CACHE_DIR: /tmp/.uv-cache
+
+      - name: Run sample validation
+        run: |
+          cd samples && uv run python -m _sample_validation --subdir semantic-kernel-migration --save-report --report-name semantic-kernel-migration
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-report-semantic-kernel-migration
+          path: python/samples/_sample_validation/reports/

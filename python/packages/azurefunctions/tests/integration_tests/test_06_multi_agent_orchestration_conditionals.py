@@ -22,6 +22,8 @@ import pytest
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
+    pytest.mark.flaky,
+    pytest.mark.integration,
     pytest.mark.orchestration,
     pytest.mark.sample("06_multi_agent_orchestration_conditionals"),
     pytest.mark.usefixtures("function_app_for_test"),
