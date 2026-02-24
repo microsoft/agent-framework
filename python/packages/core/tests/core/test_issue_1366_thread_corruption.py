@@ -15,8 +15,6 @@ returned response, potentially losing conversation history.
 See: https://github.com/microsoft/agent-framework/issues/1366
 """
 
-import pytest
-
 from agent_framework import (
     ChatResponse,
     Content,
@@ -53,9 +51,7 @@ async def test_max_iterations_exhausted_returns_orphaned_function_calls(
             messages=Message(
                 role="assistant",
                 contents=[
-                    Content.from_function_call(
-                        call_id="call_1", name="test_function", arguments='{"arg1": "v1"}'
-                    )
+                    Content.from_function_call(call_id="call_1", name="test_function", arguments='{"arg1": "v1"}')
                 ],
             )
         ),
@@ -63,9 +59,7 @@ async def test_max_iterations_exhausted_returns_orphaned_function_calls(
             messages=Message(
                 role="assistant",
                 contents=[
-                    Content.from_function_call(
-                        call_id="call_2", name="test_function", arguments='{"arg1": "v2"}'
-                    )
+                    Content.from_function_call(call_id="call_2", name="test_function", arguments='{"arg1": "v2"}')
                 ],
             )
         ),
@@ -73,9 +67,7 @@ async def test_max_iterations_exhausted_returns_orphaned_function_calls(
             messages=Message(
                 role="assistant",
                 contents=[
-                    Content.from_function_call(
-                        call_id="call_3", name="test_function", arguments='{"arg1": "v3"}'
-                    )
+                    Content.from_function_call(call_id="call_3", name="test_function", arguments='{"arg1": "v3"}')
                 ],
             )
         ),
@@ -131,9 +123,7 @@ async def test_max_iterations_exhausted_makes_final_toolchoice_none_call(
             messages=Message(
                 role="assistant",
                 contents=[
-                    Content.from_function_call(
-                        call_id="call_1", name="test_function", arguments='{"arg1": "v1"}'
-                    )
+                    Content.from_function_call(call_id="call_1", name="test_function", arguments='{"arg1": "v1"}')
                 ],
             )
         ),
@@ -141,9 +131,7 @@ async def test_max_iterations_exhausted_makes_final_toolchoice_none_call(
             messages=Message(
                 role="assistant",
                 contents=[
-                    Content.from_function_call(
-                        call_id="call_2", name="test_function", arguments='{"arg1": "v2"}'
-                    )
+                    Content.from_function_call(call_id="call_2", name="test_function", arguments='{"arg1": "v2"}')
                 ],
             )
         ),
@@ -201,9 +189,7 @@ async def test_max_iterations_preserves_all_fcc_messages(
             messages=Message(
                 role="assistant",
                 contents=[
-                    Content.from_function_call(
-                        call_id="call_1", name="test_function", arguments='{"arg1": "v1"}'
-                    )
+                    Content.from_function_call(call_id="call_1", name="test_function", arguments='{"arg1": "v1"}')
                 ],
             )
         ),
@@ -211,9 +197,7 @@ async def test_max_iterations_preserves_all_fcc_messages(
             messages=Message(
                 role="assistant",
                 contents=[
-                    Content.from_function_call(
-                        call_id="call_2", name="test_function", arguments='{"arg1": "v2"}'
-                    )
+                    Content.from_function_call(call_id="call_2", name="test_function", arguments='{"arg1": "v2"}')
                 ],
             )
         ),
@@ -245,8 +229,7 @@ async def test_max_iterations_preserves_all_fcc_messages(
 
     # Both should have matching results
     assert all_call_ids == all_result_ids, (
-        f"Mismatched function calls and results. "
-        f"Calls: {all_call_ids}, Results: {all_result_ids}"
+        f"Mismatched function calls and results. Calls: {all_call_ids}, Results: {all_result_ids}"
     )
 
 

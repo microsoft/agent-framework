@@ -2164,15 +2164,11 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         # Error threshold reached: force a final non-tool turn so
                         # function_call_output items are submitted before exit.
                         mutable_options["tool_choice"] = "none"
-                    elif (
-                        max_function_calls is not None
-                        and total_function_calls >= max_function_calls
-                    ):
+                    elif max_function_calls is not None and total_function_calls >= max_function_calls:
                         # Best-effort limit: checked after each batch of parallel calls completes,
                         # so the current batch always runs to completion even if it overshoots.
                         logger.info(
-                            "Maximum function calls reached (%d/%d). "
-                            "Stopping further function calls for this request.",
+                            "Maximum function calls reached (%d/%d). Stopping further function calls for this request.",
                             total_function_calls,
                             max_function_calls,
                         )
@@ -2202,8 +2198,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 # function_call items without matching results (issue #1366).
                 if response is not None:
                     logger.info(
-                        "Maximum iterations reached (%d). "
-                        "Requesting final response without tools.",
+                        "Maximum iterations reached (%d). Requesting final response without tools.",
                         self.function_invocation_configuration["max_iterations"],
                     )
                 mutable_options["tool_choice"] = "none"
@@ -2309,15 +2304,11 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     mutable_options["tool_choice"] = "none"
                 elif result["action"] != "continue":
                     return
-                elif (
-                    max_function_calls is not None
-                    and total_function_calls >= max_function_calls
-                ):
+                elif max_function_calls is not None and total_function_calls >= max_function_calls:
                     # Best-effort limit: checked after each batch of parallel calls completes,
                     # so the current batch always runs to completion even if it overshoots.
                     logger.info(
-                        "Maximum function calls reached (%d/%d). "
-                        "Stopping further function calls for this request.",
+                        "Maximum function calls reached (%d/%d). Stopping further function calls for this request.",
                         total_function_calls,
                         max_function_calls,
                     )
@@ -2346,8 +2337,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             # function_call items without matching results (issue #1366).
             if response is not None:
                 logger.info(
-                    "Maximum iterations reached (%d). "
-                    "Requesting final response without tools.",
+                    "Maximum iterations reached (%d). Requesting final response without tools.",
                     self.function_invocation_configuration["max_iterations"],
                 )
             mutable_options["tool_choice"] = "none"
