@@ -10,6 +10,7 @@ env:
   UV_CACHE_DIR: /tmp/.uv-cache
   # setting GH_TOKEN for the entire workflow
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GITHUB_COPILOT_MODEL: claude-opus-4.6
 
 
 jobs:
