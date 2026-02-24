@@ -785,3 +785,163 @@ class TestApplyRuntimeOptions:
         await agent._apply_runtime_options(None)  # type: ignore[reportPrivateUsage]
         mock_client.set_model.assert_not_called()
         mock_client.set_permission_mode.assert_not_called()
+
+
+# region Test ClaudeAgent Structured Output
+
+
+class TestClaudeAgentStructuredOutput:
+    """Tests for ClaudeAgent structured output propagation."""
+
+    @staticmethod
+    async def _create_async_generator(items: list[Any]) -> Any:
+        """Helper to create async generator from list."""
+        for item in items:
+            yield item
+
+    def _create_mock_client(self, messages: list[Any]) -> MagicMock:
+        """Create a mock ClaudeSDKClient that yields given messages."""
+        mock_client = MagicMock()
+        mock_client.connect = AsyncMock()
+        mock_client.disconnect = AsyncMock()
+        mock_client.query = AsyncMock()
+        mock_client.set_model = AsyncMock()
+        mock_client.set_permission_mode = AsyncMock()
+        mock_client.receive_response = MagicMock(return_value=self._create_async_generator(messages))
+        return mock_client
+
+    async def test_structured_output_propagated_to_response(self) -> None:
+        """Test that structured_output from ResultMessage is propagated to response.value."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        structured_data = {"name": "Alice", "age": 30}
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": '{"name": "Alice", "age": 30}'},
+                },
+                uuid="event-1",
+                session_id="session-123",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text='{"name": "Alice", "age": 30}')],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="session-123",
+                structured_output=structured_data,
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            response = await agent.run("Return structured data")
+            assert response.value == structured_data
+
+    async def test_structured_output_none_when_not_present(self) -> None:
+        """Test that response.value is None when structured_output is not present."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Hello!"},
+                },
+                uuid="event-1",
+                session_id="session-123",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Hello!")],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="session-123",
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            response = await agent.run("Hello")
+            assert response.value is None
+
+    async def test_structured_output_with_streaming(self) -> None:
+        """Test that structured_output is available via get_final_response after streaming."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        structured_data = {"key": "value"}
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": '{"key": "value"}'},
+                },
+                uuid="event-1",
+                session_id="session-123",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text='{"key": "value"}')],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="session-123",
+                structured_output=structured_data,
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            stream = agent.run("Return structured data", stream=True)
+            # Consume the stream
+            async for _ in stream:
+                pass
+            # Structured output should be available via get_final_response
+            response = await stream.get_final_response()
+            assert response.value == structured_data
+
+    async def test_structured_output_with_error_does_not_propagate(self) -> None:
+        """Test that structured_output is not propagated when ResultMessage is an error."""
+        from agent_framework.exceptions import AgentException
+        from claude_agent_sdk import ResultMessage
+
+        messages = [
+            ResultMessage(
+                subtype="error",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=True,
+                num_turns=0,
+                session_id="error-session",
+                result="Something went wrong",
+                structured_output={"some": "data"},
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            with pytest.raises(AgentException) as exc_info:
+                await agent.run("Hello")
+            assert "Something went wrong" in str(exc_info.value)

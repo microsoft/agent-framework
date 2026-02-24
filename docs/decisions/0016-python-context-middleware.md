@@ -1114,6 +1114,7 @@ Defaults introduced by this change:
 - `RedisContextProvider.DEFAULT_SOURCE_ID = "redis"`
 - `RedisHistoryProvider.DEFAULT_SOURCE_ID = "redis_memory"`
 - `AzureAISearchContextProvider.DEFAULT_SOURCE_ID = "azure_ai_search"`
+- `FoundryMemoryProvider.DEFAULT_SOURCE_ID = "foundry_memory"`
 
 
 ## Comparison to .NET Implementation
