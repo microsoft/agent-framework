@@ -49,7 +49,7 @@ $env:BING_CUSTOM_SEARCH_INSTANCE_NAME="your-configuration-name"
 Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/GettingStarted/FoundryAgents
+cd dotnet/samples/02-agents/FoundryAgents
 dotnet run --project .\FoundryAgents_Step21_BingCustomSearch
 ```
 
