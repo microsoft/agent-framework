@@ -60,6 +60,7 @@ internal sealed class InvokeMcpToolExecutor(
     protected override bool IsDiscreteAction => false;
 
     /// <inheritdoc/>
+    [SendsMessage(typeof(ExternalInputRequest))]
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         string serverUrl = this.GetServerUrl();
