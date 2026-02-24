@@ -8,10 +8,10 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using OpenAI.Responses;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-string connectionId = Environment.GetEnvironmentVariable("BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID") ?? throw new InvalidOperationException("BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID is not set.");
-string instanceName = Environment.GetEnvironmentVariable("BING_CUSTOM_SEARCH_INSTANCE_NAME") ?? throw new InvalidOperationException("BING_CUSTOM_SEARCH_INSTANCE_NAME is not set.");
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string connectionId = Environment.GetEnvironmentVariable("AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID") ?? throw new InvalidOperationException("AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID is not set.");
+string instanceName = Environment.GetEnvironmentVariable("AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME") ?? throw new InvalidOperationException("AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME is not set.");
 
 const string AgentInstructions = """
     You are a helpful agent that can use Bing Custom Search tools to assist users.

@@ -10,13 +10,13 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using OpenAI.Responses;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Memory store configuration
 // NOTE: Memory stores must be created beforehand via Azure Portal or Python SDK.
 // The .NET SDK currently only supports using existing memory stores with agents.
-string memoryStoreName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_MEMORY_STORE_NAME") ?? throw new InvalidOperationException("AZURE_FOUNDRY_MEMORY_STORE_NAME is not set.");
+string memoryStoreName = Environment.GetEnvironmentVariable("AZURE_AI_MEMORY_STORE_ID") ?? throw new InvalidOperationException("AZURE_AI_MEMORY_STORE_ID is not set.");
 
 const string AgentInstructions = """
     You are a helpful assistant that remembers past conversations.
