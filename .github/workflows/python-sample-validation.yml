@@ -11,6 +11,7 @@ env:
   # setting GH_TOKEN for the entire workflow
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   GITHUB_COPILOT_MODEL: claude-opus-4.6
+  GITHUB_COPILOT_LOG_LEVEL: debug
 
 
 jobs:
