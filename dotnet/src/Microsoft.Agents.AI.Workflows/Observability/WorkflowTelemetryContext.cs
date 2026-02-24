@@ -116,7 +116,7 @@ internal sealed class WorkflowTelemetryContext
             return null;
         }
 
-        return this.ActivitySource.StartActivity(ActivityNames.WorkflowRun);
+        return this.ActivitySource.StartActivity(ActivityNames.WorkflowInvoke);
     }
 
     /// <summary>

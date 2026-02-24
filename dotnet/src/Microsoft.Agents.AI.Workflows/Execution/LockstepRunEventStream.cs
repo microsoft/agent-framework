@@ -50,16 +50,14 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         }
 #endif
 
-        CancellationTokenSource linkedSource = CancellationTokenSource.CreateLinkedTokenSource(this._stopCancellation.Token, cancellationToken);
+        using CancellationTokenSource linkedSource = CancellationTokenSource.CreateLinkedTokenSource(this._stopCancellation.Token, cancellationToken);
 
         ConcurrentQueue<WorkflowEvent> eventSink = [];
 
         this._stepRunner.OutgoingEvents.EventRaised += OnWorkflowEventAsync;
 
-        // Do NOT use a 'using' declaration for the Activity inside an async iterator.
-        // In compiled async iterator state machines, 'using' locals are only disposed when
-        // DisposeAsync() is called on the enumerator. Activity.Stop (fired by Dispose) is
-        // time-sensitive for OpenTelemetry export, so we dispose explicitly in the finally block.
+        // Not 'using' — Activity.Stop must fire deterministically in the finally block
+        // for OpenTelemetry export, not deferred to the enumerator's DisposeAsync.
         Activity? activity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity();
         activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.SessionId, this._stepRunner.SessionId);
 
@@ -149,7 +147,6 @@ internal sealed class LockstepRunEventStream : IRunEventStream
             // Explicitly dispose the Activity so Activity.Stop fires deterministically,
             // regardless of how the async iterator enumerator is disposed.
             activity?.Dispose();
-            linkedSource.Dispose();
         }
 
         ValueTask OnWorkflowEventAsync(object? sender, WorkflowEvent e)
@@ -187,7 +184,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         {
             this._stopCancellation.Cancel();
 
-            // Stop the session activity — the session ends when the stream is disposed
+            // Stop the session activity
             if (this._sessionActivity is not null)
             {
                 this._sessionActivity.AddEvent(new ActivityEvent(EventNames.SessionCompleted));

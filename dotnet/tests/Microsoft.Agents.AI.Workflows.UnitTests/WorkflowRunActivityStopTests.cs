@@ -95,13 +95,13 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
         // Assert - workflow.run should have been started and stopped
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
-                        a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal))
+                        a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         startedWorkflowRuns.Should().HaveCount(1, "workflow.run Activity should be started");
 
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
-                        a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal))
+                        a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         stoppedWorkflowRuns.Should().HaveCount(1,
             "workflow.run Activity should be stopped/disposed so it is exported to telemetry backends (issue #4155)");
@@ -139,13 +139,13 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
         // Assert - workflow.run should have been started and stopped
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
-                        a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal))
+                        a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         startedWorkflowRuns.Should().HaveCount(1, "workflow.run Activity should be started");
 
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
-                        a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal))
+                        a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         stoppedWorkflowRuns.Should().HaveCount(1,
             "workflow.run Activity should be stopped/disposed so it is exported to telemetry backends (issue #4155)");
@@ -185,14 +185,14 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
         // Assert - workflow.run should have been started
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
-                        a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal))
+                        a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         startedWorkflowRuns.Should().HaveCount(1, "workflow.run Activity should be started");
 
         // Assert - workflow.run should have been stopped
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
-                        a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal))
+                        a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         stoppedWorkflowRuns.Should().HaveCount(1,
             "workflow.run Activity should be stopped/disposed so it is exported to telemetry backends (issue #4155)");
@@ -247,14 +247,14 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
         // Assert - two workflow.run activities should have been started and stopped
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
-                        a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal))
+                        a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         startedWorkflowRuns.Should().HaveCount(2,
             "each streaming invocation should start its own workflow.run Activity");
 
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
-                        a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal))
+                        a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         stoppedWorkflowRuns.Should().HaveCount(2,
             "each workflow.run Activity should be stopped/disposed so it is exported to telemetry backends in multi-turn scenarios");

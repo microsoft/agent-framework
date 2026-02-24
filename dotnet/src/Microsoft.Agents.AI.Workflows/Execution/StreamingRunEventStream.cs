@@ -68,6 +68,8 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 
         Activity? runActivity = null;
 
+        sessionActivity?.AddEvent(new ActivityEvent(EventNames.SessionStarted));
+
         try
         {
             // Wait for the first input before starting
@@ -75,7 +77,6 @@ internal sealed class StreamingRunEventStream : IRunEventStream
             await this._inputWaiter.WaitForInputAsync(cancellationToken: linkedSource.Token).ConfigureAwait(false);
 
             this._runStatus = RunStatus.Running;
-            sessionActivity?.AddEvent(new ActivityEvent(EventNames.SessionStarted));
 
             while (!linkedSource.Token.IsCancellationRequested)
             {
