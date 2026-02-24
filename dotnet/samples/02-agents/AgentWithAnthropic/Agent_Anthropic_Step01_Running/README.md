@@ -29,7 +29,7 @@ $env:ANTHROPIC_MODEL="your-anthropic-model"  # Replace with your Anthropic model
 Navigate to the AgentWithAnthropic sample directory and run:
 
 ```powershell
-cd dotnet\samples/02-agents/AgentWithAnthropic
+cd dotnet\samples\02-agents\AgentWithAnthropic
 dotnet run --project .\Agent_Anthropic_Step01_Running
 ```
 

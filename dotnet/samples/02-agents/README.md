@@ -15,6 +15,8 @@ of the agent framework.
 |[Agent Open Telemetry](./AgentOpenTelemetry/README.md)|Getting started with OpenTelemetry for agents|
 |[Agent With OpenAI exchange types](./AgentWithOpenAI/README.md)|Using OpenAI exchange types with agents|
 |[Agent With Anthropic](./AgentWithAnthropic/README.md)|Getting started with agents using Anthropic Claude|
-|[Workflow](../03-workflows/README.md)|Getting started with Workflow|
 |[Model Context Protocol](./ModelContextProtocol/README.md)|Getting started with Model Context Protocol|
 |[Agent Skills](./AgentSkills/README.md)|Getting started with Agent Skills|
+|[Declarative Agents](./DeclarativeAgents)|Loading and executing AI agents from YAML configuration files|                                          │
+|[AG-UI](./AGUI/README.md)|Getting started with AG-UI (Agent UI Protocol) servers and clients|                                                     │
+|[Dev UI](./DevUI/README.md)|Interactive web interface for testing and debugging AI agents during development| 
