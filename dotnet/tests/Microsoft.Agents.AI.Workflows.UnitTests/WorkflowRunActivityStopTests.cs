@@ -12,8 +12,8 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 /// <summary>
 /// Regression test for https://github.com/microsoft/agent-framework/issues/4155
-/// Verifies that the workflow.run Activity is properly stopped/disposed so it gets exported
-/// to telemetry backends. The ActivityStopped callback must fire for the workflow.run span.
+/// Verifies that the workflow_invoke Activity is properly stopped/disposed so it gets exported
+/// to telemetry backends. The ActivityStopped callback must fire for the workflow_invoke span.
 /// </summary>
 [Collection("ObservabilityTests")]
 public sealed class WorkflowRunActivityStopTests : IDisposable
@@ -62,7 +62,7 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
     }
 
     /// <summary>
-    /// Verifies that the workflow.run Activity is stopped (and thus exportable) when
+    /// Verifies that the workflow_invoke Activity is stopped (and thus exportable) when
     /// using the Lockstep execution environment.
     /// Bug: The Activity created by LockstepRunEventStream.TakeEventStreamAsync is never
     /// disposed because yield break in async iterators does not trigger using disposal.
@@ -92,23 +92,23 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
         stoppedSessions.Should().HaveCount(1,
             "workflow.session Activity should be stopped/disposed so it is exported to telemetry backends");
 
-        // Assert - workflow.run should have been started and stopped
+        // Assert - workflow_invoke should have been started and stopped
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
-        startedWorkflowRuns.Should().HaveCount(1, "workflow.run Activity should be started");
+        startedWorkflowRuns.Should().HaveCount(1, "workflow_invoke Activity should be started");
 
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         stoppedWorkflowRuns.Should().HaveCount(1,
-            "workflow.run Activity should be stopped/disposed so it is exported to telemetry backends (issue #4155)");
+            "workflow_invoke Activity should be stopped/disposed so it is exported to telemetry backends (issue #4155)");
     }
 
     /// <summary>
-    /// Verifies that the workflow.run Activity is stopped when using the OffThread (Default)
+    /// Verifies that the workflow_invoke Activity is stopped when using the OffThread (Default)
     /// execution environment (StreamingRunEventStream).
     /// </summary>
     [Fact]
@@ -136,23 +136,23 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
         stoppedSessions.Should().HaveCount(1,
             "workflow.session Activity should be stopped/disposed so it is exported to telemetry backends");
 
-        // Assert - workflow.run should have been started and stopped
+        // Assert - workflow_invoke should have been started and stopped
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
-        startedWorkflowRuns.Should().HaveCount(1, "workflow.run Activity should be started");
+        startedWorkflowRuns.Should().HaveCount(1, "workflow_invoke Activity should be started");
 
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         stoppedWorkflowRuns.Should().HaveCount(1,
-            "workflow.run Activity should be stopped/disposed so it is exported to telemetry backends (issue #4155)");
+            "workflow_invoke Activity should be stopped/disposed so it is exported to telemetry backends (issue #4155)");
     }
 
     /// <summary>
-    /// Verifies that the workflow.run Activity is stopped when using the streaming API
+    /// Verifies that the workflow_invoke Activity is stopped when using the streaming API
     /// (StreamingRun.WatchStreamAsync) with the OffThread execution environment.
     /// This matches the exact usage pattern described in the issue.
     /// </summary>
@@ -182,24 +182,24 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
             .ToList();
         startedSessions.Should().HaveCount(1, "workflow.session Activity should be started");
 
-        // Assert - workflow.run should have been started
+        // Assert - workflow_invoke should have been started
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
-        startedWorkflowRuns.Should().HaveCount(1, "workflow.run Activity should be started");
+        startedWorkflowRuns.Should().HaveCount(1, "workflow_invoke Activity should be started");
 
-        // Assert - workflow.run should have been stopped
+        // Assert - workflow_invoke should have been stopped
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         stoppedWorkflowRuns.Should().HaveCount(1,
-            "workflow.run Activity should be stopped/disposed so it is exported to telemetry backends (issue #4155)");
+            "workflow_invoke Activity should be stopped/disposed so it is exported to telemetry backends (issue #4155)");
     }
 
     /// <summary>
-    /// Verifies that a new workflow.run activity is started and stopped for each
+    /// Verifies that a new workflow_invoke activity is started and stopped for each
     /// streaming invocation, even when using the same workflow in a multi-turn pattern,
     /// and that each session gets its own session activity.
     /// </summary>
@@ -244,24 +244,24 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
         stoppedSessions.Should().HaveCount(2,
             "each workflow.session Activity should be stopped/disposed so it is exported to telemetry backends");
 
-        // Assert - two workflow.run activities should have been started and stopped
+        // Assert - two workflow_invoke activities should have been started and stopped
         var startedWorkflowRuns = this._startedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         startedWorkflowRuns.Should().HaveCount(2,
-            "each streaming invocation should start its own workflow.run Activity");
+            "each streaming invocation should start its own workflow_invoke Activity");
 
         var stoppedWorkflowRuns = this._stoppedActivities
             .Where(a => a.RootId == testActivity.RootId &&
                         a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
             .ToList();
         stoppedWorkflowRuns.Should().HaveCount(2,
-            "each workflow.run Activity should be stopped/disposed so it is exported to telemetry backends in multi-turn scenarios");
+            "each workflow_invoke Activity should be stopped/disposed so it is exported to telemetry backends in multi-turn scenarios");
     }
 
     /// <summary>
-    /// Verifies that all started activities (not just workflow.run) are properly stopped.
+    /// Verifies that all started activities (not just workflow_invoke) are properly stopped.
     /// This ensures no spans are "leaked" without being exported.
     /// </summary>
     [Fact]
