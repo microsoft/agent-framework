@@ -600,7 +600,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         for item in response.output:
             if item.type == "oauth_consent_request":
                 consent_link = item.consent_link
-                if consent_link and result.messages:
+                if consent_link:
                     result.messages[0].contents.append(
                         Content.from_oauth_consent_request(
                             consent_link=consent_link,
