@@ -181,8 +181,10 @@
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step13_Plugins/FoundryAgents_Step13_Plugins.csproj" />
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step14_CodeInterpreter/FoundryAgents_Step14_CodeInterpreter.csproj" />
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step15_ComputerUse/FoundryAgents_Step15_ComputerUse.csproj" />
-    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step19_OpenAPITools/FoundryAgents_Step19_OpenAPITools.csproj" />
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step18_FileSearch/FoundryAgents_Step18_FileSearch.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step19_OpenAPITools/FoundryAgents_Step19_OpenAPITools.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step25_WebSearch/FoundryAgents_Step25_WebSearch.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step26_MemorySearch/FoundryAgents_Step26_MemorySearch.csproj" />
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Evaluations_Step01_RedTeaming/FoundryAgents_Evaluations_Step01_RedTeaming.csproj" />
     <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Evaluations_Step02_SelfReflection/FoundryAgents_Evaluations_Step02_SelfReflection.csproj" />
   </Folder>

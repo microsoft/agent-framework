@@ -1,0 +1,273 @@
+#
+# Dedicated Python integration tests workflow, called from the manual integration test orchestrator.
+# Runs all tests (unit + integration) split into parallel jobs by provider.
+#
+# NOTE: This workflow and python-merge-tests.yml share the same set of parallel
+# test jobs. Keep them in sync — when adding, removing, or modifying a job here,
+# apply the same change to python-merge-tests.yml.
+#
+
+name: python-integration-tests
+
+on:
+  workflow_call:
+    inputs:
+      checkout-ref:
+        description: "Git ref to checkout (e.g., refs/pull/123/head)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  UV_CACHE_DIR: /tmp/.uv-cache
+  UV_PYTHON: "3.13"
+
+jobs:
+  # Unit tests: all non-integration tests across all packages
+  python-tests-unit:
+    name: Python Integration Tests - Unit
+    runs-on: ubuntu-latest
+    environment: integration
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Test with pytest (unit tests only)
+        run: >
+          uv run poe all-tests
+          -m "not integration"
+          -n logical --dist worksteal
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+
+  # OpenAI integration tests
+  python-tests-openai:
+    name: Python Integration Tests - OpenAI
+    runs-on: ubuntu-latest
+    environment: integration
+    timeout-minutes: 60
+    env:
+      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_EMBEDDINGS_MODEL_ID: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Test with pytest (OpenAI integration)
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/core/tests/openai
+          -m integration
+          -n logical --dist worksteal
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+
+  # Azure OpenAI integration tests
+  python-tests-azure-openai:
+    name: Python Integration Tests - Azure OpenAI
+    runs-on: ubuntu-latest
+    environment: integration
+    timeout-minutes: 60
+    env:
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__EMBEDDINGDEPLOYMENTNAME }}
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Azure CLI Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Test with pytest (Azure OpenAI integration)
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/core/tests/azure
+          -m integration
+          -n logical --dist worksteal
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+
+  # Misc integration tests (Anthropic, Ollama, MCP)
+  python-tests-misc-integration:
+    name: Python Integration Tests - Misc
+    runs-on: ubuntu-latest
+    environment: integration
+    timeout-minutes: 60
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_CHAT_MODEL_ID: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
+      LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Test with pytest (Anthropic, Ollama, MCP integration)
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/anthropic/tests
+          packages/ollama/tests
+          packages/core/tests/core/test_mcp.py
+          -m integration
+          -n logical --dist worksteal
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+
+  # Azure Functions + Durable Task integration tests
+  python-tests-functions:
+    name: Python Integration Tests - Functions
+    runs-on: ubuntu-latest
+    environment: integration
+    timeout-minutes: 60
+    env:
+      UV_PYTHON: "3.10"
+      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
+      FUNCTIONS_WORKER_RUNTIME: "python"
+      DURABLE_TASK_SCHEDULER_CONNECTION_STRING: "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None"
+      AzureWebJobsStorage: "UseDevelopmentStorage=true"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Azure CLI Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Set up Azure Functions Integration Test Emulators
+        uses: ./.github/actions/azure-functions-integration-setup
+        id: azure-functions-setup
+      - name: Test with pytest (Functions + Durable Task integration)
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/azurefunctions/tests/integration_tests
+          packages/durabletask/tests/integration_tests
+          -m integration
+          -n logical --dist worksteal
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
+
+  # Azure AI integration tests
+  python-tests-azure-ai:
+    name: Python Integration Tests - Azure AI
+    runs-on: ubuntu-latest
+    environment: integration
+    timeout-minutes: 60
+    env:
+      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
+      LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Azure CLI Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Test with pytest
+        timeout-minutes: 15
+        run: uv run --directory packages/azure-ai poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
+
+  python-integration-tests-check:
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      [
+        python-tests-unit,
+        python-tests-openai,
+        python-tests-azure-openai,
+        python-tests-misc-integration,
+        python-tests-functions,
+        python-tests-azure-ai
+      ]
+    steps:
+      - name: Fail workflow if tests failed
+        if: contains(join(needs.*.result, ','), 'failure')
+        uses: actions/github-script@v8
+        with:
+          script: core.setFailed('Integration Tests Failed!')
+
+      - name: Fail workflow if tests cancelled
+        if: contains(join(needs.*.result, ','), 'cancelled')
+        uses: actions/github-script@v8
+        with:
+          script: core.setFailed('Integration Tests Cancelled!')

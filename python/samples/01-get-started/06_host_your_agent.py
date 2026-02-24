@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+# ruff: noqa: E305
+# fmt: off
 from typing import Any
 
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient

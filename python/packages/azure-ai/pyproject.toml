@@ -85,7 +85,7 @@ test = "pytest --cov=agent_framework_azure_ai --cov-report=term-missing:skip-cov
 [tool.poe.tasks.integration-tests]
 cmd = """
 pytest --import-mode=importlib
--n logical --dist loadfile --dist worksteal
+-n logical --dist worksteal
 tests
 """
 

@@ -664,3 +664,31 @@ packages/core/
 - Factory functions with parameters should be regular functions, not fixtures (fixtures can't accept arguments)
 - Import factory functions explicitly: `from conftest import create_test_request`
 - Fixtures should use simple names that describe what they provide: `mapper`, `test_request`, `mock_client`
+
+### Integration Test Markers
+
+New integration tests that call external services must have all three markers:
+
+```python
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_openai_integration_tests_disabled
+async def test_chat_completion() -> None:
+    ...
+```
+
+- `@pytest.mark.flaky` — marks the test as potentially flaky since it depends on external services
+- `@pytest.mark.integration` — enables selecting/excluding integration tests with `-m integration` / `-m "not integration"`
+- `@skip_if_..._integration_tests_disabled` — skips the test when required API keys or service endpoints are missing
+
+For test modules where all tests are integration tests, use `pytestmark`:
+
+```python
+pytestmark = [
+    pytest.mark.flaky,
+    pytest.mark.integration,
+    pytest.mark.sample("01_single_agent"),
+]
+```
+
+When adding integration tests for a new provider, update the path filters and job assignments in **both** `python-merge-tests.yml` and `python-integration-tests.yml` — these workflows must be kept in sync. See the `python-testing` skill for details.

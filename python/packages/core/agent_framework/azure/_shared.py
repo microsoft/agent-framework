@@ -53,6 +53,8 @@ class AzureOpenAISettings(TypedDict, total=False):
             Resource Management > Deployments in the Azure portal or, alternatively,
             under Management > Deployments in Azure AI Foundry.
             Can be set via environment variable AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
+        embedding_deployment_name: The name of the Azure Embedding deployment.
+            Can be set via environment variable AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME.
         api_key: The API key for the Azure deployment. This value can be
             found in the Keys & Endpoint section when examining your resource in
             the Azure portal. You can use either KEY1 or KEY2.
@@ -95,6 +97,7 @@ class AzureOpenAISettings(TypedDict, total=False):
 
     chat_deployment_name: str | None
     responses_deployment_name: str | None
+    embedding_deployment_name: str | None
     endpoint: str | None
     base_url: str | None
     api_key: SecretString | None

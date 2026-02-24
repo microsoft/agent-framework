@@ -6,6 +6,7 @@ These executors handle simple actions like SetValue, SendActivity, etc.
 Each action becomes a node in the workflow graph.
 """
 
+import uuid
 from typing import Any
 
 from agent_framework import (
@@ -76,6 +77,41 @@ class SetVariableExecutor(DeclarativeActionExecutor):
         if path:
             evaluated_value = state.eval_if_expression(value)
             state.set(path, evaluated_value)
+
+        await ctx.send_message(ActionComplete())
+
+
+class CreateConversationExecutor(DeclarativeActionExecutor):
+    """Executor for the CreateConversation action.
+
+    Generates a unique conversation ID and initialises a conversation entry
+    in ``System.conversations``.  The generated ID is stored at the state
+    path specified by the ``conversationId`` parameter (if provided).
+    """
+
+    @handler
+    async def handle_action(
+        self,
+        trigger: Any,
+        ctx: WorkflowContext[ActionComplete],
+    ) -> None:
+        """Handle the CreateConversation action."""
+        state = await self._ensure_state_initialized(ctx, trigger)
+
+        generated_id = str(uuid.uuid4())
+
+        # Store the generated ID at the requested path (e.g. "Local.myConvId")
+        conversation_id_path = _get_variable_path(self._action_def, "conversationId")
+        if conversation_id_path:
+            state.set(conversation_id_path, generated_id)
+
+        # Initialise the conversation entry in System.conversations
+        conversations: dict[str, Any] = state.get("System.conversations") or {}
+        conversations[generated_id] = {
+            "id": generated_id,
+            "messages": [],
+        }
+        state.set("System.conversations", conversations)
 
         await ctx.send_message(ActionComplete())
 
@@ -560,6 +596,7 @@ class ParseValueExecutor(DeclarativeActionExecutor):
 
 # Mapping of action kinds to executor classes
 BASIC_ACTION_EXECUTORS: dict[str, type[DeclarativeActionExecutor]] = {
+    "CreateConversation": CreateConversationExecutor,
     "SetValue": SetValueExecutor,
     "SetVariable": SetVariableExecutor,
     "SetTextVariable": SetTextVariableExecutor,
