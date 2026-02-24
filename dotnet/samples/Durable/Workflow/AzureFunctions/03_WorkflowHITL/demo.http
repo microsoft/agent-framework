@@ -1,0 +1,32 @@
+# Default endpoint address for local testing
+@authority=http://localhost:7071
+
+### Step 1: Start the expense reimbursement workflow
+POST {{authority}}/api/workflows/ExpenseReimbursement/run
+Content-Type: text/plain
+
+EXP-2025-001
+
+### Step 1 (alternative): Start the workflow with a custom run ID
+POST {{authority}}/api/workflows/ExpenseReimbursement/run?runId=expense-001
+Content-Type: text/plain
+
+EXP-2025-001
+
+### Step 2: Check workflow status (replace {runId} with actual run ID from Step 1)
+GET {{authority}}/api/workflows/ExpenseReimbursement/status/{runId}
+
+### Step 3: Approve the expense (replace {runId} with actual run ID from Step 1)
+POST {{authority}}/api/workflows/ExpenseReimbursement/respond/{runId}
+Content-Type: application/json
+
+{"eventName": "ManagerApproval", "response": {"Approved": true, "Comments": "Approved by manager. Looks good!"}}
+
+### Step 3 (alternative): Deny the expense
+POST {{authority}}/api/workflows/ExpenseReimbursement/respond/expense-001
+Content-Type: application/json
+
+{"eventName": "ManagerApproval", "response": {"Approved": false, "Comments": "Insufficient documentation. Please resubmit."}}
+
+### Step 4: Check final workflow status after approval
+GET {{authority}}/api/workflows/ExpenseReimbursement/status/expense-001

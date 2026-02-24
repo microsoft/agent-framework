@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows;
 
@@ -39,4 +39,17 @@ public interface IStreamingWorkflowRun
     /// workflow state changes.
     /// </returns>
     IAsyncEnumerable<WorkflowEvent> WatchStreamAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sends a response to a <see cref="DurableWorkflowWaitingForInputEvent"/> to resume the workflow.
+    /// </summary>
+    /// <typeparam name="TResponse">The type of the response data.</typeparam>
+    /// <param name="requestEvent">The request event to respond to.</param>
+    /// <param name="response">The response data to send.</param>
+    /// <param name="cancellationToken">A cancellation token to observe.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    ValueTask SendResponseAsync<TResponse>(
+        DurableWorkflowWaitingForInputEvent requestEvent,
+        TResponse response,
+        CancellationToken cancellationToken = default);
 }

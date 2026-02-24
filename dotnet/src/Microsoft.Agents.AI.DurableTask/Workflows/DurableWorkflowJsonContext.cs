@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json.Serialization;
 
@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows;
 /// <item><description><see cref="DurableActivityInput"/>: Activity input wrapper with state</description></item>
 /// <item><description><see cref="DurableExecutorOutput"/>: Executor output wrapper with results, events, and state updates</description></item>
 /// <item><description><see cref="TypedPayload"/>: Serialized payload wrapper with type info (events and messages)</description></item>
-/// <item><description><see cref="DurableWorkflowCustomStatus"/>: Custom status for streaming consumption</description></item>
+/// <item><description><see cref="DurableWorkflowLiveStatus"/>: Live status payload (streaming events and pending request ports)</description></item>
 /// </list>
 /// <para>
 /// Note: User-defined executor input/output types still use reflection-based serialization
@@ -31,8 +31,10 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows;
 [JsonSerializable(typeof(DurableExecutorOutput))]
 [JsonSerializable(typeof(TypedPayload))]
 [JsonSerializable(typeof(List<TypedPayload>))]
-[JsonSerializable(typeof(DurableWorkflowCustomStatus))]
+[JsonSerializable(typeof(DurableWorkflowLiveStatus))]
 [JsonSerializable(typeof(DurableWorkflowResult))]
+[JsonSerializable(typeof(PendingRequestPortStatus))]
+[JsonSerializable(typeof(List<PendingRequestPortStatus>))]
 [JsonSerializable(typeof(List<string>))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(Dictionary<string, string?>))]

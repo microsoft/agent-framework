@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Context.Features;
@@ -79,6 +79,34 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
             }
 
             context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowOrchestrationHttpTriggerAsync(
+                httpRequestData,
+                durableTaskClient,
+                context);
+            return;
+        }
+
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.GetWorkflowStatusHttpFunctionEntryPoint)
+        {
+            if (httpRequestData == null)
+            {
+                throw new InvalidOperationException($"HTTP request data binding is missing for the invocation {context.InvocationId}.");
+            }
+
+            context.GetInvocationResult().Value = await BuiltInFunctions.GetWorkflowStatusAsync(
+                httpRequestData,
+                durableTaskClient,
+                context);
+            return;
+        }
+
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RespondToWorkflowHttpFunctionEntryPoint)
+        {
+            if (httpRequestData == null)
+            {
+                throw new InvalidOperationException($"HTTP request data binding is missing for the invocation {context.InvocationId}.");
+            }
+
+            context.GetInvocationResult().Value = await BuiltInFunctions.RespondToWorkflowAsync(
                 httpRequestData,
                 durableTaskClient,
                 context);

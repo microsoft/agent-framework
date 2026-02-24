@@ -452,6 +452,53 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
     }
 
     [Fact]
+    public async Task WorkflowHITLSampleValidationAsync()
+    {
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+        string samplePath = Path.Combine(s_samplesPath, "08_WorkflowHITL");
+
+        await this.RunSampleTestAsync(samplePath, (process, logs) =>
+        {
+            bool foundStarted = false;
+            bool foundManagerApprovalPause = false;
+            bool foundManagerApprovalInput = false;
+            bool foundManagerResponseSent = false;
+            bool foundFinanceApprovalPause = false;
+            bool foundFinanceResponseSent = false;
+            bool foundWorkflowCompleted = false;
+
+            string? line;
+            while ((line = this.ReadLogLine(logs, testTimeoutCts.Token)) != null)
+            {
+                foundStarted |= line.Contains("Starting expense reimbursement workflow", StringComparison.Ordinal);
+                foundManagerApprovalPause |= line.Contains("Workflow paused at RequestPort: ManagerApproval", StringComparison.Ordinal);
+                foundManagerApprovalInput |= line.Contains("Approval for: Jerry", StringComparison.Ordinal);
+                foundManagerResponseSent |= line.Contains("Response sent: Approved=True", StringComparison.Ordinal) && foundManagerApprovalPause && !foundFinanceApprovalPause;
+                foundFinanceApprovalPause |= line.Contains("Workflow paused at RequestPort: FinanceApproval", StringComparison.Ordinal);
+                foundFinanceResponseSent |= line.Contains("Response sent: Approved=True", StringComparison.Ordinal) && foundFinanceApprovalPause;
+
+                if (line.Contains("Workflow completed: Expense reimbursed at", StringComparison.Ordinal))
+                {
+                    foundWorkflowCompleted = true;
+                    break;
+                }
+
+                this.AssertNoError(line);
+            }
+
+            Assert.True(foundStarted, "Workflow start message not found.");
+            Assert.True(foundManagerApprovalPause, "Manager approval pause not found.");
+            Assert.True(foundManagerApprovalInput, "Manager approval input (Jerry) not found.");
+            Assert.True(foundManagerResponseSent, "Manager approval response not sent.");
+            Assert.True(foundFinanceApprovalPause, "Finance approval pause not found.");
+            Assert.True(foundFinanceResponseSent, "Finance approval response not sent.");
+            Assert.True(foundWorkflowCompleted, "Workflow did not complete successfully.");
+
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
     public async Task WorkflowAndAgentsSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();

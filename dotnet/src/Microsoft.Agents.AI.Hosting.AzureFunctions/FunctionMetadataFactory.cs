@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Azure.Functions.Worker.Core.FunctionMetadata;
@@ -38,8 +38,9 @@ internal static class FunctionMetadataFactory
     /// <param name="name">The base name used to derive the HTTP function name.</param>
     /// <param name="route">The HTTP route for the trigger.</param>
     /// <param name="entryPoint">The entry point method for the HTTP trigger.</param>
+    /// <param name="methods">The allowed HTTP methods as a JSON array fragment (e.g., <c>"\"get\""</c>). Defaults to POST.</param>
     /// <returns>A <see cref="DefaultFunctionMetadata"/> configured for an HTTP trigger.</returns>
-    internal static DefaultFunctionMetadata CreateHttpTrigger(string name, string route, string entryPoint)
+    internal static DefaultFunctionMetadata CreateHttpTrigger(string name, string route, string entryPoint, string methods = "\"post\"")
     {
         return new DefaultFunctionMetadata()
         {
@@ -47,7 +48,7 @@ internal static class FunctionMetadataFactory
             Language = "dotnet-isolated",
             RawBindings =
             [
-                $"{{\"name\":\"req\",\"type\":\"httpTrigger\",\"direction\":\"In\",\"authLevel\":\"function\",\"methods\": [\"post\"],\"route\":\"{route}\"}}",
+                $"{{\"name\":\"req\",\"type\":\"httpTrigger\",\"direction\":\"In\",\"authLevel\":\"function\",\"methods\": [{methods}],\"route\":\"{route}\"}}",
                 "{\"name\":\"$return\",\"type\":\"http\",\"direction\":\"Out\"}",
                 "{\"name\":\"client\",\"type\":\"durableClient\",\"direction\":\"In\"}"
             ],
