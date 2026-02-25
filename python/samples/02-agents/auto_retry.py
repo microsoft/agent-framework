@@ -2,10 +2,10 @@
 
 import asyncio
 import logging
-import sys
 from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar, cast
 
-from agent_framework import ChatContext, ChatMiddleware, chat_middleware
+from agent_framework import ChatContext, ChatMiddleware, SupportsChatGetResponse, chat_middleware
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -19,11 +19,6 @@ from tenacity import (
     wait_exponential,
 )
 
-if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
-
 # Load environment variables from .env file
 load_dotenv()
 
@@ -34,11 +29,11 @@ Every model inference API enforces rate limits, so production agents need retry 
 to handle 429 responses gracefully. This sample shows two ways to add automatic retry
 using the `tenacity` library, keeping your application code free of boilerplate.
 
-Approach 1 – Class-based wrapper
-    Subclass AzureOpenAIChatClient and override get_response() to wrap the underlying
-    call in a tenacity retry loop. Non-streaming responses are wrapped in an async
-    retry coroutine; streaming is returned as-is (streaming retry requires more
-    delicate handling).
+Approach 1 – Class decorator
+    Apply a class decorator to any client type implementing SupportsChatGetResponse.
+    The decorator patches get_response() with tenacity retry logic. Non-streaming
+    responses are wrapped in an async retry coroutine; streaming is returned as-is
+    (streaming retry requires more delicate handling).
 
 Approach 2 – Chat middleware
     Register middleware on the agent that catches RateLimitError raised inside
@@ -58,49 +53,47 @@ logger = logging.getLogger(__name__)
 RETRY_ATTEMPTS = 3
 
 # =============================================================================
-# Approach 1: Class-based wrapper
+# Approach 1: Class decorator
 # =============================================================================
 
 
-class AzureOpenAIChatClientWithRetry(AzureOpenAIChatClient):
-    """Azure OpenAI Chat Client with built-in retry logic for handling rate limits.
+ChatClientT = TypeVar("ChatClientT", bound=SupportsChatGetResponse[Any])
 
-    Subclass any chat client and override get_response() to transparently retry
-    on RateLimitError (HTTP 429) without changing any call-site code.
 
-    Note: Streaming responses are returned without retry. Adding retry to a
-    streaming response requires more delicate handling (e.g. checking whether
-    the stream has already started before attempting a retry).
-    """
+def with_rate_limit_retry(*, retry_attempts: int = RETRY_ATTEMPTS) -> Callable[[type[ChatClientT]], type[ChatClientT]]:
+    """Class decorator that adds non-streaming retry behavior to get_response()."""
 
-    retry_attempts: int = RETRY_ATTEMPTS
+    def decorator(client_cls: type[ChatClientT]) -> type[ChatClientT]:
+        original_get_response = client_cls.get_response
 
-    @override
-    def get_response(self, *args, **kwargs):  # type: ignore[override]
-        """Return a response, retrying up to retry_attempts times on rate limit errors."""
-        stream = kwargs.get("stream", False)
+        def get_response_with_retry(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            stream = kwargs.get("stream", False)
 
-        if stream:
-            # Streaming retry is more complex; fall back to the parent behaviour.
-            return super().get_response(*args, **kwargs)
+            if stream:
+                # Streaming retry is more complex; fall back to the original behaviour.
+                return original_get_response(self, *args, **kwargs)
 
-        # For non-streaming, wrap the awaitable in a retry loop so that each
-        # retry re-issues the full HTTP request rather than just re-awaiting a
-        # stale coroutine.
-        async def _with_retry():  # noqa: RET503 - AsyncRetrying with reraise=True raises on exhaustion
-            async for attempt in AsyncRetrying(
-                stop=stop_after_attempt(self.retry_attempts),
+            @retry(
+                stop=stop_after_attempt(retry_attempts),
                 wait=wait_exponential(multiplier=1, min=4, max=10),
                 retry=retry_if_exception_type(RateLimitError),
                 reraise=True,
                 before_sleep=before_sleep_log(logger, logging.WARNING),
-            ):
-                with attempt:
-                    return await super(  # type: ignore[misc]
-                        AzureOpenAIChatClientWithRetry, self
-                    ).get_response(*args, **kwargs)
+            )
+            async def _with_retry():
+                return await original_get_response(self, *args, **kwargs)
 
-        return _with_retry()
+            return _with_retry()
+
+        client_cls.get_response = cast(Any, get_response_with_retry)
+        return client_cls
+
+    return decorator
+
+
+@with_rate_limit_retry()
+class RetryingAzureOpenAIChatClient(AzureOpenAIChatClient):
+    """Azure OpenAI Chat client with class-decorator-based retry behavior."""
 
 
 # =============================================================================
@@ -172,14 +165,14 @@ async def rate_limit_retry_middleware(
 
 
 async def class_based_wrapper_example() -> None:
-    """Demonstrate Approach 1: subclassing the chat client."""
+    """Demonstrate Approach 1: class decorator on a chat client type."""
     print("\n" + "=" * 60)
-    print("Approach 1: Class-based wrapper (custom client subclass)")
+    print("Approach 1: Class decorator (applied to client type)")
     print("=" * 60)
 
     # For authentication, run `az login` command in terminal or replace
     # AzureCliCredential with your preferred authentication option.
-    agent = AzureOpenAIChatClientWithRetry(credential=AzureCliCredential()).as_agent(
+    agent = RetryingAzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions="You are a helpful assistant.",
     )
 
