@@ -1297,7 +1297,6 @@ class TestPrepareMessagesForKbSearch:
         assert result[0].content[0].text == "hello"
 
     def test_image_uri_content(self) -> None:
-        from agent_framework import Content
 
         img = Content.from_uri(uri="https://example.com/photo.png", media_type="image/png")
         messages = [Message(role="user", contents=[img])]
@@ -1309,7 +1308,6 @@ class TestPrepareMessagesForKbSearch:
         assert result[0].content[0].image.url == "https://example.com/photo.png"
 
     def test_mixed_text_and_image_content(self) -> None:
-        from agent_framework import Content
 
         text = Content.from_text("describe this image")
         img = Content.from_uri(uri="https://example.com/img.jpg", media_type="image/jpeg")
@@ -1319,7 +1317,6 @@ class TestPrepareMessagesForKbSearch:
         assert len(result[0].content) == 2
 
     def test_skips_non_text_non_image_content(self) -> None:
-        from agent_framework import Content
 
         error = Content.from_error(message="oops")
         messages = [Message(role="user", contents=[error])]
@@ -1327,7 +1324,6 @@ class TestPrepareMessagesForKbSearch:
         assert len(result) == 0  # message had no usable content
 
     def test_skips_empty_text(self) -> None:
-        from agent_framework import Content
 
         empty = Content.from_text("")
         messages = [Message(role="user", contents=[empty])]
@@ -1341,7 +1337,6 @@ class TestPrepareMessagesForKbSearch:
         assert result[0].content[0].text == "fallback text"
 
     def test_data_uri_image(self) -> None:
-        from agent_framework import Content
 
         img = Content.from_data(data=b"\x89PNG", media_type="image/png")
         messages = [Message(role="user", contents=[img])]
@@ -1352,7 +1347,6 @@ class TestPrepareMessagesForKbSearch:
         assert isinstance(result[0].content[0], KnowledgeBaseMessageImageContent)
 
     def test_non_image_uri_skipped(self) -> None:
-        from agent_framework import Content
 
         pdf = Content.from_uri(uri="https://example.com/doc.pdf", media_type="application/pdf")
         messages = [Message(role="user", contents=[pdf])]
@@ -1568,9 +1562,7 @@ class TestParseMessagesFromKbResponse:
                 KnowledgeBaseMessage(role="assistant", content=[KnowledgeBaseMessageTextContent(text="answer")]),
             ],
             references=[
-                KnowledgeBaseWebReference(
-                    id="ref-1", activity_source=0, url="https://example.com", title="Example"
-                ),
+                KnowledgeBaseWebReference(id="ref-1", activity_source=0, url="https://example.com", title="Example"),
             ],
         )
         result = AzureAISearchContextProvider._parse_messages_from_kb_response(response)

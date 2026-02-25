@@ -38,6 +38,7 @@ def _symlinks_supported(tmp: Path) -> bool:
         test_link.unlink(missing_ok=True)
         test_target.unlink(missing_ok=True)
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
