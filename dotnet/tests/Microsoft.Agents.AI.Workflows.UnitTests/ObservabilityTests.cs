@@ -46,7 +46,7 @@ public sealed class ObservabilityTests : IDisposable
     /// This workflow is expected to create 9 activities that will be captured by the tests
     /// - ActivityNames.WorkflowBuild
     /// - ActivityNames.WorkflowSession
-    /// -- ActivityNames.WorkflowRun
+    /// -- ActivityNames.WorkflowInvoke
     /// --- ActivityNames.EdgeGroupProcess
     /// --- ActivityNames.ExecutorProcess (UppercaseExecutor)
     /// ---- ActivityNames.MessageSend
