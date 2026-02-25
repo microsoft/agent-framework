@@ -213,6 +213,14 @@ class WorkflowAgent(BaseAgent):
             )
         return self._run_impl(messages, response_id, session, checkpoint_id, checkpoint_storage, **kwargs)
 
+    def _filter_messages(self, chat_messages: list[Message]) -> list[Message] | None:
+        """From a list[Message] output, return only the last meaningful assistant message."""
+        for msg in reversed(chat_messages):
+            if msg.role != "user" and msg.text and msg.text.strip():
+                return [msg]
+        # fallback: last non-user message
+        return [m for m in reversed(chat_messages) if m.role != "user"][:1]
+
     async def _run_impl(
         self,
         messages: AgentRunInputs,
@@ -489,7 +497,7 @@ class WorkflowAgent(BaseAgent):
                     messages.append(data)
                     raw_representations.append(data.raw_representation)
                 elif is_instance_of(data, list[Message]):
-                    chat_messages = cast(list[Message], data)
+                    chat_messages = self._filter_messages(cast(list[Message], data))
                     messages.extend(chat_messages)
                     raw_representations.append(data)
                 else:
@@ -606,7 +614,7 @@ class WorkflowAgent(BaseAgent):
                 ]
             if is_instance_of(data, list[Message]):
                 # Convert each Message to an AgentResponseUpdate
-                chat_messages = cast(list[Message], data)
+                chat_messages = self._filter_messages(cast(list[Message], data))
                 updates = []
                 for msg in chat_messages:
                     updates.append(
