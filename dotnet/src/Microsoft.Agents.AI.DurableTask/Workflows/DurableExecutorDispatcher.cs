@@ -14,19 +14,20 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.Agents.AI.DurableTask.Workflows;
 
 /// <summary>
-/// Dispatches workflow executors to either activities or AI agents.
+/// Dispatches workflow executors to activities, AI agents, or sub-orchestrations.
 /// </summary>
 /// <remarks>
 /// Called during the dispatch phase of each superstep by
 /// <c>DurableWorkflowRunner.DispatchExecutorsInParallelAsync</c>. For each executor that has
 /// pending input, this dispatcher determines whether the executor is an AI agent (stateful,
-/// backed by Durable Entities) or a regular activity, and invokes the appropriate Durable Task API.
+/// backed by Durable Entities), a sub-workflow (dispatched as a sub-orchestration), or a
+/// regular activity, and invokes the appropriate Durable Task API.
 /// The serialised string result is returned to the runner for the routing phase.
 /// </remarks>
 internal static class DurableExecutorDispatcher
 {
     /// <summary>
-    /// Dispatches an executor based on its type (activity or AI agent).
+    /// Dispatches an executor based on its type (activity, AI agent, or sub-workflow).
     /// </summary>
     /// <param name="context">The task orchestration context.</param>
     /// <param name="executorInfo">Information about the executor to dispatch.</param>
@@ -46,6 +47,11 @@ internal static class DurableExecutorDispatcher
         if (executorInfo.IsAgenticExecutor)
         {
             return await ExecuteAgentAsync(context, executorInfo, logger, envelope.Message).ConfigureAwait(true);
+        }
+
+        if (executorInfo.IsSubworkflowExecutor)
+        {
+            return await ExecuteSubWorkflowAsync(context, executorInfo, envelope.Message).ConfigureAwait(true);
         }
 
         return await ExecuteActivityAsync(context, executorInfo, envelope.Message, envelope.InputTypeName, sharedState).ConfigureAwait(true);
@@ -99,5 +105,62 @@ internal static class DurableExecutorDispatcher
         AgentResponse response = await agent.RunAsync(input, session).ConfigureAwait(true);
 
         return response.Text;
+    }
+
+    /// <summary>
+    /// Dispatches a sub-workflow executor as a sub-orchestration.
+    /// </summary>
+    /// <remarks>
+    /// Sub-workflows run as separate orchestration instances, providing independent
+    /// checkpointing, replay, and hierarchical visualization in the DTS dashboard.
+    /// The input is wrapped in <see cref="DurableWorkflowInput{T}"/> so the sub-orchestration
+    /// can extract it using the same envelope structure. The sub-orchestration returns a
+    /// <see cref="DurableWorkflowResult"/> directly (deserialized by the Durable Task SDK),
+    /// which this method converts to a <see cref="DurableExecutorOutput"/> so the parent
+    /// workflow's result processing picks up both the result and any accumulated events.
+    /// </remarks>
+    private static async Task<string> ExecuteSubWorkflowAsync(
+        TaskOrchestrationContext context,
+        WorkflowExecutorInfo executorInfo,
+        string input)
+    {
+        string orchestrationName = WorkflowNamingHelper.ToOrchestrationFunctionName(executorInfo.SubWorkflow!.Name!);
+
+        DurableWorkflowInput<string> workflowInput = new() { Input = input };
+
+        DurableWorkflowResult? workflowResult = await context.CallSubOrchestratorAsync<DurableWorkflowResult?>(
+            orchestrationName,
+            workflowInput).ConfigureAwait(true);
+
+        return ConvertWorkflowResultToExecutorOutput(workflowResult);
+    }
+
+    /// <summary>
+    /// Converts a <see cref="DurableWorkflowResult"/> from a sub-orchestration
+    /// into a <see cref="DurableExecutorOutput"/> JSON string. This bridges the sub-workflow's
+    /// output format to the parent workflow's result processing, preserving both the result
+    /// and any accumulated events from the sub-workflow.
+    /// </summary>
+    private static string ConvertWorkflowResultToExecutorOutput(DurableWorkflowResult? workflowResult)
+    {
+        if (workflowResult is null)
+        {
+            return string.Empty;
+        }
+
+        // Propagate the result, events, and sent messages from the sub-workflow.
+        // SentMessages carry the sub-workflow's output for typed routing in the parent,
+        // matching the in-process WorkflowHostExecutor behavior.
+        // Shared state is not included because each workflow instance maintains its own
+        // independent shared state; it is not shared between parent and sub-workflows.
+        DurableExecutorOutput executorOutput = new()
+        {
+            Result = workflowResult.Result,
+            Events = workflowResult.Events ?? [],
+            SentMessages = workflowResult.SentMessages ?? [],
+            HaltRequested = workflowResult.HaltRequested,
+        };
+
+        return JsonSerializer.Serialize(executorOutput, DurableWorkflowJsonContext.Default.DurableExecutorOutput);
     }
 }

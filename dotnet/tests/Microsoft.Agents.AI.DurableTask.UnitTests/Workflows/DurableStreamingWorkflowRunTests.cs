@@ -43,8 +43,7 @@ public sealed class DurableStreamingWorkflowRunTests
     private static string SerializeWorkflowResult(string? result, List<string> events)
     {
         DurableWorkflowResult workflowResult = new() { Result = result, Events = events };
-        string inner = JsonSerializer.Serialize(workflowResult, DurableWorkflowJsonContext.Default.DurableWorkflowResult);
-        return JsonSerializer.Serialize(inner);
+        return JsonSerializer.Serialize(workflowResult, DurableWorkflowJsonContext.Default.DurableWorkflowResult);
     }
 
     private static string SerializeEvent(WorkflowEvent evt)

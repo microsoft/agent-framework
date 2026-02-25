@@ -21,4 +21,22 @@ internal sealed class DurableWorkflowResult
     /// Gets or sets the serialized workflow events emitted during execution.
     /// </summary>
     public List<string> Events { get; set; } = [];
+
+    /// <summary>
+    /// Gets or sets the typed messages to forward to connected executors in the parent workflow.
+    /// </summary>
+    /// <remarks>
+    /// When this workflow runs as a sub-orchestration, these messages are propagated to the
+    /// parent workflow and routed to successor executors via the edge map.
+    /// </remarks>
+    public List<TypedPayload> SentMessages { get; set; } = [];
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the workflow was halted by an executor.
+    /// </summary>
+    /// <remarks>
+    /// When this workflow runs as a sub-orchestration, this flag is propagated to the
+    /// parent workflow so halt semantics are preserved across nesting levels.
+    /// </remarks>
+    public bool HaltRequested { get; set; }
 }

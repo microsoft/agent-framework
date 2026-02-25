@@ -376,6 +376,82 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
     }
 
     [Fact]
+    public async Task SubWorkflowsSampleValidationAsync()
+    {
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+        string samplePath = Path.Combine(s_samplesPath, "07_SubWorkflows");
+
+        await this.RunSampleTestAsync(samplePath, async (process, logs) =>
+        {
+            bool inputSent = false;
+            bool foundOrderReceived = false;
+            bool foundValidatePayment = false;
+            bool foundAnalyzePatterns = false;
+            bool foundCalculateRiskScore = false;
+            bool foundChargePayment = false;
+            bool foundSelectCarrier = false;
+            bool foundCreateShipment = false;
+            bool foundOrderCompleted = false;
+            bool foundFraudRiskEvent = false;
+            bool workflowCompleted = false;
+
+            string? line;
+            while ((line = this.ReadLogLine(logs, testTimeoutCts.Token)) != null)
+            {
+                if (!inputSent && line.Contains("Enter an order ID", StringComparison.OrdinalIgnoreCase))
+                {
+                    await this.WriteInputAsync(process, "ORD-001", testTimeoutCts.Token);
+                    inputSent = true;
+                }
+
+                if (inputSent)
+                {
+                    // Main workflow executors
+                    foundOrderReceived |= line.Contains("[OrderReceived]", StringComparison.Ordinal);
+                    foundOrderCompleted |= line.Contains("[OrderCompleted]", StringComparison.Ordinal);
+
+                    // Payment sub-workflow executors
+                    foundValidatePayment |= line.Contains("[Payment/ValidatePayment]", StringComparison.Ordinal);
+                    foundChargePayment |= line.Contains("[Payment/ChargePayment]", StringComparison.Ordinal);
+
+                    // FraudCheck sub-sub-workflow executors (nested inside Payment)
+                    foundAnalyzePatterns |= line.Contains("[Payment/FraudCheck/AnalyzePatterns]", StringComparison.Ordinal);
+                    foundCalculateRiskScore |= line.Contains("[Payment/FraudCheck/CalculateRiskScore]", StringComparison.Ordinal);
+
+                    // Shipping sub-workflow executors
+                    foundSelectCarrier |= line.Contains("[Shipping/SelectCarrier]", StringComparison.Ordinal);
+                    foundCreateShipment |= line.Contains("[Shipping/CreateShipment]", StringComparison.Ordinal);
+
+                    // Custom event from nested sub-workflow (streamed to client)
+                    foundFraudRiskEvent |= line.Contains("[Event from sub-workflow] FraudRiskAssessedEvent", StringComparison.Ordinal);
+
+                    if (line.Contains("Order completed", StringComparison.OrdinalIgnoreCase))
+                    {
+                        workflowCompleted = true;
+                        break;
+                    }
+                }
+
+                this.AssertNoError(line);
+            }
+
+            Assert.True(inputSent, "Input was not sent to the workflow.");
+            Assert.True(foundOrderReceived, "OrderReceived executor log not found.");
+            Assert.True(foundValidatePayment, "Payment/ValidatePayment executor log not found.");
+            Assert.True(foundAnalyzePatterns, "Payment/FraudCheck/AnalyzePatterns executor log not found.");
+            Assert.True(foundCalculateRiskScore, "Payment/FraudCheck/CalculateRiskScore executor log not found.");
+            Assert.True(foundChargePayment, "Payment/ChargePayment executor log not found.");
+            Assert.True(foundSelectCarrier, "Shipping/SelectCarrier executor log not found.");
+            Assert.True(foundCreateShipment, "Shipping/CreateShipment executor log not found.");
+            Assert.True(foundOrderCompleted, "OrderCompleted executor log not found.");
+            Assert.True(foundFraudRiskEvent, "FraudRiskAssessedEvent from nested sub-workflow not found.");
+            Assert.True(workflowCompleted, "Workflow did not complete successfully.");
+
+            await this.WriteInputAsync(process, "exit", testTimeoutCts.Token);
+        });
+    }
+
+    [Fact]
     public async Task WorkflowAndAgentsSampleValidationAsync()
     {
         using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();

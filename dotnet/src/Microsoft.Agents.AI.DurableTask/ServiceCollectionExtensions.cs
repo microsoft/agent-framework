@@ -251,7 +251,7 @@ public static class ServiceCollectionExtensions
         foreach (WorkflowRegistrationInfo registration in registrations)
         {
             // Register with DurableWorkflowInput<object> - the DataConverter handles serialization/deserialization
-            registry.AddOrchestratorFunc<DurableWorkflowInput<object>, string>(
+            registry.AddOrchestratorFunc<DurableWorkflowInput<object>, DurableWorkflowResult>(
                 registration.OrchestrationName,
                 (context, input) => RunWorkflowOrchestrationAsync(context, input, durableOptions));
 
@@ -336,7 +336,7 @@ public static class ServiceCollectionExtensions
         => binding is not AIAgentBinding
             and not SubworkflowBinding;
 
-    private static async Task<string> RunWorkflowOrchestrationAsync(
+    private static async Task<DurableWorkflowResult> RunWorkflowOrchestrationAsync(
         TaskOrchestrationContext context,
         DurableWorkflowInput<object> workflowInput,
         DurableOptions durableOptions)

@@ -28,7 +28,7 @@ internal sealed class WorkflowOrchestrator : ITaskOrchestrator
     public Type InputType => typeof(DurableWorkflowInput<object>);
 
     /// <inheritdoc />
-    public Type OutputType => typeof(string);
+    public Type OutputType => typeof(DurableWorkflowResult);
 
     /// <inheritdoc />
     public async Task<object?> RunAsync(TaskOrchestrationContext context, object? input)
