@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "agent-framework[azure]",
+#     "agent-framework",
 #     "tenacity",
 # ]
 # ///
@@ -39,11 +39,11 @@ Every model inference API enforces rate limits, so production agents need retry 
 to handle 429 responses gracefully. This sample shows two ways to add automatic retry
 using the `tenacity` library, keeping your application code free of boilerplate.
 
-Approach 1 – Client wrapper
-    Apply a retry wrapper to any client instance implementing
-    SupportsChatGetResponse. The wrapper patches get_response() with tenacity
-    retry logic. Non-streaming responses are wrapped in an async retry coroutine;
-    streaming is returned as-is (streaming retry requires more delicate handling).
+Approach 1 – Class decorator
+    Apply a class decorator to any client type implementing
+    SupportsChatGetResponse. The decorator patches get_response() with retry
+    behavior. Non-streaming responses are retried; streaming is returned as-is
+    (streaming retry requires more delicate handling).
 
 Approach 2 – Chat middleware
     Register middleware on the agent that catches RateLimitError raised inside
@@ -63,38 +63,49 @@ logger = logging.getLogger(__name__)
 RETRY_ATTEMPTS = 3
 
 # =============================================================================
-# Approach 1: Client wrapper
+# Approach 1: Class decorator
 # =============================================================================
 
 
 ChatClientT = TypeVar("ChatClientT", bound=SupportsChatGetResponse[Any])
 
 
-def with_rate_limit_retry(client: ChatClientT, *, retry_attempts: int = RETRY_ATTEMPTS) -> ChatClientT:
-    """Wrap a client instance with non-streaming retry behavior on get_response()."""
-    original_get_response = client.get_response
+def with_rate_limit_retry(*, retry_attempts: int = RETRY_ATTEMPTS) -> Callable[[type[ChatClientT]], type[ChatClientT]]:
+    """Class decorator that adds non-streaming retry behavior to get_response()."""
 
-    def get_response_with_retry(*args, **kwargs):  # type: ignore[no-untyped-def]
-        stream = kwargs.get("stream", False)
+    def decorator(client_cls: type[ChatClientT]) -> type[ChatClientT]:
+        original_get_response = client_cls.get_response
 
-        if stream:
-            # Streaming retry is more complex; fall back to the original behaviour.
-            return original_get_response(*args, **kwargs)
+        def get_response_with_retry(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            stream = kwargs.get("stream", False)
 
-        @retry(
-            stop=stop_after_attempt(retry_attempts),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry=retry_if_exception_type(RateLimitError),
-            reraise=True,
-            before_sleep=before_sleep_log(logger, logging.WARNING),
-        )
-        async def _with_retry():
-            return await original_get_response(*args, **kwargs)
+            if stream:
+                # Streaming retry is more complex; fall back to the original behaviour.
+                return original_get_response(self, *args, **kwargs)
 
-        return _with_retry()
+            async def _with_retry():
+                async for attempt in AsyncRetrying(
+                    stop=stop_after_attempt(retry_attempts),
+                    wait=wait_exponential(multiplier=1, min=4, max=10),
+                    retry=retry_if_exception_type(RateLimitError),
+                    reraise=True,
+                    before_sleep=before_sleep_log(logger, logging.WARNING),
+                ):
+                    with attempt:
+                        return await original_get_response(self, *args, **kwargs)
+                return None
 
-    client.get_response = cast(Any, get_response_with_retry)
-    return client
+            return _with_retry()
+
+        client_cls.get_response = cast(Any, get_response_with_retry)
+        return client_cls
+
+    return decorator
+
+
+@with_rate_limit_retry()
+class RetryingAzureOpenAIChatClient(AzureOpenAIChatClient):
+    """Azure OpenAI Chat client with class-decorator-based retry behavior."""
 
 
 # =============================================================================
@@ -165,16 +176,15 @@ async def rate_limit_retry_middleware(
 # =============================================================================
 
 
-async def class_based_wrapper_example() -> None:
-    """Demonstrate Approach 1: retry wrapper on a chat client instance."""
+async def class_decorator_example() -> None:
+    """Demonstrate Approach 1: class decorator on a chat client type."""
     print("\n" + "=" * 60)
-    print("Approach 1: Client wrapper (applied to client instance)")
+    print("Approach 1: Class decorator (applied to client type)")
     print("=" * 60)
 
     # For authentication, run `az login` command in terminal or replace
     # AzureCliCredential with your preferred authentication option.
-    client = with_rate_limit_retry(AzureOpenAIChatClient(credential=AzureCliCredential()))
-    agent = client.as_agent(
+    agent = RetryingAzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
         instructions="You are a helpful assistant.",
     )
 
@@ -231,7 +241,7 @@ async def main() -> None:
         "AZURE_OPENAI_API_KEY) before running, or populate a .env file."
     )
 
-    await class_based_wrapper_example()
+    await class_decorator_example()
     await class_based_middleware_example()
     await function_based_middleware_example()
 
