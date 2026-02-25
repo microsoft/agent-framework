@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -47,12 +49,24 @@ export function WorkflowInputForm({
   const fieldNames = Object.keys(properties);
   const requiredFields = inputSchema.required || [];
   const isSimpleInput = inputSchema.type === "string" && !inputSchema.enum;
+  const isNullInput = inputSchema.type === "null";
+  const isPrimitiveInput = inputSchema.type === "integer" || inputSchema.type === "number";
+  const isBooleanInput = inputSchema.type === "boolean";
+  const isArrayInput = inputSchema.type === "array";
 
   // Detect Message-like pattern for auto-filling role
   const isChatMessageLike = detectChatMessagePattern(inputSchema, requiredFields);
 
   // Validation: check if required fields are filled
-  const canSubmit = isSimpleInput
+  const canSubmit = isNullInput
+    ? true
+    : isBooleanInput
+    ? true
+    : isPrimitiveInput
+    ? formData.value !== undefined && formData.value !== ""
+    : isArrayInput
+    ? true
+    : isSimpleInput
     ? formData.value !== undefined && formData.value !== ""
     : requiredFields.length > 0
       ? requiredFields.every((fieldName) => {
@@ -70,8 +84,16 @@ export function WorkflowInputForm({
 
   // Initialize form data with defaults
   useEffect(() => {
-    if (inputSchema.type === "string") {
+    if (inputSchema.type === "null") {
+      setFormData({});
+    } else if (inputSchema.type === "string") {
       setFormData({ value: inputSchema.default || "" });
+    } else if (inputSchema.type === "integer" || inputSchema.type === "number") {
+      setFormData({ value: inputSchema.default ?? "" });
+    } else if (inputSchema.type === "boolean") {
+      setFormData({ value: inputSchema.default ?? false });
+    } else if (inputSchema.type === "array") {
+      setFormData({ value: inputSchema.default ?? [] });
     } else if (inputSchema.type === "object" && inputSchema.properties) {
       const initialData: Record<string, unknown> = {};
       Object.entries(inputSchema.properties).forEach(([key, fieldSchema]) => {
@@ -96,8 +118,22 @@ export function WorkflowInputForm({
     setLoading(true);
 
     // Simplified submission logic
-    if (inputSchema.type === "string") {
+    if (inputSchema.type === "null") {
+      onSubmit({});
+    } else if (inputSchema.type === "string") {
       onSubmit({ input: formData.value || "" });
+    } else if (inputSchema.type === "integer") {
+      const intStr = String(formData.value).trim();
+      const intValue = intStr === "" ? 0 : parseInt(intStr, 10);
+      onSubmit({ input: intValue });
+    } else if (inputSchema.type === "number") {
+      const numStr = String(formData.value).trim();
+      const numValue = numStr === "" ? 0 : parseFloat(numStr);
+      onSubmit({ input: numValue });
+    } else if (inputSchema.type === "boolean") {
+      onSubmit({ input: Boolean(formData.value) });
+    } else if (inputSchema.type === "array") {
+      onSubmit({ input: Array.isArray(formData.value) ? formData.value : [] });
     } else if (inputSchema.type === "object") {
       const properties = inputSchema.properties || {};
       const fieldNames = Object.keys(properties);
@@ -147,15 +183,136 @@ export function WorkflowInputForm({
     </div>
   );
 
+  // Integer/Number input renderer
+  const renderNumberInput = () => (
+    <div className="space-y-2">
+      <Label htmlFor="number-input">
+        {inputSchema.type === "integer" ? "Integer" : "Number"} Input
+      </Label>
+      <Input
+        id="number-input"
+        type="number"
+        step={inputSchema.type === "integer" ? "1" : "any"}
+        value={typeof formData.value === "number" ? formData.value : ""}
+        onChange={(e) => {
+          const rawValue = e.target.value;
+          if (rawValue === "") {
+            setFormData({ value: undefined });
+            return;
+          }
+          const val =
+            inputSchema.type === "integer"
+              ? parseInt(rawValue, 10)
+              : parseFloat(rawValue);
+          setFormData({ value: isNaN(val) ? undefined : val });
+        }}
+        placeholder={
+          typeof inputSchema.default === "number"
+            ? inputSchema.default.toString()
+            : `Enter ${inputSchema.type === "integer" ? "integer" : "number"}`
+        }
+      />
+      {inputSchema.description && (
+        <p className="text-sm text-muted-foreground">{inputSchema.description}</p>
+      )}
+    </div>
+  );
+
+  // Boolean input renderer
+  const renderBooleanInput = () => (
+    <div className="space-y-2">
+      <div className="flex items-center space-x-2">
+        <Checkbox
+          id="boolean-input"
+          checked={Boolean(formData.value)}
+          onCheckedChange={(checked) => setFormData({ value: checked })}
+        />
+        <Label htmlFor="boolean-input">
+          Value: {formData.value ? "true" : "false"}
+        </Label>
+      </div>
+      {inputSchema.description && (
+        <p className="text-sm text-muted-foreground">{inputSchema.description}</p>
+      )}
+    </div>
+  );
+
+  // Array input renderer
+  const renderArrayInput = () => (
+    <div className="space-y-2">
+      <Label htmlFor="array-input">
+        Array{inputSchema.items?.type ? ` of ${inputSchema.items.type}s` : ""}
+      </Label>
+      <Textarea
+        id="array-input"
+        value={
+          Array.isArray(formData.value)
+            ? (formData.value as unknown[]).join(", ")
+            : typeof formData.value === "string"
+              ? formData.value
+              : ""
+        }
+        onChange={(e) => {
+          const rawItems = e.target.value
+            .split(",")
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0);
+
+          const typedItems = rawItems.map((item) => {
+            const itemType = inputSchema.items?.type;
+            switch (itemType) {
+              case "integer": {
+                const parsed = parseInt(item, 10);
+                return Number.isNaN(parsed) ? item : parsed;
+              }
+              case "number": {
+                const parsed = parseFloat(item);
+                return Number.isNaN(parsed) ? item : parsed;
+              }
+              case "boolean": {
+                const lower = item.toLowerCase();
+                if (lower === "true") return true;
+                if (lower === "false") return false;
+                return item;
+              }
+              default:
+                return item;
+            }
+          });
+
+          setFormData({ value: typedItems });
+        }}
+        placeholder="Enter items separated by commas"
+        rows={3}
+      />
+      {inputSchema.description && (
+        <p className="text-sm text-muted-foreground">{inputSchema.description}</p>
+      )}
+    </div>
+  );
+
+  // Determine which renderer to use for non-object schemas
+  const renderPrimitiveInput = () => {
+    if (isNullInput) return null;
+    if (isSimpleInput) return renderSimpleInput();
+    if (isPrimitiveInput) return renderNumberInput();
+    if (isBooleanInput) return renderBooleanInput();
+    if (isArrayInput) return renderArrayInput();
+    return null;
+  };
+
+  // Check if input type is a non-object type (primitive, array, etc.)
+  const isNonObjectSchema = isNullInput || isSimpleInput || isPrimitiveInput || isBooleanInput || isArrayInput;
+
   // If embedded, just show the form directly
   if (isEmbedded) {
     return (
       <form onSubmit={handleSubmit} className={className}>
-        {/* Simple input */}
-        {isSimpleInput && renderSimpleInput()}
+        {/* Primitive/simple input types */}
+        {isNonObjectSchema && renderPrimitiveInput()}
 
         {/* Complex form fields using SchemaFormRenderer */}
-        {!isSimpleInput && (
+        {!isNonObjectSchema && (
           <SchemaFormRenderer
             schema={inputSchema}
             values={formData}
@@ -245,11 +402,11 @@ export function WorkflowInputForm({
           {/* Scrollable Form Content */}
           <div className="px-8 py-6 overflow-y-auto flex-1 min-h-0">
             <form id="workflow-modal-form" onSubmit={handleSubmit}>
-              {/* Simple input */}
-              {isSimpleInput && renderSimpleInput()}
+              {/* Primitive/simple input types */}
+              {isNonObjectSchema && renderPrimitiveInput()}
 
               {/* Complex form fields using SchemaFormRenderer */}
-              {!isSimpleInput && (
+              {!isNonObjectSchema && (
                 <SchemaFormRenderer
                   schema={inputSchema}
                   values={formData}

@@ -73,7 +73,7 @@ export interface JSONSchemaProperty {
 }
 
 export interface JSONSchema {
-  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  type?: "string" | "number" | "integer" | "boolean" | "array" | "object" | "null";
   description?: string;
   default?: unknown;
   enum?: string[];
@@ -81,6 +81,7 @@ export interface JSONSchema {
   properties?: Record<string, JSONSchemaProperty>;
   required?: string[];
   items?: JSONSchemaProperty;
+  anyOf?: JSONSchemaProperty[];  // For optional types (X | None)
 }
 
 export interface WorkflowInfo extends Omit<AgentInfo, "tools"> {
