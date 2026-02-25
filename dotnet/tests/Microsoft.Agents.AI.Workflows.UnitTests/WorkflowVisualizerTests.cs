@@ -270,9 +270,9 @@ public class WorkflowVisualizerTests
 
         // Check that the Mermaid content contains expected elements
         mermaidContent.Should().Contain("flowchart TD");
-        mermaidContent.Should().Contain("node_0[\"executor1 (Start)\"]");
-        mermaidContent.Should().Contain("node_1[\"executor2\"]");
-        mermaidContent.Should().Contain("node_0 --> node_1");
+        mermaidContent.Should().Contain("executor1[\"executor1 (Start)\"]");
+        mermaidContent.Should().Contain("executor2[\"executor2\"]");
+        mermaidContent.Should().Contain("executor1 --> executor2");
     }
 
     [Fact]
@@ -327,7 +327,7 @@ public class WorkflowVisualizerTests
         mermaidContent.Should().Contain("\"s2\"");
         mermaidContent.Should().Contain("\"t\"");
 
-        // All node IDs should be safe aliases (no raw executor names as IDs)
+        // All node IDs should be safe aliases (ASCII-only identifiers)
         foreach (var line in mermaidContent.Split('\n'))
         {
             var trimmed = line.Trim();
@@ -335,7 +335,7 @@ public class WorkflowVisualizerTests
             {
                 var bracketIdx = trimmed.IndexOfAny(['[', '(']);
                 var nodeId = trimmed.Substring(0, bracketIdx);
-                nodeId.Should().MatchRegex("^node_\\d+$");
+                nodeId.Should().MatchRegex("^[a-zA-Z_][a-zA-Z0-9_]*$");
             }
         }
     }
@@ -364,10 +364,10 @@ public class WorkflowVisualizerTests
         mermaidContent.Should().Contain("\"middle2\"");
         mermaidContent.Should().Contain("\"end\"");
 
-        // Check that safe aliases are used and all edges connect them
-        mermaidContent.Should().Contain("node_0[\"start (Start)\"]");
-        mermaidContent.Should().Contain("node_0 --> node_1");
-        mermaidContent.Should().Contain("node_0 --> node_2");
+        // Check that sanitized IDs are used and all edges connect them
+        mermaidContent.Should().Contain("start[\"start (Start)\"]");
+        mermaidContent.Should().Contain("start --> middle1");
+        mermaidContent.Should().Contain("start --> middle2");
     }
 
     [Fact]

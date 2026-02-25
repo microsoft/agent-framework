@@ -153,15 +153,31 @@ public static class WorkflowVisualizer
 
     private static void EmitWorkflowMermaid(Workflow workflow, List<string> lines, string indent, string? ns = null)
     {
-        // Build a mapping from raw IDs to Mermaid-safe node aliases.
-        // Mermaid node IDs cannot contain spaces, dots, or non-ASCII characters.
+        // Build a mapping from raw IDs to Mermaid-safe node aliases that preserve
+        // as much of the original ID as possible for readability.
+        // Mermaid node IDs cannot contain spaces, dots, pipes, or most special characters.
         var aliasMap = new Dictionary<string, string>();
+        var usedAliases = new HashSet<string>(StringComparer.Ordinal);
+
         string GetSafeId(string id)
         {
             var key = ns != null ? $"{ns}/{id}" : id;
             if (!aliasMap.TryGetValue(key, out var alias))
             {
-                alias = $"node_{aliasMap.Count}";
+                alias = SanitizeMermaidNodeId(key);
+
+                // Handle collisions by appending a numeric suffix
+                if (!usedAliases.Add(alias))
+                {
+                    var i = 2;
+                    while (!usedAliases.Add($"{alias}_{i}"))
+                    {
+                        i++;
+                    }
+
+                    alias = $"{alias}_{i}";
+                }
+
                 aliasMap[key] = alias;
             }
 
@@ -312,6 +328,47 @@ public static class WorkflowVisualizer
 
         workflow = null;
         return false;
+    }
+
+    /// <summary>
+    /// Converts a raw node ID into a Mermaid-safe identifier that preserves as much
+    /// of the original text as possible. ASCII letters, digits, and underscores are kept;
+    /// everything else (including non-ASCII letters) is replaced with an underscore.
+    /// A leading digit gets a prefix. Consecutive underscores are collapsed.
+    /// </summary>
+    private static string SanitizeMermaidNodeId(string id)
+    {
+        var sb = new StringBuilder(id.Length);
+        bool lastWasUnderscore = false;
+        foreach (var ch in id)
+        {
+            bool isAsciiSafe = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+            if (isAsciiSafe)
+            {
+                sb.Append(ch);
+                lastWasUnderscore = ch == '_';
+            }
+            else if (!lastWasUnderscore)
+            {
+                sb.Append('_');
+                lastWasUnderscore = true;
+            }
+        }
+
+        // Trim trailing underscore
+        while (sb.Length > 0 && sb[sb.Length - 1] == '_')
+        {
+            sb.Length--;
+        }
+
+        // Mermaid IDs must not start with a digit
+        if (sb.Length > 0 && sb[0] >= '0' && sb[0] <= '9')
+        {
+            sb.Insert(0, "n_");
+        }
+
+        // Guard against empty result (e.g. id was all special chars)
+        return sb.Length == 0 ? "node" : sb.ToString();
     }
 
     // Helper method to escape special characters in DOT labels
