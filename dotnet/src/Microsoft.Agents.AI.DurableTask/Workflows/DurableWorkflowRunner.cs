@@ -95,7 +95,7 @@ internal sealed class DurableWorkflowRunner
     /// <param name="logger">The replay-safe logger for orchestration logging.</param>
     /// <returns>The result of the workflow execution.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the specified workflow is not found.</exception>
-    internal async Task<string> RunWorkflowOrchestrationAsync(
+    internal async Task<DurableWorkflowResult> RunWorkflowOrchestrationAsync(
         TaskOrchestrationContext context,
         DurableWorkflowInput<object> workflowInput,
         ILogger logger)
@@ -135,7 +135,7 @@ internal sealed class DurableWorkflowRunner
     /// </summary>
     [UnconditionalSuppressMessage("AOT", "IL2026:RequiresUnreferencedCode", Justification = "Input types are preserved by the Durable Task framework's DataConverter.")]
     [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "Input types are preserved by the Durable Task framework's DataConverter.")]
-    private static async Task<string> RunSuperstepLoopAsync(
+    private static async Task<DurableWorkflowResult> RunSuperstepLoopAsync(
         TaskOrchestrationContext context,
         Workflow workflow,
         DurableEdgeMap edgeMap,
@@ -202,7 +202,7 @@ internal sealed class DurableWorkflowRunner
         // (SerializedCustomStatus is cleared by the framework on completion).
         // SentMessages carries the final result so parent workflows can route it
         // to connected executors, matching the in-process WorkflowHostExecutor behavior.
-        DurableWorkflowResult workflowResult = new()
+        return new DurableWorkflowResult
         {
             Result = finalResult,
             Events = state.AccumulatedEvents,
@@ -210,8 +210,6 @@ internal sealed class DurableWorkflowRunner
                 ? [new TypedPayload { Data = finalResult }]
                 : []
         };
-
-        return JsonSerializer.Serialize(workflowResult, DurableWorkflowJsonContext.Default.DurableWorkflowResult);
     }
 
     /// <summary>

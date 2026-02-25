@@ -262,9 +262,9 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
     /// Attempts to parse the orchestration output as a <see cref="DurableWorkflowResult"/> wrapper.
     /// </summary>
     /// <remarks>
-    /// The orchestration wraps its output in a <see cref="DurableWorkflowResult"/> to include
-    /// accumulated events alongside the result. The Durable Task framework's <c>DataConverter</c>
-    /// serializes the string output with an extra layer of JSON encoding, so we first unwrap that.
+    /// The orchestration returns a <see cref="DurableWorkflowResult"/> object directly.
+    /// The Durable Task framework's <c>DataConverter</c> serializes it as a JSON object
+    /// in <c>SerializedOutput</c>, so we deserialize it directly.
     /// </remarks>
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow result wrapper.")]
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow result wrapper.")]
@@ -278,17 +278,7 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
 
         try
         {
-            // The DurableDataConverter wraps string results in JSON quotes, so
-            // SerializedOutput is a JSON-encoded string like "\"{ ... }\"".
-            // We need to unwrap the outer JSON string first.
-            string? innerJson = JsonSerializer.Deserialize<string>(serializedOutput);
-            if (innerJson is null)
-            {
-                result = default!;
-                return false;
-            }
-
-            result = JsonSerializer.Deserialize(innerJson, DurableWorkflowJsonContext.Default.DurableWorkflowResult)!;
+            result = JsonSerializer.Deserialize(serializedOutput, DurableWorkflowJsonContext.Default.DurableWorkflowResult)!;
             return result is not null;
         }
         catch (JsonException)

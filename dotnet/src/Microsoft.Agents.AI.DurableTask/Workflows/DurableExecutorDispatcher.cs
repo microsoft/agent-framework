@@ -115,7 +115,7 @@ internal static class DurableExecutorDispatcher
     /// checkpointing, replay, and hierarchical visualization in the DTS dashboard.
     /// The input is wrapped in <see cref="DurableWorkflowInput{T}"/> to match the
     /// orchestration's registered input type. The sub-orchestration returns a
-    /// <see cref="DurableWorkflowResult"/> JSON envelope (same as top-level workflows),
+    /// <see cref="DurableWorkflowResult"/> directly (deserialized by the Durable Task SDK),
     /// which this method converts to a <see cref="DurableExecutorOutput"/> so the parent
     /// workflow's result processing picks up both the result and any accumulated events.
     /// </remarks>
@@ -128,54 +128,38 @@ internal static class DurableExecutorDispatcher
 
         DurableWorkflowInput<string> workflowInput = new() { Input = input };
 
-        string? rawOutput = await context.CallSubOrchestratorAsync<string?>(
+        DurableWorkflowResult? workflowResult = await context.CallSubOrchestratorAsync<DurableWorkflowResult?>(
             orchestrationName,
             workflowInput).ConfigureAwait(true);
 
-        return ConvertWorkflowResultToExecutorOutput(rawOutput);
+        return ConvertWorkflowResultToExecutorOutput(workflowResult);
     }
 
     /// <summary>
-    /// Converts a <see cref="DurableWorkflowResult"/> JSON envelope from a sub-orchestration
+    /// Converts a <see cref="DurableWorkflowResult"/> from a sub-orchestration
     /// into a <see cref="DurableExecutorOutput"/> JSON string. This bridges the sub-workflow's
     /// output format to the parent workflow's result processing, preserving both the result
     /// and any accumulated events from the sub-workflow.
     /// </summary>
-    private static string ConvertWorkflowResultToExecutorOutput(string? rawOutput)
+    private static string ConvertWorkflowResultToExecutorOutput(DurableWorkflowResult? workflowResult)
     {
-        if (string.IsNullOrEmpty(rawOutput))
+        if (workflowResult is null)
         {
             return string.Empty;
         }
 
-        try
+        // Propagate the result, events, and sent messages from the sub-workflow.
+        // SentMessages carry the sub-workflow's output for typed routing in the parent,
+        // matching the in-process WorkflowHostExecutor behavior.
+        // Shared state is not included because each workflow instance maintains its own
+        // independent shared state; it is not shared between parent and sub-workflows.
+        DurableExecutorOutput executorOutput = new()
         {
-            DurableWorkflowResult? workflowResult = JsonSerializer.Deserialize(
-                rawOutput,
-                DurableWorkflowJsonContext.Default.DurableWorkflowResult);
+            Result = workflowResult.Result,
+            Events = workflowResult.Events ?? [],
+            SentMessages = workflowResult.SentMessages ?? [],
+        };
 
-            if (workflowResult is null)
-            {
-                return string.Empty;
-            }
-
-            // Propagate the result, events, and sent messages from the sub-workflow.
-            // SentMessages carry the sub-workflow's output for typed routing in the parent,
-            // matching the in-process WorkflowHostExecutor behavior.
-            // Shared state is not included because each workflow instance maintains its own
-            // independent shared state; it is not shared between parent and sub-workflows.
-            DurableExecutorOutput executorOutput = new()
-            {
-                Result = workflowResult.Result,
-                Events = workflowResult.Events ?? [],
-                SentMessages = workflowResult.SentMessages ?? [],
-            };
-
-            return JsonSerializer.Serialize(executorOutput, DurableWorkflowJsonContext.Default.DurableExecutorOutput);
-        }
-        catch (JsonException)
-        {
-            return rawOutput;
-        }
+        return JsonSerializer.Serialize(executorOutput, DurableWorkflowJsonContext.Default.DurableExecutorOutput);
     }
 }
