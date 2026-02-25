@@ -474,22 +474,22 @@ class MagenticManagerBase(ABC):
     @abstractmethod
     async def plan(self, magentic_context: MagenticContext) -> Message:
         """Create a plan for the task."""
-        ...
+        pass
 
     @abstractmethod
     async def replan(self, magentic_context: MagenticContext) -> Message:
         """Replan for the task."""
-        ...
+        pass
 
     @abstractmethod
     async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         """Create a progress ledger."""
-        ...
+        pass
 
     @abstractmethod
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> Message:
         """Prepare the final answer."""
-        ...
+        pass
 
     def on_checkpoint_save(self) -> dict[str, Any]:
         """Serialize runtime state for checkpointing."""

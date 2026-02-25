@@ -513,7 +513,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         Args:
             state: The state dictionary that was saved during checkpointing.
         """
-        ...
+        pass
 
 
 # endregion: Executor
