@@ -148,8 +148,10 @@ class TestPurviewPolicyMiddleware:
             await middleware.process(context, mock_next)
 
             assert mock_process.call_count == 2
-            for call in mock_process.call_args_list:
-                assert call[0][1] == Activity.UPLOAD_TEXT
+            # First call (pre-check) should be UPLOAD_TEXT for user prompt
+            assert mock_process.call_args_list[0][0][1] == Activity.UPLOAD_TEXT
+            # Second call (post-check) should be DOWNLOAD_TEXT for agent response
+            assert mock_process.call_args_list[1][0][1] == Activity.DOWNLOAD_TEXT
 
     async def test_middleware_streaming_skips_post_check(
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
