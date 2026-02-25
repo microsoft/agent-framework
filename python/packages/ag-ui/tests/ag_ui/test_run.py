@@ -841,7 +841,6 @@ class TestTextMessageEventBalancing:
 
 # ============================================================================
 # Tests for MCP tool call, MCP tool result, and text reasoning event emission
-# (Fixes #4213)
 # ============================================================================
 
 
@@ -1031,13 +1030,12 @@ class TestEmitTextReasoning:
 
     def test_produces_custom_event(self):
         """Text reasoning emits a CustomEvent with name='text_reasoning'."""
-        flow = FlowState()
         content = Content.from_text_reasoning(
             id="reason_1",
             text="The user is asking about weather, so I should call the weather tool.",
         )
 
-        events = _emit_text_reasoning(content, flow)
+        events = _emit_text_reasoning(content)
 
         assert len(events) == 1
         assert events[0].type == "CUSTOM"
@@ -1047,13 +1045,12 @@ class TestEmitTextReasoning:
 
     def test_protected_data_as_separate_key(self):
         """protected_data is exposed under its own key, not conflated with text."""
-        flow = FlowState()
         content = Content.from_text_reasoning(
             text="visible reasoning",
             protected_data="encrypted metadata",
         )
 
-        events = _emit_text_reasoning(content, flow)
+        events = _emit_text_reasoning(content)
 
         assert len(events) == 1
         assert events[0].value["text"] == "visible reasoning"
@@ -1061,12 +1058,11 @@ class TestEmitTextReasoning:
 
     def test_protected_data_only_emits_event(self):
         """Content with only protected_data (no text) still emits an event."""
-        flow = FlowState()
         content = Content.from_text_reasoning(
             protected_data="encrypted reasoning content",
         )
 
-        events = _emit_text_reasoning(content, flow)
+        events = _emit_text_reasoning(content)
 
         assert len(events) == 1
         assert events[0].value["text"] == ""
@@ -1074,19 +1070,17 @@ class TestEmitTextReasoning:
 
     def test_empty_text_and_no_protected_data_returns_empty(self):
         """Empty text and no protected_data returns no events."""
-        flow = FlowState()
         content = Content.from_text_reasoning()
 
-        events = _emit_text_reasoning(content, flow)
+        events = _emit_text_reasoning(content)
 
         assert events == []
 
     def test_no_id_omits_id_field(self):
         """When id is None, the value dict should not include 'id'."""
-        flow = FlowState()
         content = Content.from_text_reasoning(text="thinking...")
 
-        events = _emit_text_reasoning(content, flow)
+        events = _emit_text_reasoning(content)
 
         assert len(events) == 1
         assert "id" not in events[0].value
