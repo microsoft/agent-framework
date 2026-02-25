@@ -68,7 +68,8 @@ internal static class DurableExecutorDispatcher
         {
             Input = input,
             InputTypeName = inputTypeName,
-            State = sharedState
+            State = sharedState,
+            TraceParent = DurableWorkflowInstrumentation.WorkflowRunTraceParent.Value
         };
 
         string serializedInput = JsonSerializer.Serialize(activityInput, DurableWorkflowJsonContext.Default.DurableActivityInput);

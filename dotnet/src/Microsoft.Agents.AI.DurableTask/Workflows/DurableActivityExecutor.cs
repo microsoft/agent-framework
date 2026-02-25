@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
@@ -40,18 +41,58 @@ internal static class DurableActivityExecutor
         string executorInput = inputWithState?.Input ?? input;
         Dictionary<string, string> sharedState = inputWithState?.State ?? [];
 
-        Executor executor = await binding.FactoryAsync(binding.Id).ConfigureAwait(false);
-        Type inputType = ResolveInputType(inputWithState?.InputTypeName, executor.InputTypes);
-        object typedInput = DeserializeInput(executorInput, inputType);
+        // Restore the orchestrator's trace context (workflow.run span) as the parent
+        // for spans created in the activity worker (e.g., executor.process).
+        // The Durable Task SDK propagates its own trace context (from scheduling time),
+        // not the orchestrator's Activity.Current. We bridge this gap by explicitly
+        // passing the traceparent through the activity input.
+        Activity? parentBridge = RestoreParentTraceContext(inputWithState?.TraceParent);
 
-        DurableWorkflowContext workflowContext = new(sharedState, executor);
-        object? result = await executor.ExecuteAsync(
-            typedInput,
-            new TypeId(inputType),
-            workflowContext,
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Executor executor = await binding.FactoryAsync(binding.Id).ConfigureAwait(false);
+            Type inputType = ResolveInputType(inputWithState?.InputTypeName, executor.InputTypes);
+            object typedInput = DeserializeInput(executorInput, inputType);
 
-        return SerializeActivityOutput(result, workflowContext);
+            DurableWorkflowContext workflowContext = new(sharedState, executor);
+            object? result = await executor.ExecuteAsync(
+                typedInput,
+                new TypeId(inputType),
+                workflowContext,
+                cancellationToken).ConfigureAwait(false);
+
+            return SerializeActivityOutput(result, workflowContext);
+        }
+        finally
+        {
+            parentBridge?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Restores the orchestrator's trace context so that spans created in the activity worker
+    /// (like executor.process) appear as children of workflow.run in the trace hierarchy.
+    /// </summary>
+    /// <returns>A bridge activity that should be disposed when execution completes, or null if no context was provided.</returns>
+    private static Activity? RestoreParentTraceContext(string? traceParent)
+    {
+        if (traceParent is null)
+        {
+            return null;
+        }
+
+        if (!ActivityContext.TryParse(traceParent, null, out ActivityContext parentContext))
+        {
+            return null;
+        }
+
+        // StartActivity with an explicit parent context creates a sampled span whose parent
+        // is workflow.run. All subsequent spans (executor.process, message.send) created while
+        // this is Activity.Current will nest under it in the trace.
+        return DurableWorkflowInstrumentation.ActivitySource.StartActivity(
+            "executor.dispatch",
+            ActivityKind.Internal,
+            parentContext);
     }
 
     private static string SerializeActivityOutput(object? result, DurableWorkflowContext context)

@@ -21,4 +21,10 @@ internal sealed class DurableActivityInput
     /// Gets or sets the shared state dictionary (scope-prefixed key -> serialized value).
     /// </summary>
     public Dictionary<string, string> State { get; set; } = [];
+
+    /// <summary>
+    /// Gets or sets the W3C traceparent of the orchestrator's workflow.run span,
+    /// used to establish parent-child trace hierarchy from the activity worker.
+    /// </summary>
+    public string? TraceParent { get; set; }
 }

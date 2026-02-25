@@ -15,6 +15,7 @@ internal sealed class DurableWorkflowRun : IAwaitableWorkflowRun
 {
     private readonly DurableTaskClient _client;
     private readonly List<WorkflowEvent> _eventSink = [];
+    private Activity? _runActivity;
     private int _lastBookmark;
 
     /// <summary>
@@ -23,11 +24,13 @@ internal sealed class DurableWorkflowRun : IAwaitableWorkflowRun
     /// <param name="client">The durable task client for orchestration operations.</param>
     /// <param name="instanceId">The unique instance ID for this orchestration run.</param>
     /// <param name="workflowName">The name of the workflow being executed.</param>
-    internal DurableWorkflowRun(DurableTaskClient client, string instanceId, string workflowName)
+    /// <param name="runActivity">The workflow.run activity to stop when the workflow completes.</param>
+    internal DurableWorkflowRun(DurableTaskClient client, string instanceId, string workflowName, Activity? runActivity = null)
     {
         this._client = client;
         this.RunId = instanceId;
         this.WorkflowName = workflowName;
+        this._runActivity = runActivity;
     }
 
     /// <inheritdoc/>
@@ -48,33 +51,42 @@ internal sealed class DurableWorkflowRun : IAwaitableWorkflowRun
     /// <exception cref="InvalidOperationException">Thrown when the workflow was terminated or ended with an unexpected status.</exception>
     public async ValueTask<TResult?> WaitForCompletionAsync<TResult>(CancellationToken cancellationToken = default)
     {
-        OrchestrationMetadata metadata = await this._client.WaitForInstanceCompletionAsync(
-            this.RunId,
-            getInputsAndOutputs: true,
-            cancellation: cancellationToken).ConfigureAwait(false);
-
-        if (metadata.RuntimeStatus == OrchestrationRuntimeStatus.Completed)
+        try
         {
-            return DurableStreamingWorkflowRun.ExtractResult<TResult>(metadata.SerializedOutput);
-        }
+            OrchestrationMetadata metadata = await this._client.WaitForInstanceCompletionAsync(
+                this.RunId,
+                getInputsAndOutputs: true,
+                cancellation: cancellationToken).ConfigureAwait(false);
 
-        if (metadata.RuntimeStatus == OrchestrationRuntimeStatus.Failed)
-        {
-            if (metadata.FailureDetails is not null)
+            if (metadata.RuntimeStatus == OrchestrationRuntimeStatus.Completed)
             {
-                // Use TaskFailedException to preserve full failure details including stack trace and inner exceptions
-                throw new TaskFailedException(
-                    taskName: this.WorkflowName,
-                    taskId: 0,
-                    failureDetails: metadata.FailureDetails);
+                this._runActivity?.AddEvent(new ActivityEvent("workflow.completed"));
+                return DurableStreamingWorkflowRun.ExtractResult<TResult>(metadata.SerializedOutput);
+            }
+
+            if (metadata.RuntimeStatus == OrchestrationRuntimeStatus.Failed)
+            {
+                if (metadata.FailureDetails is not null)
+                {
+                    // Use TaskFailedException to preserve full failure details including stack trace and inner exceptions
+                    throw new TaskFailedException(
+                        taskName: this.WorkflowName,
+                        taskId: 0,
+                        failureDetails: metadata.FailureDetails);
+                }
+
+                throw new InvalidOperationException(
+                    $"Workflow '{this.WorkflowName}' (RunId: {this.RunId}) failed without failure details.");
             }
 
             throw new InvalidOperationException(
-                $"Workflow '{this.WorkflowName}' (RunId: {this.RunId}) failed without failure details.");
+                $"Workflow '{this.WorkflowName}' (RunId: {this.RunId}) ended with unexpected status: {metadata.RuntimeStatus}");
         }
-
-        throw new InvalidOperationException(
-            $"Workflow '{this.WorkflowName}' (RunId: {this.RunId}) ended with unexpected status: {metadata.RuntimeStatus}");
+        finally
+        {
+            this._runActivity?.Dispose();
+            this._runActivity = null;
+        }
     }
 
     /// <summary>

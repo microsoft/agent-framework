@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
@@ -40,7 +41,20 @@ internal sealed class DurableWorkflowClient : IWorkflowClient
             throw new ArgumentException("Workflow must have a valid Name property.", nameof(workflow));
         }
 
-        DurableWorkflowInput<TInput> workflowInput = new() { Input = input };
+        // Start workflow.run at the client level so its span ID is stable across orchestrator
+        // replays. The Durable Task orchestrator re-executes from the top on each replay,
+        // creating new Activity objects that are abandoned when the method suspends. By creating
+        // workflow.run here and propagating its context via TraceParent, activity worker spans
+        // consistently reference a properly exported parent span.
+        Activity? runActivity = DurableWorkflowInstrumentation.ActivitySource.StartActivity("workflow.run");
+        runActivity?.SetTag("workflow.id", workflow.StartExecutorId)
+            .SetTag("workflow.name", workflow.Name);
+
+        DurableWorkflowInput<TInput> workflowInput = new()
+        {
+            Input = input,
+            TraceParent = runActivity?.Id ?? Activity.Current?.Id
+        };
 
         string instanceId = await this._client.ScheduleNewOrchestrationInstanceAsync(
             orchestratorName: WorkflowNamingHelper.ToOrchestrationFunctionName(workflow.Name),
@@ -48,7 +62,9 @@ internal sealed class DurableWorkflowClient : IWorkflowClient
             options: runId is not null ? new StartOrchestrationOptions(runId) : null,
             cancellation: cancellationToken).ConfigureAwait(false);
 
-        return new DurableWorkflowRun(this._client, instanceId, workflow.Name);
+        runActivity?.SetTag("run.id", instanceId);
+
+        return new DurableWorkflowRun(this._client, instanceId, workflow.Name, runActivity);
     }
 
     /// <inheritdoc/>
@@ -74,7 +90,15 @@ internal sealed class DurableWorkflowClient : IWorkflowClient
             throw new ArgumentException("Workflow must have a valid Name property.", nameof(workflow));
         }
 
-        DurableWorkflowInput<TInput> workflowInput = new() { Input = input };
+        Activity? runActivity = DurableWorkflowInstrumentation.ActivitySource.StartActivity("workflow.run");
+        runActivity?.SetTag("workflow.id", workflow.StartExecutorId)
+            .SetTag("workflow.name", workflow.Name);
+
+        DurableWorkflowInput<TInput> workflowInput = new()
+        {
+            Input = input,
+            TraceParent = runActivity?.Id ?? Activity.Current?.Id
+        };
 
         string instanceId = await this._client.ScheduleNewOrchestrationInstanceAsync(
             orchestratorName: WorkflowNamingHelper.ToOrchestrationFunctionName(workflow.Name),
@@ -82,7 +106,9 @@ internal sealed class DurableWorkflowClient : IWorkflowClient
             options: runId is not null ? new StartOrchestrationOptions(runId) : null,
             cancellation: cancellationToken).ConfigureAwait(false);
 
-        return new DurableStreamingWorkflowRun(this._client, instanceId, workflow);
+        runActivity?.SetTag("run.id", instanceId);
+
+        return new DurableStreamingWorkflowRun(this._client, instanceId, workflow, runActivity);
     }
 
     /// <inheritdoc/>

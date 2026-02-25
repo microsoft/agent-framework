@@ -23,6 +23,7 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows;
 internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
 {
     private readonly DurableTaskClient _client;
+    private readonly Activity? _runActivity;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DurableStreamingWorkflowRun"/> class.
@@ -30,11 +31,13 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
     /// <param name="client">The durable task client for orchestration operations.</param>
     /// <param name="instanceId">The unique instance ID for this orchestration run.</param>
     /// <param name="workflow">The workflow being executed.</param>
-    internal DurableStreamingWorkflowRun(DurableTaskClient client, string instanceId, Workflow workflow)
+    /// <param name="runActivity">The workflow.run activity to stop when the workflow completes.</param>
+    internal DurableStreamingWorkflowRun(DurableTaskClient client, string instanceId, Workflow workflow, Activity? runActivity = null)
     {
         this._client = client;
         this.RunId = instanceId;
         this.WorkflowName = workflow.Name ?? string.Empty;
+        this._runActivity = runActivity;
     }
 
     /// <inheritdoc/>
