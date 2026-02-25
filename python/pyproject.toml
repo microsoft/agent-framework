@@ -239,6 +239,7 @@ check = ["check-packages", "samples-lint", "samples-syntax", "test", "markdown-c
 [tool.poe.tasks.all-tests-cov]
 cmd = """
 pytest --import-mode=importlib
+-m "not integration"
 --cov=agent_framework
 --cov=agent_framework_core
 --cov=agent_framework_a2a
@@ -266,6 +267,7 @@ pytest --import-mode=importlib
 [tool.poe.tasks.all-tests]
 cmd = """
 pytest --import-mode=importlib
+-m "not integration"
 --ignore-glob=packages/lab/**
 --ignore-glob=packages/devui/**
 -rs
