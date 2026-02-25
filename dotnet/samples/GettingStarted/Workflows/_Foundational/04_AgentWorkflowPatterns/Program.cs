@@ -88,26 +88,39 @@ public static class Program
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
             await foreach (WorkflowEvent evt in run.WatchStreamAsync())
             {
-                if (evt is AgentResponseUpdateEvent e)
+                switch (evt)
                 {
-                    if (e.ExecutorId != lastExecutorId)
-                    {
-                        lastExecutorId = e.ExecutorId;
-                        Console.WriteLine();
-                        Console.WriteLine(e.ExecutorId);
-                    }
+                    case AgentResponseUpdateEvent e:
+                        if (e.ExecutorId != lastExecutorId)
+                        {
+                            lastExecutorId = e.ExecutorId;
+                            Console.WriteLine();
+                            Console.WriteLine(e.ExecutorId);
+                        }
 
-                    Console.Write(e.Update.Text);
-                    if (e.Update.Contents.OfType<FunctionCallContent>().FirstOrDefault() is FunctionCallContent call)
-                    {
+                        Console.Write(e.Update.Text);
+                        if (e.Update.Contents.OfType<FunctionCallContent>().FirstOrDefault() is FunctionCallContent call)
+                        {
+                            Console.WriteLine();
+                            Console.WriteLine($"  [Calling function '{call.Name}' with arguments: {JsonSerializer.Serialize(call.Arguments)}]");
+                        }
+                        break;
+
+                    case WorkflowOutputEvent output:
                         Console.WriteLine();
-                        Console.WriteLine($"  [Calling function '{call.Name}' with arguments: {JsonSerializer.Serialize(call.Arguments)}]");
-                    }
-                }
-                else if (evt is WorkflowOutputEvent output)
-                {
-                    Console.WriteLine();
-                    return output.As<List<ChatMessage>>()!;
+                        return output.As<List<ChatMessage>>()!;
+
+                    case ExecutorFailedEvent failureEvent:
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"Executor failed [{failureEvent.ExecutorId}]: {failureEvent.Data?.Message ?? "Unknown error"}");
+                        Console.ResetColor();
+                        break;
+
+                    case WorkflowErrorEvent errorEvent:
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"Workflow error: {errorEvent.Exception?.Message ?? "Unknown error"}");
+                        Console.ResetColor();
+                        throw errorEvent.Exception ?? new InvalidOperationException("Workflow encountered an error.");
                 }
             }
 

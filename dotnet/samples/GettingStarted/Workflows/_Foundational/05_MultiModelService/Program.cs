@@ -58,15 +58,25 @@ AIAgent workflowAgent = AgentWorkflowBuilder.BuildSequential(researcher, factChe
 
 // Run the workflow, streaming the output as it arrives.
 string? lastAuthor = null;
-await foreach (var update in workflowAgent.RunStreamingAsync(Topic))
+try
 {
-    if (lastAuthor != update.AuthorName)
+    await foreach (var update in workflowAgent.RunStreamingAsync(Topic))
     {
-        lastAuthor = update.AuthorName;
-        Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"\n\n** {update.AuthorName} **");
-        Console.ResetColor();
-    }
+        if (lastAuthor != update.AuthorName)
+        {
+            lastAuthor = update.AuthorName;
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"\n\n** {update.AuthorName} **");
+            Console.ResetColor();
+        }
 
-    Console.Write(update.Text);
+        Console.Write(update.Text);
+    }
+}
+catch (Exception ex)
+{
+    Console.ForegroundColor = ConsoleColor.Red;
+    Console.WriteLine($"\n\nWorkflow error: {ex.Message}");
+    Console.ResetColor();
+    throw;
 }

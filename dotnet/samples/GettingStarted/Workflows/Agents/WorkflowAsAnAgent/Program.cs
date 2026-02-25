@@ -59,28 +59,38 @@ public static class Program
         static async Task ProcessInputAsync(AIAgent agent, AgentSession? session, string input)
         {
             Dictionary<string, List<AgentResponseUpdate>> buffer = [];
-            await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(input, session))
+            try
             {
-                if (update.MessageId is null || string.IsNullOrEmpty(update.Text))
+                await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(input, session))
                 {
-                    // skip updates that don't have a message ID or text
-                    continue;
-                }
-                Console.Clear();
+                    if (update.MessageId is null || string.IsNullOrEmpty(update.Text))
+                    {
+                        // skip updates that don't have a message ID or text
+                        continue;
+                    }
+                    Console.Clear();
 
-                if (!buffer.TryGetValue(update.MessageId, out List<AgentResponseUpdate>? value))
-                {
-                    value = [];
-                    buffer[update.MessageId] = value;
-                }
-                value.Add(update);
+                    if (!buffer.TryGetValue(update.MessageId, out List<AgentResponseUpdate>? value))
+                    {
+                        value = [];
+                        buffer[update.MessageId] = value;
+                    }
+                    value.Add(update);
 
-                foreach (var (messageId, segments) in buffer)
-                {
-                    string combinedText = string.Concat(segments);
-                    Console.WriteLine($"{segments[0].AuthorName}: {combinedText}");
-                    Console.WriteLine();
+                    foreach (var (messageId, segments) in buffer)
+                    {
+                        string combinedText = string.Concat(segments);
+                        Console.WriteLine($"{segments[0].AuthorName}: {combinedText}");
+                        Console.WriteLine();
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"\nWorkflow error: {ex.Message}");
+                Console.ResetColor();
+                throw;
             }
         }
     }
