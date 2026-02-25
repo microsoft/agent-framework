@@ -8,6 +8,9 @@ internal static class EventNames
     public const string BuildValidationCompleted = "build.validation_completed";
     public const string BuildCompleted = "build.completed";
     public const string BuildError = "build.error";
+    public const string SessionStarted = "session.started";
+    public const string SessionCompleted = "session.completed";
+    public const string SessionError = "session.error";
     public const string WorkflowStarted = "workflow.started";
     public const string WorkflowCompleted = "workflow.completed";
     public const string WorkflowError = "workflow.error";
