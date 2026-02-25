@@ -34,7 +34,8 @@ dependencies = [
     # connectors and functions
     "openai>=1.99.0",
     "azure-identity>=1,<2",
-    "azure-ai-projects >= 2.0.0b3",
+    # Pinned to 2.0.0b3 - breaking changes in 2.0.0b4, unpin once upgrades complete
+    "azure-ai-projects == 2.0.0b3",
     "mcp[ws]>=1.24.0,<2",
     "packaging>=24.1",
 ]
