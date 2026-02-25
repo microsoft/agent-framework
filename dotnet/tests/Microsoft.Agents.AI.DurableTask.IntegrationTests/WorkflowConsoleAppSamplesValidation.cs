@@ -422,9 +422,8 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
                     foundSelectCarrier |= line.Contains("[Shipping/SelectCarrier]", StringComparison.Ordinal);
                     foundCreateShipment |= line.Contains("[Shipping/CreateShipment]", StringComparison.Ordinal);
 
-                    // Custom event from nested sub-workflow
-                    foundFraudRiskEvent |= line.Contains("FraudRiskAssessedEvent", StringComparison.Ordinal)
-                        || line.Contains("Risk score", StringComparison.Ordinal);
+                    // Custom event from nested sub-workflow (streamed to client)
+                    foundFraudRiskEvent |= line.Contains("[Event from sub-workflow] FraudRiskAssessedEvent", StringComparison.Ordinal);
 
                     if (line.Contains("Order completed", StringComparison.OrdinalIgnoreCase))
                     {
