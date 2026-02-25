@@ -462,7 +462,11 @@ class WorkflowAgent(BaseAgent):
                     )
 
                 if isinstance(data, AgentResponse):
-                    messages.extend(data.messages)
+                    # Filter to only assistant messages to avoid re-emitting user input
+                    # that may be included in the AgentResponse's conversation history
+                    # (e.g., from GroupChat orchestrators that include the full conversation).
+                    assistant_messages = [msg for msg in data.messages if msg.role == "assistant"]
+                    messages.extend(assistant_messages)
                     raw_representations.append(data.raw_representation)
                     merged_usage = add_usage_details(merged_usage, data.usage_details)
                     latest_created_at = (
@@ -563,9 +567,14 @@ class WorkflowAgent(BaseAgent):
                     data.author_name = executor_id
                 return [data]
             if isinstance(data, AgentResponse):
-                # Convert each message in AgentResponse to an AgentResponseUpdate
+                # Convert each assistant message in AgentResponse to an AgentResponseUpdate.
+                # Filter out non-assistant messages to avoid re-emitting user input
+                # that may be included in the AgentResponse's conversation history
+                # (e.g., from GroupChat orchestrators that include the full conversation).
                 updates: list[AgentResponseUpdate] = []
                 for msg in data.messages:
+                    if msg.role != "assistant":
+                        continue
                     updates.append(
                         AgentResponseUpdate(
                             contents=list(msg.contents),
