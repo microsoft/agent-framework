@@ -8,11 +8,8 @@ on:
 env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
-  # setting GH_TOKEN for the entire workflow
-  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  # GitHub Copilot configuration
   GITHUB_COPILOT_MODEL: claude-opus-4.6
-  GITHUB_COPILOT_LOG_LEVEL: debug
-
 
 jobs:
   validate-01-get-started:
@@ -37,6 +34,11 @@ jobs:
 
       - name: Install Copilot CLI
         run: npm install -g @github/copilot
+
+      - name: Authenticate Copilot CLI
+        run: gh auth login --with-token
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Test Copilot CLI
         run: |
