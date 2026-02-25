@@ -191,6 +191,7 @@ public sealed class HandoffsWorkflowBuilder
         WorkflowBuilder builder = new(start);
 
         builder.WithName(this._name);
+
         HandoffAgentExecutorOptions options = new(this.HandoffInstructions, this._toolCallFilteringBehavior);
 
         // Create an AgentExecutor for each again.
