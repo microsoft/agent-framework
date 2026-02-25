@@ -36,7 +36,7 @@ jobs:
         run: npm install -g @github/copilot
 
       - name: Authenticate Copilot CLI
-        run: gh auth login --with-token < ${{ secrets.GITHUB_TOKEN }}
+        run: echo ${{ secrets.GITHUB_TOKEN }} | gh auth login --with-token
 
       - name: Test Copilot CLI
         run: |
