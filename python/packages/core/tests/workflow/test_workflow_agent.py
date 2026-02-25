@@ -1296,3 +1296,142 @@ class TestWorkflowAgentMergeUpdates:
 
         # Order: text (user), text (assistant), function_result (orphan at end)
         assert content_types == ["text", "text", "function_result"]
+
+
+class TestWorkflowAgentUserInputFiltering:
+    """Test cases for filtering user input from AgentResponse in WorkflowAgent.
+
+    Validates the fix for GitHub issue #4261: when a workflow (e.g., GroupChat)
+    emits an AgentResponse containing the full conversation history (user +
+    assistant messages), WorkflowAgent should only surface assistant messages
+    to avoid re-emitting user input.
+    """
+
+    async def test_streaming_agent_response_filters_user_messages(self):
+        """Test that streaming filters out user messages from AgentResponse data.
+
+        When an executor yields an AgentResponse containing both user and assistant
+        messages (as GroupChat orchestrators do), only assistant messages should
+        appear in the streaming output.
+        """
+
+        @executor
+        async def groupchat_like_executor(
+            messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]
+        ) -> None:
+            # Simulate a GroupChat-like executor that emits full conversation history
+            response = AgentResponse(
+                messages=[
+                    Message(role="user", text="hi"),
+                    Message(role="assistant", text="Hello! How can I help?", author_name="Principal"),
+                    Message(role="user", text="what is 2+2?"),
+                    Message(role="assistant", text="2+2 = 4", author_name="Maths Teacher"),
+                    Message(role="assistant", text="The answer is 4.", author_name="Principal"),
+                ],
+            )
+            await ctx.yield_output(response)
+
+        workflow = WorkflowBuilder(start_executor=groupchat_like_executor).build()
+        agent = workflow.as_agent("groupchat-agent")
+
+        # Collect streaming updates
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("hi", stream=True):
+            updates.append(update)
+
+        # Should only have assistant messages (3 out of 5)
+        assert len(updates) == 3, f"Expected 3 assistant updates, got {len(updates)}"
+
+        # Verify all updates are assistant role
+        for update in updates:
+            assert update.role == "assistant", f"Expected role='assistant', got role='{update.role}'"
+
+        # Verify the content is correct
+        texts = [u.text for u in updates]
+        assert "Hello! How can I help?" in texts
+        assert "2+2 = 4" in texts
+        assert "The answer is 4." in texts
+
+        # Verify user messages are NOT present
+        assert "hi" not in texts
+        assert "what is 2+2?" not in texts
+
+    async def test_non_streaming_agent_response_filters_user_messages(self):
+        """Test that non-streaming also filters out user messages from AgentResponse data."""
+
+        @executor
+        async def groupchat_like_executor(
+            messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]
+        ) -> None:
+            response = AgentResponse(
+                messages=[
+                    Message(role="user", text="hi"),
+                    Message(role="assistant", text="Hello!", author_name="Bot"),
+                    Message(role="user", text="bye"),
+                    Message(role="assistant", text="Goodbye!", author_name="Bot"),
+                ],
+            )
+            await ctx.yield_output(response)
+
+        workflow = WorkflowBuilder(start_executor=groupchat_like_executor).build()
+        agent = workflow.as_agent("groupchat-agent")
+
+        result = await agent.run("hi")
+
+        # Should only have assistant messages (2 out of 4)
+        assert len(result.messages) == 2, f"Expected 2 messages, got {len(result.messages)}"
+
+        texts = [msg.text for msg in result.messages]
+        assert texts == ["Hello!", "Goodbye!"]
+
+    async def test_streaming_agent_response_all_assistant_unchanged(self):
+        """Test that AgentResponse with only assistant messages works correctly (no regression)."""
+
+        @executor
+        async def assistant_only_executor(
+            messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]
+        ) -> None:
+            response = AgentResponse(
+                messages=[
+                    Message(role="assistant", text="First response"),
+                    Message(role="assistant", text="Second response"),
+                ],
+            )
+            await ctx.yield_output(response)
+
+        workflow = WorkflowBuilder(start_executor=assistant_only_executor).build()
+        agent = workflow.as_agent("assistant-only-agent")
+
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("test", stream=True):
+            updates.append(update)
+
+        assert len(updates) == 2
+        texts = [u.text for u in updates]
+        assert texts == ["First response", "Second response"]
+
+    async def test_streaming_agent_response_empty_after_filtering(self):
+        """Test that AgentResponse with only user messages produces no updates."""
+
+        @executor
+        async def user_only_executor(
+            messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]
+        ) -> None:
+            # Edge case: all messages are user role
+            response = AgentResponse(
+                messages=[
+                    Message(role="user", text="user msg 1"),
+                    Message(role="user", text="user msg 2"),
+                ],
+            )
+            await ctx.yield_output(response)
+
+        workflow = WorkflowBuilder(start_executor=user_only_executor).build()
+        agent = workflow.as_agent("user-only-agent")
+
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("test", stream=True):
+            updates.append(update)
+
+        # No assistant messages means no updates
+        assert len(updates) == 0
