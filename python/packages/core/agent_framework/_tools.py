@@ -2196,7 +2196,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 # Make a final model call with tool_choice="none" so the model
                 # produces a plain text answer instead of leaving orphaned
                 # function_call items without matching results (issue #1366).
-                if response is not None:
+                if response is not None and self.function_invocation_configuration["enabled"]:
                     logger.info(
                         "Maximum iterations reached (%d). Requesting final response without tools.",
                         self.function_invocation_configuration["max_iterations"],
@@ -2335,7 +2335,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             # Make a final model call with tool_choice="none" so the model
             # produces a plain text answer instead of leaving orphaned
             # function_call items without matching results (issue #1366).
-            if response is not None:
+            if response is not None and self.function_invocation_configuration["enabled"]:
                 logger.info(
                     "Maximum iterations reached (%d). Requesting final response without tools.",
                     self.function_invocation_configuration["max_iterations"],

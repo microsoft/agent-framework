@@ -250,7 +250,11 @@ async def test_thread_safe_after_max_iterations_with_agent(
 
     # First call: model returns a function call, it's executed, then model
     # returns ANOTHER function call (on the last iteration), which is executed
-    # but no final text answer is produced
+    # but no final text answer is produced.
+    # Note: Only 2 responses are listed here for 2 iterations. The failsafe
+    # call (with tool_choice="none") after the loop is handled automatically
+    # by the mock client, which returns a hardcoded text response when
+    # tool_choice="none" (see conftest.py ChatClientBase.get_response).
     chat_client_base.run_responses = [
         ChatResponse(
             messages=Message(
