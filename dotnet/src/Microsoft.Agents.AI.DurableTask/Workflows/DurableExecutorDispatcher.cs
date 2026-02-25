@@ -113,8 +113,8 @@ internal static class DurableExecutorDispatcher
     /// <remarks>
     /// Sub-workflows run as separate orchestration instances, providing independent
     /// checkpointing, replay, and hierarchical visualization in the DTS dashboard.
-    /// The input is wrapped in <see cref="DurableWorkflowInput{T}"/> to match the
-    /// orchestration's registered input type. The sub-orchestration returns a
+    /// The input is wrapped in <see cref="DurableWorkflowInput{T}"/> so the sub-orchestration
+    /// can extract it using the same envelope structure. The sub-orchestration returns a
     /// <see cref="DurableWorkflowResult"/> directly (deserialized by the Durable Task SDK),
     /// which this method converts to a <see cref="DurableExecutorOutput"/> so the parent
     /// workflow's result processing picks up both the result and any accumulated events.
@@ -158,6 +158,7 @@ internal static class DurableExecutorDispatcher
             Result = workflowResult.Result,
             Events = workflowResult.Events ?? [],
             SentMessages = workflowResult.SentMessages ?? [],
+            HaltRequested = workflowResult.HaltRequested,
         };
 
         return JsonSerializer.Serialize(executorOutput, DurableWorkflowJsonContext.Default.DurableExecutorOutput);

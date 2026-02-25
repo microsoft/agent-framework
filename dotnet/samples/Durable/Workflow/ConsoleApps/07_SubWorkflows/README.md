@@ -45,35 +45,9 @@ OrderProcessing (main workflow)
 
 ## How Sub-Workflows Work
 
-1. **Build** each sub-workflow as a standalone `Workflow` using `WorkflowBuilder`
-2. **Bind** a workflow as an executor using `workflow.BindAsExecutor("name")`
-3. **Add** the bound executor as a node in the parent workflow's graph
-4. **Register** only the top-level workflow — sub-workflows are discovered and registered automatically
+For an introduction to sub-workflows and the `BindAsExecutor()` API, see the [Sub-Workflows foundational sample](../../../GettingStarted/Workflows/_Foundational/06_SubWorkflows).
 
-```csharp
-// Build a sub-workflow
-Workflow fraudCheckWorkflow = new WorkflowBuilder(analyzePatterns)
-    .WithName("SubFraudCheck")
-    .AddEdge(analyzePatterns, calculateRiskScore)
-    .Build();
-
-// Nest it inside another sub-workflow using BindAsExecutor
-ExecutorBinding fraudCheckExecutor = fraudCheckWorkflow.BindAsExecutor("FraudCheck");
-
-Workflow paymentWorkflow = new WorkflowBuilder(validatePayment)
-    .WithName("SubPaymentProcessing")
-    .AddEdge(validatePayment, fraudCheckExecutor)
-    .AddEdge(fraudCheckExecutor, chargePayment)
-    .Build();
-
-// Use the Payment sub-workflow in the main workflow
-ExecutorBinding paymentExecutor = paymentWorkflow.BindAsExecutor("Payment");
-
-Workflow mainWorkflow = new WorkflowBuilder(orderReceived)
-    .AddEdge(orderReceived, paymentExecutor)
-    .AddEdge(paymentExecutor, orderCompleted)
-    .Build();
-```
+This durable sample extends the same pattern — the key difference is that each sub-workflow runs as a **separate orchestration instance** on the Durable Task Scheduler, providing independent checkpointing, fault tolerance, and hierarchical visualization in the DTS dashboard.
 
 ## Environment Setup
 
@@ -121,3 +95,11 @@ Run ID: abc123...
 
 > exit
 ```
+
+### Viewing Workflows in the DTS Dashboard
+
+After running the workflow, you can navigate to the Durable Task Scheduler (DTS) dashboard to inspect the orchestration hierarchy, including sub-orchestrations.
+
+If you are using the DTS emulator, the dashboard is available at `http://localhost:8082`.
+
+Because each sub-workflow runs as a separate orchestration instance, the dashboard shows a parent-child hierarchy: the top-level `OrderProcessing` orchestration with `Payment` and `Shipping` as child orchestrations, and `FraudCheck` nested under `Payment`. You can click into each orchestration to inspect its executor inputs/outputs, events, and execution timeline independently.

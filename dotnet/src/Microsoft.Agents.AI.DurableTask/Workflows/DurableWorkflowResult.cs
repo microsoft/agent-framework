@@ -30,4 +30,13 @@ internal sealed class DurableWorkflowResult
     /// parent workflow and routed to successor executors via the edge map.
     /// </remarks>
     public List<TypedPayload> SentMessages { get; set; } = [];
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the workflow was halted by an executor.
+    /// </summary>
+    /// <remarks>
+    /// When this workflow runs as a sub-orchestration, this flag is propagated to the
+    /// parent workflow so halt semantics are preserved across nesting levels.
+    /// </remarks>
+    public bool HaltRequested { get; set; }
 }

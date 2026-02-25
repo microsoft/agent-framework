@@ -157,6 +157,8 @@ internal sealed class DurableWorkflowRunner
 
         edgeMap.EnqueueInitialInput(inputString, state.MessageQueues);
 
+        bool haltRequested = false;
+
         for (int superstep = 1; superstep <= MaxSupersteps; superstep++)
         {
             List<ExecutorInput> executorInputs = CollectExecutorInputs(state, logger);
@@ -173,7 +175,7 @@ internal sealed class DurableWorkflowRunner
 
             string[] results = await DispatchExecutorsInParallelAsync(context, executorInputs, state.SharedState, logger).ConfigureAwait(true);
 
-            bool haltRequested = ProcessSuperstepResults(executorInputs, results, state, context, logger);
+            haltRequested = ProcessSuperstepResults(executorInputs, results, state, context, logger);
 
             if (haltRequested)
             {
@@ -208,7 +210,8 @@ internal sealed class DurableWorkflowRunner
             Events = state.AccumulatedEvents,
             SentMessages = !string.IsNullOrEmpty(finalResult)
                 ? [new TypedPayload { Data = finalResult }]
-                : []
+                : [],
+            HaltRequested = haltRequested
         };
     }
 
