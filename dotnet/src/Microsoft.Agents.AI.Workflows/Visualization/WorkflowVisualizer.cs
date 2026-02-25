@@ -172,6 +172,11 @@ public static class WorkflowVisualizer
                     var i = 2;
                     while (!usedAliases.Add($"{alias}_{i}"))
                     {
+                        if (i >= 10_000)
+                        {
+                            throw new InvalidOperationException($"Unable to generate a unique Mermaid node ID for '{key}'.");
+                        }
+
                         i++;
                     }
 
@@ -338,6 +343,8 @@ public static class WorkflowVisualizer
     /// </summary>
     private static string SanitizeMermaidNodeId(string id)
     {
+        Throw.IfNull(id);
+
         var sb = new StringBuilder(id.Length);
         bool lastWasUnderscore = false;
         foreach (var ch in id)

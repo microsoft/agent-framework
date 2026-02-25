@@ -368,6 +368,8 @@ public class WorkflowVisualizerTests
         mermaidContent.Should().Contain("start[\"start (Start)\"]");
         mermaidContent.Should().Contain("start --> middle1");
         mermaidContent.Should().Contain("start --> middle2");
+        mermaidContent.Should().Contain("middle1 --> end");
+        mermaidContent.Should().Contain("middle2 --> end");
     }
 
     [Fact]
@@ -499,7 +501,7 @@ public class WorkflowVisualizerTests
 
         // Node definitions should use safe aliases as IDs (no spaces), with display names in quotes
         // Bad: '1. User input["1. User input (Start)"]' — spaces in ID break Mermaid
-        // Good: 'executor0["1. User input (Start)"]' — alias ID is safe
+        // Good: 'n_1_User_input["1. User input (Start)"]' — alias ID is safe and sanitized
 
         // Each node definition line (containing ["..."]) should have a space-free ID before the bracket
         foreach (var line in mermaidContent.Split('\n'))
@@ -539,8 +541,8 @@ public class WorkflowVisualizerTests
             {
                 var bracketIdx = trimmed.IndexOf('[');
                 var nodeId = trimmed.Substring(0, bracketIdx);
-                // Node ID should only contain ASCII alphanumeric and underscores
-                nodeId.Should().MatchRegex("^[a-zA-Z0-9_]+$",
+                // Node ID should start with a letter or underscore, followed by ASCII alphanumeric or underscores
+                nodeId.Should().MatchRegex("^[a-zA-Z_][a-zA-Z0-9_]*$",
                     because: $"Mermaid node IDs should be ASCII-safe, but got '{nodeId}'");
             }
         }
