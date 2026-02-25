@@ -171,6 +171,7 @@ markers = [
     "azure: marks tests as Azure provider specific",
     "azure-ai: marks tests as Azure AI provider specific",
     "openai: marks tests as OpenAI provider specific",
+    "integration: marks tests as integration tests that require external services",
 ]
 
 [tool.coverage.run]
@@ -229,7 +230,7 @@ build-meta = "python -m flit build"
 build = ["build-packages", "build-meta"]
 publish = "uv publish"
 # combined checks
-check-packages = "python scripts/run_tasks_in_packages_if_exists.py fmt lint pyright mypy"
+check-packages = "python scripts/run_tasks_in_packages_if_exists.py fmt lint pyright"
 check = ["check-packages", "samples-lint", "samples-syntax", "test", "markdown-code-lint"]
 
 [tool.poe.tasks.all-tests-cov]
@@ -255,7 +256,7 @@ pytest --import-mode=importlib
 --ignore-glob=packages/lab/**
 --ignore-glob=packages/devui/**
 -rs
--n logical --dist loadfile --dist worksteal
+-n logical --dist worksteal
     packages/**/tests
 """
 
@@ -265,7 +266,7 @@ pytest --import-mode=importlib
 --ignore-glob=packages/lab/**
 --ignore-glob=packages/devui/**
 -rs
--n logical --dist loadfile --dist worksteal
+-n logical --dist worksteal
     packages/**/tests
 """
 

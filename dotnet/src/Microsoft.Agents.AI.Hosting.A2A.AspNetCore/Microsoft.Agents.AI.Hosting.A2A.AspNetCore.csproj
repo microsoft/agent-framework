@@ -8,6 +8,12 @@
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
+    <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
+  </PropertyGroup>
+  
   <ItemGroup>
     <PackageReference Include="A2A.AspNetCore" />
   </ItemGroup>

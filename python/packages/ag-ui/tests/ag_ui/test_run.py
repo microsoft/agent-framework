@@ -6,6 +6,7 @@ import pytest
 from ag_ui.core import (
     TextMessageEndEvent,
     TextMessageStartEvent,
+    ToolCallArgsEvent,
 )
 from agent_framework import AgentResponseUpdate, Content, Message, ResponseStream
 from agent_framework.exceptions import AgentInvalidResponseException
@@ -414,6 +415,42 @@ def test_emit_tool_call_generates_id():
 
     assert len(events) >= 1
     assert flow.tool_call_id is not None  # ID should be generated
+
+
+def test_emit_tool_call_skips_duplicate_full_arguments_replay():
+    """Test _emit_tool_call skips replayed full-arguments on an existing tool call.
+
+    This is a regression test for issue #4194 where some streaming providers
+    send the full arguments string again after streaming deltas, causing the
+    arguments to be doubled in MESSAGES_SNAPSHOT events.
+
+    Mirrors test_emit_text_skips_duplicate_full_message_delta for consistency.
+    """
+    flow = FlowState()
+    full_args = '{"city": "Seattle"}'
+
+    # Step 1: Initial tool call with name + arguments (normal start)
+    content_start = Content.from_function_call(
+        call_id="call_dup",
+        name="get_weather",
+        arguments=full_args,
+    )
+    events_start = _emit_tool_call(content_start, flow)
+
+    # Should emit ToolCallStartEvent + ToolCallArgsEvent
+    assert any(isinstance(e, ToolCallArgsEvent) for e in events_start)
+    assert flow.tool_calls_by_id["call_dup"]["function"]["arguments"] == full_args
+
+    # Step 2: Provider replays the full arguments (duplicate)
+    content_replay = Content(type="function_call", call_id="call_dup", arguments=full_args)
+    events_replay = _emit_tool_call(content_replay, flow)
+
+    # Should NOT emit any ToolCallArgsEvent (early return on replay)
+    args_events = [e for e in events_replay if isinstance(e, ToolCallArgsEvent)]
+    assert args_events == [], "Duplicate full-arguments replay should not emit ToolCallArgsEvent"
+
+    # Accumulated arguments should remain unchanged
+    assert flow.tool_calls_by_id["call_dup"]["function"]["arguments"] == full_args
 
 
 def test_emit_tool_result_closes_open_message():

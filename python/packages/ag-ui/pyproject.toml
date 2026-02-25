@@ -70,4 +70,4 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_ag_ui"
-test = "pytest --cov=agent_framework_ag_ui --cov-report=term-missing:skip-covered tests/ag_ui"
+test = "pytest --cov=agent_framework_ag_ui --cov-report=term-missing:skip-covered -n auto --dist worksteal tests/ag_ui"

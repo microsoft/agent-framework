@@ -1,0 +1,51 @@
+# Invoke Function Tool Workflow
+
+name: invoke_function_tool_demo
+description: Demonstrates the InvokeFunctionTool action for invoking registered functions
+
+actions:
+  # Set up input location
+  - kind: SetValue
+    id: set_location
+    path: Local.location
+    value: =If(IsBlank(inputs.location), "Seattle", inputs.location)
+
+  # Set up temperature unit
+  - kind: SetValue
+    id: set_unit
+    path: Local.unit
+    value: =If(IsBlank(inputs.unit), "F", inputs.unit)
+
+  # Invoke the get_weather function tool
+  - kind: InvokeFunctionTool
+    id: invoke_weather
+    functionName: get_weather
+    arguments:
+      location: =Local.location
+      unit: =Local.unit
+    output:
+      messages: Local.weatherToolCallItems
+      result: Local.weatherInfo
+      autoSend: true
+
+  # Format a human-readable message using another function
+  - kind: InvokeFunctionTool
+    id: format_output
+    functionName: format_message
+    arguments:
+      template: "The weather in {location} is {temp}°{unit}"
+      data: =Local.weatherInfo
+    output:
+      result: Local.formattedMessage
+
+  # Output the result
+  - kind: SendActivity
+    id: send_weather
+    activity:
+      text: =Local.formattedMessage
+
+  # Store the result in workflow outputs
+  - kind: SetValue
+    id: set_output
+    path: Workflow.Outputs.weather
+    value: =Local.weatherInfo

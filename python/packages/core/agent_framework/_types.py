@@ -8,8 +8,18 @@ import logging
 import re
 import sys
 from asyncio import iscoroutine
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import (
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from copy import deepcopy
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
 from pydantic import BaseModel
@@ -272,7 +282,8 @@ def _serialize_value(value: Any, exclude_none: bool) -> Any:
 
 # region Constants and types
 _T = TypeVar("_T")
-EmbeddingT = TypeVar("EmbeddingT")
+EmbeddingT = TypeVar("EmbeddingT", default="list[float]")
+EmbeddingInputT = TypeVar("EmbeddingInputT", default="str")
 ChatResponseT = TypeVar("ChatResponseT", bound="ChatResponse")
 ToolModeT = TypeVar("ToolModeT", bound="ToolMode")
 AgentResponseT = TypeVar("AgentResponseT", bound="AgentResponse")
@@ -3162,3 +3173,129 @@ def merge_chat_options(
             result[key] = value
 
     return result
+
+
+# region Embedding Types
+
+
+class EmbeddingGenerationOptions(TypedDict, total=False):
+    """Common request settings for embedding generation.
+
+    All fields are optional (total=False) to allow partial specification.
+    Provider-specific TypedDicts extend this with additional options.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import EmbeddingGenerationOptions
+
+            options: EmbeddingGenerationOptions = {
+                "model_id": "text-embedding-3-small",
+                "dimensions": 1536,
+            }
+    """
+
+    model_id: str
+    dimensions: int
+
+
+class Embedding(Generic[EmbeddingT]):
+    """A single embedding vector with metadata.
+
+    Generic over the embedding vector type, e.g. ``Embedding[list[float]]``,
+    ``Embedding[list[int]]``, or ``Embedding[bytes]``.
+
+    Args:
+        vector: The embedding vector data.
+        model_id: The model used to generate this embedding.
+        dimensions: Explicit dimension count (computed from vector length if omitted).
+        created_at: Timestamp of when the embedding was generated.
+        additional_properties: Additional metadata.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Embedding
+
+            embedding = Embedding(
+                vector=[0.1, 0.2, 0.3],
+                model_id="text-embedding-3-small",
+            )
+            assert embedding.dimensions == 3
+    """
+
+    def __init__(
+        self,
+        vector: EmbeddingT,
+        *,
+        model_id: str | None = None,
+        dimensions: int | None = None,
+        created_at: datetime | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ) -> None:
+        self.vector = vector
+        self._dimensions = dimensions
+        self.model_id = model_id
+        self.created_at = created_at
+        self.additional_properties = additional_properties or {}
+
+    @property
+    def dimensions(self) -> int | None:
+        """Return the number of dimensions in the embedding vector.
+
+        Uses the explicitly provided value if set, otherwise computes from vector length.
+        """
+        if self._dimensions is not None:
+            return self._dimensions
+        if isinstance(self.vector, (list, tuple, bytes)):
+            return len(self.vector)
+        return None
+
+
+EmbeddingOptionsT = TypeVar(
+    "EmbeddingOptionsT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="EmbeddingGenerationOptions",
+)
+
+
+class GeneratedEmbeddings(list[Embedding[EmbeddingT]], Generic[EmbeddingT, EmbeddingOptionsT]):
+    """A list of generated embeddings with usage metadata.
+
+    Extends list for direct iteration and indexing.
+    Generic over both the embedding vector type and the options type used for generation.
+
+    Args:
+        embeddings: Sequence of Embedding objects.
+        options: The options used to generate these embeddings.
+        usage: Token usage information (e.g. prompt_tokens, total_tokens).
+        additional_properties: Additional metadata.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Embedding, GeneratedEmbeddings
+
+            embeddings = GeneratedEmbeddings(
+                [Embedding(vector=[0.1, 0.2]), Embedding(vector=[0.3, 0.4])],
+                usage={"prompt_tokens": 10, "total_tokens": 10},
+            )
+            assert len(embeddings) == 2
+            assert embeddings.usage["prompt_tokens"] == 10
+    """
+
+    def __init__(
+        self,
+        embeddings: Iterable[Embedding[EmbeddingT]] | None = None,
+        *,
+        options: EmbeddingOptionsT | None = None,
+        usage: dict[str, Any] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(embeddings or [])
+        self.options = options
+        self.usage = usage
+        self.additional_properties = additional_properties or {}
+
+
+# endregion
