@@ -4,7 +4,7 @@ import asyncio
 import os
 
 from agent_framework import Agent
-from agent_framework.azure import AzureAIAgentClient, AzureAISearchContextProvider
+from agent_framework.azure import AzureAIAgentClient, AzureAISearchContextProvider, AzureOpenAIEmbeddingClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -30,6 +30,8 @@ Prerequisites:
    - AZURE_SEARCH_INDEX_NAME: Your search index name
    - AZURE_AI_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
    - AZURE_AI_MODEL_DEPLOYMENT_NAME: Your model deployment name (e.g., "gpt-4o")
+   - AZURE_OPENAI_EMBEDDING_MODEL_ID: (Optional) Your embedding model for hybrid search (e.g., "text-embedding-3-small")
+   - AZURE_OPENAI_ENDPOINT: (Optional) Your Azure OpenAI resource URL, required if using an OpenAI embedding model for hybrid search
 """
 
 # Sample queries to demonstrate RAG
@@ -43,12 +45,24 @@ USER_INPUTS = [
 async def main() -> None:
     """Main function demonstrating Azure AI Search semantic mode."""
 
+    credential = AzureCliCredential()
+
     # Get configuration from environment
     search_endpoint = os.environ["AZURE_SEARCH_ENDPOINT"]
     search_key = os.environ.get("AZURE_SEARCH_API_KEY")
     index_name = os.environ["AZURE_SEARCH_INDEX_NAME"]
     project_endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
     model_deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
+    openai_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    embedding_model = os.environ.get("AZURE_OPENAI_EMBEDDING_MODEL_ID", "text-embedding-3-small")
+
+    embedding_client = None
+    if openai_endpoint and embedding_model:
+        embedding_client = AzureOpenAIEmbeddingClient(
+            endpoint=openai_endpoint,
+            deployment_name=embedding_model,
+            credential=credential,
+        )
 
     # Create Azure AI Search context provider with semantic mode (recommended, fast)
     print("Using SEMANTIC mode (hybrid search + semantic ranking, fast)\n")
@@ -57,9 +71,13 @@ async def main() -> None:
         endpoint=search_endpoint,
         index_name=index_name,
         api_key=search_key,  # Use api_key for API key auth, or credential for managed identity
-        credential=AzureCliCredential() if not search_key else None,
+        credential=credential if not search_key else None,
         mode="semantic",  # Default mode
         top_k=3,  # Retrieve top 3 most relevant documents
+        embedding_function=embedding_client,  # Provide embedding function for hybrid search
+        vector_field_name="DescriptionVector"
+        if embedding_client
+        else None,  # Set vector field for hybrid search if using embeddings
     )
 
     # Create agent with search context provider
@@ -68,7 +86,7 @@ async def main() -> None:
         AzureAIAgentClient(
             project_endpoint=project_endpoint,
             model_deployment_name=model_deployment,
-            credential=AzureCliCredential(),
+            credential=credential,
         ) as client,
         Agent(
             client=client,

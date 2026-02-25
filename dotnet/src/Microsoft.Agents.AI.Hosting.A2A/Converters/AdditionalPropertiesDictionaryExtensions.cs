@@ -2,7 +2,6 @@
 
 using System.Collections.Generic;
 using System.Text.Json;
-using A2A;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hosting.A2A.Converters;
@@ -37,7 +36,7 @@ internal static class AdditionalPropertiesDictionaryExtensions
                 continue;
             }
 
-            metadata[kvp.Key] = JsonSerializer.SerializeToElement(kvp.Value, A2AJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object)));
+            metadata[kvp.Key] = JsonSerializer.SerializeToElement(kvp.Value, A2AHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object)));
         }
 
         return metadata;

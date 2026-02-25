@@ -2192,9 +2192,15 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         prepped_messages.extend(response.messages)
                     continue
 
-                if response is not None:
-                    return response
-
+                # Loop exhausted all iterations (or function invocation disabled).
+                # Make a final model call with tool_choice="none" so the model
+                # produces a plain text answer instead of leaving orphaned
+                # function_call items without matching results.
+                if response is not None and self.function_invocation_configuration["enabled"]:
+                    logger.info(
+                        "Maximum iterations reached (%d). Requesting final response without tools.",
+                        self.function_invocation_configuration["max_iterations"],
+                    )
                 mutable_options["tool_choice"] = "none"
                 response = await super_get_response(
                     messages=prepped_messages,
@@ -2325,9 +2331,15 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     prepped_messages.extend(response.messages)
                 continue
 
-            if response is not None:
-                return
-
+            # Loop exhausted all iterations (or function invocation disabled).
+            # Make a final model call with tool_choice="none" so the model
+            # produces a plain text answer instead of leaving orphaned
+            # function_call items without matching results.
+            if response is not None and self.function_invocation_configuration["enabled"]:
+                logger.info(
+                    "Maximum iterations reached (%d). Requesting final response without tools.",
+                    self.function_invocation_configuration["max_iterations"],
+                )
             mutable_options["tool_choice"] = "none"
             inner_stream = await _ensure_response_stream(
                 super_get_response(

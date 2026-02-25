@@ -135,6 +135,9 @@ async def main() -> None:
             async for chunk in agent.run(user_input, stream=True):
                 if chunk.text:
                     print(chunk.text, end="", flush=True)
+                for content in chunk.contents:
+                    if content.annotations:
+                        print(f"\n[Sources: {content.annotations}]", end="", flush=True)
 
             print("\n")
 
