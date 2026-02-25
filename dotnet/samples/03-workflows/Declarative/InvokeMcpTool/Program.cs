@@ -127,7 +127,7 @@ internal sealed class Program
 
     private static PromptAgentDefinition DefineSearchAgent(IConfiguration configuration)
     {
-        return new PromptAgentDefinition(configuration.GetValue(Application.Settings.FoundryModelMini))
+        return new PromptAgentDefinition(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
