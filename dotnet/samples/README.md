@@ -28,7 +28,7 @@ Start with `01-get-started/` and work through the numbered files:
 3. **[03_multi_turn](./01-get-started/03_multi_turn/Program.cs)** — Multi-turn conversations with `AgentSession`
 4. **[04_memory](./01-get-started/04_memory/Program.cs)** — Agent memory with `AIContextProvider`
 5. **[05_first_workflow](./01-get-started/05_first_workflow/Program.cs)** — Build a workflow with executors and edges
-6. **[06_host_your_agent](./01-get-started/06_host_your_agent/Program.cs)** — Host your agent via A2A
+6. **[06_host_your_agent](./01-get-started/06_host_your_agent/Program.cs)** — Host your agent via Azure Functions
 
 ## Additional Samples
 
