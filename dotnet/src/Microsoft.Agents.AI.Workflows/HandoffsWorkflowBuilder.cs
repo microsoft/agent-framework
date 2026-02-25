@@ -60,7 +60,8 @@ public sealed class HandoffsWorkflowBuilder
         this._name = name;
         return this;
     }
-  
+
+    /// <summary>
     /// Sets additional instructions to provide to an agent that has handoffs about how and when to
     /// perform them.
     /// </summary>
@@ -189,7 +190,7 @@ public sealed class HandoffsWorkflowBuilder
         HandoffsEndExecutor end = new();
         WorkflowBuilder builder = new(start);
         builder.WithName(this._name);
-      
+
         HandoffAgentExecutorOptions options = new(this.HandoffInstructions, this._toolCallFilteringBehavior);
 
         // Create an AgentExecutor for each again.
