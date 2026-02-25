@@ -142,6 +142,8 @@
     <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step18_FileSearch/FoundryAgents_Step18_FileSearch.csproj" />
     <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step19_OpenAPITools/FoundryAgents_Step19_OpenAPITools.csproj" />
     <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step21_BingCustomSearch/FoundryAgents_Step21_BingCustomSearch.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step22_SharePoint/FoundryAgents_Step22_SharePoint.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step23_MicrosoftFabric/FoundryAgents_Step23_MicrosoftFabric.csproj" />
     <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step25_WebSearch/FoundryAgents_Step25_WebSearch.csproj" />
     <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step26_MemorySearch/FoundryAgents_Step26_MemorySearch.csproj" />
     <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Step27_LocalMCP/FoundryAgents_Step27_LocalMCP.csproj" />
