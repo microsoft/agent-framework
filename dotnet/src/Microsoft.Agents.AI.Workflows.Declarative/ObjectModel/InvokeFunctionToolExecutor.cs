@@ -204,7 +204,7 @@ internal sealed class InvokeFunctionToolExecutor(
                 object? parsedValue = jsonDocument.RootElement.ValueKind switch
                 {
                     JsonValueKind.Object => jsonDocument.ParseRecord(VariableType.RecordType),
-                    JsonValueKind.Array => jsonDocument.ParseList(CreateListTypeFromJson(jsonDocument.RootElement)),
+                    JsonValueKind.Array => jsonDocument.ParseList(jsonDocument.RootElement.GetListTypeFromJson()),
                     JsonValueKind.String => jsonDocument.RootElement.GetString(),
                     JsonValueKind.Number => jsonDocument.RootElement.TryGetInt64(out long l) ? l : jsonDocument.RootElement.GetDouble(),
                     JsonValueKind.True => true,
@@ -222,40 +222,6 @@ internal sealed class InvokeFunctionToolExecutor(
         }
 
         await this.AssignAsync(this.Model.Output.Result?.Path, resultValue.ToFormula(), context).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Creates a VariableType.List with schema inferred from the first object element in the array.
-    /// </summary>
-    private static VariableType CreateListTypeFromJson(JsonElement arrayElement)
-    {
-        // Find the first object element to infer schema
-        foreach (JsonElement element in arrayElement.EnumerateArray())
-        {
-            if (element.ValueKind == JsonValueKind.Object)
-            {
-                // Build schema from the object's properties
-                List<(string Key, VariableType Type)> fields = [];
-                foreach (JsonProperty property in element.EnumerateObject())
-                {
-                    VariableType fieldType = property.Value.ValueKind switch
-                    {
-                        JsonValueKind.String => typeof(string),
-                        JsonValueKind.Number => typeof(decimal),
-                        JsonValueKind.True or JsonValueKind.False => typeof(bool),
-                        JsonValueKind.Object => VariableType.RecordType,
-                        JsonValueKind.Array => VariableType.ListType,
-                        _ => typeof(string),
-                    };
-                    fields.Add((property.Name, fieldType));
-                }
-
-                return VariableType.List(fields);
-            }
-        }
-
-        // Fallback for arrays of primitives or empty arrays
-        return VariableType.ListType;
     }
 
     private string GetFunctionName() =>
