@@ -11,7 +11,7 @@ using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
-namespace Microsoft.Agents.AI.Workflows.Declarative;
+namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 
 /// <summary>
 /// Default implementation of <see cref="IMcpToolHandler"/> using the MCP C# SDK.
@@ -51,8 +51,8 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         string? connectionName,
         CancellationToken cancellationToken = default)
     {
-        //TODO: Handle connectionName and server label appropriately when Hosted scenario supports them. For now, ignore
-        McpServerToolResultContent resultContent = new("McpServerToolcallId");
+        // TODO: Handle connectionName and server label appropriately when Hosted scenario supports them. For now, ignore
+        McpServerToolResultContent resultContent = new(Guid.NewGuid().ToString());
         McpClient client = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, cancellationToken).ConfigureAwait(false);
 
         // Convert IDictionary to IReadOnlyDictionary for CallToolAsync

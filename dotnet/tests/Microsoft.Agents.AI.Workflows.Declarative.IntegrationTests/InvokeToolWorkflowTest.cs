@@ -10,6 +10,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
+using Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 using Microsoft.Extensions.AI;
 using Xunit.Abstractions;
 
