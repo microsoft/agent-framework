@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -104,18 +106,19 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         IDictionary<string, string>? headers,
         CancellationToken cancellationToken)
     {
-        string cacheKey = $"{serverUrl.Trim().ToUpperInvariant()}";
+        string normalizedUrl = serverUrl.Trim().ToUpperInvariant();
+        string clientCacheKey = $"{normalizedUrl}|{ComputeHeadersHash(headers)}";
 
         await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (this._clients.TryGetValue(cacheKey, out McpClient? existingClient))
+            if (this._clients.TryGetValue(clientCacheKey, out McpClient? existingClient))
             {
                 return existingClient;
             }
 
-            McpClient newClient = await this.CreateClientAsync(serverUrl, serverLabel, headers, cacheKey, cancellationToken).ConfigureAwait(false);
-            this._clients[cacheKey] = newClient;
+            McpClient newClient = await this.CreateClientAsync(serverUrl, serverLabel, headers, normalizedUrl, cancellationToken).ConfigureAwait(false);
+            this._clients[clientCacheKey] = newClient;
             return newClient;
         }
         finally
@@ -128,10 +131,10 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         string serverUrl,
         string? serverLabel,
         IDictionary<string, string>? headers,
-        string cacheKey,
+        string httpClientCacheKey,
         CancellationToken cancellationToken)
     {
-        // Get HttpClient from provider or create a default one
+        // Get or create HttpClient (Can be shared across McpClients for the same server)
         HttpClient? httpClient = null;
 
         if (this._httpClientProvider is not null)
@@ -139,10 +142,10 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             httpClient = await this._httpClientProvider(serverUrl, cancellationToken).ConfigureAwait(false);
         }
 
-        if (httpClient is null)
+        if (httpClient is null && !this._ownedHttpClients.TryGetValue(httpClientCacheKey, out httpClient))
         {
             httpClient = new HttpClient();
-            this._ownedHttpClients[cacheKey] = httpClient;
+            this._ownedHttpClients[httpClientCacheKey] = httpClient;
         }
 
         HttpClientTransportOptions transportOptions = new()
@@ -156,6 +159,27 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         HttpClientTransport transport = new(transportOptions, httpClient);
 
         return await McpClient.CreateAsync(transport, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string ComputeHeadersHash(IDictionary<string, string>? headers)
+    {
+        if (headers is null || headers.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        // Build a deterministic, sorted representation of the headers
+        // Within a single process lifetime, the hashcodes are consistent.
+        // This will ensure that the same set of headers always produces the same hash, regardless of order.
+        SortedDictionary<string, string> sorted = new(headers.ToDictionary(h => h.Key.ToUpperInvariant(), h => h.Value.ToUpperInvariant()));
+        int hashCode = 17;
+        foreach (KeyValuePair<string, string> kvp in sorted)
+        {
+            hashCode = (hashCode * 31) + StringComparer.OrdinalIgnoreCase.GetHashCode(kvp.Key);
+            hashCode = (hashCode * 31) + StringComparer.OrdinalIgnoreCase.GetHashCode(kvp.Value);
+        }
+
+        return hashCode.ToString(CultureInfo.InvariantCulture);
     }
 
     private static void PopulateResultContent(McpServerToolResultContent resultContent, CallToolResult result)

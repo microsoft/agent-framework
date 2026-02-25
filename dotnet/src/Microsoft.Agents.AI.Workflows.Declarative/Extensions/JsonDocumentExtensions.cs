@@ -45,7 +45,7 @@ internal static class JsonDocumentExtensions
     /// <summary>
     /// Creates a VariableType.List with schema inferred from the first object element in the array.
     /// </summary>
-    internal static VariableType GetListTypeFromJson(this JsonElement arrayElement)
+    public static VariableType GetListTypeFromJson(this JsonElement arrayElement)
     {
         // Find the first object element to infer schema
         foreach (JsonElement element in arrayElement.EnumerateArray())
