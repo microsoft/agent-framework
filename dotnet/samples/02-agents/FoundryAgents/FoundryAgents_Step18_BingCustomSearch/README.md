@@ -1,4 +1,4 @@
-﻿# Using Bing Custom Search with AI Agents
+# Using Bing Custom Search with AI Agents
 
 This sample demonstrates how to use the Bing Custom Search tool with AI agents to perform customized web searches.
 
@@ -50,7 +50,7 @@ Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
 cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step21_BingCustomSearch
+dotnet run --project .\FoundryAgents_Step18_BingCustomSearch
 ```
 
 ## Expected behavior

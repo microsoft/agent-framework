@@ -9,4 +9,4 @@ These samples show how to create an agent with the Agent Framework that uses Mem
 |[Custom Memory Implementation](../../01-get-started/04_memory/)|This sample demonstrates how to create a custom memory component and attach it to an agent.|
 |[Memory with Azure AI Foundry](./AgentWithMemory_Step04_MemoryUsingFoundry/)|This sample demonstrates how to create and run an agent that uses Azure AI Foundry's managed memory service to extract and retrieve individual memories.|
 
-> **See also**: [Memory Search with Foundry Agents](../FoundryAgents/FoundryAgents_Step26_MemorySearch/) - demonstrates using the built-in Memory Search tool with Azure Foundry Agents.
+> **See also**: [Memory Search with Foundry Agents](../FoundryAgents/FoundryAgents_Step22_MemorySearch/) - demonstrates using the built-in Memory Search tool with Azure Foundry Agents.

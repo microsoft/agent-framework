@@ -33,7 +33,7 @@ Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
 cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step27_LocalMCP
+dotnet run --project .\FoundryAgents_Step23_LocalMCP
 ```
 
 ## Expected behavior

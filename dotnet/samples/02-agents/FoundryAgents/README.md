@@ -58,13 +58,14 @@ Before you begin, ensure you have the following prerequisites:
 |[Using plugins](./FoundryAgents_Step13_Plugins/)|This sample demonstrates how to use plugins with a Foundry agent|
 |[Code interpreter](./FoundryAgents_Step14_CodeInterpreter/)|This sample demonstrates how to use the code interpreter tool with a Foundry agent|
 |[Computer use](./FoundryAgents_Step15_ComputerUse/)|This sample demonstrates how to use computer use capabilities with a Foundry agent|
-|[Bing Custom Search](./FoundryAgents_Step21_BingCustomSearch/)|This sample demonstrates how to use Bing Custom Search tool with a Foundry agent|
-|[SharePoint grounding](./FoundryAgents_Step22_SharePoint/)|This sample demonstrates how to use the SharePoint grounding tool with a Foundry agent|
-|[Microsoft Fabric](./FoundryAgents_Step23_MicrosoftFabric/)|This sample demonstrates how to use Microsoft Fabric tool with a Foundry agent|
-|[Web search](./FoundryAgents_Step25_WebSearch/)|This sample demonstrates how to use the Responses API web search tool with a Foundry agent|
-|[Memory search](./FoundryAgents_Step26_MemorySearch/)|This sample demonstrates how to use memory search tool with a Foundry agent|
-|[File search](./FoundryAgents_Step18_FileSearch/)|This sample demonstrates how to use the file search tool with a Foundry agent|
-|[Local MCP](./FoundryAgents_Step27_LocalMCP/)|This sample demonstrates how to use a local MCP client with a Foundry agent|
+|[File search](./FoundryAgents_Step16_FileSearch/)|This sample demonstrates how to use the file search tool with a Foundry agent|
+|[OpenAPI tools](./FoundryAgents_Step17_OpenAPITools/)|This sample demonstrates how to use OpenAPI tools with a Foundry agent|
+|[Bing Custom Search](./FoundryAgents_Step18_BingCustomSearch/)|This sample demonstrates how to use Bing Custom Search tool with a Foundry agent|
+|[SharePoint grounding](./FoundryAgents_Step19_SharePoint/)|This sample demonstrates how to use the SharePoint grounding tool with a Foundry agent|
+|[Microsoft Fabric](./FoundryAgents_Step20_MicrosoftFabric/)|This sample demonstrates how to use Microsoft Fabric tool with a Foundry agent|
+|[Web search](./FoundryAgents_Step21_WebSearch/)|This sample demonstrates how to use the Responses API web search tool with a Foundry agent|
+|[Memory search](./FoundryAgents_Step22_MemorySearch/)|This sample demonstrates how to use memory search tool with a Foundry agent|
+|[Local MCP](./FoundryAgents_Step23_LocalMCP/)|This sample demonstrates how to use a local MCP client with a Foundry agent|
 
 ## Evaluation Samples
 

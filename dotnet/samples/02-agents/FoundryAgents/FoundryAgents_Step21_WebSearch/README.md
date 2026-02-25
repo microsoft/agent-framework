@@ -35,7 +35,7 @@ Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
 cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step25_WebSearch
+dotnet run --project .\FoundryAgents_Step21_WebSearch
 ```
 
 ## Expected behavior

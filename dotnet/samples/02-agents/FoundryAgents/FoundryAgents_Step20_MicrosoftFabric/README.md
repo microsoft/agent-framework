@@ -43,7 +43,7 @@ Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
 cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step23_MicrosoftFabric
+dotnet run --project .\FoundryAgents_Step20_MicrosoftFabric
 ```
 
 ## Expected behavior

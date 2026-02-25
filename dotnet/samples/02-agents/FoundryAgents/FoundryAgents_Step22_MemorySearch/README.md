@@ -71,7 +71,7 @@ Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
 cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step26_MemorySearch
+dotnet run --project .\FoundryAgents_Step22_MemorySearch
 ```
 
 ## Expected behavior

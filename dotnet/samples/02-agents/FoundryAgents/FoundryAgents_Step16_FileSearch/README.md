@@ -34,7 +34,7 @@ Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
 cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step18_FileSearch
+dotnet run --project .\FoundryAgents_Step16_FileSearch
 ```
 
 ## Expected behavior

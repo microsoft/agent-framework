@@ -34,7 +34,7 @@ Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
 cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step22_SharePoint
+dotnet run --project .\FoundryAgents_Step19_SharePoint
 ```
 
 ## Expected behavior
