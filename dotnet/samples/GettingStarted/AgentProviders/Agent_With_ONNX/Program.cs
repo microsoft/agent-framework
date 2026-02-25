@@ -12,7 +12,7 @@ var modelPath = Environment.GetEnvironmentVariable("ONNX_MODEL_PATH") ?? throw n
 
 // Get a chat client for ONNX and use it to construct an AIAgent.
 using OnnxRuntimeGenAIChatClient chatClient = new(modelPath);
-AIAgent agent = chatClient.CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+AIAgent agent = chatClient.AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));

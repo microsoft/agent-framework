@@ -21,8 +21,8 @@ public class ChatClientAgentOptionsTests
         Assert.Null(options.Name);
         Assert.Null(options.Description);
         Assert.Null(options.ChatOptions);
-        Assert.Null(options.ChatMessageStoreFactory);
-        Assert.Null(options.AIContextProviderFactory);
+        Assert.Null(options.ChatHistoryProvider);
+        Assert.Null(options.AIContextProviders);
     }
 
     [Fact]
@@ -34,8 +34,8 @@ public class ChatClientAgentOptionsTests
         // Assert
         Assert.Null(options.Name);
         Assert.Null(options.Description);
-        Assert.Null(options.AIContextProviderFactory);
-        Assert.Null(options.ChatMessageStoreFactory);
+        Assert.Null(options.AIContextProviders);
+        Assert.Null(options.ChatHistoryProvider);
         Assert.NotNull(options.ChatOptions);
         Assert.Null(options.ChatOptions.Instructions);
         Assert.Null(options.ChatOptions.Tools);
@@ -115,12 +115,8 @@ public class ChatClientAgentOptionsTests
         const string Description = "Test description";
         var tools = new List<AITool> { AIFunctionFactory.Create(() => "test") };
 
-        static ChatMessageStore ChatMessageStoreFactory(
-            ChatClientAgentOptions.ChatMessageStoreFactoryContext ctx) => new Mock<ChatMessageStore>().Object;
-
-        static AIContextProvider AIContextProviderFactory(
-            ChatClientAgentOptions.AIContextProviderFactoryContext ctx) =>
-            new Mock<AIContextProvider>().Object;
+        var mockChatHistoryProvider = new Mock<ChatHistoryProvider>(null, null).Object;
+        var mockAIContextProvider = new Mock<AIContextProvider>(null, null).Object;
 
         var original = new ChatClientAgentOptions()
         {
@@ -128,8 +124,8 @@ public class ChatClientAgentOptionsTests
             Description = Description,
             ChatOptions = new() { Tools = tools },
             Id = "test-id",
-            ChatMessageStoreFactory = ChatMessageStoreFactory,
-            AIContextProviderFactory = AIContextProviderFactory
+            ChatHistoryProvider = mockChatHistoryProvider,
+            AIContextProviders = [mockAIContextProvider]
         };
 
         // Act
@@ -140,8 +136,8 @@ public class ChatClientAgentOptionsTests
         Assert.Equal(original.Id, clone.Id);
         Assert.Equal(original.Name, clone.Name);
         Assert.Equal(original.Description, clone.Description);
-        Assert.Same(original.ChatMessageStoreFactory, clone.ChatMessageStoreFactory);
-        Assert.Same(original.AIContextProviderFactory, clone.AIContextProviderFactory);
+        Assert.Same(original.ChatHistoryProvider, clone.ChatHistoryProvider);
+        Assert.Equal(original.AIContextProviders, clone.AIContextProviders);
 
         // ChatOptions should be cloned, not the same reference
         Assert.NotSame(original.ChatOptions, clone.ChatOptions);
@@ -153,11 +149,16 @@ public class ChatClientAgentOptionsTests
     public void Clone_WithoutProvidingChatOptions_ClonesCorrectly()
     {
         // Arrange
+        var mockChatHistoryProvider = new Mock<ChatHistoryProvider>(null, null).Object;
+        var mockAIContextProvider = new Mock<AIContextProvider>(null, null).Object;
+
         var original = new ChatClientAgentOptions
         {
             Id = "test-id",
             Name = "Test name",
-            Description = "Test description"
+            Description = "Test description",
+            ChatHistoryProvider = mockChatHistoryProvider,
+            AIContextProviders = [mockAIContextProvider]
         };
 
         // Act
@@ -169,8 +170,8 @@ public class ChatClientAgentOptionsTests
         Assert.Equal(original.Name, clone.Name);
         Assert.Equal(original.Description, clone.Description);
         Assert.Null(original.ChatOptions);
-        Assert.Null(clone.ChatMessageStoreFactory);
-        Assert.Null(clone.AIContextProviderFactory);
+        Assert.Same(original.ChatHistoryProvider, clone.ChatHistoryProvider);
+        Assert.Equal(original.AIContextProviders, clone.AIContextProviders);
     }
 
     private static void AssertSameTools(IList<AITool>? expected, IList<AITool>? actual)

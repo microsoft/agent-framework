@@ -27,9 +27,12 @@ if (!string.IsNullOrWhiteSpace(applicationInsightsConnectionString))
 using var tracerProvider = tracerProviderBuilder.Build();
 
 // Create the agent, and enable OpenTelemetry instrumentation.
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker")
+    .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker")
     .AsBuilder()
     .UseOpenTelemetry(sourceName: sourceName)
     .Build();

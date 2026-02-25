@@ -23,11 +23,11 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
-        var typedThread = (ChatClientAgentThread)thread;
+        var typedSession = (ChatClientAgentSession)session;
         List<ChatMessage> messages = [];
-        await foreach (var agentMessage in this._assistantClient!.GetMessagesAsync(typedThread.ConversationId, new() { Order = MessageCollectionOrder.Ascending }))
+        await foreach (var agentMessage in this._assistantClient!.GetMessagesAsync(typedSession.ConversationId, new() { Order = MessageCollectionOrder.Ascending }))
         {
             messages.Add(new()
             {
@@ -68,12 +68,12 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
     public Task DeleteAgentAsync(ChatClientAgent agent) =>
         this._assistantClient!.DeleteAssistantAsync(agent.Id);
 
-    public Task DeleteThreadAsync(AgentThread thread)
+    public Task DeleteSessionAsync(AgentSession session)
     {
-        var typedThread = (ChatClientAgentThread)thread;
-        if (typedThread?.ConversationId is not null)
+        var typedSession = (ChatClientAgentSession)session;
+        if (typedSession?.ConversationId is not null)
         {
-            return this._assistantClient!.DeleteThreadAsync(typedThread.ConversationId);
+            return this._assistantClient!.DeleteThreadAsync(typedSession.ConversationId);
         }
 
         return Task.CompletedTask;

@@ -74,25 +74,29 @@ public abstract class DelegatingAIAgent : AIAgent
     }
 
     /// <inheritdoc />
-    public override AgentThread GetNewThread() => this.InnerAgent.GetNewThread();
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) => this.InnerAgent.CreateSessionAsync(cancellationToken);
 
     /// <inheritdoc />
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => this.InnerAgent.DeserializeThread(serializedThread, jsonSerializerOptions);
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => this.InnerAgent.SerializeSessionAsync(session, jsonSerializerOptions, cancellationToken);
 
     /// <inheritdoc />
-    protected override Task<AgentRunResponse> RunCoreAsync(
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => this.InnerAgent.DeserializeSessionAsync(serializedState, jsonSerializerOptions, cancellationToken);
+
+    /// <inheritdoc />
+    protected override Task<AgentResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
-        => this.InnerAgent.RunAsync(messages, thread, options, cancellationToken);
+        => this.InnerAgent.RunAsync(messages, session, options, cancellationToken);
 
     /// <inheritdoc />
-    protected override IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
+    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
-        AgentThread? thread = null,
+        AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
-        => this.InnerAgent.RunStreamingAsync(messages, thread, options, cancellationToken);
+        => this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken);
 }

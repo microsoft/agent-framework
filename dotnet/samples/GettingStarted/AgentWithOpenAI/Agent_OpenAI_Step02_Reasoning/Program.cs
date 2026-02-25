@@ -5,7 +5,6 @@
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI;
-using OpenAI.Responses;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
 var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-5";
@@ -15,14 +14,10 @@ var client = new OpenAIClient(apiKey)
         .AsIChatClient().AsBuilder()
         .ConfigureOptions(o =>
         {
-            o.RawRepresentationFactory = _ => new CreateResponseOptions()
+            o.Reasoning = new()
             {
-                ReasoningOptions = new()
-                {
-                    ReasoningEffortLevel = ResponseReasoningEffortLevel.Medium,
-                    // Verbosity requires OpenAI verified Organization
-                    ReasoningSummaryVerbosity = ResponseReasoningSummaryVerbosity.Detailed
-                }
+                Effort = ReasoningEffort.Medium,
+                Output = ReasoningOutput.Full,
             };
         }).Build();
 

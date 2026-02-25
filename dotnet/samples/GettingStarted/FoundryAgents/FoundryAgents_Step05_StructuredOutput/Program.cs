@@ -19,7 +19,10 @@ const string AssistantInstructions = "You are a helpful assistant that extracts 
 const string AssistantName = "StructuredOutputAssistant";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create ChatClientAgent directly
 ChatClientAgent agent = await aiProjectClient.CreateAIAgentAsync(
@@ -35,7 +38,7 @@ ChatClientAgent agent = await aiProjectClient.CreateAIAgentAsync(
     });
 
 // Set PersonInfo as the type parameter of RunAsync method to specify the expected structured output from the agent and invoke the agent with some unstructured input.
-AgentRunResponse<PersonInfo> response = await agent.RunAsync<PersonInfo>("Please provide information about John Smith, who is a 35-year-old software engineer.");
+AgentResponse<PersonInfo> response = await agent.RunAsync<PersonInfo>("Please provide information about John Smith, who is a 35-year-old software engineer.");
 
 // Access the structured output via the Result property of the agent response.
 Console.WriteLine("Assistant Output:");
@@ -44,7 +47,7 @@ Console.WriteLine($"Age: {response.Result.Age}");
 Console.WriteLine($"Occupation: {response.Result.Occupation}");
 
 // Create the ChatClientAgent with the specified name, instructions, and expected structured output the agent should produce.
-ChatClientAgent agentWithPersonInfo = aiProjectClient.CreateAIAgent(
+ChatClientAgent agentWithPersonInfo = await aiProjectClient.CreateAIAgentAsync(
     model: deploymentName,
     new ChatClientAgentOptions()
     {
@@ -57,11 +60,12 @@ ChatClientAgent agentWithPersonInfo = aiProjectClient.CreateAIAgent(
     });
 
 // Invoke the agent with some unstructured input while streaming, to extract the structured information from.
-IAsyncEnumerable<AgentRunResponseUpdate> updates = agentWithPersonInfo.RunStreamingAsync("Please provide information about John Smith, who is a 35-year-old software engineer.");
+IAsyncEnumerable<AgentResponseUpdate> updates = agentWithPersonInfo.RunStreamingAsync("Please provide information about John Smith, who is a 35-year-old software engineer.");
 
 // Assemble all the parts of the streamed output, since we can only deserialize once we have the full json,
 // then deserialize the response into the PersonInfo class.
-PersonInfo personInfo = (await updates.ToAgentRunResponseAsync()).Deserialize<PersonInfo>(JsonSerializerOptions.Web);
+PersonInfo personInfo = JsonSerializer.Deserialize<PersonInfo>((await updates.ToAgentResponseAsync()).Text, JsonSerializerOptions.Web)
+    ?? throw new InvalidOperationException("Failed to deserialize the streamed response into PersonInfo.");
 
 Console.WriteLine("Assistant Output:");
 Console.WriteLine($"Name: {personInfo.Name}");

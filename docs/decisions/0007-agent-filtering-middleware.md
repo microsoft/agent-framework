@@ -115,7 +115,7 @@ public class AIAgent
         }
     }
 
-    public async Task<AgentRunResponse> RunAsync(
+    public async Task<AgentResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -135,7 +135,7 @@ public class AIAgent
         return context.Response ?? throw new InvalidOperationException("Agent execution did not produce a response");
     }
 
-    protected abstract Task<AgentRunResponse> ExecuteCoreLogicAsync(
+    protected abstract Task<AgentResponse> ExecuteCoreLogicAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread,
         AgentRunOptions? options,
@@ -190,7 +190,7 @@ internal sealed class GuardrailCallbackAgent : DelegatingAIAgent
 
     public GuardrailCallbackAgent(AIAgent innerAgent) : base(innerAgent) { }
 
-    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async Task<AgentResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         var filteredMessages = this.FilterMessages(messages);
         Console.WriteLine($"Guardrail Middleware - Filtered messages: {new ChatResponse(filteredMessages).Text}");
@@ -202,14 +202,14 @@ internal sealed class GuardrailCallbackAgent : DelegatingAIAgent
         return response;
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var filteredMessages = this.FilterMessages(messages);
         await foreach (var update in this.InnerAgent.RunStreamingAsync(filteredMessages, thread, options, cancellationToken))
         {
             if (update.Text != null)
             {
-                yield return new AgentRunResponseUpdate(update.Role, this.FilterContent(update.Text));
+                yield return new AgentResponseUpdate(update.Role, this.FilterContent(update.Text));
             }
             else
             {
@@ -252,7 +252,7 @@ internal sealed class RunningCallbackHandlerAgent : DelegatingAIAgent
         this._func = func;
     }
 
-    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async Task<AgentResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         var context = new AgentInvokeCallbackContext(this, messages, thread, options, isStreaming: false, cancellationToken);
 
@@ -469,7 +469,7 @@ public sealed class CallbackEnabledAgent : DelegatingAIAgent
         this._callbacksProcessor = callbackMiddlewareProcessor ?? new();
     }
 
-    public override async Task<AgentRunResponse> RunAsync(
+    public override async Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -541,7 +541,7 @@ public abstract class AgentContext
 public class AgentRunContext : AgentContext
 {
     public IList<ChatMessage> Messages { get; set; }
-    public AgentRunResponse? Response { get; set; }
+    public AgentResponse? Response { get; set; }
     public AgentThread? Thread { get; }
 
     public AgentRunContext(AIAgent agent, IList<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options)

@@ -1,0 +1,102 @@
+#
+# Dedicated .NET integration tests workflow, called from the manual integration test orchestrator.
+# Only runs integration test matrix entries (net10.0 and net472).
+#
+
+name: dotnet-integration-tests
+
+on:
+  workflow_call:
+    inputs:
+      checkout-ref:
+        description: "Git ref to checkout (e.g., refs/pull/123/head)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  dotnet-integration-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { targetFramework: "net10.0", os: "ubuntu-latest", configuration: Release }
+          - { targetFramework: "net472", os: "windows-latest", configuration: Release }
+    runs-on: ${{ matrix.os }}
+    environment: integration
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+          sparse-checkout: |
+            .
+            .github
+            dotnet
+            python
+            workflow-samples
+
+      - name: Start Azure Cosmos DB Emulator
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "Launching Azure Cosmos DB Emulator"
+          Import-Module "$env:ProgramFiles\Azure Cosmos DB Emulator\PSModules\Microsoft.Azure.CosmosDB.Emulator"
+          Start-CosmosDbEmulator -NoUI -Key "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
+          echo "COSMOS_EMULATOR_AVAILABLE=true" >> $env:GITHUB_ENV
+
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@v5.1.0
+        with:
+          global-json-file: ${{ github.workspace }}/dotnet/global.json
+
+      - name: Build dotnet solutions
+        shell: bash
+        run: |
+          export SOLUTIONS=$(find ./dotnet/ -type f -name "*.slnx" | tr '\n' ' ')
+          for solution in $SOLUTIONS; do
+            dotnet build $solution -c ${{ matrix.configuration }} --warnaserror
+          done
+
+      - name: Azure CLI Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set up Durable Task and Azure Functions Integration Test Emulators
+        if: matrix.os == 'ubuntu-latest'
+        uses: ./.github/actions/azure-functions-integration-setup
+
+      - name: Run Integration Tests
+        shell: bash
+        run: |
+          export INTEGRATION_TEST_PROJECTS=$(find ./dotnet -type f -name "*IntegrationTests.csproj" | tr '\n' ' ')
+          for project in $INTEGRATION_TEST_PROJECTS; do
+            target_frameworks=$(dotnet msbuild $project -getProperty:TargetFrameworks -p:Configuration=${{ matrix.configuration }} -nologo 2>/dev/null | tr -d '\r')
+            if [[ "$target_frameworks" == *"${{ matrix.targetFramework }}"* ]]; then
+              dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --filter "Category!=IntegrationDisabled"
+            else
+              echo "Skipping $project - does not support target framework ${{ matrix.targetFramework }} (supports: $target_frameworks)"
+            fi
+          done
+        env:
+          COSMOSDB_ENDPOINT: https://localhost:8081
+          COSMOSDB_KEY: C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==
+          OpenAI__ApiKey: ${{ secrets.OPENAI__APIKEY }}
+          OpenAI__ChatModelId: ${{ vars.OPENAI__CHATMODELID }}
+          OpenAI__ChatReasoningModelId: ${{ vars.OPENAI__CHATREASONINGMODELID }}
+          AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
+          AzureAI__Endpoint: ${{ secrets.AZUREAI__ENDPOINT }}
+          AzureAI__DeploymentName: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
+          AzureAI__BingConnectionId: ${{ vars.AZUREAI__BINGCONECTIONID }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+          FOUNDRY_MEDIA_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MEDIA_DEPLOYMENT_NAME }}
+          FOUNDRY_MODEL_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT_NAME }}
+          FOUNDRY_CONNECTION_GROUNDING_TOOL: ${{ vars.FOUNDRY_CONNECTION_GROUNDING_TOOL }}

@@ -26,9 +26,9 @@ using Microsoft.Agents.AI.A2A;
 A2AClient a2aClient = new(new Uri("https://your-a2a-agent-host/echo"));
 
 // Create an AIAgent from the A2AClient
-AIAgent agent = a2aClient.GetAIAgent();
+AIAgent agent = a2aClient.AsAIAgent();
 
 // Run the agent
-AgentRunResponse response = await agent.RunAsync("Tell me a joke about a pirate.");
+AgentResponse response = await agent.RunAsync("Tell me a joke about a pirate.");
 Console.WriteLine(response);
 ```

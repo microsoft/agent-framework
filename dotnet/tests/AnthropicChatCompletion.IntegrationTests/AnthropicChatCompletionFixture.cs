@@ -35,11 +35,16 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
-        var typedThread = (ChatClientAgentThread)thread;
+        var chatHistoryProvider = agent.GetService<ChatHistoryProvider>();
 
-        return typedThread.MessageStore is null ? [] : (await typedThread.MessageStore.GetMessagesAsync()).ToList();
+        if (chatHistoryProvider is null)
+        {
+            return [];
+        }
+
+        return (await chatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(
@@ -47,7 +52,7 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-        var anthropicClient = new AnthropicClient() { APIKey = s_config.ApiKey };
+        var anthropicClient = new AnthropicClient() { ApiKey = s_config.ApiKey };
 
         IChatClient? chatClient = this._useBeta
             ? anthropicClient
@@ -92,8 +97,8 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
         // Chat Completion does not require/support deleting agents, so this is a no-op.
         Task.CompletedTask;
 
-    public Task DeleteThreadAsync(AgentThread thread) =>
-        // Chat Completion does not require/support deleting threads, so this is a no-op.
+    public Task DeleteSessionAsync(AgentSession session) =>
+        // Chat Completion does not require/support deleting sessions, so this is a no-op.
         Task.CompletedTask;
 
     public async Task InitializeAsync() =>

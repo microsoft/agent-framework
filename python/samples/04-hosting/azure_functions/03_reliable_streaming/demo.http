@@ -1,0 +1,55 @@
+### Reliable Streaming with Redis - Demo HTTP Requests
+### Use with the VS Code REST Client extension or any HTTP client
+###
+### Workflow:
+### 1. POST /api/agents/{agentName}/run  -> Start durable agent (returns conversation_id)
+### 2. GET  /api/agent/stream/{id}       -> Read chunks from Redis (SSE or plain text)
+### 3. Add ?cursor={id} to resume from a specific point
+###
+### Prerequisites:
+### - Redis: docker run -d --name redis -p 6379:6379 redis:latest
+### - Start function app: func start
+
+### Variables
+@baseUrl = http://localhost:7071
+@agentName = TravelPlanner
+
+### Health Check
+GET {{baseUrl}}/api/health
+
+###
+
+### Start Agent Run
+# Starts the agent in the background via durable orchestration.
+# The RedisStreamCallback persists streaming chunks to Redis.
+# @name trip
+POST {{baseUrl}}/api/agents/{{agentName}}/run
+Content-Type: text/plain
+
+Plan a 3-day trip to Tokyo
+
+###
+
+### Stream from Redis (SSE format)
+# Reads persisted chunks from Redis using cursor-based pagination.
+# The conversation_id is automatically captured from the previous request.
+@conversationId = {{trip.response.body.$.conversation_id}}
+GET {{baseUrl}}/api/agent/stream/{{conversationId}}
+Accept: text/event-stream
+
+###
+
+### Stream from Redis (plain text)
+# Same as above, but returns plain text instead of SSE format
+GET {{baseUrl}}/api/agent/stream/{{conversationId}}
+Accept: text/plain
+
+###
+
+### Resume from cursor
+# Use a cursor ID from an SSE event to skip already-processed messages
+# Replace {cursor_id} with an actual entry ID from the SSE stream
+GET {{baseUrl}}/api/agent/stream/{{conversationId}}?cursor={cursor_id}
+Accept: text/event-stream
+
+###

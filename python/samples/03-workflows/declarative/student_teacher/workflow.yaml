@@ -1,0 +1,98 @@
+# Student-Teacher Math Chat Workflow
+#
+# Demonstrates iterative conversation between two agents with loop control
+# and termination conditions.
+#
+# Example input:
+# How would you compute the value of PI?
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: student_teacher_workflow
+  actions:
+
+    # Initialize turn counter
+    - kind: SetVariable
+      id: init_counter
+      variable: Local.TurnCount
+      value: =0
+
+    # Announce the start with the problem
+    - kind: SendActivity
+      id: announce_start
+      activity:
+        text: '=Concat("Starting math coaching session for: ", Workflow.Inputs.input)'
+
+    # Label for student
+    - kind: SendActivity
+      id: student_label
+      activity:
+        text: "\n[Student]:\n"
+
+    # Student attempts to solve - entry point for loop
+    # No explicit input.messages - uses implicit input from workflow inputs or conversation
+    - kind: InvokeAzureAgent
+      id: question_student
+      conversationId: =System.ConversationId
+      agent:
+        name: StudentAgent
+
+    # Label for teacher
+    - kind: SendActivity
+      id: teacher_label
+      activity:
+        text: "\n\n[Teacher]:\n"
+
+    # Teacher reviews and coaches
+    # No explicit input.messages - uses conversation context from conversationId
+    - kind: InvokeAzureAgent
+      id: question_teacher
+      conversationId: =System.ConversationId
+      agent:
+        name: TeacherAgent
+      output:
+        messages: Local.TeacherResponse
+
+    # Increment the turn counter
+    - kind: SetVariable
+      id: increment_counter
+      variable: Local.TurnCount
+      value: =Local.TurnCount + 1
+
+    # Check for completion using ConditionGroup
+    - kind: ConditionGroup
+      id: check_completion
+      conditions:
+        - id: success_condition
+          condition: =!IsBlank(Find("CONGRATULATIONS", Upper(MessageText(Local.TeacherResponse))))
+          actions:
+            - kind: SendActivity
+              id: success_message
+              activity:
+                text: "\nGOLD STAR! The student has demonstrated understanding."
+            - kind: SetVariable
+              id: set_success_result
+              variable: workflow.outputs.result
+              value: success
+      elseActions:
+        - kind: ConditionGroup
+          id: check_turn_limit
+          conditions:
+            - id: can_continue
+              condition: =Local.TurnCount < 4
+              actions:
+                # Continue the loop - go back to student label
+                - kind: GotoAction
+                  id: continue_loop
+                  actionId: student_label
+          elseActions:
+            - kind: SendActivity
+              id: timeout_message
+              activity:
+                text: "\nLet's try again later... The session has reached its limit."
+            - kind: SetVariable
+              id: set_timeout_result
+              variable: workflow.outputs.result
+              value: timeout

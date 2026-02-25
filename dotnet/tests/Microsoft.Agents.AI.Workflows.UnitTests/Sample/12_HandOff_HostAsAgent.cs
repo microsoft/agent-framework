@@ -67,16 +67,16 @@ internal static class Step12EntryPoint
 
     public static async ValueTask RunAsync(TextWriter writer, IWorkflowExecutionEnvironment executionEnvironment, IEnumerable<string> inputs)
     {
-        AIAgent hostAgent = WorkflowInstance.AsAgent("echo-workflow", "EchoW", executionEnvironment: executionEnvironment);
+        AIAgent hostAgent = WorkflowInstance.AsAIAgent("echo-workflow", "EchoW", executionEnvironment: executionEnvironment);
 
-        AgentThread thread = hostAgent.GetNewThread();
+        AgentSession session = await hostAgent.CreateSessionAsync();
         foreach (string input in inputs)
         {
-            AgentRunResponse response;
+            AgentResponse response;
             ResponseContinuationToken? continuationToken = null;
             do
             {
-                response = await hostAgent.RunAsync(input, thread, new AgentRunOptions { ContinuationToken = continuationToken });
+                response = await hostAgent.RunAsync(input, session, new AgentRunOptions { ContinuationToken = continuationToken });
             } while ((continuationToken = response.ContinuationToken) is { });
 
             foreach (ChatMessage message in response.Messages)

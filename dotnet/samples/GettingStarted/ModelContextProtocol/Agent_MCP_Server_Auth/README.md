@@ -54,7 +54,7 @@ dotnet run
 
 The protected server will start at `http://localhost:7071`
 
-### Step 3: Run the ModelContextProtocolPluginAuth sample
+### Step 3: Run the Agent_MCP_Server_Auth sample
 
 Finally, run this client:
 

@@ -23,12 +23,12 @@ public class MessageMergerTests
 
         MessageMerger merger = new();
 
-        foreach (AgentRunResponseUpdate update in "Hello Agent Framework Workflows!".ToAgentRunStream(authorName: TestAuthorName1, agentId: TestAgentId1, messageId: messageId, createdAt: creationTime, responseId: responseId))
+        foreach (AgentResponseUpdate update in "Hello Agent Framework Workflows!".ToAgentRunStream(authorName: TestAuthorName1, agentId: TestAgentId1, messageId: messageId, createdAt: creationTime, responseId: responseId))
         {
             merger.AddUpdate(update);
         }
 
-        AgentRunResponse response = merger.ComputeMerged(responseId);
+        AgentResponse response = merger.ComputeMerged(responseId);
 
         response.Messages.Should().HaveCount(1);
         response.Messages[0].Role.Should().Be(ChatRole.Assistant);

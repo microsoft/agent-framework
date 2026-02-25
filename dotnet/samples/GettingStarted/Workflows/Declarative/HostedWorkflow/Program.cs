@@ -34,8 +34,11 @@ internal sealed class Program
         IConfiguration configuration = Application.InitializeConfig();
         Uri foundryEndpoint = new(configuration.GetValue(Application.Settings.FoundryEndpoint));
 
+        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
         // Create the agent service client
-        AIProjectClient aiProjectClient = new(foundryEndpoint, new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(foundryEndpoint, new DefaultAzureCredential());
 
         // Ensure sample agents exist in Foundry.
         await CreateAgentsAsync(aiProjectClient, configuration);
@@ -45,9 +48,9 @@ internal sealed class Program
 
         string workflowInput = GetWorkflowInput(args);
 
-        AIAgent agent = aiProjectClient.GetAIAgent(agentVersion);
+        AIAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 
-        AgentThread thread = agent.GetNewThread();
+        AgentSession session = await agent.CreateSessionAsync();
 
         ProjectConversation conversation =
             await aiProjectClient
@@ -65,10 +68,10 @@ internal sealed class Program
             };
         ChatClientAgentRunOptions runOptions = new(chatOptions);
 
-        IAsyncEnumerable<AgentRunResponseUpdate> agentResponseUpdates = agent.RunStreamingAsync(workflowInput, thread, runOptions);
+        IAsyncEnumerable<AgentResponseUpdate> agentResponseUpdates = agent.RunStreamingAsync(workflowInput, session, runOptions);
 
         string? lastMessageId = null;
-        await foreach (AgentRunResponseUpdate responseUpdate in agentResponseUpdates)
+        await foreach (AgentResponseUpdate responseUpdate in agentResponseUpdates)
         {
             if (responseUpdate.MessageId != lastMessageId)
             {

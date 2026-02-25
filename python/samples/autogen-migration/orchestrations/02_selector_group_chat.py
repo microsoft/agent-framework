@@ -1,3 +1,13 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "autogen-agentchat",
+#     "autogen-ext[openai]",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/autogen-migration/orchestrations/02_selector_group_chat.py
+
 # Copyright (c) Microsoft. All rights reserved.
 """AutoGen SelectorGroupChat vs Agent Framework GroupChatBuilder.
 
@@ -7,9 +17,16 @@ which agent should speak next based on the conversation context.
 
 import asyncio
 
+from agent_framework import Message
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 
 async def run_autogen() -> None:
     """AutoGen's SelectorGroupChat with LLM-based speaker selection."""
+
     from autogen_agentchat.agents import AssistantAgent
     from autogen_agentchat.conditions import MaxMessageTermination
     from autogen_agentchat.teams import SelectorGroupChat
@@ -59,58 +76,47 @@ async def run_autogen() -> None:
 
 async def run_agent_framework() -> None:
     """Agent Framework's GroupChatBuilder with LLM-based speaker selection."""
-    from agent_framework import AgentRunUpdateEvent, GroupChatBuilder
     from agent_framework.openai import OpenAIChatClient
+    from agent_framework.orchestrations import GroupChatBuilder
 
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
 
     # Create specialized agents
-    python_expert = client.create_agent(
+    python_expert = client.as_agent(
         name="python_expert",
         instructions="You are a Python programming expert. Answer Python-related questions.",
         description="Expert in Python programming",
     )
 
-    javascript_expert = client.create_agent(
+    javascript_expert = client.as_agent(
         name="javascript_expert",
         instructions="You are a JavaScript programming expert. Answer JavaScript-related questions.",
         description="Expert in JavaScript programming",
     )
 
-    database_expert = client.create_agent(
+    database_expert = client.as_agent(
         name="database_expert",
         instructions="You are a database expert. Answer SQL and database-related questions.",
         description="Expert in databases and SQL",
     )
 
-    workflow = (
-        GroupChatBuilder()
-        .participants([python_expert, javascript_expert, database_expert])
-        .set_manager(
-            manager=client.create_agent(
-                name="selector_manager",
-                instructions="Based on the conversation, select the most appropriate expert to respond next.",
-            ),
-            display_name="SelectorManager",
-        )
-        .with_max_rounds(1)
-        .build()
-    )
+    workflow = GroupChatBuilder(
+        participants=[python_expert, javascript_expert, database_expert],
+        max_rounds=1,
+        orchestrator_agent=client.as_agent(
+            name="selector_manager",
+            instructions="Based on the conversation, select the most appropriate expert to respond next.",
+        ),
+    ).build()
 
     # Run with a question that requires expert selection
     print("[Agent Framework] Group chat conversation:")
-    current_executor = None
-    async for event in workflow.run_stream("How do I connect to a PostgreSQL database using Python?"):
-        if isinstance(event, AgentRunUpdateEvent):
-            # Print executor name header when switching to a new agent
-            if current_executor != event.executor_id:
-                if current_executor is not None:
-                    print()  # Newline after previous agent's message
-                print(f"---------- {event.executor_id} ----------")
-                current_executor = event.executor_id
-            if event.data:
-                print(event.data.text, end="", flush=True)
-    print()  # Final newline after conversation
+    async for event in workflow.run("How do I connect to a PostgreSQL database using Python?", stream=True):
+        if event.type == "output" and isinstance(event.data, list):
+            for message in event.data:
+                if isinstance(message, Message) and message.role == "assistant" and message.text:
+                    print(f"---------- {message.author_name} ----------")
+                    print(message.text)
 
 
 async def main() -> None:

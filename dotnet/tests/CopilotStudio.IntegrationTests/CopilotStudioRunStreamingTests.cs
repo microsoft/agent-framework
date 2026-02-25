@@ -10,8 +10,8 @@ public class CopilotStudioRunStreamingTests() : RunStreamingTests<CopilotStudioF
     // Set to null to run the tests.
     private const string ManualVerification = "For manual verification";
 
-    [Fact(Skip = "Copilot Studio does not support thread history retrieval, so this test is not applicable.")]
-    public override Task ThreadMaintainsHistoryAsync() =>
+    [Fact(Skip = "Copilot Studio does not support session history retrieval, so this test is not applicable.")]
+    public override Task SessionMaintainsHistoryAsync() =>
         Task.CompletedTask;
 
     [Fact(Skip = ManualVerification)]

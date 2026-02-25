@@ -55,7 +55,7 @@ internal sealed class StreamingUpdatePipelineResponse : PipelineResponse
         // No resources to dispose.
     }
 
-    internal StreamingUpdatePipelineResponse(IAsyncEnumerable<AgentRunResponseUpdate> updates)
+    internal StreamingUpdatePipelineResponse(IAsyncEnumerable<AgentResponseUpdate> updates)
     {
     }
 

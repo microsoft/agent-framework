@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace OpenAI.Responses;
@@ -17,6 +19,7 @@ namespace OpenAI.Responses;
 /// The methods handle the conversion from OpenAI clients to <see cref="IChatClient"/> instances and then wrap them
 /// in <see cref="ChatClientAgent"/> objects that implement the <see cref="AIAgent"/> interface.
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public static class OpenAIResponseClientExtensions
 {
     /// <summary>
@@ -32,7 +35,7 @@ public static class OpenAIResponseClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Response service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> is <see langword="null"/>.</exception>
-    public static ChatClientAgent CreateAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this ResponsesClient client,
         string? instructions = null,
         string? name = null,
@@ -44,7 +47,7 @@ public static class OpenAIResponseClientExtensions
     {
         Throw.IfNull(client);
 
-        return client.CreateAIAgent(
+        return client.AsAIAgent(
             new ChatClientAgentOptions()
             {
                 Name = name,
@@ -70,7 +73,7 @@ public static class OpenAIResponseClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Response service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
-    public static ChatClientAgent CreateAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this ResponsesClient client,
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,
@@ -88,5 +91,24 @@ public static class OpenAIResponseClientExtensions
         }
 
         return new ChatClientAgent(chatClient, options, loggerFactory, services);
+    }
+
+    /// <summary>
+    /// Gets an <see cref="IChatClient"/> for use with this <see cref="ResponsesClient"/> that does not store responses for later retrieval.
+    /// </summary>
+    /// <remarks>
+    /// This corresponds to setting the "store" property in the JSON representation to false.
+    /// </remarks>
+    /// <param name="responseClient">The client.</param>
+    /// <returns>An <see cref="IChatClient"/> that can be used to converse via the <see cref="ResponsesClient"/> that does not store responses for later retrieval.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="responseClient"/> is <see langword="null"/>.</exception>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public static IChatClient AsIChatClientWithStoredOutputDisabled(this ResponsesClient responseClient)
+    {
+        return Throw.IfNull(responseClient)
+            .AsIChatClient()
+            .AsBuilder()
+            .ConfigureOptions(x => x.RawRepresentationFactory = _ => new CreateResponseOptions() { StoredOutputEnabled = false })
+            .Build();
     }
 }

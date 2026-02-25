@@ -384,4 +384,79 @@ public sealed class JsonDocumentExtensionsTests
         // Act / Assert
         Assert.Throws<DeclarativeActionException>(() => document.ParseList(typeof(int[])));
     }
+
+    /// <summary>
+    /// Regression test for #4195: When a JSON object contains an array of objects
+    /// and is parsed with <c>VariableType.RecordType</c> (no schema), the nested
+    /// object properties must be preserved. Before the fix, DetermineElementType()
+    /// created an empty-schema VariableType, causing ParseRecord to take the
+    /// ParseSchema path (zero fields) and return empty dictionaries.
+    /// </summary>
+    [Fact]
+    public void ParseRecord_ObjectWithArrayOfObjects_NoSchema_PreservesNestedProperties()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse(
+            """
+            {
+              "items": [
+                { "name": "Alice", "role": "Engineer" },
+                { "name": "Bob", "role": "Designer" },
+                { "name": "Carol", "role": "PM" }
+              ]
+            }
+            """);
+
+        // Act
+        Dictionary<string, object?> result = document.ParseRecord(VariableType.RecordType);
+
+        // Assert
+        Assert.True(result.ContainsKey("items"));
+        List<object?> items = Assert.IsType<List<object?>>(result["items"]);
+        Assert.Equal(3, items.Count);
+
+        Dictionary<string, object?> first = Assert.IsType<Dictionary<string, object?>>(items[0]);
+        Assert.Equal("Alice", first["name"]);
+        Assert.Equal("Engineer", first["role"]);
+
+        Dictionary<string, object?> second = Assert.IsType<Dictionary<string, object?>>(items[1]);
+        Assert.Equal("Bob", second["name"]);
+        Assert.Equal("Designer", second["role"]);
+
+        Dictionary<string, object?> third = Assert.IsType<Dictionary<string, object?>>(items[2]);
+        Assert.Equal("Carol", third["name"]);
+        Assert.Equal("PM", third["role"]);
+    }
+
+    /// <summary>
+    /// Regression test for #4195: When a JSON array of objects is parsed directly
+    /// via <c>ParseList</c> with <c>VariableType.ListType</c> (no schema), all
+    /// object properties must be preserved in each element.
+    /// </summary>
+    [Fact]
+    public void ParseList_ArrayOfObjects_NoSchema_PreservesProperties()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse(
+            """
+            [
+              { "name": "Alice", "role": "Engineer" },
+              { "name": "Bob", "role": "Designer" }
+            ]
+            """);
+
+        // Act
+        List<object?> result = document.ParseList(VariableType.ListType);
+
+        // Assert
+        Assert.Equal(2, result.Count);
+
+        Dictionary<string, object?> first = Assert.IsType<Dictionary<string, object?>>(result[0]);
+        Assert.Equal("Alice", first["name"]);
+        Assert.Equal("Engineer", first["role"]);
+
+        Dictionary<string, object?> second = Assert.IsType<Dictionary<string, object?>>(result[1]);
+        Assert.Equal("Bob", second["name"]);
+        Assert.Equal("Designer", second["role"]);
+    }
 }

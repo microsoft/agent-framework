@@ -20,9 +20,7 @@ public class AzureAIAgentsPersistentCreateTests
 
     [Theory]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
-    [InlineData("CreateWithChatClientAgentOptionsSync")]
     [InlineData("CreateWithFoundryOptionsAsync")]
-    [InlineData("CreateWithFoundryOptionsSync")]
     public async Task CreateAgent_CreatesAgentWithCorrectMetadataAsync(string createMechanism)
     {
         // Arrange.
@@ -41,20 +39,7 @@ public class AzureAIAgentsPersistentCreateTests
                     Name = AgentName,
                     Description = AgentDescription
                 }),
-            "CreateWithChatClientAgentOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
-                s_config.DeploymentName,
-                options: new ChatClientAgentOptions()
-                {
-                    ChatOptions = new() { Instructions = AgentInstructions },
-                    Name = AgentName,
-                    Description = AgentDescription
-                }),
             "CreateWithFoundryOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
-                instructions: AgentInstructions,
-                name: AgentName,
-                description: AgentDescription),
-            "CreateWithFoundryOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
                 s_config.DeploymentName,
                 instructions: AgentInstructions,
                 name: AgentName,
@@ -85,9 +70,7 @@ public class AzureAIAgentsPersistentCreateTests
 
     [Theory(Skip = "For manual testing only")]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
-    [InlineData("CreateWithChatClientAgentOptionsSync")]
     [InlineData("CreateWithFoundryOptionsAsync")]
-    [InlineData("CreateWithFoundryOptionsSync")]
     public async Task CreateAgent_CreatesAgentWithVectorStoresAsync(string createMechanism)
     {
         // Arrange.
@@ -125,22 +108,7 @@ public class AzureAIAgentsPersistentCreateTests
                         Tools = [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreMetadata.Value.Id)] }]
                     }
                 }),
-            "CreateWithChatClientAgentOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
-                s_config.DeploymentName,
-                options: new ChatClientAgentOptions()
-                {
-                    ChatOptions = new()
-                    {
-                        Instructions = AgentInstructions,
-                        Tools = [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreMetadata.Value.Id)] }]
-                    }
-                }),
             "CreateWithFoundryOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
-                instructions: AgentInstructions,
-                tools: [new FileSearchToolDefinition()],
-                toolResources: new ToolResources() { FileSearch = new([vectorStoreMetadata.Value.Id], null) }),
-            "CreateWithFoundryOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
                 s_config.DeploymentName,
                 instructions: AgentInstructions,
                 tools: [new FileSearchToolDefinition()],
@@ -167,9 +135,7 @@ public class AzureAIAgentsPersistentCreateTests
 
     [Theory]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
-    [InlineData("CreateWithChatClientAgentOptionsSync")]
     [InlineData("CreateWithFoundryOptionsAsync")]
-    [InlineData("CreateWithFoundryOptionsSync")]
     public async Task CreateAgent_CreatesAgentWithCodeInterpreterAsync(string createMechanism)
     {
         // Arrange.
@@ -205,22 +171,7 @@ public class AzureAIAgentsPersistentCreateTests
                         Tools = [new HostedCodeInterpreterTool() { Inputs = [new HostedFileContent(uploadedCodeFile.Id)] }]
                     }
                 }),
-            "CreateWithChatClientAgentOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
-                s_config.DeploymentName,
-                options: new ChatClientAgentOptions()
-                {
-                    ChatOptions = new()
-                    {
-                        Instructions = AgentInstructions,
-                        Tools = [new HostedCodeInterpreterTool() { Inputs = [new HostedFileContent(uploadedCodeFile.Id)] }]
-                    }
-                }),
             "CreateWithFoundryOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
-                instructions: AgentInstructions,
-                tools: [new CodeInterpreterToolDefinition()],
-                toolResources: new ToolResources() { CodeInterpreter = toolResource }),
-            "CreateWithFoundryOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
                 s_config.DeploymentName,
                 instructions: AgentInstructions,
                 tools: [new CodeInterpreterToolDefinition()],
@@ -246,7 +197,6 @@ public class AzureAIAgentsPersistentCreateTests
 
     [Theory]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
-    [InlineData("CreateWithChatClientAgentOptionsSync")]
     public async Task CreateAgent_CreatesAgentWithAIFunctionToolsAsync(string createMechanism)
     {
         // Arrange.
@@ -258,16 +208,6 @@ public class AzureAIAgentsPersistentCreateTests
         ChatClientAgent agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
-                options: new ChatClientAgentOptions()
-                {
-                    ChatOptions = new()
-                    {
-                        Instructions = AgentInstructions,
-                        Tools = [weatherFunction]
-                    }
-                }),
-            "CreateWithChatClientAgentOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
                 s_config.DeploymentName,
                 options: new ChatClientAgentOptions()
                 {

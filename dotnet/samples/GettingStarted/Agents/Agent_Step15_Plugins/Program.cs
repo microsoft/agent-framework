@@ -27,11 +27,14 @@ services.AddSingleton<AgentPlugin>(); // The plugin depends on WeatherProvider a
 
 IServiceProvider serviceProvider = services.BuildServiceProvider();
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You are a helpful assistant that helps people find information.",
         name: "Assistant",
         tools: [.. serviceProvider.GetRequiredService<AgentPlugin>().AsAITools()],

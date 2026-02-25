@@ -18,8 +18,11 @@ internal sealed class Program
         string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
         string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "computer-use-preview";
 
+        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
         // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-        AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
         const string AgentInstructions = @"
                     You are a computer automation assistant. 
                     
@@ -83,8 +86,6 @@ internal sealed class Program
             AllowBackgroundResponses = true,
         };
 
-        AgentThread thread = agent.GetNewThread();
-
         ChatMessage message = new(ChatRole.User, [
             new TextContent("I need you to help me search for 'OpenAI news'. Please type 'OpenAI news' and submit the search. Once you see search results, the task is complete."),
             new DataContent(new BinaryData(screenshots["browser_search"]), "image/png")
@@ -93,19 +94,23 @@ internal sealed class Program
         // Initial request with screenshot - start with Bing search page
         Console.WriteLine("Starting computer automation session (initial screenshot: cua_browser_search.png)...");
 
-        AgentRunResponse runResponse = await agent.RunAsync(message, thread: thread, options: runOptions);
+        // IMPORTANT: Computer-use with the Azure Agents API differs from the vanilla OpenAI Responses API.
+        // The Azure Agents API rejects requests that include previous_response_id alongside
+        // computer_call_output items. To work around this, each call uses a fresh session (avoiding
+        // previous_response_id) and re-sends the full conversation context as input items instead.
+        AgentSession session = await agent.CreateSessionAsync();
+        AgentResponse response = await agent.RunAsync(message, session: session, options: runOptions);
 
         // Main interaction loop
         const int MaxIterations = 10;
         int iteration = 0;
         // Initialize state machine
         SearchState currentState = SearchState.Initial;
-        string initialCallId = string.Empty;
 
         while (true)
         {
             // Poll until the response is complete.
-            while (runResponse.ContinuationToken is { } token)
+            while (response.ContinuationToken is { } token)
             {
                 // Wait before polling again.
                 await Task.Delay(TimeSpan.FromSeconds(2));
@@ -113,10 +118,13 @@ internal sealed class Program
                 // Continue with the token.
                 runOptions.ContinuationToken = token;
 
-                runResponse = await agent.RunAsync(thread, runOptions);
+                response = await agent.RunAsync(session, runOptions);
             }
 
-            Console.WriteLine($"Agent response received (ID: {runResponse.ResponseId})");
+            // Clear the continuation token so the next RunAsync call is a fresh request.
+            runOptions.ContinuationToken = null;
+
+            Console.WriteLine($"Agent response received (ID: {response.ResponseId})");
 
             if (iteration >= MaxIterations)
             {
@@ -128,7 +136,7 @@ internal sealed class Program
             Console.WriteLine($"\n--- Iteration {iteration} ---");
 
             // Check for computer calls in the response
-            IEnumerable<ComputerCallResponseItem> computerCallResponseItems = runResponse.Messages
+            IEnumerable<ComputerCallResponseItem> computerCallResponseItems = response.Messages
                 .SelectMany(x => x.Contents)
                 .Where(c => c.RawRepresentation is ComputerCallResponseItem and not null)
                 .Select(c => (ComputerCallResponseItem)c.RawRepresentation!);
@@ -137,19 +145,13 @@ internal sealed class Program
             if (firstComputerCall is null)
             {
                 Console.WriteLine("No computer call actions found. Ending interaction.");
-                Console.WriteLine($"Final Response: {runResponse}");
+                Console.WriteLine($"Final Response: {response}");
                 break;
             }
 
             // Process the first computer call response
             ComputerCallAction action = firstComputerCall.Action;
             string currentCallId = firstComputerCall.CallId;
-
-            // Set the initial computer call ID for tracking and subsequent responses.
-            if (string.IsNullOrEmpty(initialCallId))
-            {
-                initialCallId = currentCallId;
-            }
 
             Console.WriteLine($"Processing computer call (ID: {currentCallId})");
 
@@ -159,16 +161,31 @@ internal sealed class Program
 
             Console.WriteLine("Sending action result back to agent...");
 
-            AIContent content = new()
+            // Build the follow-up messages with full conversation context.
+            // The Azure Agents API rejects previous_response_id when computer_call_output items are
+            // present, so we must re-send all prior output items (reasoning, computer_call, etc.)
+            // as input items alongside the computer_call_output to maintain conversation continuity.
+            List<ChatMessage> followUpMessages = [];
+
+            // Re-send all response output items as an assistant message so the API has full context
+            List<AIContent> priorOutputContents = response.Messages
+                .SelectMany(m => m.Contents)
+                .ToList();
+            followUpMessages.Add(new ChatMessage(ChatRole.Assistant, priorOutputContents));
+
+            // Add the computer_call_output as a user message
+            AIContent callOutput = new()
             {
                 RawRepresentation = new ComputerCallOutputResponseItem(
-                    initialCallId,
+                    currentCallId,
                     output: ComputerCallOutput.CreateScreenshotOutput(new BinaryData(screenInfo.ImageBytes), "image/png"))
             };
+            followUpMessages.Add(new ChatMessage(ChatRole.User, [callOutput]));
 
-            // Follow-up message with action result and new screenshot
-            message = new(ChatRole.User, [content]);
-            runResponse = await agent.RunAsync(message, thread: thread, options: runOptions);
+            // Create a fresh session so ConversationId does not carry over a previous_response_id.
+            // Without this, the Azure Agents API returns an error when computer_call_output is present.
+            session = await agent.CreateSessionAsync();
+            response = await agent.RunAsync(followUpMessages, session: session, options: runOptions);
         }
     }
 }

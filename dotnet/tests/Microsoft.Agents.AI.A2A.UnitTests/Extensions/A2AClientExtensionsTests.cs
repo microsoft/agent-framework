@@ -21,7 +21,7 @@ public sealed class A2AClientExtensionsTests
         const string TestDescription = "This is a test agent description";
 
         // Act
-        var agent = a2aClient.GetAIAgent(TestId, TestName, TestDescription);
+        var agent = a2aClient.AsAIAgent(TestId, TestName, TestDescription);
 
         // Assert
         Assert.NotNull(agent);

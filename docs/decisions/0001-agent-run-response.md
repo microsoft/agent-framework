@@ -64,7 +64,7 @@ Approaches observed from the compared SDKs:
 | AutoGen | **Approach 1** Separates messages into Agent-Agent (maps to Primary) and Internal (maps to Secondary) and these are returned as separate properties on the agent response object.  See [types of messages](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/messages.html#types-of-messages) and [Response](https://microsoft.github.io/autogen/stable/reference/python/autogen_agentchat.base.html#autogen_agentchat.base.Response) | **Approach 2** Returns a stream of internal events and the last item is a Response object. See [ChatAgent.on_messages_stream](https://microsoft.github.io/autogen/stable/reference/python/autogen_agentchat.base.html#autogen_agentchat.base.ChatAgent.on_messages_stream) |
 | OpenAI Agent SDK | **Approach 1** Separates new_items (Primary+Secondary) from final output (Primary) as separate properties on the [RunResult](https://github.com/openai/openai-agents-python/blob/main/src/agents/result.py#L39) | **Approach 1** Similar to non-streaming, has a way of streaming updates via a method on the response object which includes all data, and then a separate final output property on the response object which is populated only when the run is complete. See [RunResultStreaming](https://github.com/openai/openai-agents-python/blob/main/src/agents/result.py#L136) |
 | Google ADK | **Approach 2** [Emits events](https://google.github.io/adk-docs/runtime/#step-by-step-breakdown) with [FinalResponse](https://github.com/google/adk-java/blob/main/core/src/main/java/com/google/adk/events/Event.java#L232) true (Primary) / false (Secondary) and callers have to filter out those with false to get just the final response message | **Approach 2** Similar to non-streaming except [events](https://google.github.io/adk-docs/runtime/#streaming-vs-non-streaming-output-partialtrue) are emitted with [Partial](https://github.com/google/adk-java/blob/main/core/src/main/java/com/google/adk/events/Event.java#L133) true to indicate that they are streaming messages. A final non partial event is also emitted. |
-| AWS (Strands) | **Approach 3** Returns an [AgentResult](https://strandsagents.com/latest/api-reference/agent/#strands.agent.agent_result.AgentResult) (Primary) with messages and a reason for the run's completion. | **Approach 2** [Streams events](https://strandsagents.com/latest/api-reference/agent/#strands.agent.agent.Agent.stream_async) (Primary+Secondary) including, response text, current_tool_use, even data from "callbacks" (strands plugins) |
+| AWS (Strands) | **Approach 3** Returns an [AgentResult](https://strandsagents.com/latest/documentation/docs/api-reference/python/agent/agent_result/) (Primary) with messages and a reason for the run's completion. | **Approach 2** [Streams events](https://strandsagents.com/latest/documentation/docs/api-reference/python/agent/agent/#strands.agent.agent.Agent.stream_async) (Primary+Secondary) including, response text, current_tool_use, even data from "callbacks" (strands plugins) |
 | LangGraph | **Approach 2** A mixed list of all [messages](https://langchain-ai.github.io/langgraph/agents/run_agents/#output-format) | **Approach 2** A mixed list of all [messages](https://langchain-ai.github.io/langgraph/agents/run_agents/#output-format) |
 | Agno | **Combination of various approaches** Returns a [RunResponse](https://docs.agno.com/reference/agents/run-response) object with text content, messages (essentially chat history including inputs and instructions), reasoning and thinking text properties. Secondary events could potentially be extracted from messages. | **Approach 2** Returns [RunResponseEvent](https://docs.agno.com/reference/agents/run-response#runresponseevent-types-and-attributes) objects including tool call, memory update, etc, information, where the [RunResponseCompletedEvent](https://docs.agno.com/reference/agents/run-response#runresponsecompletedevent) has similar properties to RunResponse|
 | A2A | **Approach 3** Returns a [Task or Message](https://a2aproject.github.io/A2A/latest/specification/#71-messagesend) where the message is the final result (Primary) and task is a reference to a long running process. | **Approach 2** Returns a [stream](https://a2aproject.github.io/A2A/latest/specification/#72-messagestream) that contains task updates (Secondary) and a final message (Primary) |
@@ -163,8 +163,8 @@ foreach (var update in response.Messages)
 ### Option 2 Run: Container with Primary and Secondary Properties, RunStreaming: Stream of Primary + Secondary
 
 Run returns a new response type that has separate properties for the Primary Content and the Secondary Updates leading up to it.
-The Primary content is available in the `AgentRunResponse.Messages` property while Secondary updates are in a new `AgentRunResponse.Updates` property.
-`AgentRunResponse.Text` returns the Primary content text.
+The Primary content is available in the `AgentResponse.Messages` property while Secondary updates are in a new `AgentResponse.Updates` property.
+`AgentResponse.Text` returns the Primary content text.
 
 Since streaming would still need to return an `IAsyncEnumerable` of updates, the design would differ from non-streaming.
 With non-streaming Primary and Secondary content is split into separate lists, while with streaming it's combined in one stream.
@@ -232,24 +232,24 @@ await foreach (var update in responses)
 ```csharp
 class Agent
 {
-    public abstract Task<AgentRunResponse> RunAsync(
+    public abstract Task<AgentResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
 
-    public abstract IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public abstract IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
 }
 
-class AgentRunResponse : ChatResponse
+class AgentResponse : ChatResponse
 {
 }
 
-public class AgentRunResponseUpdate : ChatResponseUpdate
+public class AgentResponseUpdate : ChatResponseUpdate
 {
 }
 ```
@@ -265,20 +265,20 @@ The new types could also exclude properties that make less sense for agents, lik
 ```csharp
 class Agent
 {
-    public abstract Task<AgentRunResponse> RunAsync(
+    public abstract Task<AgentResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
 
-    public abstract IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public abstract IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
 }
 
-class AgentRunResponse // Compare with ChatResponse
+class AgentResponse // Compare with ChatResponse
 {
     public string Text { get; } // Aggregation of TextContent from messages.
 
@@ -294,12 +294,12 @@ class AgentRunResponse // Compare with ChatResponse
     public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
 }
 
-// Not Included in AgentRunResponse compared to ChatResponse
+// Not Included in AgentResponse compared to ChatResponse
 public ChatFinishReason? FinishReason { get; set; }
 public string? ConversationId { get; set; }
 public string? ModelId { get; set; }
 
-public class AgentRunResponseUpdate // Compare with ChatResponseUpdate
+public class AgentResponseUpdate // Compare with ChatResponseUpdate
 {
     public string Text { get; } // Aggregation of TextContent from Contents.
 
@@ -317,7 +317,7 @@ public class AgentRunResponseUpdate // Compare with ChatResponseUpdate
     public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
 }
 
-// Not Included in AgentRunResponseUpdate compared to ChatResponseUpdate
+// Not Included in AgentResponseUpdate compared to ChatResponseUpdate
 public ChatFinishReason? FinishReason { get; set; }
 public string? ConversationId { get; set; }
 public string? ModelId { get; set; }
@@ -360,7 +360,7 @@ public class ChatFinishReason
 ### Option 2: Add another property on responses for AgentRun
 
 ```csharp
-class AgentRunResponse
+class AgentResponse
 {
     ...
     public AgentRun RunReference { get; set; } // Reference to long running process
@@ -368,7 +368,7 @@ class AgentRunResponse
 }
 
 
-public class AgentRunResponseUpdate
+public class AgentResponseUpdate
 {
     ...
     public AgentRun RunReference { get; set; } // Reference to long running process
@@ -424,7 +424,7 @@ Note that where an agent doesn't support structured output, it may also be possi
 See [Structured Outputs Support](#structured-outputs-support) for a comparison on what other agent frameworks and protocols support.
 
 To support a good user experience for structured outputs, I'm proposing that we follow the pattern used by MEAI.
-We would add a generic version of `AgentRunResponse<T>`, that allows us to get the agent result already deserialized into our preferred type.
+We would add a generic version of `AgentResponse<T>`, that allows us to get the agent result already deserialized into our preferred type.
 This would be coupled with generic overload extension methods for Run that automatically builds a schema from the supplied type and updates
 the run options.
 
@@ -438,14 +438,14 @@ class Movie
     public int ReleaseYear { get; set; }
 }
 
-AgentRunResponse<Movie[]> response = agent.RunAsync<Movie[]>("What are the top 3 children's movies of the 80s.");
+AgentResponse<Movie[]> response = agent.RunAsync<Movie[]>("What are the top 3 children's movies of the 80s.");
 Movie[] movies = response.Result
 ```
 
 If we only support requesting a schema at agent creation time or where an agent has a built in schema, the following would be the preferred approach:
 
 ```csharp
-AgentRunResponse response = agent.RunAsync("What are the top 3 children's movies of the 80s.");
+AgentResponse response = agent.RunAsync("What are the top 3 children's movies of the 80s.");
 Movie[] movies = response.TryParseStructuredOutput<Movie[]>();
 ```
 
@@ -463,7 +463,7 @@ Option 2 chosen so that we can vary Agent responses independently of Chat Client
 ### StructuredOutputs Decision
 
 We will not support structured output per run request, but individual agents are free to allow this on the concrete implementation or at construction time.
-We will however add support for easily extracting a structured output type from the `AgentRunResponse`.
+We will however add support for easily extracting a structured output type from the `AgentResponse`.
 
 ## Addendum 1: AIContext Derived Types for different response types / Gap Analysis (Work in progress)
 
@@ -495,8 +495,8 @@ We need to decide what AIContent types, each agent response type will be mapped 
 | SDK | Structured Outputs support |
 |-|-|
 | AutoGen | **Approach 1** Supports [configuring an agent](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/agents.html#structured-output) at agent creation. |
-| Google ADK | **Approach 1** Both [input and output shemas can be specified for LLM Agents](https://google.github.io/adk-docs/agents/llm-agents/#structuring-data-input_schema-output_schema-output_key) at construction time. This option is specific to this agent type and other agent types do not necessarily support |
-| AWS (Strands) | **Approach 2** Supports a special invocation method called [structured_output](https://strandsagents.com/latest/api-reference/agent/#strands.agent.agent.Agent.structured_output) |
+| Google ADK | **Approach 1** Both [input and output schemas can be specified for LLM Agents](https://google.github.io/adk-docs/agents/llm-agents/#structuring-data-input_schema-output_schema-output_key) at construction time. This option is specific to this agent type and other agent types do not necessarily support |
+| AWS (Strands) | **Approach 2** Supports a special invocation method called [structured_output](https://strandsagents.com/latest/documentation/docs/api-reference/python/agent/agent/#strands.agent.agent.Agent.structured_output) |
 | LangGraph | **Approach 1** Supports [configuring an agent](https://langchain-ai.github.io/langgraph/agents/agents/?h=structured#6-configure-structured-output) at agent construction time, and a [structured response](https://langchain-ai.github.io/langgraph/agents/run_agents/#output-format) can be retrieved as a special property on the agent response |
 | Agno | **Approach 1** Supports [configuring an agent](https://docs.agno.com/examples/getting-started/structured-output) at agent construction time |
 | A2A | **Informal Approach 2** Doesn't formally support schema negotiation, but [hints can be provided via metadata](https://a2a-protocol.org/latest/specification/#97-structured-data-exchange-requesting-and-providing-json) at invocation time |
@@ -508,7 +508,7 @@ We need to decide what AIContent types, each agent response type will be mapped 
 |-|-|
 | AutoGen | Supports a [stop reason](https://microsoft.github.io/autogen/stable/reference/python/autogen_agentchat.base.html#autogen_agentchat.base.TaskResult.stop_reason) which is a freeform text string |
 | Google ADK | [No equivalent present](https://github.com/google/adk-python/blob/main/src/google/adk/events/event.py) |
-| AWS (Strands) | Exposes a [stop_reason](https://strandsagents.com/latest/api-reference/types/#strands.types.event_loop.StopReason) property on the [AgentResult](https://strandsagents.com/latest/api-reference/agent/#strands.agent.agent_result.AgentResult) class with options that are tied closely to LLM operations. |
+| AWS (Strands) | Exposes a [stop_reason](https://strandsagents.com/latest/documentation/docs/api-reference/python/types/event_loop/#strands.types.event_loop.StopReason) property on the [AgentResult](https://strandsagents.com/latest/documentation/docs/api-reference/python/agent/agent_result/) class with options that are tied closely to LLM operations. |
 | LangGraph | No equivalent present, output contains only [messages](https://langchain-ai.github.io/langgraph/agents/run_agents/#output-format) |
 | Agno | [No equivalent present](https://docs.agno.com/reference/agents/run-response) |
 | A2A | No equivalent present, response only contains a [message](https://a2a-protocol.org/latest/specification/#64-message-object) or [task](https://a2a-protocol.org/latest/specification/#61-task-object). |

@@ -9,7 +9,7 @@ from ._exceptions import (
     PurviewServiceError,
 )
 from ._middleware import PurviewChatPolicyMiddleware, PurviewPolicyMiddleware
-from ._settings import PurviewAppLocation, PurviewLocationType, PurviewSettings
+from ._settings import PurviewAppLocation, PurviewLocationType, PurviewSettings, get_purview_scopes
 
 __all__ = [
     "CacheProvider",
@@ -23,4 +23,5 @@ __all__ = [
     "PurviewRequestError",
     "PurviewServiceError",
     "PurviewSettings",
+    "get_purview_scopes",
 ]

@@ -7,14 +7,16 @@ import type {
 import type {
   ExtendedResponseStreamEvent,
   ResponseWorkflowEventComplete,
+  ResponseOutputItemAddedEvent,
+  ResponseOutputItemDoneEvent,
   JSONSchemaProperty,
 } from "@/types";
 import type { Workflow } from "@/types/workflow";
 import { getTypedWorkflow } from "@/types/workflow";
 
 /**
- * Detects if a JSON schema represents a ChatMessage input type.
- * ChatMessage schemas typically have:
+ * Detects if a JSON schema represents a Message input type.
+ * Message schemas typically have:
  * - type: "object"
  * - properties with "text" (required string) and "role" (optional string)
  *
@@ -22,7 +24,7 @@ import { getTypedWorkflow } from "@/types/workflow";
  * component for workflows that start with an AgentExecutor.
  *
  * @param schema - The JSON schema to check
- * @returns true if the schema represents a ChatMessage-like input
+ * @returns true if the schema represents a Message-like input
  */
 export function isChatMessageSchema(schema: JSONSchemaProperty | undefined): boolean {
   if (!schema) return false;
@@ -35,13 +37,13 @@ export function isChatMessageSchema(schema: JSONSchemaProperty | undefined): boo
 
   const props = schema.properties;
 
-  // ChatMessage has "text" property (the main content)
+  // Message has "text" property (the main content)
   const hasText = "text" in props && props.text?.type === "string";
 
-  // ChatMessage has "role" property (user, assistant, system)
+  // Message has "role" property (user, assistant, system)
   const hasRole = "role" in props && props.role?.type === "string";
 
-  // If it has both text and role, it's likely a ChatMessage
+  // If it has both text and role, it's likely a Message
   if (hasText && hasRole) {
     return true;
   }
@@ -389,9 +391,10 @@ export function processWorkflowEvents(
   events.forEach((event) => {
     // Handle new standard OpenAI events
     if (event.type === "response.output_item.added" || event.type === "response.output_item.done") {
-      const item = (event as any).item;
-      if (item && item.type === "executor_action" && item.executor_id) {
-        const executorId = item.executor_id;
+      const outputEvent = event as ResponseOutputItemAddedEvent | ResponseOutputItemDoneEvent;
+      const item = outputEvent.item;
+      if (item && item.type === "executor_action" && "executor_id" in item) {
+        const executorId = item.executor_id as string;
         const itemId = item.id;
 
         // Track the latest item ID for this executor
@@ -492,16 +495,17 @@ export function processWorkflowEvents(
     // This prevents setting to "running" after the executor has already completed
     const hasCompletionEvent = events.some((event) => {
       if (event.type === "response.output_item.done") {
-        const item = (event as any).item;
-        return item && item.type === "executor_action" && item.executor_id === startExecutorId;
+        const outputEvent = event as ResponseOutputItemDoneEvent;
+        const item = outputEvent.item;
+        return item && item.type === "executor_action" && "executor_id" in item && item.executor_id === startExecutorId;
       }
       if (event.type === "response.workflow_event.completed" && "data" in event && event.data) {
-        const data = event.data as any;
+        const data = event.data as Record<string, unknown>;
         return data.executor_id === startExecutorId &&
                (data.event_type === "ExecutorCompletedEvent" ||
                 data.event_type === "ExecutorFailedEvent" ||
-                data.event_type?.includes("Error") ||
-                data.event_type?.includes("Failed"));
+                (typeof data.event_type === "string" && data.event_type.includes("Error")) ||
+                (typeof data.event_type === "string" && data.event_type.includes("Failed")));
       }
       return false;
     });
@@ -565,9 +569,10 @@ export function getCurrentlyExecutingExecutors(
   events.forEach((event) => {
     // Handle new standard OpenAI events
     if (event.type === "response.output_item.added" || event.type === "response.output_item.done") {
-      const item = (event as any).item;
-      if (item && item.type === "executor_action" && item.executor_id) {
-        const executorId = item.executor_id;
+      const outputEvent = event as ResponseOutputItemAddedEvent | ResponseOutputItemDoneEvent;
+      const item = outputEvent.item;
+      if (item && item.type === "executor_action" && "executor_id" in item) {
+        const executorId = item.executor_id as string;
 
         executorTimeline[executorId] = {
           lastEvent: event.type === "response.output_item.added" ? "ExecutorInvokedEvent" : "ExecutorCompletedEvent",

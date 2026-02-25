@@ -89,14 +89,14 @@ public static class Program
     private static async Task ExecuteWorkflowAsync(Workflow workflow, string input)
     {
         // Execute in streaming mode to see real-time progress
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input);
 
         // Watch the workflow events
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             switch (evt)
             {
-                case AgentRunUpdateEvent agentUpdate:
+                case AgentResponseUpdateEvent agentUpdate:
                     // Stream agent output in real-time
                     if (!string.IsNullOrEmpty(agentUpdate.Update.Text))
                     {
@@ -193,7 +193,7 @@ internal sealed class CriticDecision
 /// Executor that creates or revises content based on user requests or critic feedback.
 /// This executor demonstrates multiple message handlers for different input types.
 /// </summary>
-internal sealed class WriterExecutor : Executor
+internal sealed partial class WriterExecutor : Executor
 {
     private readonly AIAgent _agent;
 
@@ -210,15 +210,11 @@ internal sealed class WriterExecutor : Executor
         );
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-        routeBuilder
-            .AddHandler<string, ChatMessage>(this.HandleInitialRequestAsync)
-            .AddHandler<CriticDecision, ChatMessage>(this.HandleRevisionRequestAsync);
-
     /// <summary>
     /// Handles the initial writing request from the user.
     /// </summary>
-    private async ValueTask<ChatMessage> HandleInitialRequestAsync(
+    [MessageHandler]
+    public async ValueTask<ChatMessage> HandleInitialRequestAsync(
         string message,
         IWorkflowContext context,
         CancellationToken cancellationToken = default)
@@ -229,7 +225,8 @@ internal sealed class WriterExecutor : Executor
     /// <summary>
     /// Handles revision requests from the critic with feedback.
     /// </summary>
-    private async ValueTask<ChatMessage> HandleRevisionRequestAsync(
+    [MessageHandler]
+    public async ValueTask<ChatMessage> HandleRevisionRequestAsync(
         CriticDecision decision,
         IWorkflowContext context,
         CancellationToken cancellationToken = default)
@@ -254,7 +251,7 @@ internal sealed class WriterExecutor : Executor
         Console.WriteLine($"\n=== Writer (Iteration {state.Iteration}) ===\n");
 
         StringBuilder sb = new();
-        await foreach (AgentRunResponseUpdate update in this._agent.RunStreamingAsync(message, cancellationToken: cancellationToken))
+        await foreach (AgentResponseUpdate update in this._agent.RunStreamingAsync(message, cancellationToken: cancellationToken))
         {
             if (!string.IsNullOrEmpty(update.Text))
             {
@@ -313,10 +310,10 @@ internal sealed class CriticExecutor : Executor<ChatMessage, CriticDecision>
         Console.WriteLine($"=== Critic (Iteration {state.Iteration}) ===\n");
 
         // Use RunStreamingAsync to get streaming updates, then deserialize at the end
-        IAsyncEnumerable<AgentRunResponseUpdate> updates = this._agent.RunStreamingAsync(message, cancellationToken: cancellationToken);
+        IAsyncEnumerable<AgentResponseUpdate> updates = this._agent.RunStreamingAsync(message, cancellationToken: cancellationToken);
 
         // Stream the output in real-time (for any rationale/explanation)
-        await foreach (AgentRunResponseUpdate update in updates)
+        await foreach (AgentResponseUpdate update in updates)
         {
             if (!string.IsNullOrEmpty(update.Text))
             {
@@ -326,8 +323,9 @@ internal sealed class CriticExecutor : Executor<ChatMessage, CriticDecision>
         Console.WriteLine("\n");
 
         // Convert the stream to a response and deserialize the structured output
-        AgentRunResponse response = await updates.ToAgentRunResponseAsync(cancellationToken);
-        CriticDecision decision = response.Deserialize<CriticDecision>(JsonSerializerOptions.Web);
+        AgentResponse response = await updates.ToAgentResponseAsync(cancellationToken);
+        CriticDecision decision = JsonSerializer.Deserialize<CriticDecision>(response.Text, JsonSerializerOptions.Web)
+            ?? throw new JsonException("Failed to deserialize CriticDecision from response text.");
 
         Console.WriteLine($"Decision: {(decision.Approved ? "✅ APPROVED" : "❌ NEEDS REVISION")}");
         if (!string.IsNullOrEmpty(decision.Feedback))
@@ -394,7 +392,7 @@ internal sealed class SummaryExecutor : Executor<CriticDecision, ChatMessage>
         string prompt = $"Present this approved content:\n\n{message.Content}";
 
         StringBuilder sb = new();
-        await foreach (AgentRunResponseUpdate update in this._agent.RunStreamingAsync(new ChatMessage(ChatRole.User, prompt), cancellationToken: cancellationToken))
+        await foreach (AgentResponseUpdate update in this._agent.RunStreamingAsync(new ChatMessage(ChatRole.User, prompt), cancellationToken: cancellationToken))
         {
             if (!string.IsNullOrEmpty(update.Text))
             {

@@ -19,7 +19,10 @@ const string AgentNameMEAI = "CoderAgent-MEAI";
 const string AgentNameNative = "CoderAgent-NATIVE";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Option 1 - Using HostedCodeInterpreterTool + AgentOptions (MEAI + AgentFramework)
 // Create the server side agent version
@@ -49,10 +52,10 @@ AIAgent agentOption2 = await aiProjectClient.CreateAIAgentAsync(
 
 // Either invoke option1 or option2 agent, should have same result
 // Option 1
-AgentRunResponse response = await agentOption1.RunAsync("I need to solve the equation sin(x) + x^2 = 42");
+AgentResponse response = await agentOption1.RunAsync("I need to solve the equation sin(x) + x^2 = 42");
 
 // Option 2
-// AgentRunResponse response = await agentOption2.RunAsync("I need to solve the equation sin(x) + x^2 = 42");
+// AgentResponse response = await agentOption2.RunAsync("I need to solve the equation sin(x) + x^2 = 42");
 
 // Get the CodeInterpreterToolCallContent
 CodeInterpreterToolCallContent? toolCallContent = response.Messages.SelectMany(m => m.Contents).OfType<CodeInterpreterToolCallContent>().FirstOrDefault();

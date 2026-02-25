@@ -49,7 +49,7 @@ public static class SampleWorkflowProvider
     /// <summary>
     /// Invokes an agent to process messages and return a response within a conversation context.
     /// </summary>
-    internal sealed class QuestionStudentExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "question_student", session, agentProvider)
+    internal sealed class QuestionStudentExecutor(FormulaSession session, ResponseAgentProvider agentProvider) : AgentExecutor(id: "question_student", session, agentProvider)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -65,7 +65,7 @@ public static class SampleWorkflowProvider
             bool autoSend = true;
             IList<ChatMessage>? inputMessages = null;
 
-            AgentRunResponse agentResponse =
+            AgentResponse agentResponse =
                 await InvokeAgentAsync(
                     context,
                     agentName,
@@ -76,7 +76,7 @@ public static class SampleWorkflowProvider
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
             }
 
             return default;
@@ -86,7 +86,7 @@ public static class SampleWorkflowProvider
     /// <summary>
     /// Invokes an agent to process messages and return a response within a conversation context.
     /// </summary>
-    internal sealed class QuestionTeacherExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "question_teacher", session, agentProvider)
+    internal sealed class QuestionTeacherExecutor(FormulaSession session, ResponseAgentProvider agentProvider) : AgentExecutor(id: "question_teacher", session, agentProvider)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -102,7 +102,7 @@ public static class SampleWorkflowProvider
             bool autoSend = false;
             IList<ChatMessage>? inputMessages = null;
 
-            AgentRunResponse agentResponse =
+            AgentResponse agentResponse =
                 await InvokeAgentAsync(
                     context,
                     agentName,
@@ -113,7 +113,7 @@ public static class SampleWorkflowProvider
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+                await context.AddEventAsync(new AgentResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
             }
 
             await context.QueueStateUpdateAsync(key: "TeacherResponse", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
@@ -175,8 +175,8 @@ public static class SampleWorkflowProvider
                     GOLD STAR!
                     """
                 );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            await context.AddEventAsync(new AgentResponseEvent(this.Id, response)).ConfigureAwait(false);
 
             return default;
         }
@@ -196,8 +196,8 @@ public static class SampleWorkflowProvider
                     Let's try again later...
                     """
                 );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+            AgentResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            await context.AddEventAsync(new AgentResponseEvent(this.Id, response)).ConfigureAwait(false);
 
             return default;
         }

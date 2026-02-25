@@ -34,17 +34,17 @@ public static class Program
         var checkpoints = new List<CheckpointInfo>();
 
         // Execute the workflow and save checkpoints
-        await using Checkpointed<StreamingRun> checkpointedRun = await InProcessExecution
-            .StreamAsync(workflow, new SignalWithNumber(NumberSignal.Init), checkpointManager)
+        await using StreamingRun checkpointedRun = await InProcessExecution
+            .RunStreamingAsync(workflow, new SignalWithNumber(NumberSignal.Init), checkpointManager)
             ;
-        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync())
+        await foreach (WorkflowEvent evt in checkpointedRun.WatchStreamAsync())
         {
             switch (evt)
             {
                 case RequestInfoEvent requestInputEvt:
                     // Handle `RequestInfoEvent` from the workflow
                     ExternalResponse response = HandleExternalRequest(requestInputEvt.Request);
-                    await checkpointedRun.Run.SendResponseAsync(response);
+                    await checkpointedRun.SendResponseAsync(response);
                     break;
                 case ExecutorCompletedEvent executorCompletedEvt:
                     Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
@@ -77,14 +77,14 @@ public static class Program
         CheckpointInfo savedCheckpoint = checkpoints[CheckpointIndex];
         // Note that we are restoring the state directly to the same run instance.
         await checkpointedRun.RestoreCheckpointAsync(savedCheckpoint, CancellationToken.None);
-        await foreach (WorkflowEvent evt in checkpointedRun.Run.WatchStreamAsync())
+        await foreach (WorkflowEvent evt in checkpointedRun.WatchStreamAsync())
         {
             switch (evt)
             {
                 case RequestInfoEvent requestInputEvt:
                     // Handle `RequestInfoEvent` from the workflow
                     ExternalResponse response = HandleExternalRequest(requestInputEvt.Request);
-                    await checkpointedRun.Run.SendResponseAsync(response);
+                    await checkpointedRun.SendResponseAsync(response);
                     break;
                 case ExecutorCompletedEvent executorCompletedEvt:
                     Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
@@ -98,8 +98,7 @@ public static class Program
 
     private static ExternalResponse HandleExternalRequest(ExternalRequest request)
     {
-        var signal = request.DataAs<SignalWithNumber>();
-        if (signal is not null)
+        if (request.TryGetDataAs<SignalWithNumber>(out var signal))
         {
             switch (signal.Signal)
             {

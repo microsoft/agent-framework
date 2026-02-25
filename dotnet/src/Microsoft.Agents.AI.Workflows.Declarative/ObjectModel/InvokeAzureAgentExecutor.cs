@@ -10,14 +10,15 @@ using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
-using Microsoft.Bot.ObjectModel.Abstractions;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
-internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state) :
+[SendsMessage(typeof(ExternalInputRequest))]
+internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<InvokeAzureAgent>(model, state)
 {
     public static class Steps
@@ -61,12 +62,12 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         string agentName = this.GetAgentName();
         bool autoSend = this.GetAutoSendValue();
         Dictionary<string, object?>? inputParameters = this.GetStructuredInputs();
-        AgentRunResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, inputParameters, cancellationToken).ConfigureAwait(false);
+        AgentResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, inputParameters, cancellationToken).ConfigureAwait(false);
 
         ChatMessage[] actionableMessages = FilterActionableContent(agentResponse).ToArray();
         if (actionableMessages.Length > 0)
         {
-            AgentRunResponse filteredResponse =
+            AgentResponse filteredResponse =
                 new(actionableMessages)
                 {
                     AdditionalProperties = agentResponse.AdditionalProperties,
@@ -137,7 +138,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         return userInput?.ToChatMessages();
     }
 
-    private static IEnumerable<ChatMessage> FilterActionableContent(AgentRunResponse agentResponse)
+    private static IEnumerable<ChatMessage> FilterActionableContent(AgentResponse agentResponse)
     {
         HashSet<string> functionResultIds =
             [.. agentResponse.Messages

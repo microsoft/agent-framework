@@ -2,6 +2,8 @@
 
 """FastAPI server implementation."""
 
+from __future__ import annotations
+
 import asyncio
 import importlib.metadata
 import inspect
@@ -220,8 +222,8 @@ class DevServer:
                 # Step 2: Close chat clients and their credentials (EXISTING)
                 entity_obj = self.executor.entity_discovery.get_entity_object(entity_id)
 
-                if entity_obj and hasattr(entity_obj, "chat_client"):
-                    client = entity_obj.chat_client
+                if entity_obj and hasattr(entity_obj, "client"):
+                    client = entity_obj.client
 
                     # Close the chat client itself
                     if hasattr(client, "close") and callable(client.close):
@@ -248,9 +250,9 @@ class DevServer:
                                 except Exception as e:
                                     logger.warning(f"Error closing credential for {entity_info.id}: {e}")
 
-                # Close MCP tools (framework tracks them in _local_mcp_tools)
-                if entity_obj and hasattr(entity_obj, "_local_mcp_tools"):
-                    for mcp_tool in entity_obj._local_mcp_tools:
+                # Close MCP tools (framework tracks them in mcp_tools)
+                if entity_obj and hasattr(entity_obj, "mcp_tools"):
+                    for mcp_tool in entity_obj.mcp_tools:
                         if hasattr(mcp_tool, "close") and callable(mcp_tool.close):
                             try:
                                 if inspect.iscoroutinefunction(mcp_tool.close):
@@ -287,7 +289,7 @@ class DevServer:
         """Create the FastAPI application."""
 
         @asynccontextmanager
-        async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             # Startup
             logger.info("Starting Agent Framework Server")
             await self._ensure_executor()
@@ -407,7 +409,7 @@ class DevServer:
                 framework="agent_framework",
                 runtime="python",  # Python DevUI backend
                 capabilities={
-                    "tracing": os.getenv("ENABLE_INSTRUMENTATION") == "true",
+                    "instrumentation": os.getenv("ENABLE_INSTRUMENTATION") == "true",
                     "openai_proxy": openai_executor.is_configured,
                     "deployment": True,  # Deployment feature is available
                 },
@@ -623,7 +625,7 @@ class DevServer:
                 entity_path = Path(entity_path_str)
 
                 # Stream deployment events
-                async def event_generator() -> AsyncGenerator[str, None]:
+                async def event_generator() -> AsyncGenerator[str]:
                     async for event in self.deployment_manager.deploy(config, entity_path):
                         # Format as SSE
                         import json
@@ -747,6 +749,11 @@ class DevServer:
                     # Generate response ID for tracking
                     response_id = f"resp_{uuid.uuid4().hex[:8]}"
                     logger.info(f"[CANCELLATION] Creating response {response_id} for entity {entity_id}")
+
+                    # Inject response_id into extra_body for trace context
+                    if request.extra_body is None:
+                        request.extra_body = {}
+                    request.extra_body["response_id"] = response_id
 
                     return StreamingResponse(
                         self._stream_with_cancellation(executor, request, response_id),
@@ -1000,10 +1007,16 @@ class DevServer:
                         logger.warning(f"Unexpected item type: {type(item)}, converting to dict")
                         serialized_items.append(dict(item))
 
+                # Get stored traces for context inspection (DevUI extension)
+                traces = executor.conversation_store.get_traces(conversation_id)
+
                 return {
                     "object": "list",
                     "data": serialized_items,
                     "has_more": has_more,
+                    "metadata": {
+                        "traces": traces,  # Trace events for token usage, timing, LLM context
+                    },
                 }
             except ValueError as e:
                 raise HTTPException(status_code=404, detail=str(e)) from e
@@ -1046,7 +1059,7 @@ class DevServer:
                     # Extract checkpoint_id from item_id (format: "checkpoint_{checkpoint_id}")
                     checkpoint_id = item_id[len("checkpoint_") :]
                     storage = executor.checkpoint_manager.get_checkpoint_storage(conversation_id)
-                    deleted = await storage.delete_checkpoint(checkpoint_id)
+                    deleted = await storage.delete(checkpoint_id)
 
                     if not deleted:
                         raise HTTPException(status_code=404, detail="Checkpoint not found")
@@ -1074,15 +1087,27 @@ class DevServer:
 
     async def _stream_execution(
         self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         """Stream execution directly through executor."""
         try:
             # Collect events for final response.completed event
             events = []
 
+            # Get conversation_id for trace storage
+            conversation_id = request._get_conversation_id()
+
             # Stream all events
             async for event in executor.execute_streaming(request):
                 events.append(event)
+
+                # Store trace events for context inspection (persisted with conversation)
+                if conversation_id and hasattr(event, "type") and event.type == "response.trace.completed":
+                    try:
+                        trace_data = event.data if hasattr(event, "data") else None
+                        if trace_data:
+                            executor.conversation_store.add_trace(conversation_id, trace_data)
+                    except Exception as e:
+                        logger.debug(f"Failed to store trace event: {e}")
 
                 # IMPORTANT: Check model_dump_json FIRST because to_json() can have newlines (pretty-printing)
                 # which breaks SSE format. model_dump_json() returns single-line JSON.
@@ -1132,7 +1157,7 @@ class DevServer:
 
     async def _stream_openai_execution(
         self, executor: OpenAIExecutor, request: AgentFrameworkRequest
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         """Stream execution through OpenAI executor.
 
         OpenAI events are already in final format - no conversion or aggregation needed.
@@ -1189,7 +1214,7 @@ class DevServer:
 
     async def _stream_with_cancellation(
         self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest, response_id: str
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str]:
         """Stream execution with automatic cancellation on client disconnect.
 
         This wrapper adds cancellation support to the execution stream:
@@ -1208,7 +1233,7 @@ class DevServer:
         """
         task = None
 
-        async def execution_wrapper() -> AsyncGenerator[str, None]:
+        async def execution_wrapper() -> AsyncGenerator[str]:
             """Inner wrapper to handle the actual execution."""
             try:
                 logger.debug(f"[CANCELLATION] Starting execution for {response_id}")

@@ -44,7 +44,7 @@ public static class Program
             .Build();
 
         // Execute the workflow
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, new ChatMessage(ChatRole.User, "Hello World!"));
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, new ChatMessage(ChatRole.User, "Hello World!"));
 
         // Must send the turn token to trigger the agents.
         // The agents are wrapped as executors. When they receive messages,
@@ -52,7 +52,7 @@ public static class Program
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
-            if (evt is AgentRunUpdateEvent executorComplete)
+            if (evt is AgentResponseUpdateEvent executorComplete)
             {
                 Console.WriteLine($"{executorComplete.ExecutorId}: {executorComplete.Data}");
             }

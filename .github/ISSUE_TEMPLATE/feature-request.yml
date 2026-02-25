@@ -1,0 +1,51 @@
+name: Feature Request
+description: Request a new feature for Microsoft Agent Framework
+title: "[Feature]: "
+type: feature
+body:
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Please describe the feature you'd like and why it would be useful.
+      placeholder: |
+        Describe the feature you're requesting:
+        - What problem does it solve?
+        - What would the expected behavior be?
+        - Are there any alternatives you've considered?
+    validations:
+      required: true
+
+  - type: textarea
+    id: code-sample
+    attributes:
+      label: Code Sample
+      description: If applicable, provide a code sample showing how you'd like to use this feature.
+      placeholder: |
+        ```python
+        # Your code here
+        ```
+
+        or
+
+        ```csharp
+        // Your code here
+        ```
+      render: markdown
+    validations:
+      required: false
+
+  - type: dropdown
+    id: language
+    attributes:
+      label: Language/SDK
+      description: Which language/SDK does this feature apply to?
+      options:
+        - Both
+        - .NET
+        - Python
+        - Other / Not Applicable
+      default: 0
+    validations:
+      required: false

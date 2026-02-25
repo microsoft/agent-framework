@@ -7,9 +7,9 @@ namespace Microsoft.Agents.AI.OpenAI;
 
 internal sealed class AsyncStreamingChatCompletionUpdateCollectionResult : AsyncCollectionResult<StreamingChatCompletionUpdate>
 {
-    private readonly IAsyncEnumerable<AgentRunResponseUpdate> _updates;
+    private readonly IAsyncEnumerable<AgentResponseUpdate> _updates;
 
-    internal AsyncStreamingChatCompletionUpdateCollectionResult(IAsyncEnumerable<AgentRunResponseUpdate> updates)
+    internal AsyncStreamingChatCompletionUpdateCollectionResult(IAsyncEnumerable<AgentResponseUpdate> updates)
     {
         this._updates = updates;
     }
@@ -23,7 +23,7 @@ internal sealed class AsyncStreamingChatCompletionUpdateCollectionResult : Async
 
     protected override IAsyncEnumerable<StreamingChatCompletionUpdate> GetValuesFromPageAsync(ClientResult page)
     {
-        var updates = ((ClientResult<IAsyncEnumerable<AgentRunResponseUpdate>>)page).Value;
+        var updates = ((ClientResult<IAsyncEnumerable<AgentResponseUpdate>>)page).Value;
 
         return updates.AsChatResponseUpdatesAsync().AsOpenAIStreamingChatCompletionUpdatesAsync();
     }

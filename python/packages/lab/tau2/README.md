@@ -138,21 +138,21 @@ export OPENAI_BASE_URL="https://your-custom-endpoint.com/v1"
 
 ```python
 from agent_framework.lab.tau2 import TaskRunner
-from agent_framework import ChatAgent
+from agent_framework import Agent
 
 class CustomTaskRunner(TaskRunner):
     def assistant_agent(self, assistant_chat_client):
         # Override to customize the assistant agent
-        return ChatAgent(
-            chat_client=assistant_chat_client,
+        return Agent(
+            client=assistant_chat_client,
             instructions="Your custom system prompt here",
             # Add custom tools, temperature, etc.
         )
 
     def user_simulator(self, user_chat_client, task):
         # Override to customize the user simulator
-        return ChatAgent(
-            chat_client=user_chat_client,
+        return Agent(
+            client=user_chat_client,
             instructions="Custom user simulator prompt",
         )
 ```
@@ -165,15 +165,12 @@ from agent_framework.lab.tau2 import TaskRunner
 
 class WorkflowTaskRunner(TaskRunner):
     def build_conversation_workflow(self, assistant_agent, user_simulator_agent):
-        # Build a custom workflow
-        builder = WorkflowBuilder()
-
         # Create agent executors
         assistant_executor = AgentExecutor(assistant_agent, id="assistant_agent")
         user_executor = AgentExecutor(user_simulator_agent, id="user_simulator")
 
-        # Add workflow edges and conditions
-        builder.set_start_executor(assistant_executor)
+        # Build a custom workflow with start executor
+        builder = WorkflowBuilder(start_executor=assistant_executor)
         builder.add_edge(assistant_executor, user_executor)
         builder.add_edge(user_executor, assistant_executor, condition=self.should_not_stop)
 

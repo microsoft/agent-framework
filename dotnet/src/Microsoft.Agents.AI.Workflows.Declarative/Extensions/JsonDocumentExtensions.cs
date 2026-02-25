@@ -111,7 +111,9 @@ internal static class JsonDocumentExtensions
                     VariableType? currentType =
                         element.ValueKind switch
                         {
-                            JsonValueKind.Object => VariableType.Record(targetType.Schema?.Select(kvp => (kvp.Key, kvp.Value)) ?? []),
+                            JsonValueKind.Object => targetType.HasSchema
+                                ? VariableType.Record(targetType.Schema!.Select(kvp => (kvp.Key, kvp.Value)))
+                                : VariableType.RecordType,
                             JsonValueKind.String => typeof(string),
                             JsonValueKind.True => typeof(bool),
                             JsonValueKind.False => typeof(bool),

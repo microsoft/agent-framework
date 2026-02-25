@@ -19,7 +19,7 @@ public sealed class ChatClientExtensionsTests
         var chatClientMock = new Mock<IChatClient>();
 
         // Act
-        var agent = chatClientMock.Object.CreateAIAgent(
+        var agent = chatClientMock.Object.AsAIAgent(
             instructions: "Test instructions",
             name: "TestAgent",
             description: "Test description"
@@ -40,7 +40,7 @@ public sealed class ChatClientExtensionsTests
         var tools = new List<AITool> { new Mock<AITool>().Object };
 
         // Act
-        var agent = chatClientMock.Object.CreateAIAgent(tools: tools);
+        var agent = chatClientMock.Object.AsAIAgent(tools: tools);
 
         // Assert
         Assert.NotNull(agent);
@@ -62,7 +62,7 @@ public sealed class ChatClientExtensionsTests
         };
 
         // Act
-        var agent = chatClientMock.Object.CreateAIAgent(options);
+        var agent = chatClientMock.Object.AsAIAgent(options);
 
         // Assert
         Assert.NotNull(agent);
@@ -79,7 +79,7 @@ public sealed class ChatClientExtensionsTests
         IChatClient chatClient = null!;
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => chatClient.CreateAIAgent(instructions: "instructions"));
+        Assert.Throws<ArgumentNullException>(() => chatClient.AsAIAgent(instructions: "instructions"));
     }
 
     [Fact]
@@ -89,6 +89,6 @@ public sealed class ChatClientExtensionsTests
         IChatClient chatClient = null!;
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => chatClient.CreateAIAgent(options: new() { ChatOptions = new() { Instructions = "instructions" } }));
+        Assert.Throws<ArgumentNullException>(() => chatClient.AsAIAgent(options: new() { ChatOptions = new() { Instructions = "instructions" } }));
     }
 }

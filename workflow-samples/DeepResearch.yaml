@@ -16,6 +16,7 @@
 # - Weather Agent: Provides weather information.
 # 
 kind: Workflow
+maxTurns: 500
 trigger:
 
   kind: OnConversationStart
@@ -141,6 +142,7 @@ trigger:
         messages: =UserMessage(Local.AgentResponseText)
       output:
         responseObject: Local.ProgressLedger
+        autoSend: false
 
     - kind: ConditionGroup
       id: conditionGroup_mVIecC

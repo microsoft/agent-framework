@@ -209,7 +209,7 @@ export function DeploymentModal({
         setCopiedTemplate(null);
         timeoutRef.current = null;
       }, 2000);
-    } catch (err) {
+    } catch {
       // Reset state on error - clipboard write failed
       setCopiedTemplate(null);
     }
@@ -248,7 +248,7 @@ services:
       - AZURE_OPENAI_API_KEY=\${AZURE_OPENAI_API_KEY}
       - AZURE_OPENAI_ENDPOINT=\${AZURE_OPENAI_ENDPOINT}
       - AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=\${AZURE_OPENAI_CHAT_DEPLOYMENT_NAME}
-      # Optional: Enable tracing
+      # Optional: Enable instrumentation
       - ENABLE_INSTRUMENTATION=\${ENABLE_INSTRUMENTATION:-false}
     ports:
       - "8080:8080"

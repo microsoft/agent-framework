@@ -67,7 +67,7 @@ public sealed class ObservabilityTests : IDisposable
         WorkflowBuilder builder = new(uppercase);
         builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
 
-        return builder.Build();
+        return builder.WithOpenTelemetry().Build();
     }
 
     private static Dictionary<string, int> GetExpectedActivityNameCounts() =>
@@ -111,8 +111,6 @@ public sealed class ObservabilityTests : IDisposable
         Run run = await executionEnvironment.RunAsync(workflow, "Hello, World!");
         await run.DisposeAsync();
 
-        await Task.Delay(100); // Allow time for activities to be captured
-
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         capturedActivities.Should().HaveCount(8, "Exactly 8 activities should be created.");
@@ -122,12 +120,12 @@ public sealed class ObservabilityTests : IDisposable
         {
             var activityName = kvp.Key;
             var expectedCount = kvp.Value;
-            var actualCount = capturedActivities.Count(a => a.OperationName == activityName);
+            var actualCount = capturedActivities.Count(a => a.OperationName.StartsWith(activityName, StringComparison.Ordinal));
             actualCount.Should().Be(expectedCount, $"Activity '{activityName}' should occur {expectedCount} times.");
         }
 
         // Verify WorkflowRun activity events include workflow lifecycle events
-        var workflowRunActivity = capturedActivities.First(a => a.OperationName == ActivityNames.WorkflowRun);
+        var workflowRunActivity = capturedActivities.First(a => a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal));
         var activityEvents = workflowRunActivity.Events.ToList();
         activityEvents.Should().Contain(e => e.Name == EventNames.WorkflowStarted, "activity should have workflow started event");
         activityEvents.Should().Contain(e => e.Name == EventNames.WorkflowCompleted, "activity should have workflow completed event");
@@ -166,8 +164,6 @@ public sealed class ObservabilityTests : IDisposable
 
         // Act
         CreateWorkflow();
-        await Task.Delay(100); // Allow time for activities to be captured
-
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
         capturedActivities.Should().HaveCount(1, "Exactly 1 activity should be created.");
@@ -182,5 +178,326 @@ public sealed class ObservabilityTests : IDisposable
         var tags = capturedActivities[0].Tags.ToDictionary(t => t.Key, t => t.Value);
         tags.Should().ContainKey(Tags.WorkflowId);
         tags.Should().ContainKey(Tags.WorkflowDefinition);
+    }
+
+    [Fact]
+    public async Task TelemetryDisabledByDefault_CreatesNoActivitiesAsync()
+    {
+        // Arrange
+        // Create a test activity to correlate captured activities
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        // Act - Build workflow WITHOUT calling WithOpenTelemetry()
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        WorkflowBuilder builder = new(uppercase);
+        builder.Build(); // No WithOpenTelemetry() call
+        // Assert - No activities should be created
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().BeEmpty("No activities should be created when telemetry is disabled (default).");
+    }
+
+    [Fact]
+    public async Task WithOpenTelemetry_UsesProvidedActivitySourceAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+        using var userActivitySource = new ActivitySource("UserProvidedSource");
+
+        // Set up a separate listener for the user-provided source
+        ConcurrentBag<Activity> userActivities = [];
+        using var userListener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "UserProvidedSource",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllData,
+            ActivityStarted = activity => userActivities.Add(activity),
+        };
+        ActivitySource.AddActivityListener(userListener);
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        // Act
+        WorkflowBuilder builder = new(uppercase);
+        var workflow = builder.WithOpenTelemetry(activitySource: userActivitySource).Build();
+
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
+        await run.DisposeAsync();
+
+        // Assert
+        var capturedActivities = userActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().NotBeEmpty("Activities should be created with user-provided ActivitySource.");
+        capturedActivities.Should().OnlyContain(
+            a => a.Source.Name == "UserProvidedSource",
+            "All activities should come from the user-provided ActivitySource.");
+    }
+
+    [Fact]
+    public async Task DisableWorkflowBuild_PreventsWorkflowBuildActivityAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        // Act
+        WorkflowBuilder builder = new(uppercase);
+        builder.WithOpenTelemetry(configure: opts => opts.DisableWorkflowBuild = true).Build();
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().NotContain(
+            a => a.OperationName.StartsWith(ActivityNames.WorkflowBuild, StringComparison.Ordinal),
+            "WorkflowBuild activity should be disabled.");
+    }
+
+    [Fact]
+    public async Task DisableWorkflowRun_PreventsWorkflowRunActivityAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        // Act
+        WorkflowBuilder builder = new(uppercase);
+        builder.WithOutputFrom(uppercase);
+        var workflow = builder.WithOpenTelemetry(configure: opts => opts.DisableWorkflowRun = true).Build();
+
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
+        await run.DisposeAsync();
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().NotContain(
+            a => a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal),
+            "WorkflowRun activity should be disabled.");
+        capturedActivities.Should().Contain(
+            a => a.OperationName.StartsWith(ActivityNames.WorkflowBuild, StringComparison.Ordinal),
+            "Other activities should still be created.");
+    }
+
+    [Fact]
+    public async Task DisableExecutorProcess_PreventsExecutorProcessActivityAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        // Act
+        WorkflowBuilder builder = new(uppercase);
+        builder.WithOutputFrom(uppercase);
+        var workflow = builder.WithOpenTelemetry(configure: opts => opts.DisableExecutorProcess = true).Build();
+
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
+        await run.DisposeAsync();
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().NotContain(
+            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal),
+            "ExecutorProcess activity should be disabled.");
+        capturedActivities.Should().Contain(
+            a => a.OperationName.StartsWith(ActivityNames.WorkflowRun, StringComparison.Ordinal),
+            "Other activities should still be created.");
+    }
+
+    [Fact]
+    public async Task DisableEdgeGroupProcess_PreventsEdgeGroupProcessActivityAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+        var workflow = CreateWorkflowWithDisabledEdges();
+
+        // Act
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
+        await run.DisposeAsync();
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().NotContain(
+            a => a.OperationName.StartsWith(ActivityNames.EdgeGroupProcess, StringComparison.Ordinal),
+            "EdgeGroupProcess activity should be disabled.");
+        capturedActivities.Should().Contain(
+            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal),
+            "Other activities should still be created.");
+    }
+
+    [Fact]
+    public async Task DisableMessageSend_PreventsMessageSendActivityAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+        var workflow = CreateWorkflowWithDisabledMessages();
+
+        // Act
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello");
+        await run.DisposeAsync();
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        capturedActivities.Should().NotContain(
+            a => a.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal),
+            "MessageSend activity should be disabled.");
+        capturedActivities.Should().Contain(
+            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal),
+            "Other activities should still be created.");
+    }
+
+    private static Workflow CreateWorkflowWithDisabledEdges()
+    {
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        Func<string, string> reverseFunc = s => new string(s.Reverse().ToArray());
+        var reverse = reverseFunc.BindAsExecutor("ReverseTextExecutor");
+
+        WorkflowBuilder builder = new(uppercase);
+        builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
+
+        return builder.WithOpenTelemetry(configure: opts => opts.DisableEdgeGroupProcess = true).Build();
+    }
+
+    private static Workflow CreateWorkflowWithDisabledMessages()
+    {
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        Func<string, string> reverseFunc = s => new string(s.Reverse().ToArray());
+        var reverse = reverseFunc.BindAsExecutor("ReverseTextExecutor");
+
+        WorkflowBuilder builder = new(uppercase);
+        builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
+
+        return builder.WithOpenTelemetry(configure: opts => opts.DisableMessageSend = true).Build();
+    }
+
+    [Fact]
+    public async Task EnableSensitiveData_LogsExecutorInputAndOutputAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        // Act
+        WorkflowBuilder builder = new(uppercase);
+        builder.WithOutputFrom(uppercase);
+        var workflow = builder.WithOpenTelemetry(configure: opts => opts.EnableSensitiveData = true).Build();
+
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
+        await run.DisposeAsync();
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        var executorActivity = capturedActivities.FirstOrDefault(
+            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal));
+
+        executorActivity.Should().NotBeNull("ExecutorProcess activity should be created.");
+
+        var tags = executorActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
+        tags.Should().ContainKey(Tags.ExecutorInput, "Input should be logged when EnableSensitiveData is true.");
+        tags.Should().ContainKey(Tags.ExecutorOutput, "Output should be logged when EnableSensitiveData is true.");
+        tags[Tags.ExecutorInput].Should().Contain("hello", "Input should contain the input value.");
+        tags[Tags.ExecutorOutput].Should().Contain("HELLO", "Output should contain the transformed value.");
+    }
+
+    [Fact]
+    public async Task EnableSensitiveData_Disabled_DoesNotLogInputOutputAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        // Act - EnableSensitiveData is false by default
+        WorkflowBuilder builder = new(uppercase);
+        builder.WithOutputFrom(uppercase);
+        var workflow = builder.WithOpenTelemetry().Build();
+
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
+        await run.DisposeAsync();
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        var executorActivity = capturedActivities.FirstOrDefault(
+            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal));
+
+        executorActivity.Should().NotBeNull("ExecutorProcess activity should be created.");
+
+        var tags = executorActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
+        tags.Should().NotContainKey(Tags.ExecutorInput, "Input should NOT be logged when EnableSensitiveData is false.");
+        tags.Should().NotContainKey(Tags.ExecutorOutput, "Output should NOT be logged when EnableSensitiveData is false.");
+    }
+
+    [Fact]
+    public async Task EnableSensitiveData_LogsMessageSendContentAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        Func<string, string> reverseFunc = s => new string(s.Reverse().ToArray());
+        var reverse = reverseFunc.BindAsExecutor("ReverseTextExecutor");
+
+        // Act
+        WorkflowBuilder builder = new(uppercase);
+        builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
+        var workflow = builder.WithOpenTelemetry(configure: opts => opts.EnableSensitiveData = true).Build();
+
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
+        await run.DisposeAsync();
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        var messageSendActivity = capturedActivities.FirstOrDefault(
+            a => a.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal));
+
+        messageSendActivity.Should().NotBeNull("MessageSend activity should be created.");
+
+        var tags = messageSendActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
+        tags.Should().ContainKey(Tags.MessageContent, "Message content should be logged when EnableSensitiveData is true.");
+        tags.Should().ContainKey(Tags.MessageSourceId, "Source ID should be logged.");
+    }
+
+    [Fact]
+    public async Task EnableSensitiveData_Disabled_DoesNotLogMessageContentAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
+        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
+
+        Func<string, string> reverseFunc = s => new string(s.Reverse().ToArray());
+        var reverse = reverseFunc.BindAsExecutor("ReverseTextExecutor");
+
+        // Act - EnableSensitiveData is false by default
+        WorkflowBuilder builder = new(uppercase);
+        builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
+        var workflow = builder.WithOpenTelemetry().Build();
+
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
+        await run.DisposeAsync();
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        var messageSendActivity = capturedActivities.FirstOrDefault(
+            a => a.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal));
+
+        messageSendActivity.Should().NotBeNull("MessageSend activity should be created.");
+
+        var tags = messageSendActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
+        tags.Should().NotContainKey(Tags.MessageContent, "Message content should NOT be logged when EnableSensitiveData is false.");
+        tags.Should().ContainKey(Tags.MessageSourceId, "Source ID should still be logged.");
     }
 }

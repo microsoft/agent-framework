@@ -76,10 +76,14 @@ internal sealed class TestHelper : IDisposable
     {
         TestLoggerProvider loggerProvider = new(outputHelper);
 
+        // Generate a unique TaskHub name for this test instance to prevent cross-test interference
+        // when multiple tests run together and share the same DTS emulator.
+        string uniqueTaskHubName = $"test-{Guid.NewGuid().ToString("N").Substring(0, 6)}";
+
         IHost host = Host.CreateDefaultBuilder()
             .ConfigureServices((ctx, services) =>
             {
-                string dtsConnectionString = GetDurableTaskSchedulerConnectionString(ctx.Configuration);
+                string dtsConnectionString = GetDurableTaskSchedulerConnectionString(ctx.Configuration, uniqueTaskHubName);
 
                 // Register durable agents using the caller-supplied registration action and
                 // apply the default chat client for agents that don't supply one themselves.
@@ -107,11 +111,46 @@ internal sealed class TestHelper : IDisposable
         return new TestHelper(loggerProvider, host, client);
     }
 
-    private static string GetDurableTaskSchedulerConnectionString(IConfiguration configuration)
+    private static string GetDurableTaskSchedulerConnectionString(IConfiguration configuration, string? taskHubName = null)
     {
         // The default value is for local development using the Durable Task Scheduler emulator.
-        return configuration["DURABLE_TASK_SCHEDULER_CONNECTION_STRING"]
-            ?? "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None";
+        string? connectionString = configuration["DURABLE_TASK_SCHEDULER_CONNECTION_STRING"];
+
+        if (connectionString != null)
+        {
+            // If a connection string is provided, replace the TaskHub name if a custom one is specified
+            if (taskHubName != null)
+            {
+                // Replace TaskHub in the connection string
+                if (connectionString.Contains("TaskHub=", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Find and replace the TaskHub value
+                    int taskHubIndex = connectionString.IndexOf("TaskHub=", StringComparison.OrdinalIgnoreCase);
+                    int taskHubValueStart = taskHubIndex + "TaskHub=".Length;
+                    int taskHubValueEnd = connectionString.IndexOf(';', taskHubValueStart);
+                    if (taskHubValueEnd == -1)
+                    {
+                        taskHubValueEnd = connectionString.Length;
+                    }
+
+                    connectionString = string.Concat(
+                        connectionString.AsSpan(0, taskHubValueStart),
+                        taskHubName,
+                        connectionString.AsSpan(taskHubValueEnd));
+                }
+                else
+                {
+                    // Append TaskHub if it doesn't exist
+                    connectionString += $";TaskHub={taskHubName}";
+                }
+            }
+
+            return connectionString;
+        }
+
+        // Default connection string with unique TaskHub name
+        string defaultTaskHub = taskHubName ?? "default";
+        return $"Endpoint=http://localhost:8080;TaskHub={defaultTaskHub};Authentication=None";
     }
 
     internal static ChatClient GetAzureOpenAIChatClient(IConfiguration configuration)

@@ -24,13 +24,13 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 
     public AIAgent Agent => this._agent;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
         List<ChatMessage> messages = [];
-        var typedThread = (ChatClientAgentThread)thread;
+        var typedSession = (ChatClientAgentSession)session;
 
         await foreach (var threadMessage in (AsyncPageable<PersistentThreadMessage>)this._persistentAgentsClient.Messages.GetMessagesAsync(
-            threadId: typedThread.ConversationId, order: ListSortOrder.Ascending))
+            threadId: typedSession.ConversationId, order: ListSortOrder.Ascending))
         {
             var message = new ChatMessage
             {
@@ -75,12 +75,12 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
     public Task DeleteAgentAsync(ChatClientAgent agent) =>
         this._persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 
-    public Task DeleteThreadAsync(AgentThread thread)
+    public Task DeleteSessionAsync(AgentSession session)
     {
-        var typedThread = (ChatClientAgentThread)thread;
-        if (typedThread?.ConversationId is not null)
+        var typedSession = (ChatClientAgentSession)session;
+        if (typedSession?.ConversationId is not null)
         {
-            return this._persistentAgentsClient.Threads.DeleteThreadAsync(typedThread.ConversationId);
+            return this._persistentAgentsClient.Threads.DeleteThreadAsync(typedSession.ConversationId);
         }
 
         return Task.CompletedTask;

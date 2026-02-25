@@ -76,7 +76,7 @@ public sealed class OpenAIChatClientExtensionsTests
         var testChatClient = new TestChatClient(chatClient.AsIChatClient());
 
         // Act
-        var agent = chatClient.CreateAIAgent(
+        var agent = chatClient.AsAIAgent(
             instructions: "Test instructions",
             name: "Test Agent",
             description: "Test description",
@@ -104,7 +104,7 @@ public sealed class OpenAIChatClientExtensionsTests
         TestChatClient? testChatClient = null;
 
         // Act
-        var agent = chatClient.CreateAIAgent(
+        var agent = chatClient.AsAIAgent(
             instructions: "Test instructions",
             clientFactory: (innerClient) =>
                 innerClient.AsBuilder().Use((innerClient) => testChatClient = new TestChatClient(innerClient)).Build());
@@ -135,7 +135,7 @@ public sealed class OpenAIChatClientExtensionsTests
         };
 
         // Act
-        var agent = chatClient.CreateAIAgent(
+        var agent = chatClient.AsAIAgent(
             options,
             clientFactory: (innerClient) => testChatClient);
 
@@ -160,7 +160,7 @@ public sealed class OpenAIChatClientExtensionsTests
         var chatClient = new TestOpenAIChatClient();
 
         // Act
-        var agent = chatClient.CreateAIAgent(
+        var agent = chatClient.AsAIAgent(
             instructions: "Test instructions",
             name: "Test Agent");
 
@@ -183,7 +183,7 @@ public sealed class OpenAIChatClientExtensionsTests
         var chatClient = new TestOpenAIChatClient();
 
         // Act
-        var agent = chatClient.CreateAIAgent(
+        var agent = chatClient.AsAIAgent(
             instructions: "Test instructions",
             name: "Test Agent",
             clientFactory: null);
@@ -205,7 +205,7 @@ public sealed class OpenAIChatClientExtensionsTests
     {
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            ((OpenAIChatClient)null!).CreateAIAgent());
+            ((OpenAIChatClient)null!).AsAIAgent());
 
         Assert.Equal("client", exception.ParamName);
     }
@@ -221,7 +221,7 @@ public sealed class OpenAIChatClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            chatClient.CreateAIAgent((ChatClientAgentOptions)null!));
+            chatClient.AsAIAgent((ChatClientAgentOptions)null!));
 
         Assert.Equal("options", exception.ParamName);
     }

@@ -390,7 +390,7 @@ class MetaResponse(BaseModel):
     """Backend runtime/language - 'python' or 'dotnet' for deployment guides and feature availability."""
 
     capabilities: dict[str, bool] = {}
-    """Server capabilities (e.g., tracing, openai_proxy)."""
+    """Server capabilities (e.g., instrumentation, openai_proxy)."""
 
     auth_required: bool = False
     """Whether the server requires Bearer token authentication."""

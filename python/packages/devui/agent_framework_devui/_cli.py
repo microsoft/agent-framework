@@ -28,7 +28,7 @@ Examples:
   devui ./agents                    # Scan specific directory
   devui --port 8000                 # Custom port
   devui --headless                  # API only, no UI
-  devui --tracing                   # Enable OpenTelemetry tracing
+  devui --instrumentation           # Enable OpenTelemetry instrumentation
         """,
     )
 
@@ -53,7 +53,7 @@ Examples:
 
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
 
-    parser.add_argument("--tracing", action="store_true", help="Enable OpenTelemetry tracing for Agent Framework")
+    parser.add_argument("--instrumentation", action="store_true", help="Enable OpenTelemetry instrumentation")
 
     parser.add_argument(
         "--mode",
@@ -182,7 +182,7 @@ def main() -> None:
             host=args.host,
             auto_open=not args.no_open,
             ui_enabled=ui_enabled,
-            tracing_enabled=args.tracing,
+            instrumentation_enabled=args.instrumentation,
             mode=mode,
             auth_enabled=args.auth,
             auth_token=args.auth_token,  # Pass through explicit token only

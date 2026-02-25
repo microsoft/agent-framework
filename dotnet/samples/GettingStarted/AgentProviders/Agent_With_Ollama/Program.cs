@@ -11,7 +11,7 @@ var modelName = Environment.GetEnvironmentVariable("OLLAMA_MODEL_NAME") ?? throw
 
 // Get a chat client for Ollama and use it to construct an AIAgent.
 AIAgent agent = new OllamaApiClient(new Uri(endpoint), modelName)
-    .CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+    .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));

@@ -57,7 +57,7 @@ public sealed class OrchestrationTests(ITestOutputHelper outputHelper) : IDispos
                 // Register a different agent, but not "NonExistentAgent"
                 agents.AddAIAgentFactory(
                     "OtherAgent",
-                    sp => TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+                    sp => TestHelper.GetAzureOpenAIChatClient(s_configuration).AsAIAgent(
                         name: "OtherAgent",
                         instructions: "You are a test agent."));
             },

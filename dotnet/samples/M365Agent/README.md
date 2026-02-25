@@ -21,7 +21,7 @@ This Agent Sample is intended to introduce you the basics of integrating Agent F
     "AzureOpenAI": {
       "DeploymentName": "", // This is the Deployment (as opposed to model) Name of the Azure OpenAI model
       "Endpoint": "", // This is the Endpoint of the Azure OpenAI resource
-      "ApiKey": "" // This is the API Key of the Azure OpenAI resource. Optional, uses AzureCliCredential if not provided
+      "ApiKey": "" // This is the API Key of the Azure OpenAI resource. Optional, uses DefaultAzureCredential if not provided
     },
     "OpenAI": {
       "ModelId": "", // This is the Model ID of the OpenAI model

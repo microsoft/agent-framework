@@ -6,6 +6,8 @@ This executor mirrors the AgentFrameworkExecutor interface but routes
 requests to OpenAI's API instead of executing local entities.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 from collections.abc import AsyncGenerator
@@ -76,7 +78,7 @@ class OpenAIExecutor:
 
         return self._client
 
-    async def execute_streaming(self, request: AgentFrameworkRequest) -> AsyncGenerator[Any, None]:
+    async def execute_streaming(self, request: AgentFrameworkRequest) -> AsyncGenerator[Any]:
         """Execute request via OpenAI and stream results in OpenAI format.
 
         This mirrors AgentFrameworkExecutor.execute_streaming() interface.

@@ -70,18 +70,18 @@ internal static class AIAgentChatCompletionsProcessor
             DateTimeOffset? createdAt = null;
             var chunkId = IdGenerator.NewId(prefix: "chatcmpl", delimiter: "-", stringLength: 13);
 
-            await foreach (var agentRunResponseUpdate in agent.RunStreamingAsync(chatMessages, options: options, cancellationToken: cancellationToken).WithCancellation(cancellationToken))
+            await foreach (var agentResponseUpdate in agent.RunStreamingAsync(chatMessages, options: options, cancellationToken: cancellationToken).WithCancellation(cancellationToken))
             {
-                var finishReason = (agentRunResponseUpdate.RawRepresentation is ChatResponseUpdate { FinishReason: not null } chatResponseUpdate)
+                var finishReason = (agentResponseUpdate.RawRepresentation is ChatResponseUpdate { FinishReason: not null } chatResponseUpdate)
                     ? chatResponseUpdate.FinishReason.ToString()
                     : "stop";
 
                 var choiceChunks = new List<ChatCompletionChoiceChunk>();
                 CompletionUsage? usageDetails = null;
 
-                createdAt ??= agentRunResponseUpdate.CreatedAt;
+                createdAt ??= agentResponseUpdate.CreatedAt;
 
-                foreach (var content in agentRunResponseUpdate.Contents)
+                foreach (var content in agentResponseUpdate.Contents)
                 {
                     // usage content is handled separately
                     if (content is UsageContent usageContent && usageContent.Details != null)
@@ -124,7 +124,7 @@ internal static class AIAgentChatCompletionsProcessor
                         continue;
                     }
 
-                    delta.Role = agentRunResponseUpdate.Role?.Value ?? "user";
+                    delta.Role = agentResponseUpdate.Role?.Value ?? "user";
 
                     var choiceChunk = new ChatCompletionChoiceChunk
                     {

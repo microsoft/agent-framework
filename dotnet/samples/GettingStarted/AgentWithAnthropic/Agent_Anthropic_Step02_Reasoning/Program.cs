@@ -13,8 +13,8 @@ var model = Environment.GetEnvironmentVariable("ANTHROPIC_MODEL") ?? "claude-hai
 var maxTokens = 4096;
 var thinkingTokens = 2048;
 
-var agent = new AnthropicClient(new ClientOptions { APIKey = apiKey })
-    .CreateAIAgent(
+var agent = new AnthropicClient(new ClientOptions { ApiKey = apiKey })
+    .AsAIAgent(
         model: model,
         clientFactory: (chatClient) => chatClient
             .AsBuilder()

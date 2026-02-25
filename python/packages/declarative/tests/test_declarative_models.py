@@ -103,6 +103,50 @@ class TestProperty:
         assert prop.description == "A test property"
         assert prop.required is True
 
+    def test_property_from_dict_type_maps_to_kind(self):
+        """Test that 'type' field in YAML is mapped to 'kind' internally."""
+        data = {
+            "name": "test_prop",
+            "type": "string",
+            "description": "A test property",
+            "required": True,
+        }
+        prop = Property.from_dict(data)
+        assert prop.name == "test_prop"
+        assert prop.kind == "string"
+
+    def test_property_from_dict_kind_takes_precedence_over_type(self):
+        """Test that 'kind' takes precedence when both 'type' and 'kind' are present."""
+        data = {
+            "name": "test_prop",
+            "type": "integer",
+            "kind": "string",
+        }
+        prop = Property.from_dict(data)
+        assert prop.kind == "string"
+
+    def test_property_from_dict_type_dispatches_to_array(self):
+        """Test that 'type: array' correctly dispatches to ArrayProperty."""
+        data = {
+            "name": "test_array",
+            "type": "array",
+            "items": {"type": "string"},
+        }
+        prop = Property.from_dict(data)
+        assert isinstance(prop, ArrayProperty)
+        assert prop.kind == "array"
+
+    def test_property_from_dict_type_dispatches_to_object(self):
+        """Test that 'type: object' correctly dispatches to ObjectProperty."""
+        data = {
+            "name": "test_object",
+            "type": "object",
+            "properties": {"field": {"type": "string"}},
+        }
+        prop = Property.from_dict(data)
+        assert isinstance(prop, ObjectProperty)
+        assert prop.kind == "object"
+
 
 class TestArrayProperty:
     """Tests for ArrayProperty class."""
@@ -229,6 +273,29 @@ class TestPropertySchema:
         age_prop = next(p for p in schema.properties if p.name == "age")
         assert age_prop.kind == "integer"
         assert age_prop.required is True
+
+    def test_property_schema_with_type_field_produces_correct_json_schema(self):
+        """Test that PropertySchema with 'type' fields (YAML spec format) produces valid JSON schema."""
+        data = {
+            "properties": {
+                "language": {"type": "string", "required": True, "description": "The language."},
+                "answer": {"type": "string", "required": False, "description": "The answer."},
+            },
+        }
+        schema = PropertySchema.from_dict(data)
+        assert len(schema.properties) == 2
+
+        lang_prop = next(p for p in schema.properties if p.name == "language")
+        assert lang_prop.kind == "string"
+
+        json_schema = schema.to_json_schema()
+        assert json_schema["type"] == "object"
+        assert json_schema["properties"]["language"]["type"] == "string"
+        assert json_schema["properties"]["answer"]["type"] == "string"
+        # required is a top-level array, not a per-property boolean
+        assert json_schema["required"] == ["language"]
+        assert "required" not in json_schema["properties"]["language"]
+        assert "required" not in json_schema["properties"]["answer"]
 
 
 class TestConnection:
@@ -839,6 +906,16 @@ class TestEnvironmentVariable:
         assert env_var.value == "secret123"
 
 
+# Check if PowerFx is available
+try:
+    from powerfx import Engine as _PfxEngine
+
+    _PfxEngine()
+    _powerfx_available = True
+except (ImportError, RuntimeError):
+    _powerfx_available = False
+
+
 class TestTryPowerfxEval:
     """Tests for _try_powerfx_eval function."""
 
@@ -856,6 +933,7 @@ class TestTryPowerfxEval:
         """Test that empty strings are returned as empty."""
         assert _try_powerfx_eval("") == ""
 
+    @pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
     def test_simple_powerfx_expressions(self):
         """Test simple PowerFx expressions."""
         from decimal import Decimal
@@ -868,6 +946,7 @@ class TestTryPowerfxEval:
         assert _try_powerfx_eval('="hello"') == "hello"
         assert _try_powerfx_eval('="test value"') == "test value"
 
+    @pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
     def test_env_variable_access(self, monkeypatch):
         """Test accessing environment variables using =Env.<name> pattern."""
         # Set up test environment variables
@@ -885,6 +964,7 @@ class TestTryPowerfxEval:
         finally:
             _safe_mode_context.reset(token)
 
+    @pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
     def test_env_variable_with_string_concatenation(self, monkeypatch):
         """Test env variables with string concatenation operator."""
         monkeypatch.setenv("BASE_URL", "https://api.example.com")
@@ -903,6 +983,7 @@ class TestTryPowerfxEval:
         finally:
             _safe_mode_context.reset(token)
 
+    @pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
     def test_string_comparison_operators(self, monkeypatch):
         """Test PowerFx string comparison operators."""
         monkeypatch.setenv("ENV_MODE", "production")
@@ -920,6 +1001,7 @@ class TestTryPowerfxEval:
         finally:
             _safe_mode_context.reset(token)
 
+    @pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
     def test_string_in_operator(self):
         """Test PowerFx 'in' operator for substring testing (case-insensitive)."""
         # Substring test - case insensitive - returns bool
@@ -927,6 +1009,7 @@ class TestTryPowerfxEval:
         assert _try_powerfx_eval('="THE" in "The keyboard and the monitor"') is True
         assert _try_powerfx_eval('="xyz" in "The keyboard and the monitor"') is False
 
+    @pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
     def test_string_exactin_operator(self):
         """Test PowerFx 'exactin' operator for substring testing (case-sensitive)."""
         # Substring test - case sensitive - returns bool
@@ -934,6 +1017,7 @@ class TestTryPowerfxEval:
         assert _try_powerfx_eval('="windows" exactin "To display windows in the Windows operating system"') is True
         assert _try_powerfx_eval('="WINDOWS" exactin "To display windows in the Windows operating system"') is False
 
+    @pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
     def test_logical_operators_with_strings(self):
         """Test PowerFx logical operators (And, Or, Not) with string comparisons."""
         # And operator - returns bool
@@ -957,6 +1041,7 @@ class TestTryPowerfxEval:
         # ! operator (alternative syntax) - returns bool
         assert _try_powerfx_eval('=!("a" = "b")') is True
 
+    @pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
     def test_parentheses_for_precedence(self):
         """Test using parentheses to control operator precedence."""
         from decimal import Decimal
@@ -969,6 +1054,7 @@ class TestTryPowerfxEval:
         result = _try_powerfx_eval('=("a" = "a" Or "b" = "c") And "d" = "d"')
         assert result is True
 
+    @pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
     def test_env_with_special_characters(self, monkeypatch):
         """Test env variables containing special characters in values."""
         monkeypatch.setenv("URL_WITH_QUERY", "https://example.com?param=value")
@@ -999,6 +1085,7 @@ class TestTryPowerfxEval:
         finally:
             _safe_mode_context.reset(token)
 
+    @pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
     def test_safe_mode_context_isolation(self, monkeypatch):
         """Test that safe_mode context variable properly isolates env access."""
         monkeypatch.setenv("TEST_VAR", "test_value")

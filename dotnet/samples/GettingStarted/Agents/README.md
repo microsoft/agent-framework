@@ -33,7 +33,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Using function tools with approvals](./Agent_Step04_UsingFunctionToolsWithApprovals/)|This sample demonstrates how to use function tools where approvals require human in the loop approvals before execution|
 |[Structured output with a simple agent](./Agent_Step05_StructuredOutput/)|This sample demonstrates how to use structured output with a simple agent|
 |[Persisted conversations with a simple agent](./Agent_Step06_PersistedConversations/)|This sample demonstrates how to persist conversations and reload them later. This is useful for cases where an agent is hosted in a stateless service|
-|[3rd party thread storage with a simple agent](./Agent_Step07_3rdPartyThreadStorage/)|This sample demonstrates how to store conversation history in a 3rd party storage solution|
+|[3rd party chat history storage with a simple agent](./Agent_Step07_3rdPartyChatHistoryStorage/)|This sample demonstrates how to store chat history in a 3rd party storage solution|
 |[Observability with a simple agent](./Agent_Step08_Observability/)|This sample demonstrates how to add telemetry to a simple agent|
 |[Dependency injection with a simple agent](./Agent_Step09_DependencyInjection/)|This sample demonstrates how to add and resolve an agent with a dependency injection container|
 |[Exposing a simple agent as MCP tool](./Agent_Step10_AsMcpTool/)|This sample demonstrates how to expose an agent as an MCP tool|
@@ -46,6 +46,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Background responses](./Agent_Step17_BackgroundResponses/)|This sample demonstrates how to use background responses for long-running operations with polling and resumption support|
 |[Deep research with an agent](./Agent_Step18_DeepResearch/)|This sample demonstrates how to use the Deep Research Tool to perform comprehensive research on complex topics|
 |[Declarative agent](./Agent_Step19_Declarative/)|This sample demonstrates how to declaratively define an agent.|
+|[Providing additional AI Context to an agent using multiple AIContextProviders](./Agent_Step20_AdditionalAIContext/)|This sample demonstrates how to inject additional AI context into a ChatClientAgent using multiple custom AIContextProvider components that are attached to the agent.|
 
 ## Running the samples from the console
 

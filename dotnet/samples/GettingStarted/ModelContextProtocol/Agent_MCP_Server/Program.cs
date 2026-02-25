@@ -23,11 +23,14 @@ await using var mcpClient = await McpClient.CreateAsync(new StdioClientTransport
 // Retrieve the list of tools available on the GitHub server
 var mcpTools = await mcpClient.ListToolsAsync().ConfigureAwait(false);
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
      .GetChatClient(deploymentName)
-     .CreateAIAgent(instructions: "You answer questions related to GitHub repositories only.", tools: [.. mcpTools.Cast<AITool>()]);
+     .AsAIAgent(instructions: "You answer questions related to GitHub repositories only.", tools: [.. mcpTools.Cast<AITool>()]);
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Summarize the last four commits to the microsoft/semantic-kernel repository?"));

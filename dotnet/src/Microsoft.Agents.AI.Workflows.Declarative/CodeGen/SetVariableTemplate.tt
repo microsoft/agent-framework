@@ -1,7 +1,9 @@
 ﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
 <#@ output extension=".cs" #>
 <#@ assembly name="System.Core" #>
-<#@ include file="Snippets/Index.tt" once="true" #>
+<#@ import namespace="Microsoft.Agents.ObjectModel" #>
+<#@ include file="Snippets/AssignVariableTemplate.tt" once="true" #>
+<#@ include file="Snippets/EvaluateValueExpressionTemplate.tt" once="true" #>
 /// <summary>
 /// Assigns an evaluated expression, other variable, or literal value to the  "<#= this.Model.Variable #>" variable.
 /// </summary>

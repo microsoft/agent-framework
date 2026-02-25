@@ -2,6 +2,8 @@
 
 """Agent Framework entity discovery implementation."""
 
+from __future__ import annotations
+
 import ast
 import importlib
 import importlib.util
@@ -111,7 +113,7 @@ class EntityDiscovery:
                 f"Only 'directory' and 'in-memory' sources are supported."
             )
 
-        # Note: Checkpoint storage is now injected at runtime via run_stream() parameter,
+        # Note: Checkpoint storage is now injected at runtime via run() parameter,
         # not at load time. This provides cleaner architecture and explicit control flow.
         # See _executor.py _execute_workflow() for runtime checkpoint storage injection.
 
@@ -346,8 +348,8 @@ class EntityDiscovery:
         instructions = None
         model = None
         chat_client_type = None
-        context_providers_list = None
-        middleware_list = None
+        context_provider_list = None
+        middlewares_list = None
 
         if entity_type == "agent":
             from ._utils import extract_agent_metadata
@@ -356,21 +358,15 @@ class EntityDiscovery:
             instructions = agent_meta["instructions"]
             model = agent_meta["model"]
             chat_client_type = agent_meta["chat_client_type"]
-            context_providers_list = agent_meta["context_providers"]
-            middleware_list = agent_meta["middleware"]
+            context_provider_list = agent_meta["context_provider"]
+            middlewares_list = agent_meta["middleware"]
 
         # Log helpful info about agent capabilities (before creating EntityInfo)
         if entity_type == "agent":
-            has_run_stream = hasattr(entity_object, "run_stream")
             has_run = hasattr(entity_object, "run")
 
-            if not has_run_stream and has_run:
-                logger.info(
-                    f"Agent '{entity_id}' only has run() (non-streaming). "
-                    "DevUI will automatically convert to streaming."
-                )
-            elif not has_run_stream and not has_run:
-                logger.warning(f"Agent '{entity_id}' lacks both run() and run_stream() methods. May not work.")
+            if not has_run:
+                logger.warning(f"Agent '{entity_id}' lacks run() method. May not work.")
 
         # Check deployment support based on source
         # For directory-based entities, we need the path to verify deployment support
@@ -395,8 +391,8 @@ class EntityDiscovery:
             instructions=instructions,
             model_id=model,
             chat_client_type=chat_client_type,
-            context_providers=context_providers_list,
-            middleware=middleware_list,
+            context_provider=context_provider_list,
+            middleware=middlewares_list,
             executors=tools_list if entity_type == "workflow" else [],
             input_schema={"type": "string"},  # Default schema
             start_executor_id=tools_list[0] if tools_list and entity_type == "workflow" else None,
@@ -407,7 +403,6 @@ class EntityDiscovery:
                 "class_name": entity_object.__class__.__name__
                 if hasattr(entity_object, "__class__")
                 else str(type(entity_object)),
-                "has_run_stream": hasattr(entity_object, "run_stream"),
             },
         )
 
@@ -546,8 +541,8 @@ class EntityDiscovery:
         """Check if a Python file has entity exports (agent or workflow) using AST parsing.
 
         This safely checks for module-level assignments like:
-        - agent = ChatAgent(...)
-        - workflow = WorkflowBuilder()...
+        - agent = Agent(...)
+        - workflow = WorkflowBuilder(start_executor=...)...
 
         Args:
             file_path: Python file to check
@@ -666,7 +661,16 @@ class EntityDiscovery:
             logger.debug(f"Successfully imported {pattern}")
             return module, None
 
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as e:
+            # Distinguish between "module pattern doesn't exist" vs "module has import errors"
+            # If the missing module is the pattern itself, it's just not found (try next pattern)
+            # If the missing module is something else (a dependency), capture the error
+            missing_module = getattr(e, "name", None)
+            if missing_module and missing_module != pattern and not pattern.endswith(f".{missing_module}"):
+                # The module exists but has an import error (missing dependency)
+                logger.warning(f"Error importing {pattern}: {e}")
+                return None, e
+            # The module pattern itself doesn't exist - this is expected, try next pattern
             logger.debug(f"Import pattern {pattern} not found")
             return None, None
         except Exception as e:
@@ -755,19 +759,19 @@ class EntityDiscovery:
             True if object appears to be a valid agent
         """
         try:
-            # Try to import AgentProtocol for proper type checking
+            # Try to import SupportsAgentRun for proper type checking
             try:
-                from agent_framework import AgentProtocol
+                from agent_framework import SupportsAgentRun
 
-                if isinstance(obj, AgentProtocol):
+                if isinstance(obj, SupportsAgentRun):
                     return True
             except ImportError:
                 pass
 
             # Fallback to duck typing for agent protocol
-            # Agent must have either run_stream() or run() method, plus id and name
-            has_execution_method = hasattr(obj, "run_stream") or hasattr(obj, "run")
-            if has_execution_method and hasattr(obj, "id") and hasattr(obj, "name"):
+            # Agent must have run() method, plus id and name
+            has_run = hasattr(obj, "run")
+            if has_run and hasattr(obj, "id") and hasattr(obj, "name"):
                 return True
 
         except (TypeError, AttributeError):
@@ -784,8 +788,9 @@ class EntityDiscovery:
         Returns:
             True if object appears to be a valid workflow
         """
-        # Check for workflow - must have run_stream method and executors
-        return hasattr(obj, "run_stream") and (hasattr(obj, "executors") or hasattr(obj, "get_executors_list"))
+        # Check for workflow - must have run (streaming via stream=True) and executors
+        has_run = hasattr(obj, "run")
+        return has_run and (hasattr(obj, "executors") or hasattr(obj, "get_executors_list"))
 
     async def _register_entity_from_object(
         self, obj: Any, obj_type: str, module_path: str, source: str = "directory"
@@ -820,8 +825,8 @@ class EntityDiscovery:
             instructions = None
             model = None
             chat_client_type = None
-            context_providers_list = None
-            middleware_list = None
+            context_provider_list = None
+            middlewares_list = None
 
             if obj_type == "agent":
                 from ._utils import extract_agent_metadata
@@ -830,8 +835,8 @@ class EntityDiscovery:
                 instructions = agent_meta["instructions"]
                 model = agent_meta["model"]
                 chat_client_type = agent_meta["chat_client_type"]
-                context_providers_list = agent_meta["context_providers"]
-                middleware_list = agent_meta["middleware"]
+                context_provider_list = agent_meta["context_provider"]
+                middlewares_list = agent_meta["middleware"]
 
             entity_info = EntityInfo(
                 id=entity_id,
@@ -843,13 +848,12 @@ class EntityDiscovery:
                 instructions=instructions,
                 model_id=model,
                 chat_client_type=chat_client_type,
-                context_providers=context_providers_list,
-                middleware=middleware_list,
+                context_provider=context_provider_list,
+                middleware=middlewares_list,
                 metadata={
                     "module_path": module_path,
                     "entity_type": obj_type,
                     "source": source,
-                    "has_run_stream": hasattr(obj, "run_stream"),
                     "class_name": obj.__class__.__name__ if hasattr(obj, "__class__") else str(type(obj)),
                 },
             )
@@ -874,10 +878,14 @@ class EntityDiscovery:
 
         try:
             if obj_type == "agent":
-                # For agents, check chat_options.tools first
-                chat_options = getattr(obj, "chat_options", None)
-                if chat_options and hasattr(chat_options, "tools"):
-                    for tool in chat_options.tools:
+                # For agents, check default_options.get("tools")
+                chat_options = getattr(obj, "default_options", None)
+                chat_options_tools = None
+                if chat_options:
+                    chat_options_tools = chat_options.get("tools")
+
+                if chat_options_tools:
+                    for tool in chat_options_tools:
                         if hasattr(tool, "__name__"):
                             tools.append(tool.__name__)
                         elif hasattr(tool, "name"):

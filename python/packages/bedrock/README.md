@@ -12,7 +12,7 @@ The Bedrock integration enables Microsoft Agent Framework applications to call A
 
 ### Basic Usage Example
 
-See the [Bedrock sample script](samples/bedrock_sample.py) for a runnable end-to-end script that:
+See the [Bedrock sample](../../samples/02-agents/providers/amazon/bedrock_chat_client.py) for a runnable end-to-end script that:
 
 - Loads credentials from the `BEDROCK_*` environment variables
 - Instantiates `BedrockChatClient`

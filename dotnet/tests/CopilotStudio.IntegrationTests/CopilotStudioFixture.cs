@@ -20,10 +20,10 @@ public class CopilotStudioFixture : IAgentFixture
 {
     public AIAgent Agent { get; private set; } = null!;
 
-    public Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread) =>
+    public Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session) =>
         throw new NotSupportedException("CopilotStudio doesn't allow retrieval of chat history.");
 
-    public Task DeleteThreadAsync(AgentThread thread) =>
+    public Task DeleteSessionAsync(AgentSession session) =>
         // Chat Completion does not require/support deleting threads, so this is a no-op.
         Task.CompletedTask;
 

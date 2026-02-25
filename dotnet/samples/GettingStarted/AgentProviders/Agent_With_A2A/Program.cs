@@ -14,5 +14,5 @@ A2ACardResolver agentCardResolver = new(new Uri(a2aAgentHost));
 AIAgent agent = await agentCardResolver.GetAIAgentAsync();
 
 // Invoke the agent and output the text result.
-AgentRunResponse response = await agent.RunAsync("Tell me a joke about a pirate.");
+AgentResponse response = await agent.RunAsync("Tell me a joke about a pirate.");
 Console.WriteLine(response);
