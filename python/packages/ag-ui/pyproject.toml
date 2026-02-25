@@ -45,6 +45,9 @@ packages = ["agent_framework_ag_ui", "agent_framework_ag_ui_examples"]
 asyncio_mode = "auto"
 testpaths = ["tests/ag_ui"]
 pythonpath = ["."]
+markers = [
+    "integration: marks tests as integration tests that require external services",
+]
 
 [tool.ruff]
 line-length = 120

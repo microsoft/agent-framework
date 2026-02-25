@@ -10,6 +10,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Declarative\Microsoft.Agents.AI.Workflows.Declarative.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Declarative.AzureAI\Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Declarative.Mcp\Microsoft.Agents.AI.Workflows.Declarative.Mcp.csproj" />
   </ItemGroup>
 
   <ItemGroup>
