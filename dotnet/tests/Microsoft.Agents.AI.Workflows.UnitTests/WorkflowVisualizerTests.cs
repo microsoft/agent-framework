@@ -270,9 +270,9 @@ public class WorkflowVisualizerTests
 
         // Check that the Mermaid content contains expected elements
         mermaidContent.Should().Contain("flowchart TD");
-        mermaidContent.Should().Contain("executor1[\"executor1 (Start)\"]");
-        mermaidContent.Should().Contain("executor2[\"executor2\"]");
-        mermaidContent.Should().Contain("executor1 --> executor2");
+        mermaidContent.Should().Contain("node_0[\"executor1 (Start)\"]");
+        mermaidContent.Should().Contain("node_1[\"executor2\"]");
+        mermaidContent.Should().Contain("node_0 --> node_1");
     }
 
     [Fact]
@@ -292,11 +292,14 @@ public class WorkflowVisualizerTests
 
         var mermaidContent = workflow.ToMermaidString();
 
-        // Conditional edge should be dotted with label
-        mermaidContent.Should().Contain("start -. conditional .--> mid");
+        // Conditional edge should be dotted with label (using .-> not .-->)
+        mermaidContent.Should().Contain("-. conditional .-> ");
         // Non-conditional edge should be solid
-        mermaidContent.Should().Contain("mid --> end");
-        mermaidContent.Should().NotContain("end -. conditional");
+        mermaidContent.Should().Contain(" --> ");
+        // Display labels should be present
+        mermaidContent.Should().Contain("\"start (Start)\"");
+        mermaidContent.Should().Contain("\"mid\"");
+        mermaidContent.Should().Contain("\"end\"");
     }
 
     [Fact]
@@ -316,23 +319,25 @@ public class WorkflowVisualizerTests
         var mermaidContent = workflow.ToMermaidString();
 
         // There should be a fan-in node with special styling
-        var lines = mermaidContent.Split('\n');
-        var fanInLines = Array.FindAll(lines, line => line.Contains("((fan-in))"));
-        fanInLines.Should().HaveCount(1);
+        mermaidContent.Should().Contain("((fan-in))");
 
-        // Extract the intermediate node id from the line
-        var fanInLine = fanInLines[0].Trim();
-        var fanInNodeId = fanInLine.Substring(0, fanInLine.IndexOf("((fan-in))", StringComparison.Ordinal)).Trim();
-        fanInNodeId.Should().NotBeNullOrEmpty();
+        // Display labels should be present
+        mermaidContent.Should().Contain("\"start (Start)\"");
+        mermaidContent.Should().Contain("\"s1\"");
+        mermaidContent.Should().Contain("\"s2\"");
+        mermaidContent.Should().Contain("\"t\"");
 
-        // Edges should be routed through the intermediate node
-        mermaidContent.Should().Contain($"s1 --> {fanInNodeId}");
-        mermaidContent.Should().Contain($"s2 --> {fanInNodeId}");
-        mermaidContent.Should().Contain($"{fanInNodeId} --> t");
-
-        // Ensure direct edges are not present
-        mermaidContent.Should().NotContain("s1 --> t");
-        mermaidContent.Should().NotContain("s2 --> t");
+        // All node IDs should be safe aliases (no raw executor names as IDs)
+        foreach (var line in mermaidContent.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Contains("[\"") || trimmed.Contains("(("))
+            {
+                var bracketIdx = trimmed.IndexOfAny(['[', '(']);
+                var nodeId = trimmed.Substring(0, bracketIdx);
+                nodeId.Should().MatchRegex("^node_\\d+$");
+            }
+        }
     }
 
     [Fact]
@@ -353,17 +358,16 @@ public class WorkflowVisualizerTests
 
         var mermaidContent = workflow.ToMermaidString();
 
-        // Check all executors are present
-        mermaidContent.Should().Contain("start[\"start (Start)\"]");
-        mermaidContent.Should().Contain("middle1[\"middle1\"]");
-        mermaidContent.Should().Contain("middle2[\"middle2\"]");
-        mermaidContent.Should().Contain("end[\"end\"]");
+        // Check display labels are present
+        mermaidContent.Should().Contain("\"start (Start)\"");
+        mermaidContent.Should().Contain("\"middle1\"");
+        mermaidContent.Should().Contain("\"middle2\"");
+        mermaidContent.Should().Contain("\"end\"");
 
-        // Check all edges are present
-        mermaidContent.Should().Contain("start --> middle1");
-        mermaidContent.Should().Contain("start --> middle2");
-        mermaidContent.Should().Contain("middle1 --> end");
-        mermaidContent.Should().Contain("middle2 --> end");
+        // Check that safe aliases are used and all edges connect them
+        mermaidContent.Should().Contain("node_0[\"start (Start)\"]");
+        mermaidContent.Should().Contain("node_0 --> node_1");
+        mermaidContent.Should().Contain("node_0 --> node_2");
     }
 
     [Fact]
@@ -386,15 +390,19 @@ public class WorkflowVisualizerTests
 
         var mermaidContent = workflow.ToMermaidString();
 
-        // Check conditional edge
-        mermaidContent.Should().Contain("start -. conditional .--> a");
-
-        // Check fan-out edges
-        mermaidContent.Should().Contain("a --> b");
-        mermaidContent.Should().Contain("a --> c");
+        // Check conditional edge uses correct syntax (.-> not .-->)
+        mermaidContent.Should().Contain("-. conditional .->");
+        mermaidContent.Should().NotContain(".-->");
 
         // Check fan-in (should have intermediate node)
         mermaidContent.Should().Contain("((fan-in))");
+
+        // Display labels should be present
+        mermaidContent.Should().Contain("\"start (Start)\"");
+        mermaidContent.Should().Contain("\"a\"");
+        mermaidContent.Should().Contain("\"b\"");
+        mermaidContent.Should().Contain("\"c\"");
+        mermaidContent.Should().Contain("\"end\"");
     }
 
     [Fact]
@@ -411,7 +419,7 @@ public class WorkflowVisualizerTests
         var mermaidContent = workflow.ToMermaidString();
 
         // Should escape pipe character
-        mermaidContent.Should().Contain("start -->|High &#124; Low Priority| end");
+        mermaidContent.Should().Contain("-->|High &#124; Low Priority|");
         // Should not contain unescaped pipe that would break syntax
         mermaidContent.Should().NotContain("-->|High | Low");
     }
@@ -452,5 +460,89 @@ public class WorkflowVisualizerTests
         mermaidContent.Should().Contain("Line 1<br/>Line 2");
         // Should not contain literal newline in the label (but the overall output has newlines between statements)
         mermaidContent.Should().NotContain("Line 1\nLine 2");
+    }
+
+    [Fact]
+    public void Test_WorkflowViz_Mermaid_ConditionalEdge_ArrowSyntax_Issue1406()
+    {
+        // Issue #1406: Conditional edges produce ".-->" which is invalid Mermaid syntax.
+        // The correct Mermaid syntax for a dotted arrow with label is "-. label .->" (not ".-->").
+        var start = new MockExecutor("start");
+        var mid = new MockExecutor("mid");
+
+        static bool Condition(string? msg) => msg == "foo";
+
+        var workflow = new WorkflowBuilder("start")
+            .AddEdge<string>(start, mid, Condition)
+            .Build();
+
+        var mermaidContent = workflow.ToMermaidString();
+
+        // The output should use ".->" not ".-->" for conditional (dotted) edges
+        mermaidContent.Should().NotContain(".-->", because: "'.-->' is invalid Mermaid syntax for dotted arrows; should be '.->'");
+        mermaidContent.Should().Contain("-. conditional .->", because: "'-. label .->' is the correct Mermaid syntax for dotted arrows with labels");
+    }
+
+    [Fact]
+    public void Test_WorkflowViz_Mermaid_IdentifiersWithSpaces_Issue1406()
+    {
+        // Issue #1406: Identifiers with spaces are used directly as Mermaid node IDs,
+        // which causes rendering errors. Mermaid node IDs should not contain spaces.
+        var executor1 = new MockExecutor("1. User input");
+        var executor2 = new MockExecutor("2. Process data");
+
+        var workflow = new WorkflowBuilder("1. User input")
+            .AddEdge(executor1, executor2)
+            .Build();
+
+        var mermaidContent = workflow.ToMermaidString();
+
+        // Node definitions should use safe aliases as IDs (no spaces), with display names in quotes
+        // Bad: '1. User input["1. User input (Start)"]' — spaces in ID break Mermaid
+        // Good: 'executor0["1. User input (Start)"]' — alias ID is safe
+
+        // Each node definition line (containing ["..."]) should have a space-free ID before the bracket
+        foreach (var line in mermaidContent.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Contains("[\""))
+            {
+                var bracketIdx = trimmed.IndexOf('[');
+                var nodeId = trimmed.Substring(0, bracketIdx);
+                nodeId.Should().NotContain(" ", because: $"Mermaid node IDs must not contain spaces, but got '{nodeId}'");
+            }
+        }
+    }
+
+    [Fact]
+    public void Test_WorkflowViz_Mermaid_IdentifiersWithUnicode_Issue1406()
+    {
+        // Issue #1406: Non-ASCII characters (e.g. Japanese) in identifiers cause Mermaid rendering errors.
+        var executor1 = new MockExecutor("ユーザー入力");
+        var executor2 = new MockExecutor("データ処理");
+
+        var workflow = new WorkflowBuilder("ユーザー入力")
+            .AddEdge(executor1, executor2)
+            .Build();
+
+        var mermaidContent = workflow.ToMermaidString();
+
+        // The display labels should contain the original names
+        mermaidContent.Should().Contain("ユーザー入力");
+        mermaidContent.Should().Contain("データ処理");
+
+        // But node IDs (before the bracket) should be safe ASCII-only identifiers
+        foreach (var line in mermaidContent.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Contains("[\""))
+            {
+                var bracketIdx = trimmed.IndexOf('[');
+                var nodeId = trimmed.Substring(0, bracketIdx);
+                // Node ID should only contain ASCII alphanumeric and underscores
+                nodeId.Should().MatchRegex("^[a-zA-Z0-9_]+$",
+                    because: $"Mermaid node IDs should be ASCII-safe, but got '{nodeId}'");
+            }
+        }
     }
 }

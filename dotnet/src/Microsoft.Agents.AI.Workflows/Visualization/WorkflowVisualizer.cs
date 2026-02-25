@@ -153,18 +153,31 @@ public static class WorkflowVisualizer
 
     private static void EmitWorkflowMermaid(Workflow workflow, List<string> lines, string indent, string? ns = null)
     {
-        string MapId(string id) => ns != null ? $"{ns}/{id}" : id;
+        // Build a mapping from raw IDs to Mermaid-safe node aliases.
+        // Mermaid node IDs cannot contain spaces, dots, or non-ASCII characters.
+        var aliasMap = new Dictionary<string, string>();
+        string GetSafeId(string id)
+        {
+            var key = ns != null ? $"{ns}/{id}" : id;
+            if (!aliasMap.TryGetValue(key, out var alias))
+            {
+                alias = $"node_{aliasMap.Count}";
+                aliasMap[key] = alias;
+            }
+
+            return alias;
+        }
 
         // Add start node
         var startExecutorId = workflow.StartExecutorId;
-        lines.Add($"{indent}{MapId(startExecutorId)}[\"{startExecutorId} (Start)\"];");
+        lines.Add($"{indent}{GetSafeId(startExecutorId)}[\"{startExecutorId} (Start)\"];");
 
         // Add other executor nodes
         foreach (var executorId in workflow.ExecutorBindings.Keys)
         {
             if (executorId != startExecutorId)
             {
-                lines.Add($"{indent}{MapId(executorId)}[\"{executorId}\"];");
+                lines.Add($"{indent}{GetSafeId(executorId)}[\"{executorId}\"];");
             }
         }
 
@@ -175,7 +188,7 @@ public static class WorkflowVisualizer
             lines.Add("");
             foreach (var (nodeId, _, _) in fanInDescriptors)
             {
-                lines.Add($"{indent}{MapId(nodeId)}((fan-in))");
+                lines.Add($"{indent}{GetSafeId(nodeId)}((fan-in))");
             }
         }
 
@@ -184,9 +197,9 @@ public static class WorkflowVisualizer
         {
             foreach (var src in sources)
             {
-                lines.Add($"{indent}{MapId(src)} --> {MapId(nodeId)};");
+                lines.Add($"{indent}{GetSafeId(src)} --> {GetSafeId(nodeId)};");
             }
-            lines.Add($"{indent}{MapId(nodeId)} --> {MapId(target)};");
+            lines.Add($"{indent}{GetSafeId(nodeId)} --> {GetSafeId(target)};");
         }
 
         // Emit normal edges
@@ -197,17 +210,17 @@ public static class WorkflowVisualizer
                 string effectiveLabel = label != null ? EscapeMermaidLabel(label) : "conditional";
 
                 // Conditional edge, with user label or default
-                lines.Add($"{indent}{MapId(src)} -. {effectiveLabel} .--> {MapId(target)};");
+                lines.Add($"{indent}{GetSafeId(src)} -. {effectiveLabel} .-> {GetSafeId(target)};");
             }
             else if (label != null)
             {
                 // Regular edge with label
-                lines.Add($"{indent}{MapId(src)} -->|{EscapeMermaidLabel(label)}| {MapId(target)};");
+                lines.Add($"{indent}{GetSafeId(src)} -->|{EscapeMermaidLabel(label)}| {GetSafeId(target)};");
             }
             else
             {
                 // Regular edge without label
-                lines.Add($"{indent}{MapId(src)} --> {MapId(target)};");
+                lines.Add($"{indent}{GetSafeId(src)} --> {GetSafeId(target)};");
             }
         }
     }
