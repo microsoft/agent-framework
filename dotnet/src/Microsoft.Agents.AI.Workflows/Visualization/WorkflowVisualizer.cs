@@ -191,14 +191,14 @@ public static class WorkflowVisualizer
 
         // Add start node
         var startExecutorId = workflow.StartExecutorId;
-        lines.Add($"{indent}{GetSafeId(startExecutorId)}[\"{startExecutorId} (Start)\"];");
+        lines.Add($"{indent}{GetSafeId(startExecutorId)}[\"{EscapeMermaidLabel(startExecutorId)} (Start)\"];");
 
         // Add other executor nodes
         foreach (var executorId in workflow.ExecutorBindings.Keys)
         {
             if (executorId != startExecutorId)
             {
-                lines.Add($"{indent}{GetSafeId(executorId)}[\"{executorId}\"];");
+                lines.Add($"{indent}{GetSafeId(executorId)}[\"{EscapeMermaidLabel(executorId)}\"];");
             }
         }
 
@@ -337,9 +337,10 @@ public static class WorkflowVisualizer
 
     /// <summary>
     /// Converts a raw node ID into a Mermaid-safe identifier that preserves as much
-    /// of the original text as possible. ASCII letters, digits, and underscores are kept;
-    /// everything else (including non-ASCII letters) is replaced with an underscore.
-    /// A leading digit gets a prefix. Consecutive underscores are collapsed.
+    /// of the original text as possible. ASCII letters, digits, and underscores are kept
+    /// as-is (including existing consecutive underscores). All other characters (including
+    /// non-ASCII letters) are replaced with underscores, with consecutive invalid characters
+    /// collapsed into a single underscore. A leading digit gets a prefix.
     /// </summary>
     private static string SanitizeMermaidNodeId(string id)
     {

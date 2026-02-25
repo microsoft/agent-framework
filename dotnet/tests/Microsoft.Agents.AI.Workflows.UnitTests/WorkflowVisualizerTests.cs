@@ -294,8 +294,8 @@ public class WorkflowVisualizerTests
 
         // Conditional edge should be dotted with label (using .-> not .-->)
         mermaidContent.Should().Contain("-. conditional .-> ");
-        // Non-conditional edge should be solid
-        mermaidContent.Should().Contain(" --> ");
+        // Non-conditional edge should be a specific solid arrow
+        mermaidContent.Should().Contain("mid --> end");
         // Display labels should be present
         mermaidContent.Should().Contain("\"start (Start)\"");
         mermaidContent.Should().Contain("\"mid\"");
@@ -319,7 +319,23 @@ public class WorkflowVisualizerTests
         var mermaidContent = workflow.ToMermaidString();
 
         // There should be a fan-in node with special styling
-        mermaidContent.Should().Contain("((fan-in))");
+        var lines = mermaidContent.Split('\n');
+        var fanInLines = Array.FindAll(lines, line => line.Contains("((fan-in))"));
+        fanInLines.Should().HaveCount(1);
+
+        // Extract the intermediate fan-in node id from the line
+        var fanInLine = fanInLines[0].Trim();
+        var fanInNodeId = fanInLine.Substring(0, fanInLine.IndexOf("((fan-in))", StringComparison.Ordinal)).Trim();
+        fanInNodeId.Should().NotBeNullOrEmpty();
+
+        // Edges should be routed through the intermediate node
+        mermaidContent.Should().Contain($"s1 --> {fanInNodeId}");
+        mermaidContent.Should().Contain($"s2 --> {fanInNodeId}");
+        mermaidContent.Should().Contain($"{fanInNodeId} --> t");
+
+        // Ensure direct edges are not present
+        mermaidContent.Should().NotContain("s1 --> t");
+        mermaidContent.Should().NotContain("s2 --> t");
 
         // Display labels should be present
         mermaidContent.Should().Contain("\"start (Start)\"");
