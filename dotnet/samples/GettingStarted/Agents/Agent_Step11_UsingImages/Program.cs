@@ -20,9 +20,14 @@ var agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential(
         name: "VisionAgent",
         instructions: "You are a helpful agent that can analyze images");
 
+
+using HttpClient httpClient = new();
+httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+byte[] imageBytes = await httpClient.GetByteArrayAsync("https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg");
+
 ChatMessage message = new(ChatRole.User, [
     new TextContent("What do you see in this image?"),
-    new UriContent("https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg", "image/jpeg")
+    new DataContent(imageBytes, "image/jpeg")
 ]);
 
 var session = await agent.CreateSessionAsync();
