@@ -1279,15 +1279,15 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         return _get_response()
 
 
-EmbeddingOptionsCoT = TypeVar(
-    "EmbeddingOptionsCoT",
+EmbeddingOptionsT = TypeVar(
+    "EmbeddingOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="EmbeddingGenerationOptions",
     covariant=True,
 )
 
 
-class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOptionsCoT]):
+class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOptionsT]):
     """Layer that wraps embedding client get_embeddings with OpenTelemetry tracing."""
 
     def __init__(self, *args: Any, otel_provider_name: str | None = None, **kwargs: Any) -> None:
@@ -1301,7 +1301,7 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
         self,
         values: Sequence[EmbeddingInputT],
         *,
-        options: EmbeddingOptionsCoT | None = None,
+        options: EmbeddingOptionsT | None = None,
     ) -> GeneratedEmbeddings[EmbeddingT]:
         """Trace embedding generation with OpenTelemetry spans and metrics."""
         global OBSERVABILITY_SETTINGS

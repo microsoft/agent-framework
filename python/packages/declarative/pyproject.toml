@@ -39,9 +39,9 @@ environments = [
     "sys_platform == 'win32'"
 ]
 
-
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
+
 [tool.pytest.ini_options]
 testpaths = 'tests'
 addopts = "-ra -q -r fEX"
@@ -51,6 +51,9 @@ filterwarnings = [
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning:pydantic.*"
 ]
 timeout = 120
+markers = [
+    "integration: marks tests as integration tests that require external services",
+]
 
 [tool.ruff]
 extend = "../../pyproject.toml"
@@ -88,6 +91,7 @@ exclude_dirs = ["tests"]
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
+
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_declarative"
 test = "pytest --cov=agent_framework_declarative --cov-report=term-missing:skip-covered tests"

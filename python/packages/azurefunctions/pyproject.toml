@@ -41,6 +41,7 @@ environments = [
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
+
 [tool.pytest.ini_options]
 testpaths = 'tests'
 pythonpath = ["tests/integration_tests"]
@@ -88,6 +89,7 @@ exclude_dirs = ["tests"]
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
+
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azurefunctions"
 test = "pytest --cov=agent_framework_azurefunctions --cov-report=term-missing:skip-covered tests"

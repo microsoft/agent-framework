@@ -54,6 +54,9 @@ addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
+markers = [
+    "integration: marks tests as integration tests that require external services",
+]
 
 [tool.ruff]
 extend = "../../pyproject.toml"
@@ -65,7 +68,6 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
-
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
@@ -89,6 +91,7 @@ exclude_dirs = ["tests"]
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
+
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_devui"
 test = "pytest --cov=agent_framework_devui --cov-report=term-missing:skip-covered tests"
