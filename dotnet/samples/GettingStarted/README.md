@@ -1,3 +1,14 @@
+---
+page_type: sample
+languages:
+- csharp
+products:
+- agent-framework
+- dotnet
+name: Getting started with Agent Framework
+urlFragment: af-getting-started
+---
+
 # Getting started
 
 The getting started samples demonstrate the fundamental concepts and functionalities

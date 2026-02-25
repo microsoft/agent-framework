@@ -1,4 +1,15 @@
-# AGUI WebChat Sample
+---
+page_type: sample
+languages:
+- csharp
+products:
+- agent-framework
+- dotnet
+name: Agent UI (AG-UI) web chat app
+urlFragment: ag-ui-webchat
+---
+
+# AG-UI WebChat Sample
 
 This sample demonstrates a Blazor-based web chat application using the AG-UI protocol to communicate with an AI agent server.
 
@@ -54,6 +65,7 @@ The client will start on `http://localhost:5000`. Open your browser and navigate
 Type your message in the text box at the bottom of the page and press Enter or click the send button. The assistant will respond with streaming text that appears in real-time.
 
 Features:
+
 - **Streaming responses**: Watch the assistant's response appear word by word
 - **Conversation suggestions**: The assistant may offer follow-up questions after responding
 - **New chat**: Click the "New chat" button to start a fresh conversation
@@ -98,6 +110,7 @@ builder.Services.AddChatClient(sp => new AGUIChatClient(
 ```
 
 The Blazor UI (`Client/Components/Pages/Chat/Chat.razor`) uses the `IChatClient` to:
+
 - Send user messages to the agent
 - Stream responses back in real-time
 - Maintain conversation history

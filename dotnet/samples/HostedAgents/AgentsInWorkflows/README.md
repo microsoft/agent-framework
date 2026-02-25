@@ -1,8 +1,20 @@
-# What this sample demonstrates
+---
+page_type: sample
+languages:
+- csharp
+products:
+- agent-framework
+- dotnet
+name: Agents in a workflow
+urlFragment: agents-in-workflow
+---
+
+# Agents in a workflow
 
 This sample demonstrates the use of AI agents as executors within a workflow.
 
 This workflow uses three translation agents:
+
 1. French Agent - translates input text to French
 2. Spanish Agent - translates French text to Spanish
 3. English Agent - translates Spanish text back to English
@@ -24,3 +36,4 @@ Set the following environment variables:
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" # Replace with your Azure OpenAI resource endpoint
 $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
+```
