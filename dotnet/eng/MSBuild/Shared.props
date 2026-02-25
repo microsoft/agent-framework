@@ -7,6 +7,7 @@
   </ItemGroup>
   <ItemGroup Condition="'$(InjectSharedIntegrationTestCode)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\IntegrationTests\*.cs" LinkBase="Shared\IntegrationTests" />
+    <Content Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\IntegrationTests\Assets\*" LinkBase="Shared\Assets" CopyToOutputDirectory="Always" />
   </ItemGroup>
   <ItemGroup Condition="'$(InjectSharedBuildTestCode)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\CodeTests\*.cs" LinkBase="Shared\CodeTests" />
