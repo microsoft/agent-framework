@@ -364,8 +364,6 @@ def _emit_mcp_tool_call(content: Content, flow: FlowState) -> list[BaseEvent]:
     same AG-UI ToolCall* events used by regular function calls, making MCP tool
     execution visible to AG-UI consumers. Completion/end events are handled
     separately by ``_emit_mcp_tool_result``.
-
-    Fixes #4213.
     """
     events: list[BaseEvent] = []
 
@@ -415,12 +413,11 @@ def _emit_mcp_tool_result(content: Content, flow: FlowState) -> list[BaseEvent]:
     Mirrors the FlowState cleanup performed by ``_emit_tool_result`` (resetting
     tool_call_id/tool_call_name, closing any open text message) so MCP results
     behave consistently with standard tool results.
-
-    Fixes #4213.
     """
     events: list[BaseEvent] = []
 
     if not content.call_id:
+        logger.warning("MCP tool result content missing call_id, skipping")
         return events
 
     events.append(ToolCallEndEvent(tool_call_id=content.call_id))
@@ -460,15 +457,13 @@ def _emit_mcp_tool_result(content: Content, flow: FlowState) -> list[BaseEvent]:
     return events
 
 
-def _emit_text_reasoning(content: Content, flow: FlowState) -> list[BaseEvent]:
+def _emit_text_reasoning(content: Content) -> list[BaseEvent]:
     """Emit a custom event for text_reasoning content.
 
     AG-UI protocol does not define a dedicated reasoning event type, so we emit
     a ``CustomEvent`` with ``name="text_reasoning"``.  This makes reasoning /
     chain-of-thought progress visible to frontends that listen for custom events,
     following the same pattern used by ``_emit_usage``.
-
-    Fixes #4213.
     """
     # Only emit user-visible text from content.text. Do not fall back to
     # protected_data as text, since protected_data may contain non-display
@@ -512,6 +507,6 @@ def _emit_content(
     if content_type == "mcp_server_tool_result":
         return _emit_mcp_tool_result(content, flow)
     if content_type == "text_reasoning":
-        return _emit_text_reasoning(content, flow)
+        return _emit_text_reasoning(content)
     logger.debug("Skipping unsupported content type in AG-UI emitter: %s", content_type)
     return []
