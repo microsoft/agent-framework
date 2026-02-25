@@ -31,12 +31,16 @@ internal sealed class LockstepRunEventStream : IRunEventStream
 
     public void Start()
     {
-        // Start the session-level activity that spans the entire lockstep execution lifetime.
-        // Individual run-stage activities are nested within this session activity.
+        // Save and restore Activity.Current so the long-lived session activity
+        // doesn't leak into caller code via AsyncLocal.
+        Activity? previousActivity = Activity.Current;
+
         this._sessionActivity = this._stepRunner.TelemetryContext.StartWorkflowSessionActivity();
         this._sessionActivity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId)
                               .SetTag(Tags.SessionId, this._stepRunner.SessionId);
         this._sessionActivity?.AddEvent(new ActivityEvent(EventNames.SessionStarted));
+
+        Activity.Current = previousActivity;
     }
 
     public async IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(bool blockOnPendingRequest, [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -56,15 +60,17 @@ internal sealed class LockstepRunEventStream : IRunEventStream
 
         this._stepRunner.OutgoingEvents.EventRaised += OnWorkflowEventAsync;
 
-        // Not 'using' — Activity.Stop must fire deterministically in the finally block
-        // for OpenTelemetry export, not deferred to the enumerator's DisposeAsync.
-        Activity? activity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity();
-        activity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.SessionId, this._stepRunner.SessionId);
+        // Re-establish session as parent so the run activity nests correctly.
+        Activity.Current = this._sessionActivity;
+
+        // Not 'using' — must dispose explicitly in finally for deterministic export.
+        Activity? runActivity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity();
+        runActivity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId).SetTag(Tags.SessionId, this._stepRunner.SessionId);
 
         try
         {
             this.RunStatus = RunStatus.Running;
-            activity?.AddEvent(new ActivityEvent(EventNames.WorkflowStarted));
+            runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowStarted));
 
             do
             {
@@ -73,7 +79,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                 {
                     // Because we may be yielding out of this function, we need to ensure that the Activity.Current
                     // is set to our activity for the duration of this loop iteration.
-                    Activity.Current = activity;
+                    Activity.Current = runActivity;
 
                     // Drain SuperSteps while there are steps to run
                     try
@@ -83,13 +89,13 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                     catch (OperationCanceledException)
                     {
                     }
-                    catch (Exception ex) when (activity is not null)
+                    catch (Exception ex) when (runActivity is not null)
                     {
-                        activity.AddEvent(new ActivityEvent(EventNames.WorkflowError, tags: new() {
+                        runActivity.AddEvent(new ActivityEvent(EventNames.WorkflowError, tags: new() {
                              { Tags.ErrorType, ex.GetType().FullName },
                              { Tags.ErrorMessage, ex.Message },
                         }));
-                        activity.CaptureException(ex);
+                        runActivity.CaptureException(ex);
                         throw;
                     }
 
@@ -137,7 +143,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                 }
             } while (!ShouldBreak());
 
-            activity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
+            runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
         }
         finally
         {
@@ -146,7 +152,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
 
             // Explicitly dispose the Activity so Activity.Stop fires deterministically,
             // regardless of how the async iterator enumerator is disposed.
-            activity?.Dispose();
+            runActivity?.Dispose();
         }
 
         ValueTask OnWorkflowEventAsync(object? sender, WorkflowEvent e)

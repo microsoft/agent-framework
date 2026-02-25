@@ -298,4 +298,47 @@ public sealed class WorkflowRunActivityStopTests : IDisposable
                 $"Activities started but never stopped: [{string.Join(", ", neverStoppedNames)}]");
         }
     }
+
+    /// <summary>
+    /// Verifies that Activity.Current is not leaked after lockstep RunAsync.
+    /// Application code creating activities after RunAsync returns should not
+    /// be parented under the workflow session span. The run activity should
+    /// still nest correctly under the session.
+    /// </summary>
+    [Fact]
+    public async Task Lockstep_SessionActivity_DoesNotLeak_IntoCaller_ActivityCurrentAsync()
+    {
+        // Arrange
+        using var testActivity = new Activity("SessionLeakTest").Start();
+        var workflow = CreateWorkflow();
+
+        // Act — run the workflow via lockstep (Start + drain happen inside RunAsync)
+        Run run = await InProcessExecution.Lockstep.RunAsync(workflow, "Hello, World!");
+
+        // Create an application activity after RunAsync returns.
+        // If the session leaked into Activity.Current, this would be parented under it.
+        using var appActivity = new Activity("AppWork").Start();
+        appActivity.Stop();
+
+        await run.DisposeAsync();
+
+        // Assert — the app activity should be parented under the test root, not the session
+        var sessionActivities = this._startedActivities
+            .Where(a => a.RootId == testActivity.RootId &&
+                        a.OperationName.StartsWith(ActivityNames.WorkflowSession, StringComparison.Ordinal))
+            .ToList();
+        sessionActivities.Should().HaveCount(1, "one session activity should exist");
+
+        appActivity.ParentId.Should().Be(testActivity.Id,
+            "application activity should be parented under the test root, not the workflow session");
+
+        // Assert — the run activity should still be parented under the session
+        var invokeActivities = this._startedActivities
+            .Where(a => a.RootId == testActivity.RootId &&
+                        a.OperationName.StartsWith(ActivityNames.WorkflowInvoke, StringComparison.Ordinal))
+            .ToList();
+        invokeActivities.Should().HaveCount(1, "one workflow_invoke activity should exist");
+        invokeActivities[0].ParentId.Should().Be(sessionActivities[0].Id,
+            "workflow_invoke activity should be nested under the session activity");
+    }
 }
