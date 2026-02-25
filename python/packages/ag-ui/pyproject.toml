@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-ag-ui"
-version = "1.0.0b260219"
+version = "1.0.0b260225"
 description = "AG-UI protocol integration for Agent Framework"
 readme = "README.md"
 license-files = ["LICENSE"]
@@ -22,7 +22,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc1",
+    "agent-framework-core>=1.0.0rc2",
     "ag-ui-protocol>=0.1.9",
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0"
@@ -45,6 +45,9 @@ packages = ["agent_framework_ag_ui", "agent_framework_ag_ui_examples"]
 asyncio_mode = "auto"
 testpaths = ["tests/ag_ui"]
 pythonpath = ["."]
+markers = [
+    "integration: marks tests as integration tests that require external services",
+]
 
 [tool.ruff]
 line-length = 120

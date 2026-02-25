@@ -459,4 +459,208 @@ public sealed class JsonDocumentExtensionsTests
         Assert.Equal("Bob", second["name"]);
         Assert.Equal("Designer", second["role"]);
     }
+
+    [Fact]
+    public void GetListTypeFromJson_EmptyArray_ReturnsFallbackListType()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse("[]");
+
+        // Act
+        VariableType result = document.RootElement.GetListTypeFromJson();
+
+        // Assert
+        Assert.Equal(VariableType.ListType, result.Type);
+        Assert.False(result.HasSchema);
+    }
+
+    [Fact]
+    public void GetListTypeFromJson_ArrayOfPrimitives_ReturnsFallbackListType()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse("[1, 2, 3]");
+
+        // Act
+        VariableType result = document.RootElement.GetListTypeFromJson();
+
+        // Assert
+        Assert.Equal(VariableType.ListType, result.Type);
+        Assert.False(result.HasSchema);
+    }
+
+    [Fact]
+    public void GetListTypeFromJson_ObjectWithStringField_InfersStringType()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse(
+            """
+            [{ "name": "hello" }]
+            """);
+
+        // Act
+        VariableType result = document.RootElement.GetListTypeFromJson();
+
+        // Assert
+        Assert.True(result.HasSchema);
+        Assert.True(result.Schema!.ContainsKey("name"));
+        Assert.Equal(typeof(string), result.Schema["name"].Type);
+    }
+
+    [Fact]
+    public void GetListTypeFromJson_ObjectWithNumberField_InfersDecimalType()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse(
+            """
+            [{ "value": 42 }]
+            """);
+
+        // Act
+        VariableType result = document.RootElement.GetListTypeFromJson();
+
+        // Assert
+        Assert.True(result.HasSchema);
+        Assert.True(result.Schema!.ContainsKey("value"));
+        Assert.Equal(typeof(decimal), result.Schema["value"].Type);
+    }
+
+    [Fact]
+    public void GetListTypeFromJson_ObjectWithBooleanTrueField_InfersBoolType()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse(
+            """
+            [{ "flag": true }]
+            """);
+
+        // Act
+        VariableType result = document.RootElement.GetListTypeFromJson();
+
+        // Assert
+        Assert.True(result.HasSchema);
+        Assert.True(result.Schema!.ContainsKey("flag"));
+        Assert.Equal(typeof(bool), result.Schema["flag"].Type);
+    }
+
+    [Fact]
+    public void GetListTypeFromJson_ObjectWithBooleanFalseField_InfersBoolType()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse(
+            """
+            [{ "flag": false }]
+            """);
+
+        // Act
+        VariableType result = document.RootElement.GetListTypeFromJson();
+
+        // Assert
+        Assert.True(result.HasSchema);
+        Assert.True(result.Schema!.ContainsKey("flag"));
+        Assert.Equal(typeof(bool), result.Schema["flag"].Type);
+    }
+
+    [Fact]
+    public void GetListTypeFromJson_ObjectWithNestedObjectField_InfersRecordType()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse(
+            """
+            [{ "child": { "inner": 1 } }]
+            """);
+
+        // Act
+        VariableType result = document.RootElement.GetListTypeFromJson();
+
+        // Assert
+        Assert.True(result.HasSchema);
+        Assert.True(result.Schema!.ContainsKey("child"));
+        Assert.Equal(VariableType.RecordType, result.Schema["child"].Type);
+    }
+
+    [Fact]
+    public void GetListTypeFromJson_ObjectWithNestedArrayField_InfersListType()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse(
+            """
+            [{ "items": [1, 2, 3] }]
+            """);
+
+        // Act
+        VariableType result = document.RootElement.GetListTypeFromJson();
+
+        // Assert
+        Assert.True(result.HasSchema);
+        Assert.True(result.Schema!.ContainsKey("items"));
+        Assert.Equal(VariableType.ListType, result.Schema["items"].Type);
+    }
+
+    [Fact]
+    public void GetListTypeFromJson_ObjectWithNullField_InfersStringTypeDefault()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse(
+            """
+            [{ "missing": null }]
+            """);
+
+        // Act
+        VariableType result = document.RootElement.GetListTypeFromJson();
+
+        // Assert
+        Assert.True(result.HasSchema);
+        Assert.True(result.Schema!.ContainsKey("missing"));
+        Assert.Equal(typeof(string), result.Schema["missing"].Type);
+    }
+
+    [Fact]
+    public void GetListTypeFromJson_SkipsNonObjectElements_InfersFromFirstObject()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse(
+            """
+            [1, "text", { "id": 99 }]
+            """);
+
+        // Act
+        VariableType result = document.RootElement.GetListTypeFromJson();
+
+        // Assert
+        Assert.True(result.HasSchema);
+        Assert.True(result.Schema!.ContainsKey("id"));
+        Assert.Equal(typeof(decimal), result.Schema["id"].Type);
+    }
+
+    [Fact]
+    public void GetListTypeFromJson_ObjectWithAllFieldTypes_InfersCorrectTypes()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse(
+            """
+            [{
+              "text": "hello",
+              "count": 5,
+              "enabled": true,
+              "disabled": false,
+              "nested": { "x": 1 },
+              "list": [1, 2],
+              "empty": null
+            }]
+            """);
+
+        // Act
+        VariableType result = document.RootElement.GetListTypeFromJson();
+
+        // Assert
+        Assert.True(result.HasSchema);
+        Assert.Equal(7, result.Schema!.Count);
+        Assert.Equal(typeof(string), result.Schema["text"].Type);
+        Assert.Equal(typeof(decimal), result.Schema["count"].Type);
+        Assert.Equal(typeof(bool), result.Schema["enabled"].Type);
+        Assert.Equal(typeof(bool), result.Schema["disabled"].Type);
+        Assert.Equal(VariableType.RecordType, result.Schema["nested"].Type);
+        Assert.Equal(VariableType.ListType, result.Schema["list"].Type);
+        Assert.Equal(typeof(string), result.Schema["empty"].Type);
+    }
 }

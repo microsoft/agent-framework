@@ -62,6 +62,11 @@ public abstract class IntegrationTest : IDisposable
 
     protected async ValueTask<DeclarativeWorkflowOptions> CreateOptionsAsync(bool externalConversation = false, params IEnumerable<AIFunction> functionTools)
     {
+        return await this.CreateOptionsAsync(externalConversation, mcpToolProvider: null, functionTools).ConfigureAwait(false);
+    }
+
+    protected async ValueTask<DeclarativeWorkflowOptions> CreateOptionsAsync(bool externalConversation, IMcpToolHandler? mcpToolProvider, params IEnumerable<AIFunction> functionTools)
+    {
         AzureAgentProvider agentProvider =
             new(this.TestEndpoint, new AzureCliCredential())
             {
@@ -78,7 +83,8 @@ public abstract class IntegrationTest : IDisposable
             new DeclarativeWorkflowOptions(agentProvider)
             {
                 ConversationId = conversationId,
-                LoggerFactory = this.Output
+                LoggerFactory = this.Output,
+                McpToolHandler = mcpToolProvider
             };
     }
 

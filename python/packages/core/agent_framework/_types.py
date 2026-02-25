@@ -377,6 +377,12 @@ class UsageDetails(TypedDict, total=False):
 
     This is a non-closed dictionary, so any specific provider fields can be added as needed.
     Whenever they can be mapped to standard fields, they will be.
+
+    Keys:
+        input_token_count: The number of input tokens used.
+        output_token_count: The number of output tokens generated.
+        total_token_count: The total number of tokens (input + output).
+
     """
 
     input_token_count: int | None
@@ -3289,7 +3295,7 @@ class GeneratedEmbeddings(list[Embedding[EmbeddingT]], Generic[EmbeddingT, Embed
         embeddings: Iterable[Embedding[EmbeddingT]] | None = None,
         *,
         options: EmbeddingOptionsT | None = None,
-        usage: dict[str, Any] | None = None,
+        usage: UsageDetails | None = None,
         additional_properties: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(embeddings or [])

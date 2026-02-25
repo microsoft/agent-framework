@@ -667,15 +667,11 @@ class SupportsFileSearchTool(Protocol):
 
 # region SupportsGetEmbeddings Protocol
 
-# Contravariant/covariant TypeVars for the Protocol
+# Contravariant TypeVars for the Protocol
 EmbeddingInputContraT = TypeVar(
     "EmbeddingInputContraT",
     default="str",
     contravariant=True,
-)
-EmbeddingCoT = TypeVar(
-    "EmbeddingCoT",
-    default="list[float]",
 )
 EmbeddingOptionsContraT = TypeVar(
     "EmbeddingOptionsContraT",
@@ -686,7 +682,7 @@ EmbeddingOptionsContraT = TypeVar(
 
 
 @runtime_checkable
-class SupportsGetEmbeddings(Protocol[EmbeddingInputContraT, EmbeddingCoT, EmbeddingOptionsContraT]):
+class SupportsGetEmbeddings(Protocol[EmbeddingInputContraT, EmbeddingT, EmbeddingOptionsContraT]):
     """Protocol for an embedding client that can generate embeddings.
 
     This protocol enables duck-typing for embedding generation. Any class that
@@ -714,7 +710,7 @@ class SupportsGetEmbeddings(Protocol[EmbeddingInputContraT, EmbeddingCoT, Embedd
         values: Sequence[EmbeddingInputContraT],
         *,
         options: EmbeddingOptionsContraT | None = None,
-    ) -> Awaitable[GeneratedEmbeddings[EmbeddingCoT]]:
+    ) -> Awaitable[GeneratedEmbeddings[EmbeddingT]]:
         """Generate embeddings for the given values.
 
         Args:
@@ -733,15 +729,15 @@ class SupportsGetEmbeddings(Protocol[EmbeddingInputContraT, EmbeddingCoT, Embedd
 # region BaseEmbeddingClient
 
 # Covariant for the BaseEmbeddingClient
-EmbeddingOptionsCoT = TypeVar(
-    "EmbeddingOptionsCoT",
+EmbeddingOptionsT = TypeVar(
+    "EmbeddingOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="EmbeddingGenerationOptions",
     covariant=True,
 )
 
 
-class BaseEmbeddingClient(SerializationMixin, ABC, Generic[EmbeddingInputT, EmbeddingT, EmbeddingOptionsCoT]):
+class BaseEmbeddingClient(SerializationMixin, ABC, Generic[EmbeddingInputT, EmbeddingT, EmbeddingOptionsT]):
     """Abstract base class for embedding clients.
 
     Subclasses implement ``get_embeddings`` to provide the actual
@@ -785,7 +781,7 @@ class BaseEmbeddingClient(SerializationMixin, ABC, Generic[EmbeddingInputT, Embe
         self,
         values: Sequence[EmbeddingInputT],
         *,
-        options: EmbeddingOptionsCoT | None = None,
+        options: EmbeddingOptionsT | None = None,
     ) -> GeneratedEmbeddings[EmbeddingT]:
         """Generate embeddings for the given values.
 

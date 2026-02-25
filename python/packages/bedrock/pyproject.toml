@@ -4,7 +4,7 @@ description = "Amazon Bedrock integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260219"
+version = "1.0.0b260225"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,11 +23,10 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc1",
+    "agent-framework-core>=1.0.0rc2",
     "boto3>=1.35.0,<2.0.0",
     "botocore>=1.35.0,<2.0.0",
 ]
-
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
@@ -46,6 +45,9 @@ addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
+markers = [
+    "integration: marks tests as integration tests that require external services",
+]
 timeout = 120
 
 [tool.ruff]

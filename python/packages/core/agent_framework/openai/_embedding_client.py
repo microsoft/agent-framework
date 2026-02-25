@@ -12,7 +12,7 @@ from openai import AsyncOpenAI
 
 from .._clients import BaseEmbeddingClient
 from .._settings import load_settings
-from .._types import Embedding, EmbeddingGenerationOptions, GeneratedEmbeddings
+from .._types import Embedding, EmbeddingGenerationOptions, GeneratedEmbeddings, UsageDetails
 from ..observability import EmbeddingTelemetryLayer
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
@@ -116,11 +116,11 @@ class RawOpenAIEmbeddingClient(
                 )
             )
 
-        usage_dict: dict[str, Any] | None = None
+        usage_dict: UsageDetails | None = None
         if response.usage:
             usage_dict = {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "total_tokens": response.usage.total_tokens,
+                "input_token_count": response.usage.prompt_tokens,
+                "total_token_count": response.usage.total_tokens,
             }
 
         return GeneratedEmbeddings(embeddings, options=options, usage=usage_dict)
@@ -143,6 +143,7 @@ class OpenAIEmbeddingClient(
         default_headers: Additional HTTP headers.
         async_client: Pre-configured AsyncOpenAI client.
         base_url: Custom API base URL.
+        otel_provider_name: Override the OpenTelemetry provider name for telemetry.
         env_file_path: Path to .env file for settings.
         env_file_encoding: Encoding for .env file.
 
@@ -176,6 +177,7 @@ class OpenAIEmbeddingClient(
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         base_url: str | None = None,
+        otel_provider_name: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -208,4 +210,5 @@ class OpenAIEmbeddingClient(
             org_id=openai_settings["org_id"],
             default_headers=default_headers,
             client=async_client,
+            otel_provider_name=otel_provider_name,
         )

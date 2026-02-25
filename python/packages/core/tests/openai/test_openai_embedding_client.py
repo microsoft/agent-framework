@@ -100,8 +100,8 @@ async def test_openai_get_embeddings_usage(openai_unit_test_env: None) -> None:
     result = await client.get_embeddings(["test"])
 
     assert result.usage is not None
-    assert result.usage["prompt_tokens"] == 10
-    assert result.usage["total_tokens"] == 10
+    assert result.usage["input_token_count"] == 10
+    assert result.usage["total_token_count"] == 10
 
 
 async def test_openai_options_passthrough_dimensions(openai_unit_test_env: None) -> None:
@@ -284,7 +284,7 @@ async def test_integration_openai_get_embeddings() -> None:
     assert all(isinstance(v, float) for v in result[0].vector)
     assert result[0].model_id is not None
     assert result.usage is not None
-    assert result.usage["prompt_tokens"] > 0
+    assert result.usage["input_token_count"] > 0
 
 
 @skip_if_openai_integration_tests_disabled
@@ -327,7 +327,7 @@ async def test_integration_azure_openai_get_embeddings() -> None:
     assert all(isinstance(v, float) for v in result[0].vector)
     assert result[0].model_id is not None
     assert result.usage is not None
-    assert result.usage["prompt_tokens"] > 0
+    assert result.usage["input_token_count"] > 0
 
 
 @skip_if_azure_openai_integration_tests_disabled
