@@ -69,7 +69,7 @@ internal sealed class Program
     }
 
     private static PromptAgentDefinition DefineLocationTriageAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -80,7 +80,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineLocationCaptureAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -129,7 +129,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineLocationAwareAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             // Parameterized instructions reference the "location" input argument.
             Instructions =

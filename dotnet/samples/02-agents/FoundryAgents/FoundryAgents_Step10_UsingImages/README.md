@@ -29,8 +29,8 @@ Before running this sample, ensure you have:
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_FOUNDRY_PROJECT_ENDPOINT="https://your-resource.openai.azure.com/" # Replace with your Azure Foundry Project endpoint
-$env:AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME="gpt-4o" # Replace with your model deployment name (optional, defaults to gpt-4o)
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-resource.openai.azure.com/" # Replace with your Azure Foundry Project endpoint
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o" # Replace with your model deployment name (optional, defaults to gpt-4o)
 ```
 
 ## Run the sample

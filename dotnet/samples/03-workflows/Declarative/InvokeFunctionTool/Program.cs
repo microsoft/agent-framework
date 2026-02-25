@@ -66,7 +66,7 @@ internal sealed class Program
     private static PromptAgentDefinition DefineMenuAgent(IConfiguration configuration, AIFunction[] functions)
     {
         PromptAgentDefinition agentDefinition =
-            new(configuration.GetValue(Application.Settings.FoundryModelMini))
+            new(configuration.GetValue(Application.Settings.FoundryModel))
             {
                 Instructions =
                     """

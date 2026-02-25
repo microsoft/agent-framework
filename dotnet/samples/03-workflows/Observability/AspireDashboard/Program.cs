@@ -29,7 +29,7 @@ public static class Program
     private static async Task Main()
     {
         // Configure OpenTelemetry for Aspire dashboard
-        var otlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT") ?? "http://localhost:4317";
+        var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT") ?? "http://localhost:4317";
 
         var resourceBuilder = ResourceBuilder
             .CreateDefault()

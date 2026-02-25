@@ -13,7 +13,7 @@ This sample demonstrates how to create an AI agent directly from an `OpenAI.Chat
 1. Set the required environment variables:
    ```bash
    set OPENAI_API_KEY=your_api_key_here
-   set OPENAI_MODEL=gpt-4o-mini
+   set OPENAI_CHAT_MODEL_NAME=gpt-4o-mini
    ```
 
 2. Run the sample:

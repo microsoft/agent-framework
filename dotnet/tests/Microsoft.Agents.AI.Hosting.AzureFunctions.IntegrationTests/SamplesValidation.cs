@@ -25,14 +25,16 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     private static readonly HttpClient s_sharedHttpClient = new();
     private static readonly IConfiguration s_configuration =
         new ConfigurationBuilder()
-            .AddUserSecrets(Assembly.GetExecutingAssembly())
             .AddEnvironmentVariables()
+            .AddUserSecrets(Assembly.GetExecutingAssembly())
             .Build();
 
     private static bool s_infrastructureStarted;
     private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(1);
-    private static readonly string s_samplesPath = Path.GetFullPath(
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "Durable", "Agents", "AzureFunctions"));
+    private static readonly string s_samplesGetStartedPath = Path.GetFullPath(
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "01-get-started"));
+    private static readonly string s_samplesHostingPath = Path.GetFullPath(
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "04-hosting", "DurableAgents", "AzureFunctions"));
 
     private readonly ITestOutputHelper _outputHelper = outputHelper;
 
@@ -54,7 +56,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     [Fact]
     public async Task SingleAgentSampleValidationAsync()
     {
-        string samplePath = Path.Combine(s_samplesPath, "01_SingleAgent");
+        string samplePath = Path.Combine(s_samplesGetStartedPath, "06_host_your_agent");
         await this.RunSampleTestAsync(samplePath, async (logs) =>
         {
             Uri startUri = new($"http://localhost:{AzureFunctionsPort}/api/agents/Joker/run");
@@ -99,7 +101,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     [Fact]
     public async Task SingleAgentOrchestrationChainingSampleValidationAsync()
     {
-        string samplePath = Path.Combine(s_samplesPath, "02_AgentOrchestration_Chaining");
+        string samplePath = Path.Combine(s_samplesHostingPath, "01_AgentOrchestration_Chaining");
         await this.RunSampleTestAsync(samplePath, async (logs) =>
         {
             Uri startUri = new($"http://localhost:{AzureFunctionsPort}/api/singleagent/run");
@@ -142,7 +144,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     [Fact]
     public async Task MultiAgentOrchestrationConcurrentSampleValidationAsync()
     {
-        string samplePath = Path.Combine(s_samplesPath, "03_AgentOrchestration_Concurrency");
+        string samplePath = Path.Combine(s_samplesHostingPath, "02_AgentOrchestration_Concurrency");
         await this.RunSampleTestAsync(samplePath, async (logs) =>
         {
             // Start the multi-agent orchestration
@@ -192,7 +194,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     [Fact]
     public async Task MultiAgentOrchestrationConditionalsSampleValidationAsync()
     {
-        string samplePath = Path.Combine(s_samplesPath, "04_AgentOrchestration_Conditionals");
+        string samplePath = Path.Combine(s_samplesHostingPath, "03_AgentOrchestration_Conditionals");
         await this.RunSampleTestAsync(samplePath, async (logs) =>
         {
             // Test with legitimate email
@@ -210,7 +212,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     [Fact]
     public async Task SingleAgentOrchestrationHITLSampleValidationAsync()
     {
-        string samplePath = Path.Combine(s_samplesPath, "05_AgentOrchestration_HITL");
+        string samplePath = Path.Combine(s_samplesHostingPath, "04_AgentOrchestration_HITL");
 
         await this.RunSampleTestAsync(samplePath, async (logs) =>
         {
@@ -266,7 +268,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     [Fact]
     public async Task LongRunningToolsSampleValidationAsync()
     {
-        string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
+        string samplePath = Path.Combine(s_samplesHostingPath, "05_LongRunningTools");
 
         await this.RunSampleTestAsync(samplePath, async (logs) =>
         {
@@ -356,7 +358,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     [Fact]
     public async Task AgentAsMcpToolAsync()
     {
-        string samplePath = Path.Combine(s_samplesPath, "07_AgentAsMcpTool");
+        string samplePath = Path.Combine(s_samplesHostingPath, "06_AgentAsMcpTool");
         await this.RunSampleTestAsync(samplePath, async (logs) =>
         {
             IClientTransport clientTransport = new HttpClientTransport(new()
@@ -396,7 +398,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     [Fact]
     public async Task ReliableStreamingSampleValidationAsync()
     {
-        string samplePath = Path.Combine(s_samplesPath, "08_ReliableStreaming");
+        string samplePath = Path.Combine(s_samplesHostingPath, "07_ReliableStreaming");
         await this.RunSampleTestAsync(samplePath, async (logs) =>
         {
             Uri createUri = new($"http://localhost:{AzureFunctionsPort}/api/agent/create");
@@ -826,12 +828,12 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 
         string openAiEndpoint = s_configuration["AZURE_OPENAI_ENDPOINT"] ??
             throw new InvalidOperationException("The required AZURE_OPENAI_ENDPOINT env variable is not set.");
-        string openAiDeployment = s_configuration["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"] ??
-            throw new InvalidOperationException("The required AZURE_OPENAI_CHAT_DEPLOYMENT_NAME env variable is not set.");
+        string openAiDeployment = s_configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ??
+            throw new InvalidOperationException("The required AZURE_OPENAI_DEPLOYMENT_NAME env variable is not set.");
 
         // Set required environment variables for the function app (see local.settings.json for required settings)
         startInfo.EnvironmentVariables["AZURE_OPENAI_ENDPOINT"] = openAiEndpoint;
-        startInfo.EnvironmentVariables["AZURE_OPENAI_DEPLOYMENT"] = openAiDeployment;
+        startInfo.EnvironmentVariables["AZURE_OPENAI_DEPLOYMENT_NAME"] = openAiDeployment;
         startInfo.EnvironmentVariables["DURABLE_TASK_SCHEDULER_CONNECTION_STRING"] =
             $"Endpoint=http://localhost:{DtsPort};TaskHub=default;Authentication=None";
         startInfo.EnvironmentVariables["AzureWebJobsStorage"] = "UseDevelopmentStorage=true";

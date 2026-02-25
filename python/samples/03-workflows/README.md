@@ -127,16 +127,18 @@ Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magen
 
 YAML-based declarative workflows allow you to define multi-agent orchestration patterns without writing Python code. See the [declarative workflows README](./declarative/README.md) for more details on YAML workflow syntax and available actions.
 
-| Sample               | File                                                                     | Concepts                                                      |
-| -------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| Conditional Workflow | [declarative/conditional_workflow/](./declarative/conditional_workflow/) | Nested conditional branching based on user input              |
-| Customer Support     | [declarative/customer_support/](./declarative/customer_support/)         | Multi-agent customer support with routing                     |
-| Deep Research        | [declarative/deep_research/](./declarative/deep_research/)               | Research workflow with planning, searching, and synthesis     |
-| Function Tools       | [declarative/function_tools/](./declarative/function_tools/)             | Invoking Python functions from declarative workflows          |
-| Human-in-Loop        | [declarative/human_in_loop/](./declarative/human_in_loop/)               | Interactive workflows that request user input                 |
-| Marketing            | [declarative/marketing/](./declarative/marketing/)                       | Marketing content generation workflow                         |
-| Simple Workflow      | [declarative/simple_workflow/](./declarative/simple_workflow/)           | Basic workflow with variable setting, conditionals, and loops |
-| Student Teacher      | [declarative/student_teacher/](./declarative/student_teacher/)           | Student-teacher interaction pattern                           |
+| Sample | File | Concepts |
+|---|---|---|
+| Agent to Function Tool | [declarative/agent_to_function_tool/](./declarative/agent_to_function_tool/) | Chain agent output to InvokeFunctionTool actions |
+| Conditional Workflow | [declarative/conditional_workflow/](./declarative/conditional_workflow/) | Nested conditional branching based on user input |
+| Customer Support | [declarative/customer_support/](./declarative/customer_support/) | Multi-agent customer support with routing |
+| Deep Research | [declarative/deep_research/](./declarative/deep_research/) | Research workflow with planning, searching, and synthesis |
+| Function Tools | [declarative/function_tools/](./declarative/function_tools/) | Invoking Python functions from declarative workflows |
+| Human-in-Loop | [declarative/human_in_loop/](./declarative/human_in_loop/) | Interactive workflows that request user input |
+| Invoke Function Tool | [declarative/invoke_function_tool/](./declarative/invoke_function_tool/) | Call registered Python functions with InvokeFunctionTool |
+| Marketing | [declarative/marketing/](./declarative/marketing/) | Marketing content generation workflow |
+| Simple Workflow | [declarative/simple_workflow/](./declarative/simple_workflow/) | Basic workflow with variable setting, conditionals, and loops |
+| Student Teacher | [declarative/student_teacher/](./declarative/student_teacher/) | Student-teacher interaction pattern |
 
 ### resources
 

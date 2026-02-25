@@ -98,7 +98,7 @@ internal sealed class Program
     }
 
     private static PromptAgentDefinition DefineSelfServiceAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -145,7 +145,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineTicketingAgent(IConfiguration configuration, TicketingPlugin plugin) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -209,7 +209,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineTicketRoutingAgent(IConfiguration configuration, TicketingPlugin plugin) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -254,7 +254,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineWindowsSupportAgent(IConfiguration configuration, TicketingPlugin plugin) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -324,7 +324,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineResolutionAgent(IConfiguration configuration, TicketingPlugin plugin) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -358,7 +358,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition TicketEscalationAgent(IConfiguration configuration, TicketingPlugin plugin) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """

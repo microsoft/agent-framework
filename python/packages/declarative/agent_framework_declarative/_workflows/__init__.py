@@ -34,7 +34,6 @@ from ._executors_agents import (
     AgentResult,
     ExternalLoopState,
     InvokeAzureAgentExecutor,
-    InvokeToolExecutor,
 )
 from ._executors_basic import (
     BASIC_ACTION_EXECUTORS,
@@ -68,6 +67,17 @@ from ._executors_external_input import (
     RequestExternalInputExecutor,
     WaitForInputExecutor,
 )
+from ._executors_tools import (
+    FUNCTION_TOOL_REGISTRY_KEY,
+    TOOL_ACTION_EXECUTORS,
+    TOOL_APPROVAL_STATE_KEY,
+    BaseToolExecutor,
+    InvokeFunctionToolExecutor,
+    ToolApprovalRequest,
+    ToolApprovalResponse,
+    ToolApprovalState,
+    ToolInvocationResult,
+)
 from ._factory import DeclarativeWorkflowError, WorkflowFactory
 from ._state import WorkflowState
 
@@ -79,6 +89,9 @@ __all__ = [
     "CONTROL_FLOW_EXECUTORS",
     "DECLARATIVE_STATE_KEY",
     "EXTERNAL_INPUT_EXECUTORS",
+    "FUNCTION_TOOL_REGISTRY_KEY",
+    "TOOL_ACTION_EXECUTORS",
+    "TOOL_APPROVAL_STATE_KEY",
     "TOOL_REGISTRY_KEY",
     "ActionComplete",
     "ActionTrigger",
@@ -86,6 +99,7 @@ __all__ = [
     "AgentExternalInputResponse",
     "AgentResult",
     "AppendValueExecutor",
+    "BaseToolExecutor",
     "BreakLoopExecutor",
     "ClearAllVariablesExecutor",
     "ConfirmationExecutor",
@@ -107,7 +121,7 @@ __all__ = [
     "ForeachInitExecutor",
     "ForeachNextExecutor",
     "InvokeAzureAgentExecutor",
-    "InvokeToolExecutor",
+    "InvokeFunctionToolExecutor",
     "JoinExecutor",
     "LoopControl",
     "LoopIterationResult",
@@ -119,6 +133,10 @@ __all__ = [
     "SetTextVariableExecutor",
     "SetValueExecutor",
     "SetVariableExecutor",
+    "ToolApprovalRequest",
+    "ToolApprovalResponse",
+    "ToolApprovalState",
+    "ToolInvocationResult",
     "WaitForInputExecutor",
     "WorkflowFactory",
     "WorkflowState",

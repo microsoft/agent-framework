@@ -37,9 +37,9 @@ Before you begin, ensure you have the following prerequisites:
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_FOUNDRY_PROJECT_ENDPOINT="https://your-project.api.azureml.ms"  # Azure Foundry project endpoint
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-project.api.azureml.ms"  # Azure Foundry project endpoint
 $env:AZURE_OPENAI_ENDPOINT="https://your-openai.openai.azure.com/"         # Azure OpenAI endpoint (for quality evaluators)
-$env:AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME="gpt-4o-mini"                   # Model deployment name
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"                   # Model deployment name
 ```
 
 **Note**: For best evaluation results, use GPT-4o or GPT-4o-mini as the evaluator model. The groundedness evaluator has been tested and tuned for these models.

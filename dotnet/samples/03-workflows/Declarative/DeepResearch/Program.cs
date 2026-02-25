@@ -89,7 +89,7 @@ internal sealed class Program
     }
 
     private static PromptAgentDefinition DefineResearchAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelFull))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -121,7 +121,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefinePlannerAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions = // TODO: Use Structured Inputs / Prompt Template
                 """
@@ -140,7 +140,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineManagerAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions = // TODO: Use Structured Inputs / Prompt Template
                 """
@@ -226,7 +226,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineSummaryAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -241,7 +241,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineKnowledgeAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Tools =
             {
@@ -252,7 +252,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineCoderAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """
@@ -266,7 +266,7 @@ internal sealed class Program
         };
 
     private static PromptAgentDefinition DefineWeatherAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        new(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """

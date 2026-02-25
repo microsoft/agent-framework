@@ -20,7 +20,7 @@ The agent urls are provided as a ` ` delimited list of strings
 ```powershell
 cd dotnet/samples/05-end-to-end/A2AClientServer/A2AClient
 
-$env:OPENAI_MODEL="gpt-4o-mini"
+$env:OPENAI_CHAT_MODEL_NAME="gpt-4o-mini"
 $env:OPENAI_API_KEY="<Your OPENAI api key>"
 $env:AGENT_URLS="http://localhost:5000/policy;http://localhost:5000/invoice;http://localhost:5000/logistics"
 ```
