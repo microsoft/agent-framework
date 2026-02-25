@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 #pragma warning disable IDE0002 // Simplify Member Access
 
@@ -14,8 +14,8 @@ using OpenAI.Chat;
 // Get the Azure OpenAI endpoint and deployment name from environment variables.
 string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
     ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT")
-    ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
 
 // Use Azure Key Credential if provided, otherwise use Azure CLI Credential.
 string? azureOpenAiKey = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY");
