@@ -463,10 +463,10 @@ public class WorkflowVisualizerTests
     }
 
     [Fact]
-    public void Test_WorkflowViz_Mermaid_ConditionalEdge_ArrowSyntax_Issue1406()
+    public void Test_WorkflowViz_Mermaid_ConditionalEdge_ArrowSyntax()
     {
-        // Issue #1406: Conditional edges produce ".-->" which is invalid Mermaid syntax.
-        // The correct Mermaid syntax for a dotted arrow with label is "-. label .->" (not ".-->").
+        // Conditional edges must use "-. label .->" (not ".-->") which is the correct
+        // Mermaid syntax for dotted arrows with labels.
         var start = new MockExecutor("start");
         var mid = new MockExecutor("mid");
 
@@ -484,10 +484,10 @@ public class WorkflowVisualizerTests
     }
 
     [Fact]
-    public void Test_WorkflowViz_Mermaid_IdentifiersWithSpaces_Issue1406()
+    public void Test_WorkflowViz_Mermaid_IdentifiersWithSpaces()
     {
-        // Issue #1406: Identifiers with spaces are used directly as Mermaid node IDs,
-        // which causes rendering errors. Mermaid node IDs should not contain spaces.
+        // Identifiers with spaces must not be used directly as Mermaid node IDs
+        // because spaces cause rendering errors.
         var executor1 = new MockExecutor("1. User input");
         var executor2 = new MockExecutor("2. Process data");
 
@@ -515,9 +515,9 @@ public class WorkflowVisualizerTests
     }
 
     [Fact]
-    public void Test_WorkflowViz_Mermaid_IdentifiersWithUnicode_Issue1406()
+    public void Test_WorkflowViz_Mermaid_IdentifiersWithUnicode()
     {
-        // Issue #1406: Non-ASCII characters (e.g. Japanese) in identifiers cause Mermaid rendering errors.
+        // Non-ASCII characters (e.g. Japanese) in identifiers cause Mermaid rendering errors.
         var executor1 = new MockExecutor("ユーザー入力");
         var executor2 = new MockExecutor("データ処理");
 
