@@ -8,7 +8,6 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
 using Azure.Core;
 using Azure.Identity;
-using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
