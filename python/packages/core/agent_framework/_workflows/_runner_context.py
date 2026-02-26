@@ -105,7 +105,7 @@ class RunnerContext(Protocol):
         Args:
             WorkflowMessage: The WorkflowMessage to be sent.
         """
-        ...
+        pass
 
     async def drain_messages(self) -> dict[str, list[WorkflowMessage]]:
         """Drain all messages from the context.
@@ -113,7 +113,7 @@ class RunnerContext(Protocol):
         Returns:
             A dictionary mapping executor IDs to lists of messages.
         """
-        ...
+        pass
 
     async def has_messages(self) -> bool:
         """Check if there are any messages in the context.
@@ -121,7 +121,7 @@ class RunnerContext(Protocol):
         Returns:
             True if there are messages, False otherwise.
         """
-        ...
+        pass
 
     async def add_event(self, event: WorkflowEvent) -> None:
         """Add an event to the execution context.
@@ -129,7 +129,7 @@ class RunnerContext(Protocol):
         Args:
             event: The event to be added.
         """
-        ...
+        pass
 
     async def drain_events(self) -> list[WorkflowEvent]:
         """Drain all events from the context.
@@ -137,7 +137,7 @@ class RunnerContext(Protocol):
         Returns:
             A list of events that were added to the context.
         """
-        ...
+        pass
 
     async def has_events(self) -> bool:
         """Check if there are any events in the context.
@@ -145,11 +145,11 @@ class RunnerContext(Protocol):
         Returns:
             True if there are events, False otherwise.
         """
-        ...
+        pass
 
     async def next_event(self) -> WorkflowEvent:  # pragma: no cover - interface only
         """Wait for and return the next event emitted by the workflow run."""
-        ...
+        pass
 
     # Checkpointing capability
     def has_checkpointing(self) -> bool:
@@ -158,7 +158,7 @@ class RunnerContext(Protocol):
         Returns:
             True if checkpointing is supported, False otherwise.
         """
-        ...
+        pass
 
     def set_runtime_checkpoint_storage(self, storage: CheckpointStorage) -> None:
         """Set runtime checkpoint storage to override build-time configuration.
@@ -166,15 +166,15 @@ class RunnerContext(Protocol):
         Args:
             storage: The checkpoint storage to use for this run.
         """
-        ...
+        pass
 
     def clear_runtime_checkpoint_storage(self) -> None:
         """Clear runtime checkpoint storage override."""
-        ...
+        pass
 
     def reset_for_new_run(self) -> None:
         """Reset the context for a new workflow run."""
-        ...
+        pass
 
     def set_streaming(self, streaming: bool) -> None:
         """Set whether agents should stream incremental updates.
@@ -182,7 +182,7 @@ class RunnerContext(Protocol):
         Args:
             streaming: True for streaming mode (stream=True), False for non-streaming (stream=False).
         """
-        ...
+        pass
 
     def is_streaming(self) -> bool:
         """Check if the workflow is in streaming mode.
@@ -190,7 +190,7 @@ class RunnerContext(Protocol):
         Returns:
             True if streaming mode is enabled, False otherwise.
         """
-        ...
+        pass
 
     async def create_checkpoint(
         self,
@@ -217,7 +217,7 @@ class RunnerContext(Protocol):
         Returns:
             The ID of the created checkpoint.
         """
-        ...
+        pass
 
     async def load_checkpoint(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint | None:
         """Load a checkpoint without mutating the current context state.
@@ -228,7 +228,7 @@ class RunnerContext(Protocol):
         Returns:
             The loaded checkpoint, or None if it does not exist.
         """
-        ...
+        pass
 
     async def apply_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
         """Apply a checkpoint to the current context, mutating its state.
@@ -236,7 +236,7 @@ class RunnerContext(Protocol):
         Args:
             checkpoint: The checkpoint whose state is to be applied.
         """
-        ...
+        pass
 
     async def add_request_info_event(self, event: WorkflowEvent[Any]) -> None:
         """Add a request_info event to the context and track it for correlation.
@@ -244,7 +244,7 @@ class RunnerContext(Protocol):
         Args:
             event: The WorkflowEvent with type='request_info' to be added.
         """
-        ...
+        pass
 
     async def send_request_info_response(self, request_id: str, response: Any) -> None:
         """Send a response correlated to a pending request.
@@ -253,7 +253,7 @@ class RunnerContext(Protocol):
             request_id: The ID of the original request.
             response: The response data to be sent.
         """
-        ...
+        pass
 
     async def get_pending_request_info_events(self) -> dict[str, WorkflowEvent[Any]]:
         """Get the mapping of request IDs to their corresponding request_info events.
@@ -261,7 +261,7 @@ class RunnerContext(Protocol):
         Returns:
             A dictionary mapping request IDs to their corresponding WorkflowEvent (type='request_info').
         """
-        ...
+        pass
 
 
 class InProcRunnerContext:

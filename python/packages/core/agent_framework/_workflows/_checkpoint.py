@@ -128,7 +128,7 @@ class CheckpointStorage(Protocol):
         Returns:
             The unique ID of the saved checkpoint.
         """
-        ...
+        pass
 
     async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
         """Load a checkpoint by ID.
@@ -142,7 +142,7 @@ class CheckpointStorage(Protocol):
         Raises:
             WorkflowCheckpointException: If no checkpoint with the given ID exists.
         """
-        ...
+        pass
 
     async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
         """List checkpoint objects for a given workflow name.
@@ -153,7 +153,7 @@ class CheckpointStorage(Protocol):
         Returns:
             A list of WorkflowCheckpoint objects for the specified workflow name.
         """
-        ...
+        pass
 
     async def delete(self, checkpoint_id: CheckpointID) -> bool:
         """Delete a checkpoint by ID.
@@ -164,7 +164,7 @@ class CheckpointStorage(Protocol):
         Returns:
             True if the checkpoint was successfully deleted, False if no checkpoint with the given ID exists.
         """
-        ...
+        pass
 
     async def get_latest(self, *, workflow_name: str) -> WorkflowCheckpoint | None:
         """Get the latest checkpoint for a given workflow name.
@@ -175,7 +175,7 @@ class CheckpointStorage(Protocol):
         Returns:
             The latest WorkflowCheckpoint object for the specified workflow name, or None if no checkpoints exist.
         """
-        ...
+        pass
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         """List checkpoint IDs for a given workflow name.
@@ -186,7 +186,7 @@ class CheckpointStorage(Protocol):
         Returns:
             A list of checkpoint IDs for the specified workflow name.
         """
-        ...
+        pass
 
 
 class InMemoryCheckpointStorage:
