@@ -13,6 +13,7 @@ env:
   COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
 
 permissions:
+  contents: read
   id-token: write
 
 jobs:
@@ -20,8 +21,6 @@ jobs:
     name: Validate 01-get-started
     runs-on: ubuntu-latest
     environment: integration
-    permissions:
-      contents: read
     env:
       # Required configuration for get-started samples
       AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
