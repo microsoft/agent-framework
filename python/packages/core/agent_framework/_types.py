@@ -468,6 +468,7 @@ class Content:
         arguments: str | Mapping[str, Any] | None = None,
         exception: str | None = None,
         result: Any = None,
+        items: Sequence[Content] | None = None,
         # Hosted file/vector store fields
         file_id: str | None = None,
         vector_store_id: str | None = None,
@@ -513,6 +514,7 @@ class Content:
         self.arguments = arguments
         self.exception = exception
         self.result = result
+        self.items = items
         self.file_id = file_id
         self.vector_store_id = vector_store_id
         self.inputs = inputs
@@ -756,16 +758,30 @@ class Content:
         call_id: str,
         *,
         result: Any = None,
+        items: Sequence[Content] | None = None,
         exception: str | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
     ) -> ContentT:
-        """Create function result content."""
+        """Create function result content.
+
+        Args:
+            call_id: The ID of the function call this result corresponds to.
+
+        Keyword Args:
+            result: The text result of the function call.
+            items: Optional rich content items (e.g. images, audio) produced by the tool.
+            exception: The exception message if the function call failed.
+            annotations: Optional annotations for the content.
+            additional_properties: Optional additional properties.
+            raw_representation: Optional raw representation from the provider.
+        """
         return cls(
             "function_result",
             call_id=call_id,
             result=result,
+            items=list(items) if items else None,
             exception=exception,
             annotations=annotations,
             additional_properties=additional_properties,
@@ -1029,6 +1045,7 @@ class Content:
             "arguments",
             "exception",
             "result",
+            "items",
             "file_id",
             "vector_store_id",
             "inputs",

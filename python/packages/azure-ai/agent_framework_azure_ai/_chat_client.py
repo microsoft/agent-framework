@@ -1391,6 +1391,11 @@ class AzureAIAgentClient(
                 call_id = run_and_call_ids[1]
 
                 if content.type == "function_result":
+                    if content.items:
+                        logger.warning(
+                            "Azure AI Agents does not support rich content (images, audio) in tool results. "
+                            "Rich content items will be omitted."
+                        )
                     if tool_outputs is None:
                         tool_outputs = []
                     tool_outputs.append(

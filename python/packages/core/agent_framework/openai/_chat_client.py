@@ -571,9 +571,21 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         args["tool_calls"] = [self._prepare_content_for_openai(content)]  # type: ignore
                 case "function_result":
                     args["tool_call_id"] = content.call_id
-                    # Always include content for tool results - API requires it even if empty
-                    # Functions returning None should still have a tool result message
-                    args["content"] = content.result if content.result is not None else ""
+                    if content.items:
+                        # Multi-part: text result + rich content (images, audio, files)
+                        content_parts: list[dict[str, Any]] = []
+                        text_result = content.result if content.result else ""
+                        if text_result:
+                            content_parts.append({"type": "text", "text": text_result})
+                        for item in content.items:
+                            prepared = self._prepare_content_for_openai(item)
+                            if prepared:
+                                content_parts.append(prepared)
+                        args["content"] = content_parts
+                    else:
+                        # Always include content for tool results - API requires it even if empty
+                        # Functions returning None should still have a tool result message
+                        args["content"] = content.result if content.result is not None else ""
                 case "text_reasoning" if (protected_data := content.protected_data) is not None:
                     all_messages[-1]["reasoning_details"] = json.loads(protected_data)
                 case _:

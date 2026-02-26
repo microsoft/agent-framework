@@ -926,6 +926,19 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     new_args.update(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore[arg-type]
                     if new_args:
                         all_messages.append(new_args)
+                    # Forward rich content items (images, audio, files) as a user message
+                    if content.items:
+                        rich_parts = [
+                            self._prepare_content_for_openai("user", item, call_id_to_id)  # type: ignore[arg-type]
+                            for item in content.items
+                        ]
+                        rich_parts = [p for p in rich_parts if p]
+                        if rich_parts:
+                            all_messages.append({
+                                "type": "message",
+                                "role": "user",
+                                "content": rich_parts,
+                            })
                 case "function_call":
                     function_call = self._prepare_content_for_openai(message.role, content, call_id_to_id)  # type: ignore[arg-type]
                     if function_call:

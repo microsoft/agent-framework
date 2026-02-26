@@ -503,10 +503,16 @@ class BedrockChatClient(
                     }
                 }
             case "function_result":
+                tool_result_blocks = self._convert_tool_result_to_blocks(content.result)
+                if content.items:
+                    logger.warning(
+                        "Bedrock does not support rich content (images, audio) in tool results. "
+                        "Rich content items will be omitted."
+                    )
                 tool_result_block = {
                     "toolResult": {
                         "toolUseId": content.call_id,
-                        "content": self._convert_tool_result_to_blocks(content.result),
+                        "content": tool_result_blocks,
                         "status": "error" if content.exception else "success",
                     }
                 }

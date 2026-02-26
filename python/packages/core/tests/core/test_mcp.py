@@ -64,7 +64,7 @@ def test_mcp_prompt_message_to_ai_content():
 
 
 def test_parse_tool_result_from_mcp():
-    """Test conversion from MCP tool result to string representation."""
+    """Test conversion from MCP tool result with images returns rich content list."""
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Result text"),
@@ -74,20 +74,19 @@ def test_parse_tool_result_from_mcp():
     )
     result = _parse_tool_result_from_mcp(mcp_result)
 
-    # Multiple items produce a JSON array of strings
-    assert isinstance(result, str)
-    import json
-
-    parsed = json.loads(result)
-    assert len(parsed) == 3
-    assert parsed[0] == "Result text"
-    # Image items are JSON-encoded strings within the array
-    img1 = json.loads(parsed[1])
-    assert img1["type"] == "image"
-    assert img1["data"] == "eHl6"
-    img2 = json.loads(parsed[2])
-    assert img2["type"] == "image"
-    assert img2["data"] == "YWJj"
+    # Results with images return a list of Content objects
+    assert isinstance(result, list)
+    assert len(result) == 3
+    # First item is the text content
+    assert result[0].type == "text"
+    assert result[0].text == "Result text"
+    # Image items are preserved as data Content objects (data URI)
+    assert result[1].type == "data"
+    assert result[1].media_type == "image/png"
+    assert "eHl6" in result[1].uri
+    assert result[2].type == "data"
+    assert result[2].media_type == "image/webp"
+    assert "YWJj" in result[2].uri
 
 
 def test_parse_tool_result_from_mcp_single_text():
@@ -115,6 +114,22 @@ def test_parse_tool_result_from_mcp_empty_content():
     mcp_result = types.CallToolResult(content=[])
     result = _parse_tool_result_from_mcp(mcp_result)
     assert result == ""
+
+
+def test_parse_tool_result_from_mcp_audio_content():
+    """Test conversion from MCP tool result with audio returns rich content list."""
+    mcp_result = types.CallToolResult(
+        content=[
+            types.AudioContent(type="audio", data="YXVkaW8=", mimeType="audio/wav"),
+        ]
+    )
+    result = _parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "data"
+    assert result[0].media_type == "audio/wav"
+    assert "YXVkaW8=" in result[0].uri
 
 
 def test_mcp_content_types_to_ai_content_text():

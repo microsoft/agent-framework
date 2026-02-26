@@ -242,7 +242,7 @@ class FunctionTool(SerializationMixin):
         additional_properties: dict[str, Any] | None = None,
         func: Callable[..., Any] | None = None,
         input_model: type[BaseModel] | Mapping[str, Any] | None = None,
-        result_parser: Callable[[Any], str] | None = None,
+        result_parser: Callable[[Any], str | list[Content]] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the FunctionTool.
@@ -438,19 +438,19 @@ class FunctionTool(SerializationMixin):
         *,
         arguments: BaseModel | Mapping[str, Any] | None = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> str | list[Content]:
         """Run the AI function with the provided arguments as a Pydantic model.
 
         The raw return value of the wrapped function is automatically parsed into a ``str``
-        (either plain text or serialized JSON) using :meth:`parse_result` or the custom
-        ``result_parser`` if one was provided.
+        (either plain text or serialized JSON) or a ``list[Content]`` (for rich content like
+        images) using :meth:`parse_result` or the custom ``result_parser`` if one was provided.
 
         Keyword Args:
             arguments: A mapping or model instance containing the arguments for the function.
             kwargs: Keyword arguments to pass to the function, will not be used if ``arguments`` is provided.
 
         Returns:
-            The parsed result as a string — either plain text or serialized JSON.
+            The parsed result as a string, or a list of Content items for rich results.
 
         Raises:
             TypeError: If arguments is not mapping-like or fails schema checks.
@@ -556,8 +556,9 @@ class FunctionTool(SerializationMixin):
                     parsed = str(result)
                 logger.info(f"Function {self.name} succeeded.")
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
-                    span.set_attribute(OtelAttr.TOOL_RESULT, parsed)
-                    logger.debug(f"Function result: {parsed}")
+                    result_str = parsed if isinstance(parsed, str) else str(parsed)
+                    span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
+                    logger.debug(f"Function result: {result_str}")
                 return parsed
             finally:
                 duration = (end_time_stamp or perf_counter()) - start_time_stamp
@@ -609,10 +610,13 @@ class FunctionTool(SerializationMixin):
         return value
 
     @staticmethod
-    def parse_result(result: Any) -> str:
-        """Convert a raw function return value to a string representation.
+    def parse_result(result: Any) -> str | list[Content]:
+        """Convert a raw function return value to a string or rich content list.
 
-        The return value is always a ``str`` — either plain text or serialized JSON.
+        Returns a ``str`` for text-only results, or a ``list[Content]`` when the
+        function produced rich content (images, audio, files) that should be
+        forwarded to the model as visual/multi-modal input.
+
         This is called automatically by :meth:`invoke` before returning the result,
         ensuring that the result stored in ``Content.from_function_result`` is
         already in a form that can be passed directly to LLM APIs.
@@ -621,12 +625,22 @@ class FunctionTool(SerializationMixin):
             result: The raw return value from the wrapped function.
 
         Returns:
-            A string representation of the result, either plain text or serialized JSON.
+            A string representation, or a list of Content items for rich results.
         """
+        from ._types import Content
+
         if result is None:
             return ""
         if isinstance(result, str):
             return result
+        # Preserve rich Content (images, audio, files) instead of serializing to JSON
+        if isinstance(result, Content):
+            if result.type in ("data", "uri"):
+                return [result]
+            if result.type == "text" and result.text:
+                return result.text
+        if isinstance(result, list) and any(isinstance(item, Content) for item in result):
+            return [item if isinstance(item, Content) else Content.from_text(str(item)) for item in result]
         dumpable = FunctionTool._make_dumpable(result)
         if isinstance(dumpable, str):
             return dumpable
@@ -1080,7 +1094,7 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | None = None,
 ) -> FunctionTool: ...
 
 
@@ -1095,7 +1109,7 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | None = None,
 ) -> Callable[[Callable[..., Any]], FunctionTool]: ...
 
 
@@ -1109,7 +1123,7 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | None = None,
 ) -> FunctionTool | Callable[[Callable[..., Any]], FunctionTool]:
     """Decorate a function to turn it into a FunctionTool that can be passed to models and executed automatically.
 
@@ -1343,6 +1357,33 @@ def normalize_function_invocation_configuration(
     return normalized
 
 
+def _build_function_result(call_id: str, function_result: str | list[Content]) -> Content:
+    """Build a function_result Content from a parsed tool result.
+
+    When the tool returned rich content (list of Content items), the text
+    items are concatenated as the text result and media items are stored
+    in the ``items`` field so providers can forward them to the model.
+
+    Args:
+        call_id: The function call ID this result corresponds to.
+        function_result: The parsed result from FunctionTool.invoke.
+
+    Returns:
+        A Content with type ``function_result``.
+    """
+    from ._types import Content
+
+    if isinstance(function_result, list):
+        text_parts = [c.text for c in function_result if c.type == "text" and c.text]
+        rich_items = [c for c in function_result if c.type in ("data", "uri")]
+        return Content.from_function_result(
+            call_id=call_id,
+            result="\n".join(text_parts) if text_parts else "",
+            items=rich_items or None,
+        )
+    return Content.from_function_result(call_id=call_id, result=function_result)
+
+
 async def _auto_invoke_function(
     function_call_content: Content,
     custom_args: dict[str, Any] | None = None,
@@ -1440,9 +1481,9 @@ async def _auto_invoke_function(
                 tool_call_id=function_call_content.call_id,
                 **runtime_kwargs if getattr(tool, "_forward_runtime_kwargs", False) else {},
             )
-            return Content.from_function_result(
+            return _build_function_result(
                 call_id=function_call_content.call_id,  # type: ignore[arg-type]
-                result=function_result,
+                function_result=function_result,
             )
         except Exception as exc:
             message = "Error: Function failed."
@@ -1474,9 +1515,9 @@ async def _auto_invoke_function(
     # MiddlewareTermination bubbles up to signal loop termination
     try:
         function_result = await middleware_pipeline.execute(middleware_context, final_function_handler)
-        return Content.from_function_result(
+        return _build_function_result(
             call_id=function_call_content.call_id,  # type: ignore[arg-type]
-            result=function_result,
+            function_result=function_result,
         )
     except MiddlewareTermination as term_exc:
         # Re-raise to signal loop termination, but first capture any result set by middleware

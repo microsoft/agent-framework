@@ -2210,12 +2210,103 @@ def test_parse_result_content_object():
 
 
 def test_parse_result_list_of_content():
-    """Test that list[Content] is serialized to JSON."""
+    """Test that list[Content] with text-only items is returned as list[Content]."""
     contents = [Content.from_text("hello"), Content.from_text("world")]
     result = FunctionTool.parse_result(contents)
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0].text == "hello"
+    assert result[1].text == "world"
+
+
+def test_parse_result_single_image_content():
+    """Test that a single image Content is preserved as list[Content]."""
+    image_content = Content.from_data(data=b"fake_png_bytes", media_type="image/png")
+    result = FunctionTool.parse_result(image_content)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "data"
+    assert result[0].media_type == "image/png"
+
+
+def test_parse_result_single_text_content():
+    """Test that a single text Content returns its text string."""
+    text_content = Content.from_text("just text")
+    result = FunctionTool.parse_result(text_content)
     assert isinstance(result, str)
-    assert "hello" in result
-    assert "world" in result
+    assert result == "just text"
+
+
+def test_parse_result_mixed_content_list():
+    """Test that list with text and image Content is preserved."""
+    contents = [
+        Content.from_text("Chart rendered."),
+        Content.from_data(data=b"image_bytes", media_type="image/png"),
+    ]
+    result = FunctionTool.parse_result(contents)
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0].type == "text"
+    assert result[1].type == "data"
+
+
+def test_build_function_result_with_rich_content():
+    """Test _build_function_result separates text and rich items."""
+    from agent_framework._tools import _build_function_result
+
+    content_list = [
+        Content.from_text("Chart rendered."),
+        Content.from_data(data=b"image_bytes", media_type="image/png"),
+    ]
+    result = _build_function_result(call_id="test-123", function_result=content_list)
+    assert result.type == "function_result"
+    assert result.call_id == "test-123"
+    assert result.result == "Chart rendered."
+    assert result.items is not None
+    assert len(result.items) == 1
+    assert result.items[0].type == "data"
+    assert result.items[0].media_type == "image/png"
+
+
+def test_build_function_result_with_string():
+    """Test _build_function_result with plain string result."""
+    from agent_framework._tools import _build_function_result
+
+    result = _build_function_result(call_id="test-123", function_result="just text")
+    assert result.type == "function_result"
+    assert result.call_id == "test-123"
+    assert result.result == "just text"
+    assert result.items is None
+
+
+def test_content_from_function_result_with_items():
+    """Test Content.from_function_result with items parameter."""
+    image = Content.from_data(data=b"png_data", media_type="image/png")
+    result = Content.from_function_result(
+        call_id="call-1",
+        result="Screenshot captured.",
+        items=[image],
+    )
+    assert result.type == "function_result"
+    assert result.call_id == "call-1"
+    assert result.result == "Screenshot captured."
+    assert result.items is not None
+    assert len(result.items) == 1
+    assert result.items[0].media_type == "image/png"
+
+
+def test_content_from_function_result_items_in_to_dict():
+    """Test that items are included in to_dict serialization."""
+    image = Content.from_data(data=b"png_data", media_type="image/png")
+    result = Content.from_function_result(
+        call_id="call-1",
+        result="done",
+        items=[image],
+    )
+    d = result.to_dict()
+    assert "items" in d
+    assert len(d["items"]) == 1
+    assert d["items"][0]["type"] == "data"
 
 
 # endregion

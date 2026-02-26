@@ -500,11 +500,16 @@ class OllamaChatClient(
 
     def _format_tool_message(self, message: Message) -> list[OllamaMessage]:
         # Ollama does not support multiple tool results in a single message, so we create a separate
-        return [
-            OllamaMessage(role="tool", content=str(item.result), tool_name=item.call_id)
-            for item in message.contents
-            if item.type == "function_result"
-        ]
+        messages: list[OllamaMessage] = []
+        for item in message.contents:
+            if item.type == "function_result":
+                if item.items:
+                    logger.warning(
+                        "Ollama does not support rich content (images, audio) in tool results. "
+                        "Rich content items will be omitted."
+                    )
+                messages.append(OllamaMessage(role="tool", content=str(item.result), tool_name=item.call_id))
+        return messages
 
     def _parse_contents_from_ollama(self, response: OllamaChatResponse) -> list[Content]:
         contents: list[Content] = []
