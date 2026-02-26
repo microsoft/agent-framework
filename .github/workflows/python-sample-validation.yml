@@ -10,6 +10,7 @@ env:
   UV_CACHE_DIR: /tmp/.uv-cache
   # GitHub Copilot configuration
   GITHUB_COPILOT_MODEL: claude-opus-4.6
+  COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
 
 jobs:
   validate-01-get-started:
@@ -34,9 +35,6 @@ jobs:
 
       - name: Install Copilot CLI
         run: npm install -g @github/copilot
-
-      - name: Authenticate Copilot CLI
-        run: echo ${{ secrets.GITHUB_TOKEN }} | gh auth login --with-token
 
       - name: Test Copilot CLI
         run: |
