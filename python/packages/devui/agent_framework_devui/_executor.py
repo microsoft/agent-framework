@@ -21,6 +21,13 @@ from .models._discovery_models import EntityInfo
 logger = logging.getLogger(__name__)
 
 
+def _get_event_type(event: Any) -> str | None:
+    """Safely get the type of an event, handling both objects and dicts."""
+    if isinstance(event, dict):
+        return event.get("type")
+    return getattr(event, "type", None)
+
+
 class EntityNotFoundError(Exception):
     """Raised when an entity is not found."""
 
@@ -264,7 +271,7 @@ class AgentFrameworkExecutor:
                 elif entity_info.type == "workflow":
                     async for event in self._execute_workflow(entity_obj, request, trace_collector):
                         # Log request_info event (type='request_info') for debugging HIL flow
-                        if event.type == "request_info":
+                        if _get_event_type(event) == "request_info":
                             logger.info(
                                 "🔔 [EXECUTOR] request_info event (type='request_info') detected from workflow!"
                             )
@@ -474,7 +481,7 @@ class AgentFrameworkExecutor:
                         checkpoint_storage=checkpoint_storage,
                     ):
                         # Enrich new request_info events that may come from subsequent HIL requests
-                        if event.type == "request_info":
+                        if _get_event_type(event) == "request_info":
                             self._enrich_request_info_event_with_response_schema(event, workflow)
 
                         for trace_event in trace_collector.get_pending_events():
@@ -496,7 +503,7 @@ class AgentFrameworkExecutor:
                         checkpoint_id=checkpoint_id,
                         checkpoint_storage=checkpoint_storage,
                     ):
-                        if event.type == "request_info":
+                        if _get_event_type(event) == "request_info":
                             self._enrich_request_info_event_with_response_schema(event, workflow)
 
                         for trace_event in trace_collector.get_pending_events():
@@ -520,7 +527,7 @@ class AgentFrameworkExecutor:
                 parsed_input = await self._parse_workflow_input(workflow, request.input)
 
                 async for event in workflow.run(parsed_input, stream=True, checkpoint_storage=checkpoint_storage):
-                    if event.type == "request_info":
+                    if _get_event_type(event) == "request_info":
                         self._enrich_request_info_event_with_response_schema(event, workflow)
 
                     for trace_event in trace_collector.get_pending_events():
