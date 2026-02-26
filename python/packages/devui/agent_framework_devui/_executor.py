@@ -330,19 +330,22 @@ class AgentFrameworkExecutor:
 
             # Agent must have run() method - use stream=True for streaming
             if hasattr(agent, "run") and callable(agent.run):
-                # Use Agent Framework's run() with stream=True for streaming
+                # Capture the stream reference so we can call get_final_response()
+                # after iteration. This triggers result hooks (after_run providers
+                # like InMemoryHistoryProvider) that persist conversation history.
+                run_kwargs: dict[str, Any] = {"stream": True}
                 if session:
-                    async for update in agent.run(user_message, stream=True, session=session):
-                        for trace_event in trace_collector.get_pending_events():
-                            yield trace_event
+                    run_kwargs["session"] = session
 
-                        yield update
-                else:
-                    async for update in agent.run(user_message, stream=True):
-                        for trace_event in trace_collector.get_pending_events():
-                            yield trace_event
+                stream = agent.run(user_message, **run_kwargs)
+                async for update in stream:
+                    for trace_event in trace_collector.get_pending_events():
+                        yield trace_event
 
-                        yield update
+                    yield update
+
+                # Finalize stream to trigger result hooks (saves conversation history)
+                await stream.get_final_response()
             else:
                 raise ValueError("Agent must implement run() method")
 
