@@ -145,6 +145,39 @@ user_msg = UserMessage(content="Hello, world!")
 asst_msg = AssistantMessage(content="Hello, world!")
 ```
 
+### Empty Method Bodies
+
+Use `pass` for empty method bodies rather than `...` (Ellipsis). The `...` literal should be reserved for `@overload` stubs and `= ...` default argument sentinels, where it carries idiomatic meaning.
+
+```python
+# ✅ Preferred - concrete no-op method body
+async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+    """Hook called when the workflow is restored from a checkpoint."""
+    pass
+
+# ✅ Preferred - Protocol method stub
+class CheckpointStorage(Protocol):
+    async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
+        """Save a checkpoint and return its ID."""
+        pass
+
+# ✅ Preferred - abstract method
+@abstractmethod
+async def plan(self, context: Context) -> Message:
+    """Create a plan for the task."""
+    raise NotImplementedError
+
+# ✅ Acceptable - @overload stubs and default argument sentinels use ...
+@overload
+def run(self, stream: Literal[True]) -> ResponseStream: ...
+@overload
+def run(self, stream: Literal[False] = ...) -> Response: ...
+
+# ❌ Avoid - ... in concrete or Protocol method bodies
+async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+    ...
+```
+
 ### Import Structure
 
 The package follows a flat import structure:
