@@ -97,6 +97,32 @@ async def test_chat_client_agent_run_streaming(client: SupportsChatGetResponse) 
     assert result.text == "test streaming response another update"
 
 
+async def test_chat_client_agent_run_streaming_with_default_response_format(client: SupportsChatGetResponse) -> None:
+    """Test that response_format set via default_options produces a parsed value when streaming."""
+    from pydantic import BaseModel
+
+    class Greeting(BaseModel):
+        greeting: str
+
+    # Configure streaming responses to return valid JSON for the model
+    client.streaming_responses = [  # type: ignore[attr-defined]
+        [
+            ChatResponseUpdate(contents=[Content.from_text('{"greeting": "Hello"}')], role="assistant"),
+        ]
+    ]
+
+    agent = Agent(client=client, default_options={"response_format": Greeting})
+    stream = agent.run("Hello", stream=True)
+    async for _ in stream:
+        pass
+    result = await stream.get_final_response()
+
+    assert result.text == '{"greeting": "Hello"}'
+    assert result.value is not None
+    assert isinstance(result.value, Greeting)
+    assert result.value.greeting == "Hello"
+
+
 async def test_chat_client_agent_create_session(client: SupportsChatGetResponse) -> None:
     agent = Agent(client=client)
     session = agent.create_session()
