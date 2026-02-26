@@ -40,6 +40,13 @@ jobs:
         run: |
           copilot -p "What can you do?"
 
+      - name: Azure CLI Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       - name: Set up python and install the project
         uses: ./.github/actions/python-setup
         with:
