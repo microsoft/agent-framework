@@ -262,3 +262,141 @@ def test_sanitize_tool_history_filters_confirm_changes_from_assistant_messages()
     # (the approval response is handled separately by the framework)
     tool_call_ids = {str(msg.contents[0].call_id) for msg in tool_messages}
     assert "call_c1" not in tool_call_ids  # No synthetic result for confirm_changes
+
+
+# ---------------------------------------------------------------------------
+# Tests for _clean_resolved_approvals_from_snapshot
+# ---------------------------------------------------------------------------
+
+
+def test_clean_resolved_approvals_from_snapshot() -> None:
+    """Approval payload in snapshot should be replaced with the actual tool result."""
+    import json
+
+    from agent_framework_ag_ui._agent_run import _clean_resolved_approvals_from_snapshot
+
+    # Snapshot still has the approval payload
+    snapshot_messages = [
+        {"role": "user", "content": "What time is it?", "id": "msg_1"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "call_123", "type": "function", "function": {"name": "get_datetime", "arguments": "{}"}}
+            ],
+            "id": "msg_2",
+        },
+        {
+            "role": "tool",
+            "content": json.dumps({"accepted": True}),
+            "toolCallId": "call_123",
+            "id": "msg_3",
+        },
+    ]
+
+    # Resolved provider messages have the actual tool result
+    resolved_messages = [
+        Message(role="user", contents=[Content.from_text(text="What time is it?")]),
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="call_123", name="get_datetime", arguments="{}")],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_123", result="2024-01-01 12:00:00")],
+        ),
+    ]
+
+    _clean_resolved_approvals_from_snapshot(snapshot_messages, resolved_messages)
+
+    # The approval payload should now be replaced with the tool result
+    tool_snap = snapshot_messages[2]
+    assert tool_snap["content"] == "2024-01-01 12:00:00"
+
+
+def test_clean_resolved_approvals_from_snapshot_no_approvals() -> None:
+    """When there are no approval payloads, snapshot should be unchanged."""
+    from agent_framework_ag_ui._agent_run import _clean_resolved_approvals_from_snapshot  # type: ignore
+
+    snapshot_messages = [
+        {"role": "user", "content": "Hello", "id": "msg_1"},
+        {"role": "assistant", "content": "Hi there", "id": "msg_2"},
+    ]
+    original = [dict(m) for m in snapshot_messages]
+
+    resolved_messages = [
+        Message(role="user", contents=[Content.from_text(text="Hello")]),
+        Message(role="assistant", contents=[Content.from_text(text="Hi there")]),
+    ]
+
+    _clean_resolved_approvals_from_snapshot(snapshot_messages, resolved_messages)
+
+    # Nothing should have changed
+    assert snapshot_messages == original
+
+
+def test_cleaned_snapshot_prevents_approval_reprocessing() -> None:
+    """After snapshot cleaning, approval payload is replaced so it won't re-trigger on next turn.
+
+    Simulates what happens on Turn 2: the approval is processed, the tool executes,
+    and _clean_resolved_approvals_from_snapshot replaces the approval payload with the
+    real tool result. On Turn 3, CopilotKit re-sends the cleaned snapshot, which no
+    longer contains an approval payload — so no function_approval_response is produced.
+    """
+    import json
+
+    from agent_framework_ag_ui._agent_run import _clean_resolved_approvals_from_snapshot
+    from agent_framework_ag_ui._message_adapters import normalize_agui_input_messages
+
+    # Turn 2 snapshot: still has the raw approval payload
+    snapshot_messages = [
+        {"role": "user", "content": "What time is it?", "id": "msg_1"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "call_789", "type": "function", "function": {"name": "get_datetime", "arguments": "{}"}}
+            ],
+            "id": "msg_2",
+        },
+        {
+            "role": "tool",
+            "content": json.dumps({"accepted": True}),
+            "toolCallId": "call_789",
+            "id": "msg_3",
+        },
+    ]
+
+    # Resolved provider messages after tool execution
+    resolved_messages = [
+        Message(role="user", contents=[Content.from_text(text="What time is it?")]),
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="call_789", name="get_datetime", arguments="{}")],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_789", result="2024-01-01 12:00:00")],
+        ),
+    ]
+
+    # Fix B: clean the snapshot
+    _clean_resolved_approvals_from_snapshot(snapshot_messages, resolved_messages)
+
+    # Snapshot should now have the real tool result
+    assert snapshot_messages[2]["content"] == "2024-01-01 12:00:00"
+
+    # Simulate Turn 3: CopilotKit re-sends the cleaned snapshot + new messages
+    turn3_messages = list(snapshot_messages) + [
+        {"role": "assistant", "content": "It is 12:00 PM.", "id": "msg_4"},
+        {"role": "user", "content": "Thanks!", "id": "msg_5"},
+    ]
+
+    provider_messages, _ = normalize_agui_input_messages(turn3_messages)
+
+    # No function_approval_response should exist — the approval payload is gone
+    for msg in provider_messages:
+        for content in msg.contents or []:
+            assert content.type != "function_approval_response", (
+                f"Stale approval was re-processed on subsequent turn: {content}"
+            )

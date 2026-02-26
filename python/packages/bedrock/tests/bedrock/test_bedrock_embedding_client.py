@@ -18,6 +18,7 @@ class _StubBedrockEmbeddingRuntime:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.meta = MagicMock(endpoint_url="https://bedrock-runtime.us-west-2.amazonaws.com")
 
     def invoke_model(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append(kwargs)
