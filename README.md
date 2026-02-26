@@ -53,7 +53,7 @@ Still have questions? Join our [weekly office hours](./COMMUNITY.md#public-commu
 ### ✨ **Highlights**
 
 - **Graph-based Workflows**: Connect agents and deterministic functions using data flows with streaming, checkpointing, human-in-the-loop, and time-travel capabilities
-  - [Python workflows](./python/samples/03-workflows/) | [.NET workflows](./dotnet/samples/GettingStarted/Workflows/)
+  - [Python workflows](./python/samples/03-workflows/) | [.NET workflows](./dotnet/samples/03-workflows/)
 - **AF Labs**: Experimental packages for cutting-edge features including benchmarking, reinforcement learning, and research initiatives
   - [Labs directory](./python/packages/lab/)
 - **DevUI**: Interactive developer UI for agent development, testing, and debugging workflows
@@ -73,11 +73,11 @@ Still have questions? Join our [weekly office hours](./COMMUNITY.md#public-commu
 - **Python and C#/.NET Support**: Full framework support for both Python and C#/.NET implementations with consistent APIs
   - [Python packages](./python/packages/) | [.NET source](./dotnet/src/)
 - **Observability**: Built-in OpenTelemetry integration for distributed tracing, monitoring, and debugging
-  - [Python observability](./python/samples/02-agents/observability/) | [.NET telemetry](./dotnet/samples/GettingStarted/AgentOpenTelemetry/)
+  - [Python observability](./python/samples/02-agents/observability/) | [.NET telemetry](./dotnet/samples/02-agents/AgentOpenTelemetry/)
 - **Multiple Agent Provider Support**: Support for various LLM providers with more being added continuously
-  - [Python examples](./python/samples/02-agents/providers/) | [.NET examples](./dotnet/samples/GettingStarted/AgentProviders/)
+  - [Python examples](./python/samples/02-agents/providers/) | [.NET examples](./dotnet/samples/02-agents/AgentProviders/)
 - **Middleware**: Flexible middleware system for request/response processing, exception handling, and custom pipelines
-  - [Python middleware](./python/samples/02-agents/middleware/) | [.NET middleware](./dotnet/samples/GettingStarted/Agents/Agent_Step14_Middleware/)
+  - [Python middleware](./python/samples/02-agents/middleware/) | [.NET middleware](./dotnet/samples/02-agents/Agents/Agent_Step11_Middleware/)
 
 ### 💬 **We want your feedback!**
 
@@ -169,9 +169,9 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 
 ### .NET
 
-- [Getting Started with Agents](./dotnet/samples/GettingStarted/Agents): basic agent creation and tool usage
-- [Agent Provider Samples](./dotnet/samples/GettingStarted/AgentProviders): samples showing different agent providers
-- [Workflow Samples](./dotnet/samples/GettingStarted/Workflows): advanced multi-agent patterns and workflow orchestration
+- [Getting Started with Agents](./dotnet/samples/02-agents/Agents): basic agent creation and tool usage
+- [Agent Provider Samples](./dotnet/samples/02-agents/AgentProviders): samples showing different agent providers
+- [Workflow Samples](./dotnet/samples/03-workflows): advanced multi-agent patterns and workflow orchestration
 
 ## Contributor Resources
 

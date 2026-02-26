@@ -498,7 +498,7 @@ We need to decide what AIContent types, each agent response type will be mapped 
 | Google ADK | **Approach 1** Both [input and output schemas can be specified for LLM Agents](https://google.github.io/adk-docs/agents/llm-agents/#structuring-data-input_schema-output_schema-output_key) at construction time. This option is specific to this agent type and other agent types do not necessarily support |
 | AWS (Strands) | **Approach 2** Supports a special invocation method called [structured_output](https://strandsagents.com/latest/documentation/docs/api-reference/python/agent/agent/#strands.agent.agent.Agent.structured_output) |
 | LangGraph | **Approach 1** Supports [configuring an agent](https://langchain-ai.github.io/langgraph/agents/agents/?h=structured#6-configure-structured-output) at agent construction time, and a [structured response](https://langchain-ai.github.io/langgraph/agents/run_agents/#output-format) can be retrieved as a special property on the agent response |
-| Agno | **Approach 1** Supports [configuring an agent](https://docs.agno.com/examples/getting-started/structured-output) at agent construction time |
+| Agno | **Approach 1** Supports [configuring an agent](https://docs.agno.com/input-output/structured-output/agent) at agent construction time |
 | A2A | **Informal Approach 2** Doesn't formally support schema negotiation, but [hints can be provided via metadata](https://a2a-protocol.org/latest/specification/#97-structured-data-exchange-requesting-and-providing-json) at invocation time |
 | Protocol Activity | Supports returning [Complex types](https://github.com/microsoft/Agents/blob/main/specs/activity/protocol-activity.md#complex-types) but no support for requesting a type |
 

@@ -2594,3 +2594,189 @@ async def test_agent_no_instructions_in_default_or_options(
     span = spans[0]
 
     assert OtelAttr.SYSTEM_INSTRUCTIONS not in span.attributes
+
+
+# region Additional coverage tests
+
+
+def test_get_instructions_from_options_none():
+    """Test _get_instructions_from_options returns None for None input."""
+    from agent_framework.observability import _get_instructions_from_options
+
+    assert _get_instructions_from_options(None) is None
+
+
+def test_get_instructions_from_options_non_dict():
+    """Test _get_instructions_from_options returns None for non-dict input."""
+    from agent_framework.observability import _get_instructions_from_options
+
+    assert _get_instructions_from_options("not a dict") is None
+    assert _get_instructions_from_options(42) is None
+
+
+def test_get_instructions_from_options_dict_with_instructions():
+    """Test _get_instructions_from_options extracts instructions from dict."""
+    from agent_framework.observability import _get_instructions_from_options
+
+    assert _get_instructions_from_options({"instructions": "do stuff"}) == "do stuff"
+    assert _get_instructions_from_options({"other_key": "value"}) is None
+
+
+def test_get_span_attributes_with_non_dict_options():
+    """Test _get_span_attributes handles non-dict options gracefully."""
+    from agent_framework.observability import _get_span_attributes
+
+    # Pass options as a non-dict value; should not crash
+    attrs = _get_span_attributes(
+        operation_name="chat",
+        provider_name="test",
+        all_options="not_a_dict",
+    )
+    assert attrs[OtelAttr.OPERATION] == "chat"
+
+
+def test_capture_response_with_error_type(span_exporter: InMemorySpanExporter):
+    """Test _capture_response includes error_type in duration histogram attributes."""
+    from agent_framework.observability import OtelAttr, _capture_response, get_tracer
+
+    span_exporter.clear()
+    tracer = get_tracer()
+
+    from agent_framework.observability import _get_duration_histogram, _get_token_usage_histogram
+
+    token_histogram = _get_token_usage_histogram()
+    duration_histogram = _get_duration_histogram()
+
+    attrs = {
+        "gen_ai.request.model": "test-model",
+        OtelAttr.ERROR_TYPE: "ValueError",
+    }
+
+    with tracer.start_as_current_span("test_span") as span:
+        _capture_response(
+            span=span,
+            attributes=attrs,
+            token_usage_histogram=token_histogram,
+            operation_duration_histogram=duration_histogram,
+            duration=0.5,
+        )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].attributes.get(OtelAttr.ERROR_TYPE) == "ValueError"
+
+
+def test_configure_otel_providers_with_env_file_path(monkeypatch, tmp_path):
+    """Test configure_otel_providers with env_file_path creates new settings."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("ENABLE_INSTRUMENTATION=true\n")
+
+    observability.configure_otel_providers(
+        env_file_path=str(env_file),
+        enable_sensitive_data=True,
+        vs_code_extension_port=None,
+    )
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
+
+
+def test_configure_otel_providers_with_env_file_and_vs_code_port(monkeypatch, tmp_path):
+    """Test configure_otel_providers with env_file_path and vs_code_extension_port."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("ENABLE_INSTRUMENTATION=true\n")
+
+    observability.configure_otel_providers(
+        env_file_path=str(env_file),
+        env_file_encoding="utf-8",
+        vs_code_extension_port=4317,
+    )
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.vs_code_extension_port == 4317
+
+
+def test_get_exporters_from_env_with_env_file_path(monkeypatch, tmp_path):
+    """Test _get_exporters_from_env loads dotenv when env_file_path is provided."""
+    from agent_framework.observability import _get_exporters_from_env
+
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    # Create a .env file with no OTEL endpoints so it returns empty
+    env_file = tmp_path / ".env"
+    env_file.write_text("SOME_VAR=value\n")
+
+    exporters = _get_exporters_from_env(env_file_path=str(env_file))
+    assert exporters == []
+
+
+def test_create_resource_with_env_file_path(monkeypatch, tmp_path):
+    """Test create_resource loads dotenv when env_file_path is provided."""
+    from agent_framework.observability import create_resource
+
+    monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
+    monkeypatch.delenv("OTEL_SERVICE_VERSION", raising=False)
+    monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES", raising=False)
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("OTEL_SERVICE_NAME=my_test_service\n")
+
+    resource = create_resource(env_file_path=str(env_file))
+    assert resource.attributes.get("service.name") == "my_test_service"
+
+
+def test_get_meter_typeerror_fallback():
+    """Test get_meter falls back when TypeError is raised (old OTel versions)."""
+    from unittest.mock import patch as mock_patch
+
+    from agent_framework.observability import get_meter
+
+    call_count = 0
+
+    def mock_get_meter(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if "attributes" in kwargs:
+            raise TypeError("unexpected keyword argument 'attributes'")
+        from opentelemetry import metrics
+
+        return metrics.get_meter_provider().get_meter(*args, **{k: v for k, v in kwargs.items() if k != "attributes"})
+
+    with mock_patch("agent_framework.observability.metrics.get_meter", side_effect=mock_get_meter):
+        meter = get_meter(name="test", attributes={"key": "val"})
+        assert meter is not None
+        assert call_count == 2

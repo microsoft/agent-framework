@@ -1,0 +1,35 @@
+#
+# This workflow tests invoking MCP tools with approval requirement.
+# Uses the Microsoft Learn MCP server: search tool with requireApproval: true
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_invoke_mcp_tool_approval_test
+  actions:
+
+    # Set the search query we want to use
+    - kind: SetVariable
+      id: set_search_query
+      variable: Local.ContentUrl
+      value: https://learn.microsoft.com/azure/ai-foundry/openai/concepts/use-your-data
+
+    # Invoke MCP search tool with approval requirement
+    - kind: InvokeMcpTool
+      id: invoke_mcp_search
+      serverUrl: https://learn.microsoft.com/api/mcp
+      serverLabel: MicrosoftLearn
+      toolName: microsoft_docs_fetch
+      requireApproval: true
+      arguments:
+        url: =Local.ContentUrl
+      output:
+        autoSend: false
+        result: Local.FetchResult
+        messages: Local.FetchMessages
+
+    # Send the result as an activity
+    - kind: SendMessage
+      id: show_search_result
+      message: "Content for {Local.ContentUrl}: {Local.FetchResult}"

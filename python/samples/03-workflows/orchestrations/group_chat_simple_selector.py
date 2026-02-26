@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from typing import cast
 
 from agent_framework import (
@@ -8,7 +9,7 @@ from agent_framework import (
     AgentResponseUpdate,
     Message,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatBuilder, GroupChatState
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -24,7 +25,9 @@ What it does:
 - Uses a pure Python function to control speaker selection based on conversation state
 
 Prerequisites:
-- OpenAI environment variables configured for OpenAIChatClient
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
 
@@ -36,8 +39,12 @@ def round_robin_selector(state: GroupChatState) -> str:
 
 
 async def main() -> None:
-    # Create a chat client using Azure OpenAI and Azure CLI credentials for all agents
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    # Create a Responses client using Azure OpenAI and Azure CLI credentials for all agents
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     # Participant agents
     expert = Agent(

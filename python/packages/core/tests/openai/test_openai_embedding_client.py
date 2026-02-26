@@ -100,8 +100,8 @@ async def test_openai_get_embeddings_usage(openai_unit_test_env: None) -> None:
     result = await client.get_embeddings(["test"])
 
     assert result.usage is not None
-    assert result.usage["prompt_tokens"] == 10
-    assert result.usage["total_tokens"] == 10
+    assert result.usage["input_token_count"] == 10
+    assert result.usage["total_token_count"] == 10
 
 
 async def test_openai_options_passthrough_dimensions(openai_unit_test_env: None) -> None:
@@ -259,20 +259,14 @@ def test_azure_otel_provider_name() -> None:
 # --- Integration tests ---
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
-    reason="No real OPENAI_API_KEY provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
+    reason="No real OPENAI_API_KEY provided; skipping integration tests.",
 )
 
 skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or not os.getenv("AZURE_OPENAI_ENDPOINT")
+    not os.getenv("AZURE_OPENAI_ENDPOINT")
     or (not os.getenv("AZURE_OPENAI_API_KEY") and not os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")),
-    reason="No Azure OpenAI credentials provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    reason="No Azure OpenAI credentials provided; skipping integration tests.",
 )
 
 
@@ -290,7 +284,7 @@ async def test_integration_openai_get_embeddings() -> None:
     assert all(isinstance(v, float) for v in result[0].vector)
     assert result[0].model_id is not None
     assert result.usage is not None
-    assert result.usage["prompt_tokens"] > 0
+    assert result.usage["input_token_count"] > 0
 
 
 @skip_if_openai_integration_tests_disabled
@@ -333,7 +327,7 @@ async def test_integration_azure_openai_get_embeddings() -> None:
     assert all(isinstance(v, float) for v in result[0].vector)
     assert result[0].model_id is not None
     assert result.usage is not None
-    assert result.usage["prompt_tokens"] > 0
+    assert result.usage["input_token_count"] > 0
 
 
 @skip_if_azure_openai_integration_tests_disabled

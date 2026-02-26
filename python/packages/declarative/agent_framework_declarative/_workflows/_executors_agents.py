@@ -1019,75 +1019,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         await ctx.send_message(ActionComplete())
 
 
-class InvokeToolExecutor(DeclarativeActionExecutor):
-    """Executor that invokes a registered tool/function.
-
-    Tools are simpler than agents - they take input, perform an action,
-    and return a result synchronously (or with a simple async call).
-    """
-
-    @handler
-    async def handle_action(
-        self,
-        trigger: Any,
-        ctx: WorkflowContext[ActionComplete],
-    ) -> None:
-        """Handle the tool invocation."""
-        state = await self._ensure_state_initialized(ctx, trigger)
-
-        tool_name = self._action_def.get("tool") or self._action_def.get("toolName", "")
-        input_expr = self._action_def.get("input")
-        output_property = self._action_def.get("output", {}).get("property") or self._action_def.get("resultProperty")
-        parameters = self._action_def.get("parameters", {})
-
-        # Get tools registry
-        try:
-            tool_registry: dict[str, Any] | None = ctx.state.get(TOOL_REGISTRY_KEY)
-        except KeyError:
-            tool_registry = {}
-
-        tool: Any = tool_registry.get(tool_name) if tool_registry else None
-
-        if tool is None:
-            error_msg = f"Tool '{tool_name}' not found in registry"
-            if output_property:
-                state.set(output_property, {"error": error_msg})
-            await ctx.send_message(ActionComplete())
-            return
-
-        # Build parameters
-        params: dict[str, Any] = {}
-        for param_name, param_expression in parameters.items():
-            params[param_name] = state.eval_if_expression(param_expression)
-
-        # Add main input if specified
-        if input_expr:
-            params["input"] = state.eval_if_expression(input_expr)
-
-        try:
-            # Invoke the tool
-            if callable(tool):
-                from inspect import isawaitable
-
-                result = tool(**params)
-                if isawaitable(result):
-                    result = await result
-
-                # Store result
-                if output_property:
-                    state.set(output_property, result)
-
-        except Exception as e:
-            if output_property:
-                state.set(output_property, {"error": str(e)})
-            await ctx.send_message(ActionComplete())
-            return
-
-        await ctx.send_message(ActionComplete())
-
-
 # Mapping of agent action kinds to executor classes
 AGENT_ACTION_EXECUTORS: dict[str, type[DeclarativeActionExecutor]] = {
     "InvokeAzureAgent": InvokeAzureAgentExecutor,
-    "InvokeTool": InvokeToolExecutor,
 }

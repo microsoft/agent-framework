@@ -8,6 +8,9 @@ This module lazily re-exports objects from:
 Supported classes:
 - BedrockChatClient
 - BedrockChatOptions
+- BedrockEmbeddingClient
+- BedrockEmbeddingOptions
+- BedrockEmbeddingSettings
 - BedrockGuardrailConfig
 - BedrockSettings
 """
@@ -17,7 +20,15 @@ from typing import Any
 
 IMPORT_PATH = "agent_framework_bedrock"
 PACKAGE_NAME = "agent-framework-bedrock"
-_IMPORTS = ["BedrockChatClient", "BedrockChatOptions", "BedrockGuardrailConfig", "BedrockSettings"]
+_IMPORTS = [
+    "BedrockChatClient",
+    "BedrockChatOptions",
+    "BedrockEmbeddingClient",
+    "BedrockEmbeddingOptions",
+    "BedrockEmbeddingSettings",
+    "BedrockGuardrailConfig",
+    "BedrockSettings",
+]
 
 
 def __getattr__(name: str) -> Any:

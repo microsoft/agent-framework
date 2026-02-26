@@ -331,10 +331,6 @@ wrapped_agent = AgentFrameworkAgent(
     orchestrators=[MyCustomOrchestrator(), DefaultOrchestrator()],
 )
 
-## Documentation
-
-For detailed documentation, see [DESIGN.md](DESIGN.md).
-
 ## License
 
 MIT

@@ -1,0 +1,63 @@
+#
+# This workflow demonstrates invoking MCP tools directly from a declarative workflow.
+# Uses the Foundry MCP server to search AI model details.
+#
+# The workflow:
+# 1. Accepts a model search term as input
+# 2. Invokes the Foundry MCP tool
+# 3. Invokes the Microsoft Learn MCP tool
+# 4. Uses an agent to summarize the results
+#
+# Example input: 
+# gpt-4.1
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_invoke_mcp_tool
+  actions:
+
+    # Set the search query from user input or use default
+    - kind: SetVariable
+      id: set_search_query
+      variable: Local.SearchQuery
+      value: =System.LastMessage.Text
+
+    # Invoke MCP search tool on Foundry MCP server
+    - kind: InvokeMcpTool
+      id: invoke_foundry_search
+      serverUrl: https://mcp.ai.azure.com
+      serverLabel: azure_mcp_server
+      toolName: model_details_get
+      conversationId: =System.ConversationId
+      arguments:
+        modelName: =Local.SearchQuery
+      output:
+        autoSend: true
+        result: Local.FoundrySearchResult
+
+    # Invoke MCP search tool on Microsoft Learn server
+    - kind: InvokeMcpTool
+      id: invoke_docs_search
+      serverUrl: https://learn.microsoft.com/api/mcp
+      serverLabel: microsoft_docs
+      toolName: microsoft_docs_search
+      conversationId: =System.ConversationId
+      arguments:
+        query: =Local.SearchQuery
+      output:
+        autoSend: true
+        result: Local.DocsSearchResult
+
+    # Use the search agent to provide a helpful response based on results
+    - kind: InvokeAzureAgent
+      id: summarize_results
+      agent:
+        name: McpSearchAgent
+      conversationId: =System.ConversationId
+      input:
+        messages: =UserMessage("Based on the search results for '" & Local.SearchQuery & "', please provide a helpful summary.")
+      output:
+        autoSend: true
+        result: Local.Summary

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -14,9 +15,9 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowRunState,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import MagenticBuilder, MagenticPlanReviewRequest
-from azure.identity._credentials import AzureCliCredential
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -38,7 +39,9 @@ Concepts highlighted here:
    `responses` mapping so we can inject the stored human reply during restoration.
 
 Prerequisites:
-- OpenAI environment variables configured for `OpenAIChatClient`.
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
 TASK = (
@@ -61,14 +64,22 @@ def build_workflow(checkpoint_storage: FileCheckpointStorage):
         name="ResearcherAgent",
         description="Collects background facts and references for the project.",
         instructions=("You are the research lead. Gather crisp bullet points the team should know."),
-        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        client=AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
     )
 
     writer = Agent(
         name="WriterAgent",
         description="Synthesizes the final brief for stakeholders.",
         instructions=("You convert the research notes into a structured brief with milestones and risks."),
-        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        client=AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
     )
 
     # Create a manager agent for orchestration
@@ -76,7 +87,11 @@ def build_workflow(checkpoint_storage: FileCheckpointStorage):
         name="MagenticManager",
         description="Orchestrator that coordinates the research and writing workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",
-        client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+        client=AzureOpenAIResponsesClient(
+            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
     )
 
     # The builder wires in the Magentic orchestrator, sets the plan review path, and

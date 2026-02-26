@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from typing import Any
 
 from agent_framework import Message
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -17,7 +18,7 @@ Sample: Concurrent Orchestration with Custom Aggregator
 
 Build a concurrent workflow with ConcurrentBuilder that fans out one prompt to
 multiple domain agents and fans in their responses. Override the default
-aggregator with a custom async callback that uses AzureOpenAIChatClient.get_response()
+aggregator with a custom async callback that uses AzureOpenAIResponsesClient.get_response()
 to synthesize a concise, consolidated summary from the experts' outputs.
 The workflow completes when all participants become idle.
 
@@ -28,12 +29,18 @@ Demonstrates:
 - Workflow output yielded with the synthesized summary string
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient (az login + required env vars)
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
 
 async def main() -> None:
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     researcher = client.as_agent(
         instructions=(
