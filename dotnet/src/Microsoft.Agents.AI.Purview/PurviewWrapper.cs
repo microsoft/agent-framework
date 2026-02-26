@@ -98,7 +98,7 @@ internal sealed class PurviewWrapper : IDisposable
 
         try
         {
-            (bool shouldBlockResponse, _) = await this._scopedProcessor.ProcessMessagesAsync(response.Messages, options?.ConversationId, Activity.UploadText, this._purviewSettings, resolvedUserId, cancellationToken).ConfigureAwait(false);
+            (bool shouldBlockResponse, _) = await this._scopedProcessor.ProcessMessagesAsync(response.Messages, options?.ConversationId, Activity.DownloadText, this._purviewSettings, resolvedUserId, cancellationToken).ConfigureAwait(false);
             if (shouldBlockResponse)
             {
                 if (this._logger.IsEnabled(LogLevel.Information))
@@ -186,7 +186,7 @@ internal sealed class PurviewWrapper : IDisposable
                     sessionIdResponse = sessionId;
                 }
             }
-            (bool shouldBlockResponse, _) = await this._scopedProcessor.ProcessMessagesAsync(response.Messages, sessionIdResponse, Activity.UploadText, this._purviewSettings, resolvedUserId, cancellationToken).ConfigureAwait(false);
+            (bool shouldBlockResponse, _) = await this._scopedProcessor.ProcessMessagesAsync(response.Messages, sessionIdResponse, Activity.DownloadText, this._purviewSettings, resolvedUserId, cancellationToken).ConfigureAwait(false);
 
             if (shouldBlockResponse)
             {

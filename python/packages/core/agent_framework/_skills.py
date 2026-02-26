@@ -115,6 +115,7 @@ class _FileAgentSkill:
     source_path: str
     resource_names: list[str] = field(default_factory=list)
 
+
 # endregion
 
 # region Private module-level functions (skill discovery, parsing, security)
@@ -165,9 +166,7 @@ def _has_symlink_in_path(full_path: str, directory_path: str) -> bool:
     try:
         relative = Path(full_path).relative_to(dir_path)
     except ValueError as exc:
-        raise ValueError(
-            f"full_path {full_path!r} does not start with directory_path {directory_path!r}"
-        ) from exc
+        raise ValueError(f"full_path {full_path!r} does not start with directory_path {directory_path!r}") from exc
 
     current = dir_path
     for part in relative.parts:
@@ -436,6 +435,7 @@ def _build_skills_instruction_prompt(
 
     return template.format("\n".join(lines))
 
+
 # endregion
 
 # region Public API
@@ -494,7 +494,9 @@ class FileAgentSkillsProvider(BaseContextProvider):
         """
         super().__init__(source_id or self.DEFAULT_SOURCE_ID)
 
-        resolved_paths: Sequence[str] = [str(skill_paths)] if isinstance(skill_paths, (str, Path)) else [str(p) for p in skill_paths]
+        resolved_paths: Sequence[str] = (
+            [str(skill_paths)] if isinstance(skill_paths, (str, Path)) else [str(p) for p in skill_paths]
+        )
 
         self._skills = _discover_and_load_skills(resolved_paths)
         self._skills_instruction_prompt = _build_skills_instruction_prompt(skills_instruction_prompt, self._skills)
@@ -593,5 +595,6 @@ class FileAgentSkillsProvider(BaseContextProvider):
         except Exception:
             logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
             return f"Error: Failed to read resource '{resource_name}' from skill '{skill_name}'."
+
 
 # endregion
