@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -72,6 +73,8 @@ else:
 
 if TYPE_CHECKING:
     from .._middleware import MiddlewareTypes
+
+logger = logging.getLogger(__name__)
 
 
 # region OpenAI Assistants Options TypedDict
@@ -580,11 +583,14 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                             text_content.annotations = []
                             for annotation in block.text.annotations:
                                 if isinstance(annotation, FileCitationAnnotation):
+                                    props: dict[str, Any] = {
+                                        "text": annotation.text,
+                                    }
+                                    if annotation.file_citation and annotation.file_citation.quote:
+                                        props["quote"] = annotation.file_citation.quote
                                     ann: Annotation = Annotation(
                                         type="citation",
-                                        additional_properties={
-                                            "text": annotation.text,
-                                        },
+                                        additional_properties=props,
                                         raw_representation=annotation,
                                     )
                                     if annotation.file_citation and annotation.file_citation.file_id:
@@ -617,6 +623,11 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                                             )
                                         ]
                                     text_content.annotations.append(ann)
+                                else:
+                                    logger.debug(
+                                        "Unhandled annotation type in thread.message.completed: %s",
+                                        type(annotation).__name__,
+                                    )
                         completed_contents.append(text_content)
                     if completed_contents:
                         yield ChatResponseUpdate(
