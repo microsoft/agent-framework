@@ -53,7 +53,8 @@ class BatchCompletion:
 
 AgentInstruction = (
     "You are validating exactly one Python sample.\n"
-    "Analyze the sample code and execute it. Determine if it runs successfully, fails, or times out.\n"
+    "Analyze the sample code and execute it. Based on the execution result, determine if it "
+    "runs successfully, fails, or times out.\n"
     "The sample can be interactive. If it is interactive, respond to the sample when prompted "
     "based on your analysis of the code. You do not need to consult human on what to respond.\n"
     "Return ONLY valid JSON with this schema:\n"

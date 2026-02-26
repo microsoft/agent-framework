@@ -84,7 +84,7 @@ def print_summary(report: Report) -> None:
     print(f"  [PASS] Success: {report.success_count}")
     print(f"  [FAIL] Failure: {report.failure_count}")
     print(f"  [TIMEOUT] Timeout: {report.timeout_count}")
-    print(f"  [ERROR] Error: {report.error_count}")
+    print(f"  [ERR] Errors: {report.error_count}")
     print("=" * 80)
 
 
