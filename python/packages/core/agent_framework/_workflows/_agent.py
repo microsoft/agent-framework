@@ -213,10 +213,10 @@ class WorkflowAgent(BaseAgent):
             )
         return self._run_impl(messages, response_id, session, checkpoint_id, checkpoint_storage, **kwargs)
 
-    def _filter_messages(self, chat_messages: list[Message]) -> list[Message] | None:
+    def _filter_messages(self, chat_messages: list[Message]) -> list[Message]:
         """From a list[Message] output, return only the last meaningful assistant message."""
         for msg in reversed(chat_messages):
-    def _filter_messages(self, chat_messages: list[Message]) -> list[Message]:
+            if msg.role != "user" and msg.text and msg.text.strip():
                 return [msg]
         # fallback: last non-user message
         return [m for m in reversed(chat_messages) if m.role != "user"][:1]
