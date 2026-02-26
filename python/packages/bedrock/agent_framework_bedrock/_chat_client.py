@@ -534,6 +534,8 @@ class BedrockChatClient(
 
     def _convert_tool_result_to_blocks(self, result: Any) -> list[dict[str, Any]]:
         prepared_result = result if isinstance(result, str) else FunctionTool.parse_result(result)
+        if not isinstance(prepared_result, str):
+            return [{"text": str(prepared_result)}]
         try:
             parsed_result = json.loads(prepared_result)
         except json.JSONDecodeError:

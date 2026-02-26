@@ -679,6 +679,11 @@ class AnthropicClient(
                                     "type": "image",
                                     "source": {"type": "url", "url": item.uri},
                                 })
+                            else:
+                                logger.debug(
+                                    "Ignoring unsupported rich content media type in tool result: %s",
+                                    item.media_type,
+                                )
                         a_content.append({
                             "type": "tool_result",
                             "tool_use_id": content.call_id,
