@@ -333,11 +333,9 @@ class Workflow(DictConvertible):
                 span.add_event(OtelAttr.WORKFLOW_STARTED)
                 # Emit explicit start/status events to the stream
                 with _framework_event_origin():
-                    started = WorkflowEvent.started()
-                yield started
+                    yield WorkflowEvent.started()
                 with _framework_event_origin():
-                    in_progress = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
-                yield in_progress
+                    yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
 
                 # Reset context for a new run if supported
                 if reset_context:
@@ -367,18 +365,15 @@ class Workflow(DictConvertible):
                     if event.type == "request_info" and not emitted_in_progress_pending:
                         emitted_in_progress_pending = True
                         with _framework_event_origin():
-                            pending_status = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
-                        yield pending_status
+                            yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
 
                 # Workflow runs until idle - emit final status based on whether requests are pending
                 if saw_request:
                     with _framework_event_origin():
-                        terminal_status = WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
-                    yield terminal_status
+                        yield WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
                 else:
                     with _framework_event_origin():
-                        terminal_status = WorkflowEvent.status(WorkflowRunState.IDLE)
-                    yield terminal_status
+                        yield WorkflowEvent.status(WorkflowRunState.IDLE)
 
                 span.add_event(OtelAttr.WORKFLOW_COMPLETED)
             except Exception as exc:

@@ -612,11 +612,11 @@ class AgentFunctionApp(DFAppBase):
             context: Durable Functions orchestration context invoking the agent.
             agent_name: Name of the agent registered on this app.
 
-        Raises:
-            ValueError: If the requested agent has not been registered.
-
         Returns:
             DurableAIAgent[AgentTask] wrapper bound to the orchestration context.
+
+        Raises:
+            ValueError: If the requested agent has not been registered.
         """
         normalized_name = str(agent_name)
 
