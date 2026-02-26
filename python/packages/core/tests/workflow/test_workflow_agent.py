@@ -1578,9 +1578,9 @@ class TestFilterMessages:
     def test_assistant_with_none_text_falls_through_to_next(self):
         agent = self._make_agent()
         msgs = [
-            Message(role="assistant", text="a1"),  # earlier — should be skipped
-            Message(role="assistant", text=None),  # no text — falls through
-            Message(role="assistant", text="   "),  # whitespace — falls through
+            Message(role="assistant", text="a1"),
+            Message(role="assistant", text=None),
+            Message(role="assistant", text="   "),
         ]
         # The last non-user message is whitespace-only, falls to non-text fallback
         result = agent._filter_messages(msgs)
@@ -1591,7 +1591,7 @@ class TestFilterMessages:
         msgs = [
             Message(role="assistant", text="First response"),
             Message(role="user", text="follow up"),
-            Message(role="assistant", text="Second response"),  # ← should be returned
+            Message(role="assistant", text="Second response"),
         ]
         result = agent._filter_messages(msgs)
         assert len(result) == 1
