@@ -21,6 +21,12 @@ public sealed class DeclarativeWorkflowOptions(ResponseAgentProvider agentProvid
     public ResponseAgentProvider AgentProvider { get; } = Throw.IfNull(agentProvider);
 
     /// <summary>
+    /// Gets or sets the MCP tool handler for invoking MCP tools within workflows.
+    /// If not set, MCP tool invocations will fail with an appropriate error message.
+    /// </summary>
+    public IMcpToolHandler? McpToolHandler { get; init; }
+
+    /// <summary>
     /// Defines the configuration settings for the workflow.
     /// </summary>
     public IConfiguration? Configuration { get; init; }

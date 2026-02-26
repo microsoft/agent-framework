@@ -1,0 +1,32 @@
+{
+  "profiles": {
+    "Marketing": {
+      "commandName": "Project",
+      "commandLineArgs": "\"Marketing.yaml\" \"An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours\""
+    },
+    "MathChat": {
+      "commandName": "Project",
+      "commandLineArgs": "\"MathChat.yaml\" \"How would you compute the value of PI?\""
+    },
+    "Question": {
+      "commandName": "Project",
+      "commandLineArgs": "\"Question.yaml\" \"Iko\""
+    },
+    "Research": {
+      "commandName": "Project",
+      "commandLineArgs": "\"DeepResearch.yaml\" \"What is the closest bus-stop that is next to ISHONI YAKINIKU in Seattle?\""
+    },
+    "ResponseObject": {
+      "commandName": "Project",
+      "commandLineArgs": "\"ResponseObject.yaml\" \"Can you help me plan a trip somewhere soon?\""
+    },
+    "UserInput": {
+      "commandName": "Project",
+      "commandLineArgs": "\"UserInput.yaml\" \"Iko\""
+    },
+    "ParseValue": {
+      "commandName": "Project",
+      "commandLineArgs": "\"Pradeep-ParseValue-Number.yaml\" \"Test this case:\""
+    }
+  }
+}

@@ -937,8 +937,7 @@ async def test_max_iterations_no_orphaned_function_calls(chat_client_base: Suppo
 
     orphaned_calls = all_call_ids - all_result_ids
     assert not orphaned_calls, (
-        f"Response contains orphaned FunctionCallContent without matching "
-        f"FunctionResultContent: {orphaned_calls}."
+        f"Response contains orphaned FunctionCallContent without matching FunctionResultContent: {orphaned_calls}."
     )
 
 
@@ -1123,8 +1122,7 @@ async def test_max_iterations_thread_integrity_with_agent(chat_client_base: Supp
 
     orphaned_calls = all_call_ids - all_result_ids
     assert not orphaned_calls, (
-        f"Response contains orphaned function calls {orphaned_calls}. "
-        f"This would cause API errors on the next call."
+        f"Response contains orphaned function calls {orphaned_calls}. This would cause API errors on the next call."
     )
 
 

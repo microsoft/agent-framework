@@ -8,10 +8,8 @@ We've provided a set of [Sample Workflows](../../../workflow-samples/) within th
 
 Please refer to the [README](../../../workflow-samples/README.md) for setup instructions to run the sample workflows in your environment.
 
-As part of our [Getting Started with Declarative Workflows](../../samples/GettingStarted/Workflows/Declarative/README.md),
+As part of our [Getting Started with Declarative Workflows](../../samples/03-workflows/Declarative/README.md),
 we've provided a console application that is able to execute any declarative workflow.
-
-Please refer to the [README](../../samples/GettingStarted/Workflows/Declarative/README.md) for configuration instructions.
 
 ## Actions
 

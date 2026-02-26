@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "Default": {
+      "commandName": "Project"
+    },
+    "Graph API": {
+      "commandName": "Project",
+      "commandLineArgs": "\"What is Microsoft Graph API used for?\""
+    }
+  }
+}
