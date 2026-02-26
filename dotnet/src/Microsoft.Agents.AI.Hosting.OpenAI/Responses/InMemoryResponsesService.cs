@@ -432,7 +432,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
                 var itemsResult = await this._conversationStorage.ListItemsAsync(
                     request.Conversation.Id,
                     limit: 100,
-                    order: OpenAI.Models.SortOrder.Ascending,
+                    order: SortOrder.Ascending,
                     cancellationToken: linkedCts.Token).ConfigureAwait(false);
 
                 var history = ItemResourceConversions.ToChatMessages(itemsResult.Data);
