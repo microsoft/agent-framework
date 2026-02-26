@@ -1543,6 +1543,12 @@ class TestFilterMessages:
         msg = Message(role="assistant", text="   ")
         assert agent._filter_messages([msg]) == [msg]
 
+    def test_single_assistant_message_none_text(self):
+        """Return the single assistant message as-is when it's the only message, even if it has None text."""
+        agent = self._make_agent()
+        msg = Message(role="assistant", text=None)
+        assert agent._filter_messages([msg]) == [msg]
+
     def test_single_assistant_message_returned(self):
         """Return the single assistant message as-is when it's the only message"""
         agent = self._make_agent()
