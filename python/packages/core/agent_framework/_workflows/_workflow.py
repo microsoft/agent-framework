@@ -384,11 +384,9 @@ class Workflow(DictConvertible):
                 # Surface structured failure details before propagating exception
                 details = WorkflowErrorDetails.from_exception(exc)
                 with _framework_event_origin():
-                    failed_event = WorkflowEvent.failed(details)
-                yield failed_event
+                    yield WorkflowEvent.failed(details)
                 with _framework_event_origin():
-                    failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
-                yield failed_status
+                    yield WorkflowEvent.status(WorkflowRunState.FAILED)
                 span.add_event(
                     name=OtelAttr.WORKFLOW_ERROR,
                     attributes={
