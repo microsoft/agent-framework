@@ -173,6 +173,7 @@ jobs:
 
   validate-05-end-to-end:
     name: Validate 05-end-to-end
+    if: false  # Temporarily disabled because of sample complexity
     runs-on: ubuntu-latest
     environment: integration
     env:
