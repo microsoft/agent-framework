@@ -333,10 +333,10 @@ class Workflow(DictConvertible):
                 span.add_event(OtelAttr.WORKFLOW_STARTED)
                 # Emit explicit start/status events to the stream
                 with _framework_event_origin():
-                    started = WorkflowEvent.started()
+                    started = WorkflowEvent.started()  # ruff: noqa: RUF070
                 yield started
                 with _framework_event_origin():
-                    in_progress = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
+                    in_progress = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)  # ruff: noqa: RUF070
                 yield in_progress
 
                 # Reset context for a new run if supported
@@ -367,16 +367,16 @@ class Workflow(DictConvertible):
                     if event.type == "request_info" and not emitted_in_progress_pending:
                         emitted_in_progress_pending = True
                         with _framework_event_origin():
-                            pending_status = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
+                            pending_status = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)  # ruff: noqa: RUF070
                         yield pending_status
                 # Workflow runs until idle - emit final status based on whether requests are pending
                 if saw_request:
                     with _framework_event_origin():
-                        terminal_status = WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+                        terminal_status = WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)  # ruff: noqa: RUF070
                     yield terminal_status
                 else:
                     with _framework_event_origin():
-                        terminal_status = WorkflowEvent.status(WorkflowRunState.IDLE)
+                        terminal_status = WorkflowEvent.status(WorkflowRunState.IDLE)  # ruff: noqa: RUF070
                     yield terminal_status
 
                 span.add_event(OtelAttr.WORKFLOW_COMPLETED)
@@ -388,10 +388,10 @@ class Workflow(DictConvertible):
                 # Surface structured failure details before propagating exception
                 details = WorkflowErrorDetails.from_exception(exc)
                 with _framework_event_origin():
-                    failed_event = WorkflowEvent.failed(details)
+                    failed_event = WorkflowEvent.failed(details)  # ruff: noqa: RUF070
                 yield failed_event
                 with _framework_event_origin():
-                    failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
+                    failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)  # ruff: noqa: RUF070
                 yield failed_status
                 span.add_event(
                     name=OtelAttr.WORKFLOW_ERROR,
