@@ -46,3 +46,18 @@ runs:
           echo "Installing Azure Functions Core Tools"
           npm install -g azure-functions-core-tools@4 --unsafe-perm true
           func --version
+      - name: Ensure Python 3.12 is available for Azure Functions worker
+        shell: bash
+        run: |
+          # The Azure Functions Python worker may segfault on Python >=3.13
+          # (protobuf C extension crash).  Ensure a compatible Python is
+          # available so the conftest can redirect the worker to it.
+          if ! python3.12 --version 2>/dev/null; then
+            echo "Python 3.12 not found on system, installing via uv..."
+            uv python install 3.12
+            FUNC_WORKER_PYTHON="$(uv python find 3.12)"
+            echo "FUNC_WORKER_PYTHON=${FUNC_WORKER_PYTHON}" >> "$GITHUB_ENV"
+            echo "Installed Python 3.12 at ${FUNC_WORKER_PYTHON}"
+          else
+            echo "System Python 3.12 found: $(which python3.12)"
+          fi

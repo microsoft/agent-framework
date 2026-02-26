@@ -350,6 +350,34 @@ def _load_and_validate_env() -> None:
         )
 
 
+def _find_func_worker_python() -> str | None:
+    """Find a Python 3.10-3.12 executable for the Azure Functions worker.
+
+    The Azure Functions Core Tools worker may segfault on Python >=3.13 due to
+    protobuf/grpcio C extension compatibility issues (``google._upb`` crash).
+    This returns a path to a compatible Python interpreter so the function host
+    can use it instead of the default (which is the test runner's Python).
+
+    Returns ``None`` when the current interpreter is already compatible or no
+    alternative can be found.
+    """
+    if sys.version_info < (3, 13):
+        return None  # Current Python is compatible; no override needed.
+
+    # Check for an explicit override first (e.g. set by CI).
+    explicit = os.environ.get("FUNC_WORKER_PYTHON", "").strip()
+    if explicit and Path(explicit).is_file():
+        return explicit
+
+    # Try versioned system executables (python3.12, python3.11, python3.10).
+    for minor in range(12, 9, -1):
+        path = shutil.which(f"python3.{minor}")
+        if path:
+            return path
+
+    return None
+
+
 def _start_function_app(sample_path: Path, port: int) -> subprocess.Popen[Any]:
     """Start a function app in the specified sample directory.
 
@@ -360,6 +388,13 @@ def _start_function_app(sample_path: Path, port: int) -> subprocess.Popen[Any]:
     # This prevents conflicts between parallel or repeated test runs, as Durable Functions
     # use the task hub name to separate orchestration state.
     env["TASKHUB_NAME"] = f"test{uuid.uuid4().hex[:8]}"
+
+    # The Azure Functions Python worker may crash on Python >=3.13 with a
+    # SIGSEGV in the protobuf C extension (google._upb).  Point the worker at
+    # a compatible Python when one is available.
+    worker_python = _find_func_worker_python()
+    if worker_python:
+        env["languageWorkers__python__defaultExecutablePath"] = worker_python
 
     # On Windows, use CREATE_NEW_PROCESS_GROUP to allow proper termination
     # shell=True only on Windows to handle PATH resolution
