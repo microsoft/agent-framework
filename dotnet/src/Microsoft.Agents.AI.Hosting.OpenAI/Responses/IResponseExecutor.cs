@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 
@@ -28,10 +29,12 @@ internal interface IResponseExecutor
     /// </summary>
     /// <param name="context">The agent invocation context containing the ID generator and other context information.</param>
     /// <param name="request">The create response request.</param>
+    /// <param name="conversationHistory">Optional prior conversation messages to prepend to the agent's input.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>An async enumerable of streaming response events.</returns>
     IAsyncEnumerable<StreamingResponseEvent> ExecuteAsync(
         AgentInvocationContext context,
         CreateResponse request,
+        IReadOnlyList<ChatMessage>? conversationHistory = null,
         CancellationToken cancellationToken = default);
 }
