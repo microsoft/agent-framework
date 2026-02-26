@@ -34,6 +34,10 @@ from agent_framework.observability import (
     OtelAttr,
     get_tracer,
 )
+# These internal helpers are used by AgentTelemetryLayer to build spans.
+# ClaudeAgent cannot inherit AgentTelemetryLayer (MRO conflict with its own
+# run()), so we reuse the same helpers directly.  If the core package later
+# exposes public equivalents, this import block should be updated.
 from agent_framework.observability import (
     _capture_messages as capture_messages,
     _capture_response as capture_response,
@@ -674,7 +678,12 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         span.set_attributes(attributes)
 
         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
-            capture_messages(span=span, provider_name=provider_name, messages=messages)
+            capture_messages(
+                span=span,
+                provider_name=provider_name,
+                messages=messages,
+                system_instructions=self._default_options.get("system_prompt"),
+            )
 
         span_state = {"closed": False}
         duration_state: dict[str, float] = {}
@@ -722,7 +731,12 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         """Wrap a non-streaming run with OpenTelemetry tracing."""
         with get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
-                capture_messages(span=span, provider_name=provider_name, messages=messages)
+                capture_messages(
+                    span=span,
+                    provider_name=provider_name,
+                    messages=messages,
+                    system_instructions=self._default_options.get("system_prompt"),
+                )
             start_time = perf_counter()
             try:
                 response = await result_stream.get_final_response()

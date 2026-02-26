@@ -998,93 +998,81 @@ class TestClaudeAgentTelemetry:
             ),
         ]
 
-    async def test_run_emits_span_when_instrumentation_enabled(self) -> None:
+    async def test_run_emits_span_when_instrumentation_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that run() creates an OpenTelemetry span when instrumentation is enabled."""
         from agent_framework.observability import OBSERVABILITY_SETTINGS
 
         messages = self._create_standard_messages()
         mock_client = self._create_mock_client(messages)
 
-        original_enabled = OBSERVABILITY_SETTINGS.enable_instrumentation
-        try:
-            OBSERVABILITY_SETTINGS.enable_instrumentation = True
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", True)
 
-            with (
-                patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
-                patch("agent_framework_claude._agent.get_span") as mock_get_span,
-            ):
-                mock_span = MagicMock()
-                mock_get_span.return_value.__enter__ = MagicMock(return_value=mock_span)
-                mock_get_span.return_value.__exit__ = MagicMock(return_value=False)
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework_claude._agent.get_span") as mock_get_span,
+        ):
+            mock_span = MagicMock()
+            mock_get_span.return_value.__enter__ = MagicMock(return_value=mock_span)
+            mock_get_span.return_value.__exit__ = MagicMock(return_value=False)
 
-                agent = ClaudeAgent(name="test-agent")
-                response = await agent.run("Hello")
+            agent = ClaudeAgent(name="test-agent")
+            response = await agent.run("Hello")
 
-                assert response.text == "Hello!"
-                mock_get_span.assert_called_once()
-                call_kwargs = mock_get_span.call_args[1]
-                assert call_kwargs["attributes"]["gen_ai.agent.name"] == "test-agent"
-                assert call_kwargs["attributes"]["gen_ai.operation.name"] == "invoke_agent"
-        finally:
-            OBSERVABILITY_SETTINGS.enable_instrumentation = original_enabled
+            assert response.text == "Hello!"
+            mock_get_span.assert_called_once()
+            call_kwargs = mock_get_span.call_args[1]
+            assert call_kwargs["attributes"]["gen_ai.agent.name"] == "test-agent"
+            assert call_kwargs["attributes"]["gen_ai.operation.name"] == "invoke_agent"
 
-    async def test_run_skips_telemetry_when_instrumentation_disabled(self) -> None:
+    async def test_run_skips_telemetry_when_instrumentation_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that run() skips telemetry when instrumentation is disabled."""
         from agent_framework.observability import OBSERVABILITY_SETTINGS
 
         messages = self._create_standard_messages()
         mock_client = self._create_mock_client(messages)
 
-        original_enabled = OBSERVABILITY_SETTINGS.enable_instrumentation
-        try:
-            OBSERVABILITY_SETTINGS.enable_instrumentation = False
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", False)
 
-            with (
-                patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
-                patch("agent_framework_claude._agent.get_span") as mock_get_span,
-            ):
-                agent = ClaudeAgent(name="test-agent")
-                response = await agent.run("Hello")
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework_claude._agent.get_span") as mock_get_span,
+        ):
+            agent = ClaudeAgent(name="test-agent")
+            response = await agent.run("Hello")
 
-                assert response.text == "Hello!"
-                mock_get_span.assert_not_called()
-        finally:
-            OBSERVABILITY_SETTINGS.enable_instrumentation = original_enabled
+            assert response.text == "Hello!"
+            mock_get_span.assert_not_called()
 
-    async def test_run_stream_emits_span_when_instrumentation_enabled(self) -> None:
+    async def test_run_stream_emits_span_when_instrumentation_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that run(stream=True) creates a span when instrumentation is enabled."""
         from agent_framework.observability import OBSERVABILITY_SETTINGS
 
         messages = self._create_standard_messages()
         mock_client = self._create_mock_client(messages)
 
-        original_enabled = OBSERVABILITY_SETTINGS.enable_instrumentation
-        try:
-            OBSERVABILITY_SETTINGS.enable_instrumentation = True
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", True)
 
-            with (
-                patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
-                patch("agent_framework_claude._agent.get_tracer") as mock_get_tracer,
-            ):
-                mock_span = MagicMock()
-                mock_tracer = MagicMock()
-                mock_tracer.start_span.return_value = mock_span
-                mock_get_tracer.return_value = mock_tracer
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework_claude._agent.get_tracer") as mock_get_tracer,
+        ):
+            mock_span = MagicMock()
+            mock_tracer = MagicMock()
+            mock_tracer.start_span.return_value = mock_span
+            mock_get_tracer.return_value = mock_tracer
 
-                agent = ClaudeAgent(name="stream-agent")
-                updates: list[AgentResponseUpdate] = []
-                async for update in agent.run("Hello", stream=True):
-                    updates.append(update)
+            agent = ClaudeAgent(name="stream-agent")
+            updates: list[AgentResponseUpdate] = []
+            async for update in agent.run("Hello", stream=True):
+                updates.append(update)
 
-                assert len(updates) == 1
-                mock_tracer.start_span.assert_called_once()
-                span_name = mock_tracer.start_span.call_args[0][0]
-                assert "stream-agent" in span_name
-                assert "invoke_agent" in span_name
-        finally:
-            OBSERVABILITY_SETTINGS.enable_instrumentation = original_enabled
+            assert len(updates) == 1
+            mock_tracer.start_span.assert_called_once()
+            span_name = mock_tracer.start_span.call_args[0][0]
+            assert "stream-agent" in span_name
+            assert "invoke_agent" in span_name
 
-    async def test_run_captures_exception_in_span(self) -> None:
+    async def test_run_captures_exception_in_span(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that exceptions during run() are captured in the telemetry span."""
         from agent_framework.exceptions import AgentException
         from agent_framework.observability import OBSERVABILITY_SETTINGS
@@ -1103,53 +1091,45 @@ class TestClaudeAgentTelemetry:
         ]
         mock_client = self._create_mock_client(error_messages)
 
-        original_enabled = OBSERVABILITY_SETTINGS.enable_instrumentation
-        try:
-            OBSERVABILITY_SETTINGS.enable_instrumentation = True
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", True)
 
-            with (
-                patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
-                patch("agent_framework_claude._agent.get_span") as mock_get_span,
-                patch("agent_framework_claude._agent.capture_exception") as mock_capture_exc,
-            ):
-                mock_span = MagicMock()
-                mock_get_span.return_value.__enter__ = MagicMock(return_value=mock_span)
-                mock_get_span.return_value.__exit__ = MagicMock(return_value=False)
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework_claude._agent.get_span") as mock_get_span,
+            patch("agent_framework_claude._agent.capture_exception") as mock_capture_exc,
+        ):
+            mock_span = MagicMock()
+            mock_get_span.return_value.__enter__ = MagicMock(return_value=mock_span)
+            mock_get_span.return_value.__exit__ = MagicMock(return_value=False)
 
-                agent = ClaudeAgent(name="error-agent")
-                with pytest.raises(AgentException):
-                    await agent.run("Hello")
+            agent = ClaudeAgent(name="error-agent")
+            with pytest.raises(AgentException):
+                await agent.run("Hello")
 
-                mock_capture_exc.assert_called_once()
-                exc_kwargs = mock_capture_exc.call_args[1]
-                assert exc_kwargs["span"] is mock_span
-                assert isinstance(exc_kwargs["exception"], AgentException)
-        finally:
-            OBSERVABILITY_SETTINGS.enable_instrumentation = original_enabled
+            mock_capture_exc.assert_called_once()
+            exc_kwargs = mock_capture_exc.call_args[1]
+            assert exc_kwargs["span"] is mock_span
+            assert isinstance(exc_kwargs["exception"], AgentException)
 
-    async def test_telemetry_uses_correct_provider_name(self) -> None:
+    async def test_telemetry_uses_correct_provider_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that telemetry uses AGENT_PROVIDER_NAME as provider."""
         from agent_framework.observability import OBSERVABILITY_SETTINGS
 
         messages = self._create_standard_messages()
         mock_client = self._create_mock_client(messages)
 
-        original_enabled = OBSERVABILITY_SETTINGS.enable_instrumentation
-        try:
-            OBSERVABILITY_SETTINGS.enable_instrumentation = True
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", True)
 
-            with (
-                patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
-                patch("agent_framework_claude._agent.get_span") as mock_get_span,
-            ):
-                mock_span = MagicMock()
-                mock_get_span.return_value.__enter__ = MagicMock(return_value=mock_span)
-                mock_get_span.return_value.__exit__ = MagicMock(return_value=False)
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework_claude._agent.get_span") as mock_get_span,
+        ):
+            mock_span = MagicMock()
+            mock_get_span.return_value.__enter__ = MagicMock(return_value=mock_span)
+            mock_get_span.return_value.__exit__ = MagicMock(return_value=False)
 
-                agent = ClaudeAgent(name="test-agent")
-                await agent.run("Hello")
+            agent = ClaudeAgent(name="test-agent")
+            await agent.run("Hello")
 
-                call_kwargs = mock_get_span.call_args[1]
-                assert call_kwargs["attributes"]["gen_ai.provider.name"] == "anthropic.claude"
-        finally:
-            OBSERVABILITY_SETTINGS.enable_instrumentation = original_enabled
+            call_kwargs = mock_get_span.call_args[1]
+            assert call_kwargs["attributes"]["gen_ai.provider.name"] == "anthropic.claude"
