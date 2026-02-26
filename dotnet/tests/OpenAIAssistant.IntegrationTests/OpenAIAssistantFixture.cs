@@ -14,8 +14,6 @@ namespace OpenAIAssistant.IntegrationTests;
 
 public class OpenAIAssistantFixture : IChatClientAgentFixture
 {
-    private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
-
     private AssistantClient? _assistantClient;
     private ChatClientAgent _agent = null!;
 
@@ -49,7 +47,7 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
     {
         var assistant =
             await this._assistantClient!.CreateAssistantAsync(
-                s_config.ChatModelId!,
+                TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
                 new AssistantCreationOptions()
                 {
                     Name = name,
@@ -81,7 +79,7 @@ public class OpenAIAssistantFixture : IChatClientAgentFixture
 
     public async Task InitializeAsync()
     {
-        var client = new OpenAIClient(s_config.ApiKey);
+        var client = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey));
         this._assistantClient = client.GetAssistantClient();
 
         this._agent = await this.CreateChatClientAgentAsync();

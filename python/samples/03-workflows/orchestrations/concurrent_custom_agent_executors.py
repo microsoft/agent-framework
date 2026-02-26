@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from typing import Any
 
 from agent_framework import (
@@ -12,7 +13,7 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -29,21 +30,23 @@ and emit AgentExecutorResponse outputs, which allows reuse of the high-level
 ConcurrentBuilder API and the default aggregator.
 
 Demonstrates:
-- Executors that create their Agent in __init__ (via AzureOpenAIChatClient)
+- Executors that create their Agent in __init__ (via AzureOpenAIResponsesClient)
 - A @handler that converts AgentExecutorRequest -> AgentExecutorResponse
 - ConcurrentBuilder(participants=[...]) to build fan-out/fan-in
 - Default aggregator returning list[Message] (one user + one assistant per agent)
 - Workflow completion when all participants become idle
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient (az login + required env vars)
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
 
 class ResearcherExec(Executor):
     agent: Agent
 
-    def __init__(self, client: AzureOpenAIChatClient, id: str = "researcher"):
+    def __init__(self, client: AzureOpenAIResponsesClient, id: str = "researcher"):
         self.agent = client.as_agent(
             instructions=(
                 "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
@@ -63,7 +66,7 @@ class ResearcherExec(Executor):
 class MarketerExec(Executor):
     agent: Agent
 
-    def __init__(self, client: AzureOpenAIChatClient, id: str = "marketer"):
+    def __init__(self, client: AzureOpenAIResponsesClient, id: str = "marketer"):
         self.agent = client.as_agent(
             instructions=(
                 "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
@@ -83,7 +86,7 @@ class MarketerExec(Executor):
 class LegalExec(Executor):
     agent: Agent
 
-    def __init__(self, client: AzureOpenAIChatClient, id: str = "legal"):
+    def __init__(self, client: AzureOpenAIResponsesClient, id: str = "legal"):
         self.agent = client.as_agent(
             instructions=(
                 "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
@@ -101,7 +104,11 @@ class LegalExec(Executor):
 
 
 async def main() -> None:
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     researcher = ResearcherExec(client)
     marketer = MarketerExec(client)

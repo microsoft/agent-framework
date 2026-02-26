@@ -7,6 +7,10 @@ This module lazily re-exports objects from:
 
 Supported classes:
 - OllamaChatClient
+- OllamaChatOptions
+- OllamaEmbeddingClient
+- OllamaEmbeddingOptions
+- OllamaEmbeddingSettings
 - OllamaSettings
 """
 
@@ -15,7 +19,14 @@ from typing import Any
 
 IMPORT_PATH = "agent_framework_ollama"
 PACKAGE_NAME = "agent-framework-ollama"
-_IMPORTS = ["OllamaChatClient", "OllamaSettings"]
+_IMPORTS = [
+    "OllamaChatClient",
+    "OllamaChatOptions",
+    "OllamaEmbeddingClient",
+    "OllamaEmbeddingOptions",
+    "OllamaEmbeddingSettings",
+    "OllamaSettings",
+]
 
 
 def __getattr__(name: str) -> Any:

@@ -20,7 +20,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_framework_declarative._workflows._declarative_base import (
+try:
+    import powerfx  # noqa: F401
+
+    _powerfx_available = True
+except (ImportError, RuntimeError):
+    _powerfx_available = False
+
+pytestmark = pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
+
+from agent_framework_declarative._workflows._declarative_base import (  # noqa: E402
     DeclarativeWorkflowState,
 )
 

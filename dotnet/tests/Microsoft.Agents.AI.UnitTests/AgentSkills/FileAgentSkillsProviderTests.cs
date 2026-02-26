@@ -96,7 +96,7 @@ public sealed class FileAgentSkillsProviderTests : IDisposable
         this.CreateSkill("custom-prompt-skill", "Custom prompt", "Body.");
         var options = new FileAgentSkillsProviderOptions
         {
-            SkillsInstructionPrompt = "Custom template: {0}"
+            SkillsInstructionPrompt = "Custom template: {skills}"
         };
         var provider = new FileAgentSkillsProvider(this._testRoot, options);
         var inputContext = new AIContext();
@@ -108,21 +108,6 @@ public sealed class FileAgentSkillsProviderTests : IDisposable
         // Assert
         Assert.NotNull(result.Instructions);
         Assert.StartsWith("Custom template:", result.Instructions);
-    }
-
-    [Fact]
-    public void Constructor_InvalidPromptTemplate_ThrowsArgumentException()
-    {
-        // Arrange — template with unescaped braces and no valid {0} placeholder
-        var options = new FileAgentSkillsProviderOptions
-        {
-            SkillsInstructionPrompt = "Bad template with {unescaped} braces"
-        };
-
-        // Act & Assert
-        var ex = Assert.Throws<ArgumentException>(() => new FileAgentSkillsProvider(this._testRoot, options));
-        Assert.Contains("SkillsInstructionPrompt", ex.Message);
-        Assert.Equal("options", ex.ParamName);
     }
 
     [Fact]

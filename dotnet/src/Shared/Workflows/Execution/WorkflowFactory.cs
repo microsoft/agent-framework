@@ -22,6 +22,9 @@ internal sealed class WorkflowFactory(string workflowFile, Uri foundryEndpoint)
     // Assign to enable logging
     public ILoggerFactory LoggerFactory { get; init; } = NullLoggerFactory.Instance;
 
+    // Assign to provide MCP tool capabilities
+    public IMcpToolHandler? McpToolHandler { get; init; }
+
     /// <summary>
     /// Create the workflow from the declarative YAML.  Includes definition of the
     /// <see cref="DeclarativeWorkflowOptions" /> and the associated <see cref="ResponseAgentProvider"/>.
@@ -42,6 +45,7 @@ internal sealed class WorkflowFactory(string workflowFile, Uri foundryEndpoint)
                 Configuration = this.Configuration,
                 ConversationId = this.ConversationId,
                 LoggerFactory = this.LoggerFactory,
+                McpToolHandler = this.McpToolHandler,
             };
 
         string workflowPath = Path.Combine(AppContext.BaseDirectory, workflowFile);

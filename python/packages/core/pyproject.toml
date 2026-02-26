@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0rc1"
+version = "1.0.0rc2"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -34,7 +34,8 @@ dependencies = [
     # connectors and functions
     "openai>=1.99.0",
     "azure-identity>=1,<2",
-    "azure-ai-projects >= 2.0.0b3",
+    # Pinned to 2.0.0b3 - breaking changes in 2.0.0b4, unpin once upgrades complete
+    "azure-ai-projects == 2.0.0b3",
     "mcp[ws]>=1.24.0,<2",
     "packaging>=24.1",
 ]
@@ -90,6 +91,9 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
 timeout = 120
+markers = [
+    "integration: marks tests as integration tests that require external services",
+]
 
 [tool.coverage.run]
 omit = [
@@ -123,6 +127,7 @@ exclude_dirs = ["tests"]
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
+
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"
 test = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered -n auto --dist worksteal tests"

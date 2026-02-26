@@ -59,6 +59,7 @@ from ._sessions import (
     register_state_type,
 )
 from ._settings import SecretString, load_settings
+from ._skills import FileAgentSkillsProvider
 from ._telemetry import (
     AGENT_FRAMEWORK_USER_AGENT,
     APP_INFO,
@@ -233,6 +234,7 @@ __all__ = [
     "Executor",
     "FanInEdgeGroup",
     "FanOutEdgeGroup",
+    "FileAgentSkillsProvider",
     "FileCheckpointStorage",
     "FinalT",
     "FinishReason",

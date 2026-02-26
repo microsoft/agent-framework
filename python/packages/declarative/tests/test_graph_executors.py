@@ -7,7 +7,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agent_framework_declarative._workflows import (
+try:
+    import powerfx  # noqa: F401
+
+    _powerfx_available = True
+except (ImportError, RuntimeError):
+    _powerfx_available = False
+
+_requires_powerfx = pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
+
+from agent_framework_declarative._workflows import (  # noqa: E402
     ALL_ACTION_EXECUTORS,
     DECLARATIVE_STATE_KEY,
     ActionComplete,
@@ -99,6 +108,7 @@ class TestDeclarativeWorkflowState:
         result = state.get("Local.items")
         assert result == ["first", "second"]
 
+    @_requires_powerfx
     @pytest.mark.asyncio
     async def test_eval_expression(self, mock_state):
         """Test evaluating expressions."""
@@ -196,6 +206,7 @@ class TestDeclarativeActionExecutor:
 
     # Note: ConditionEvaluatorExecutor tests removed - conditions are now evaluated on edges
 
+    @_requires_powerfx
     async def test_foreach_init_with_items(self, mock_context, mock_state):
         """Test ForeachInitExecutor with items."""
         state = DeclarativeWorkflowState(mock_state)
@@ -529,6 +540,7 @@ class TestHumanInputExecutors:
         assert "continue" in request.message.lower()
 
 
+@_requires_powerfx
 class TestParseValueExecutor:
     """Tests for the ParseValue action executor."""
 

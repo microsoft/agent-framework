@@ -158,7 +158,8 @@ class ScopedContentProcessor:
                 name=f"Agent Framework Message {message_id}",
                 is_truncated=False,
                 correlation_id=correlation_id,
-                sequence_number=time.time_ns(),
+                # This would be c# ticks equivalent and needs to fit inside c# long
+                sequence_number=time.time_ns() // 100 + 621355968000000000,
             )
             activity_meta = ActivityMetadata(activity=activity)
 

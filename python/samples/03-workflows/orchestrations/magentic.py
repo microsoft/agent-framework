@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 from typing import cast
 
 from agent_framework import (
@@ -11,8 +12,9 @@ from agent_framework import (
     Message,
     WorkflowEvent,
 )
-from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import GroupChatRequestSentEvent, MagenticBuilder, MagenticProgressLedger
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.WARNING)
@@ -40,7 +42,9 @@ energy efficiency and CO2 emissions of several ML models, streams intermediate
 events, and prints the final answer. The workflow completes when idle.
 
 Prerequisites:
-- OpenAI credentials configured for `OpenAIChatClient` and `OpenAIResponsesClient`.
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
 # Load environment variables from .env file
@@ -48,25 +52,29 @@ load_dotenv()
 
 
 async def main() -> None:
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
+
     researcher_agent = Agent(
         name="ResearcherAgent",
         description="Specialist in research and information gathering",
         instructions=(
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
-        # This agent requires the gpt-4o-search-preview model to perform web searches.
-        client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
+        client=client,
     )
 
     # Create code interpreter tool using instance method
-    coder_client = OpenAIResponsesClient()
-    code_interpreter_tool = coder_client.get_code_interpreter_tool()
+    code_interpreter_tool = client.get_code_interpreter_tool()
 
     coder_agent = Agent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
-        client=coder_client,
+        client=client,
         tools=code_interpreter_tool,
     )
 
@@ -75,7 +83,7 @@ async def main() -> None:
         name="MagenticManager",
         description="Orchestrator that coordinates the research and coding workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",
-        client=OpenAIChatClient(),
+        client=client,
     )
 
     print("\nBuilding Magentic Workflow...")

@@ -109,7 +109,7 @@ public sealed partial class ChatClientAgent : AIAgent
         // Use the ChatHistoryProvider from options if provided.
         // If one was not provided, and we later find out that the underlying service does not manage chat history server-side,
         // we will use the default InMemoryChatHistoryProvider at that time.
-        this.ChatHistoryProvider = options?.ChatHistoryProvider;
+        this.ChatHistoryProvider = options?.ChatHistoryProvider ?? new InMemoryChatHistoryProvider();
         this.AIContextProviders = this._agentOptions?.AIContextProviders as IReadOnlyList<AIContextProvider> ?? this._agentOptions?.AIContextProviders?.ToList();
 
         // Validate that no two providers share the same StateKey, since they would overwrite each other's state in the session.
@@ -743,24 +743,30 @@ public sealed partial class ChatClientAgent : AIAgent
 
         if (!string.IsNullOrWhiteSpace(responseConversationId))
         {
-            if (this.ChatHistoryProvider is not null)
+            if (this._agentOptions?.ChatHistoryProvider is not null)
             {
                 // The agent has a ChatHistoryProvider configured, but the service returned a conversation id,
                 // meaning the service manages chat history server-side. Both cannot be used simultaneously.
-                throw new InvalidOperationException(
-                    $"Only {nameof(ChatClientAgentSession.ConversationId)} or {nameof(this.ChatHistoryProvider)} may be used, but not both. The service returned a conversation id indicating server-side chat history management, but the agent has a {nameof(this.ChatHistoryProvider)} configured.");
+                if (this._agentOptions?.WarnOnChatHistoryProviderConflict is true)
+                {
+                    this._logger.LogAgentChatClientHistoryProviderConflict(nameof(ChatClientAgentSession.ConversationId), nameof(this.ChatHistoryProvider), this.Id, this.GetLoggingAgentName());
+                }
+
+                if (this._agentOptions?.ThrowOnChatHistoryProviderConflict is true)
+                {
+                    throw new InvalidOperationException(
+                        $"Only {nameof(ChatClientAgentSession.ConversationId)} or {nameof(this.ChatHistoryProvider)} may be used, but not both. The service returned a conversation id indicating server-side chat history management, but the agent has a {nameof(this.ChatHistoryProvider)} configured.");
+                }
+
+                if (this._agentOptions?.ClearOnChatHistoryProviderConflict is true)
+                {
+                    this.ChatHistoryProvider = null;
+                }
             }
 
             // If we got a conversation id back from the chat client, it means that the service supports server side session storage
             // so we should update the session with the new id.
             session.ConversationId = responseConversationId;
-        }
-        else
-        {
-            // If the service doesn't use service side chat history storage (i.e. we got no id back from invocation), and
-            // the agent has no ChatHistoryProvider yet, we should use the default InMemoryChatHistoryProvider so that
-            // we have somewhere to store the chat history.
-            this.ChatHistoryProvider ??= new InMemoryChatHistoryProvider();
         }
     }
 
@@ -807,13 +813,7 @@ public sealed partial class ChatClientAgent : AIAgent
 
     private ChatHistoryProvider? ResolveChatHistoryProvider(ChatOptions? chatOptions, ChatClientAgentSession session)
     {
-        ChatHistoryProvider? provider = this.ChatHistoryProvider;
-
-        if (session.ConversationId is not null && provider is not null)
-        {
-            throw new InvalidOperationException(
-                $"Only {nameof(ChatClientAgentSession.ConversationId)} or {nameof(this.ChatHistoryProvider)} may be used, but not both. The current {nameof(ChatClientAgentSession)} has a {nameof(ChatClientAgentSession.ConversationId)} indicating server-side chat history management, but the agent has a {nameof(this.ChatHistoryProvider)} configured.");
-        }
+        ChatHistoryProvider? provider = session.ConversationId is null ? this.ChatHistoryProvider : null;
 
         // If someone provided an override ChatHistoryProvider via AdditionalProperties, we should use that instead.
         if (chatOptions?.AdditionalProperties?.TryGetValue(out ChatHistoryProvider? overrideProvider) is true)

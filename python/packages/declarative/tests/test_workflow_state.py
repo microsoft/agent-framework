@@ -225,6 +225,335 @@ class TestWorkflowStateResetTurn:
         assert state.get("Workflow.Outputs.result") == "done"
 
 
+class TestWorkflowStateEvalSimple:
+    """Tests for _eval_simple fallback PowerFx evaluation."""
+
+    def test_negation_prefix(self):
+        """Test negation with ! prefix."""
+        state = WorkflowState()
+        state.set("Local.value", True)
+        assert state._eval_simple("!Local.value") is False
+        state.set("Local.value", False)
+        assert state._eval_simple("!Local.value") is True
+
+    def test_not_function(self):
+        """Test Not() function."""
+        state = WorkflowState()
+        state.set("Local.flag", True)
+        assert state._eval_simple("Not(Local.flag)") is False
+        state.set("Local.flag", False)
+        assert state._eval_simple("Not(Local.flag)") is True
+
+    def test_and_operator(self):
+        """Test And operator."""
+        state = WorkflowState()
+        state.set("Local.a", True)
+        state.set("Local.b", True)
+        assert state._eval_simple("Local.a And Local.b") is True
+        state.set("Local.b", False)
+        assert state._eval_simple("Local.a And Local.b") is False
+
+    def test_or_operator(self):
+        """Test Or operator."""
+        state = WorkflowState()
+        state.set("Local.a", False)
+        state.set("Local.b", False)
+        assert state._eval_simple("Local.a Or Local.b") is False
+        state.set("Local.b", True)
+        assert state._eval_simple("Local.a Or Local.b") is True
+
+    def test_or_operator_double_pipe(self):
+        """Test || operator."""
+        state = WorkflowState()
+        state.set("Local.x", False)
+        state.set("Local.y", True)
+        assert state._eval_simple("Local.x || Local.y") is True
+
+    def test_less_than(self):
+        """Test < comparison."""
+        state = WorkflowState()
+        state.set("Local.num", 5)
+        assert state._eval_simple("Local.num < 10") is True
+        assert state._eval_simple("Local.num < 3") is False
+
+    def test_greater_than(self):
+        """Test > comparison."""
+        state = WorkflowState()
+        state.set("Local.num", 5)
+        assert state._eval_simple("Local.num > 3") is True
+        assert state._eval_simple("Local.num > 10") is False
+
+    def test_less_than_or_equal(self):
+        """Test <= comparison."""
+        state = WorkflowState()
+        state.set("Local.num", 5)
+        assert state._eval_simple("Local.num <= 5") is True
+        assert state._eval_simple("Local.num <= 4") is False
+
+    def test_greater_than_or_equal(self):
+        """Test >= comparison."""
+        state = WorkflowState()
+        state.set("Local.num", 5)
+        assert state._eval_simple("Local.num >= 5") is True
+        assert state._eval_simple("Local.num >= 6") is False
+
+    def test_not_equal(self):
+        """Test <> comparison."""
+        state = WorkflowState()
+        state.set("Local.val", "hello")
+        assert state._eval_simple('Local.val <> "world"') is True
+        assert state._eval_simple('Local.val <> "hello"') is False
+
+    def test_equal(self):
+        """Test = comparison."""
+        state = WorkflowState()
+        state.set("Local.val", "test")
+        assert state._eval_simple('Local.val = "test"') is True
+        assert state._eval_simple('Local.val = "other"') is False
+
+    def test_addition_numeric(self):
+        """Test + operator with numbers."""
+        state = WorkflowState()
+        state.set("Local.a", 3)
+        state.set("Local.b", 4)
+        assert state._eval_simple("Local.a + Local.b") == 7.0
+
+    def test_addition_string_concat(self):
+        """Test + operator falls back to string concat."""
+        state = WorkflowState()
+        state.set("Local.a", "hello")
+        state.set("Local.b", "world")
+        assert state._eval_simple("Local.a + Local.b") == "helloworld"
+
+    def test_addition_with_none(self):
+        """Test + treats None as 0."""
+        state = WorkflowState()
+        state.set("Local.a", 5)
+        # Local.b doesn't exist, so it's None
+        assert state._eval_simple("Local.a + Local.b") == 5.0
+
+    def test_subtraction(self):
+        """Test - operator."""
+        state = WorkflowState()
+        state.set("Local.a", 10)
+        state.set("Local.b", 3)
+        assert state._eval_simple("Local.a - Local.b") == 7.0
+
+    def test_subtraction_with_none(self):
+        """Test - treats None as 0."""
+        state = WorkflowState()
+        state.set("Local.a", 5)
+        assert state._eval_simple("Local.a - Local.missing") == 5.0
+
+    def test_multiplication(self):
+        """Test * operator."""
+        state = WorkflowState()
+        state.set("Local.a", 4)
+        state.set("Local.b", 5)
+        assert state._eval_simple("Local.a * Local.b") == 20.0
+
+    def test_multiplication_with_none(self):
+        """Test * treats None as 0."""
+        state = WorkflowState()
+        state.set("Local.a", 5)
+        assert state._eval_simple("Local.a * Local.missing") == 0.0
+
+    def test_division(self):
+        """Test / operator."""
+        state = WorkflowState()
+        state.set("Local.a", 20)
+        state.set("Local.b", 4)
+        assert state._eval_simple("Local.a / Local.b") == 5.0
+
+    def test_division_by_zero(self):
+        """Test / by zero returns None."""
+        state = WorkflowState()
+        state.set("Local.a", 10)
+        state.set("Local.b", 0)
+        assert state._eval_simple("Local.a / Local.b") is None
+
+    def test_string_literal_double_quotes(self):
+        """Test string literal with double quotes."""
+        state = WorkflowState()
+        assert state._eval_simple('"hello world"') == "hello world"
+
+    def test_string_literal_single_quotes(self):
+        """Test string literal with single quotes."""
+        state = WorkflowState()
+        assert state._eval_simple("'hello world'") == "hello world"
+
+    def test_integer_literal(self):
+        """Test integer literal."""
+        state = WorkflowState()
+        assert state._eval_simple("42") == 42
+
+    def test_float_literal(self):
+        """Test float literal."""
+        state = WorkflowState()
+        assert state._eval_simple("3.14") == 3.14
+
+    def test_boolean_true_literal(self):
+        """Test true literal (case insensitive)."""
+        state = WorkflowState()
+        assert state._eval_simple("true") is True
+        assert state._eval_simple("True") is True
+        assert state._eval_simple("TRUE") is True
+
+    def test_boolean_false_literal(self):
+        """Test false literal (case insensitive)."""
+        state = WorkflowState()
+        assert state._eval_simple("false") is False
+        assert state._eval_simple("False") is False
+        assert state._eval_simple("FALSE") is False
+
+    def test_variable_reference(self):
+        """Test simple variable reference."""
+        state = WorkflowState()
+        state.set("Local.myvar", "myvalue")
+        assert state._eval_simple("Local.myvar") == "myvalue"
+
+    def test_unknown_expression_returned_as_is(self):
+        """Test that unknown expressions are returned as-is."""
+        state = WorkflowState()
+        result = state._eval_simple("unknown_identifier")
+        assert result == "unknown_identifier"
+
+    def test_agent_namespace_reference(self):
+        """Test Agent namespace variable reference."""
+        state = WorkflowState()
+        state.set_agent_result(text="agent response")
+        assert state._eval_simple("Agent.text") == "agent response"
+
+    def test_conversation_namespace_reference(self):
+        """Test Conversation namespace variable reference."""
+        state = WorkflowState()
+        state.add_conversation_message({"role": "user", "content": "hello"})
+        result = state._eval_simple("Conversation.messages")
+        assert len(result) == 1
+
+    def test_workflow_inputs_reference(self):
+        """Test Workflow.Inputs reference."""
+        state = WorkflowState(inputs={"name": "test"})
+        assert state._eval_simple("Workflow.Inputs.name") == "test"
+
+
+class TestWorkflowStateParseFunctionArgs:
+    """Tests for _parse_function_args helper."""
+
+    def test_simple_args(self):
+        """Test parsing simple comma-separated args."""
+        state = WorkflowState()
+        args = state._parse_function_args("1, 2, 3")
+        assert args == ["1", "2", "3"]
+
+    def test_string_args_with_commas(self):
+        """Test parsing string args containing commas."""
+        state = WorkflowState()
+        args = state._parse_function_args('"hello, world", "another"')
+        assert args == ['"hello, world"', '"another"']
+
+    def test_nested_function_args(self):
+        """Test parsing nested function calls."""
+        state = WorkflowState()
+        args = state._parse_function_args("Concat(a, b), c")
+        assert args == ["Concat(a, b)", "c"]
+
+    def test_empty_args(self):
+        """Test parsing empty args string."""
+        state = WorkflowState()
+        args = state._parse_function_args("")
+        assert args == []
+
+    def test_single_arg(self):
+        """Test parsing single argument."""
+        state = WorkflowState()
+        args = state._parse_function_args("single")
+        assert args == ["single"]
+
+    def test_deeply_nested_parens(self):
+        """Test parsing deeply nested parentheses."""
+        state = WorkflowState()
+        args = state._parse_function_args("Func1(Func2(a, b)), c")
+        assert args == ["Func1(Func2(a, b))", "c"]
+
+
+class TestWorkflowStateEvalIfExpression:
+    """Tests for eval_if_expression method."""
+
+    def test_dict_values_evaluated(self):
+        """Test that dict values are recursively evaluated."""
+        state = WorkflowState()
+        state.set("Local.name", "World")
+        result = state.eval_if_expression({"greeting": "=Local.name", "static": "value"})
+        assert result == {"greeting": "World", "static": "value"}
+
+    def test_list_values_evaluated(self):
+        """Test that list values are recursively evaluated."""
+        state = WorkflowState()
+        state.set("Local.val", 42)
+        result = state.eval_if_expression(["=Local.val", "static"])
+        assert result == [42, "static"]
+
+    def test_nested_dict_in_list(self):
+        """Test nested dict in list is evaluated."""
+        state = WorkflowState()
+        state.set("Local.x", 10)
+        result = state.eval_if_expression([{"key": "=Local.x"}])
+        assert result == [{"key": 10}]
+
+
+class TestWorkflowStateSetErrors:
+    """Tests for set() error handling."""
+
+    def test_set_workflow_directly_raises(self):
+        """Test that setting Workflow directly raises error."""
+        state = WorkflowState()
+        with pytest.raises(ValueError, match="Cannot set 'Workflow' directly"):
+            state.set("Workflow", "value")
+
+    def test_set_unknown_workflow_namespace_raises(self):
+        """Test that setting unknown Workflow sub-namespace raises."""
+        state = WorkflowState()
+        with pytest.raises(ValueError, match="Unknown Workflow namespace"):
+            state.set("Workflow.Unknown.path", "value")
+
+    def test_set_namespace_root_raises(self):
+        """Test that setting namespace root raises error."""
+        state = WorkflowState()
+        with pytest.raises(ValueError, match="Cannot replace entire namespace"):
+            state.set("Local", "value")
+
+
+class TestWorkflowStateGetEdgeCases:
+    """Tests for get() edge cases."""
+
+    def test_get_empty_path(self):
+        """Test get with empty path returns default."""
+        state = WorkflowState()
+        assert state.get("", "default") == "default"
+
+    def test_get_unknown_namespace(self):
+        """Test get from unknown namespace returns default."""
+        state = WorkflowState()
+        assert state.get("Unknown.path") is None
+        assert state.get("Unknown.path", "fallback") == "fallback"
+
+    def test_get_with_object_attribute(self):
+        """Test get navigates object attributes."""
+        state = WorkflowState()
+
+        class MockObj:
+            attr = "attribute_value"
+
+        state.set("Local.obj", MockObj())
+        assert state.get("Local.obj.attr") == "attribute_value"
+
+    def test_get_unknown_workflow_subspace(self):
+        """Test get from unknown Workflow sub-namespace."""
+        state = WorkflowState()
+        assert state.get("Workflow.Unknown.path") is None
+
+
 class TestWorkflowStateConversationIdInit:
     """Tests that WorkflowState generates a real UUID for System.ConversationId."""
 
