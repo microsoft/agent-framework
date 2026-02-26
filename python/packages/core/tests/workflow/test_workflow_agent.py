@@ -1391,51 +1391,69 @@ class TestWorkflowAgentMergeUpdates:
 class TestWorkflowAgentUserInputFilteringRegression:
     """Regression tests for #4261: user input must not compound across successive turns.
 
-    When a GroupChat orchestrator terminates, it yields self._full_conversation
-    (a list[Message]) containing the entire conversation history. Without filtering,
-    user inputs and earlier assistant messages accumulate in the response across turns.
+    When a GroupChat orchestrator terminates, it yields self._full_conversation via
+    ctx.yield_output(self._full_conversation). This is a list[Message] containing the
+    entire conversation history — both user inputs and all prior assistant responses.
 
-    The _filter_messages fix returns only the last meaningful assistant message from
-    list[Message] output, which aligns with the default GroupChatBuilder behavior
-    (intermediate_outputs=False) where only the orchestrator's final summary is surfaced.
+    Without filtering, WorkflowAgent's _convert_workflow_event_to_agent_response_updates
+    (streaming) and _convert_workflow_events_to_agent_response (non-streaming) forward
+    all messages verbatim, causing user inputs and earlier assistant responses to
+    accumulate in the output on every successive turn.
 
-    Users who need intermediate agent responses can opt in via
-    intermediate_outputs=True in GroupChatBuilder.
+    _filter_messages fixes this by returning only the last meaningful assistant message
+    from list[Message] output, aligning with GroupChatBuilder's default behavior of
+    intermediate_outputs=False where only the orchestrator's final summary is surfaced.
+    Users who need intermediate agent responses can opt in via intermediate_outputs=True.
+
+    These tests use a class-based Executor (rather than the @executor decorator) to
+    ensure generic type annotations on WorkflowContext[Never, list[Message]] resolve
+    correctly at runtime, so is_instance_of(data, list[Message]) hits the right branch.
     """
 
     async def test_streaming_compounding_not_observed_across_turns(self):
-        """Regression: turn 1's user input must not appear in turn 2's streamed response.
+        """Regression: turn 1's user input must not appear in turn 2's streamed response."""
 
-        Reproduces the escalating symptom from #4261 where each new turn accumulated
-        all previous user messages in the streamed response text.
-        """
+        class GroupChatLikeExecutor(Executor):
+            """Simulates a GroupChat orchestrator's termination behavior.
 
-        @executor
-        async def groupchat_like_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:
-            input_text = messages[-1].text or ""
-            response = AgentResponse(
-                messages=[
+            On termination, BaseGroupChatOrchestrator yields self._full_conversation
+            via ctx.yield_output(self._full_conversation), which is a list[Message]
+            containing the entire conversation history (both user and assistant messages).
+            This executor replicates that exact pattern to exercise the list[Message]
+            branch in _filter_messages and verify that user inputs do not compound
+            across successive turns (see #4261).
+            """
+
+            @handler
+            async def handle_messages(
+                self,
+                messages: list[Message],
+                ctx: WorkflowContext[Never, list[Message]],
+            ) -> None:
+                input_text = messages[-1].text or ""
+                full_conversation: list[Message] = [
                     Message(role="user", text=input_text),
                     Message(
                         role="assistant",
                         contents=[Content.from_text(text=f"Answer to: {input_text}")],
                         author_name="Principal",
                     ),
-                ],
-            )
-            await ctx.yield_output(response)
+                ]
+                await ctx.yield_output(full_conversation)
 
-        workflow = WorkflowBuilder(start_executor=groupchat_like_executor).build()
+        groupchat_executor = GroupChatLikeExecutor(id="groupchat")
+        workflow = WorkflowBuilder(start_executor=groupchat_executor).build()
         agent = workflow.as_agent("groupchat-agent")
+        session = AgentSession()
 
         # Turn 1
         updates1: list[AgentResponseUpdate] = []
-        async for chunk in agent.run("first_question", stream=True):
+        async for chunk in agent.run("first_question", stream=True, session=session):
             updates1.append(chunk)
 
         # Turn 2: "first_question" must NOT bleed into turn 2's streamed output
         updates2: list[AgentResponseUpdate] = []
-        async for chunk in agent.run("second_question", stream=True):
+        async for chunk in agent.run("second_question", stream=True, session=session):
             updates2.append(chunk)
 
         text2 = " ".join(u.text or "" for u in updates2 if u.text)
@@ -1445,37 +1463,130 @@ class TestWorkflowAgentUserInputFilteringRegression:
         assert "Answer to: second_question" in text2
 
     async def test_nonstreaming_compounding_not_observed_across_turns(self):
-        """Regression: turn 1's user input must not appear in turn 2's response.
+        """Regression: turn 1's user input must not appear in turn 2's response."""
 
-        Reproduces the escalating symptom from #4261 where each new turn accumulated
-        all previous user messages in the response text.
-        """
+        class GroupChatLikeExecutor(Executor):
+            """Simulates a GroupChat orchestrator's termination behavior.
 
-        @executor
-        async def groupchat_like_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:
-            input_text = messages[-1].text or ""
-            response = AgentResponse(
-                messages=[
+            On termination, BaseGroupChatOrchestrator yields self._full_conversation
+            via ctx.yield_output(self._full_conversation), which is a list[Message]
+            containing the entire conversation history (both user and assistant messages).
+            This executor replicates that exact pattern to exercise the list[Message]
+            branch in _filter_messages and verify that user inputs do not compound
+            across successive turns (see #4261).
+            """
+
+            @handler
+            async def handle_messages(
+                self,
+                messages: list[Message],
+                ctx: WorkflowContext[Never, list[Message]],
+            ) -> None:
+                input_text = messages[-1].text or ""
+                full_conversation: list[Message] = [
                     Message(role="user", text=input_text),
                     Message(
                         role="assistant",
                         contents=[Content.from_text(text=f"Answer to: {input_text}")],
                         author_name="Principal",
                     ),
-                ],
-            )
-            await ctx.yield_output(response)
+                ]
+                await ctx.yield_output(full_conversation)
 
-        workflow = WorkflowBuilder(start_executor=groupchat_like_executor).build()
+        groupchat_executor = GroupChatLikeExecutor(id="groupchat")
+        workflow = WorkflowBuilder(start_executor=groupchat_executor).build()
         agent = workflow.as_agent("groupchat-agent")
+        session = AgentSession()
 
         # Turn 1
-        await agent.run("first_question")
+        await agent.run("first_question", session=session)
 
         # Turn 2: "first_question" must NOT bleed into turn 2's response
-        result2 = await agent.run("second_question")
+        result2 = await agent.run("second_question", session=session)
         text2 = " ".join(m.text or "" for m in result2.messages)
         assert "first_question" not in text2, (
             "Turn 1 user input should not appear in turn 2 response (compounding regression)"
         )
         assert "Answer to: second_question" in text2
+
+
+class TestFilterMessages:
+    """Direct unit tests for WorkflowAgent._filter_messages edge cases.
+
+    Covers empty input, all-user messages, assistant messages with no/whitespace text,
+    mixed roles, and ordering. The all-user and empty cases both hit the
+    `if not non_user: return chat_messages` fallback path, returning the original
+    list unchanged rather than silently dropping output (see moonbox3's review on #4268).
+    """
+
+    def _make_agent(self) -> WorkflowAgent:
+        @executor
+        async def _e(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+            await ctx.yield_output("x")
+
+        workflow = WorkflowBuilder(start_executor=_e).build()
+        return WorkflowAgent(workflow=workflow)
+
+    def test_empty_list_returns_empty(self):
+        agent = self._make_agent()
+        assert agent._filter_messages([]) == []
+
+    def test_single_assistant_message_empty_text(self):
+        """Return the single assistant message as-is when it's the only message, even if it has no text"""
+        agent = self._make_agent()
+        msg = Message(role="assistant", text="")
+        assert agent._filter_messages([msg]) == [msg]
+
+    def test_single_assistant_message_whitespace_text(self):
+        """Return the single assistant message as-is when it's the only message, even if it has only whitespace."""
+        agent = self._make_agent()
+        msg = Message(role="assistant", text="   ")
+        assert agent._filter_messages([msg]) == [msg]
+
+    def test_single_assistant_message_returned(self):
+        """Return the single assistant message as-is when it's the only message"""
+        agent = self._make_agent()
+        msg = Message(role="assistant", text="Hello")
+        assert agent._filter_messages([msg]) == [msg]
+
+    def test_all_user_messages_returns_empty_list(self):
+        """All-user input: no assistant content exists to surface, returns empty list."""
+
+        agent = self._make_agent()
+        msgs = [Message(role="user", text="hi"), Message(role="user", text="hello")]
+        result = agent._filter_messages(msgs)
+        assert result == []
+
+    def test_mixed_roles_returns_last_assistant(self):
+        agent = self._make_agent()
+        msgs = [
+            Message(role="user", text="q1"),
+            Message(role="assistant", text="a1"),
+            Message(role="user", text="q2"),
+            Message(role="assistant", text="a2"),  # should be returned
+        ]
+        result = agent._filter_messages(msgs)
+        assert len(result) == 1
+        assert result[0].text == "a2"
+
+    def test_assistant_with_none_text_falls_through_to_next(self):
+        agent = self._make_agent()
+        msgs = [
+            Message(role="assistant", text="a1"),  # earlier — should be skipped
+            Message(role="assistant", text=None),  # no text — falls through
+            Message(role="assistant", text="   "),  # whitespace — falls through
+        ]
+        # The last non-user message is whitespace-only, falls to non-text fallback
+        result = agent._filter_messages(msgs)
+        assert len(result) == 1  # fallback picks last non-user message
+
+    def test_returns_last_not_first_assistant(self):
+        agent = self._make_agent()
+        msgs = [
+            Message(role="assistant", text="First response"),
+            Message(role="user", text="follow up"),
+            Message(role="assistant", text="Second response"),  # ← should be returned
+        ]
+        result = agent._filter_messages(msgs)
+        assert len(result) == 1
+        assert result[0].text == "Second response"

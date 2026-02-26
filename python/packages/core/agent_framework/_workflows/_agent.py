@@ -214,12 +214,29 @@ class WorkflowAgent(BaseAgent):
         return self._run_impl(messages, response_id, session, checkpoint_id, checkpoint_storage, **kwargs)
 
     def _filter_messages(self, chat_messages: list[Message]) -> list[Message]:
-        """From a list[Message] output, return only the last meaningful assistant message."""
+        """Return only the last meaningful non-user message from a list of messages.
+
+        Args:
+            chat_messages: The conversation history or workflow output to filter.
+
+        Returns:
+            A single-element list containing the last meaningful non-user message,
+            or an empty list if none exists.
+        """
+        if not chat_messages:
+            return []
+
         for msg in reversed(chat_messages):
             if msg.role != "user" and msg.text and msg.text.strip():
                 return [msg]
         # fallback: last non-user message
-        return [m for m in reversed(chat_messages) if m.role != "user"][:1]
+        non_user = [m for m in reversed(chat_messages) if m.role != "user"][:1]
+        if not non_user:
+            logger.warning(
+                "_filter_messages: no non-user messages found in list[Message] output. "
+                "Returning empty list — this likely indicates an unexpected workflow termination state."
+            )
+        return non_user
 
     async def _run_impl(
         self,
@@ -499,6 +516,8 @@ class WorkflowAgent(BaseAgent):
                 elif is_instance_of(data, list[Message]):
                     chat_messages = self._filter_messages(cast(list[Message], data))
                     messages.extend(chat_messages)
+                    # raw_representations intentionally stores the original unfiltered list —
+                    # it records what the workflow emitted, not what was surfaced to the caller.
                     raw_representations.append(data)
                 else:
                     contents = self._extract_contents(data)
