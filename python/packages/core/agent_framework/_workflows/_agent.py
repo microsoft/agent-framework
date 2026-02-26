@@ -270,6 +270,11 @@ class WorkflowAgent(BaseAgent):
                 output_events.append(event)
 
         result = self._convert_workflow_events_to_agent_response(response_id, output_events)
+
+        # Set the response on the context so after_run providers (e.g. InMemoryHistoryProvider)
+        # can persist the response messages alongside input messages.
+        session_context._response = result  # type: ignore[assignment]
+
         await self._run_after_providers(session=provider_session, context=session_context)
         return result
 
@@ -322,12 +327,20 @@ class WorkflowAgent(BaseAgent):
         # combine the messages
 
         session_messages: list[Message] = session_context.get_messages(include_input=True)
+        all_updates: list[AgentResponseUpdate] = []
         async for event in self._run_core(
             session_messages, checkpoint_id, checkpoint_storage, streaming=True, **kwargs
         ):
             updates = self._convert_workflow_event_to_agent_response_updates(response_id, event)
             for update in updates:
+                all_updates.append(update)
                 yield update
+
+        # Build the final response from collected updates so after_run providers
+        # (e.g. InMemoryHistoryProvider) can persist the response messages.
+        if all_updates:
+            session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
+
         await self._run_after_providers(session=provider_session, context=session_context)
 
     async def _run_core(
