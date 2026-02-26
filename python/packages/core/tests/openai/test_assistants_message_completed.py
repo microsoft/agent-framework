@@ -8,6 +8,7 @@ events, extracting fully-resolved annotations from the completed ThreadMessage.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -46,6 +47,7 @@ def _make_file_citation_annotation(
     file_id: str = "file-abc123",
     start_index: int = 10,
     end_index: int = 24,
+    quote: str | None = None,
 ) -> MagicMock:
     """Create a mock FileCitationAnnotation."""
     from openai.types.beta.threads import FileCitationAnnotation
@@ -56,7 +58,7 @@ def _make_file_citation_annotation(
     annotation.end_index = end_index
     annotation.file_citation = MagicMock()
     annotation.file_citation.file_id = file_id
-    annotation.file_citation.quote = None
+    annotation.file_citation.quote = quote
     return annotation
 
 
@@ -75,6 +77,13 @@ def _make_file_path_annotation(
     annotation.end_index = end_index
     annotation.file_path = MagicMock()
     annotation.file_path.file_id = file_id
+    return annotation
+
+
+def _make_unknown_annotation() -> MagicMock:
+    """Create a mock annotation of an unrecognized type."""
+    annotation = MagicMock()
+    annotation.__class__.__name__ = "FutureAnnotationType"
     return annotation
 
 
@@ -153,6 +162,42 @@ class TestMessageCompletedAnnotations:
         assert ann["file_id"] == "file-abc123"
         assert ann["annotated_regions"][0]["start_index"] == 10
         assert ann["annotated_regions"][0]["end_index"] == 24
+
+    @pytest.mark.asyncio
+    async def test_message_completed_with_file_citation_quote(self, client):
+        """Verify the quote field from file_citation is included in additional_properties."""
+        citation = _make_file_citation_annotation(
+            text="【4:0†source】",
+            file_id="file-abc123",
+            start_index=10,
+            end_index=24,
+            quote="The exact quoted text from the source document.",
+        )
+        text_block = _make_text_block("Some text【4:0†source】", [citation])
+        msg = _make_thread_message([text_block])
+
+        events = [_make_stream_event("thread.message.completed", msg)]
+        updates = await _collect_updates(client, events)
+
+        assert len(updates) == 1
+        ann = updates[0].contents[0].annotations[0]
+        assert ann["additional_properties"]["quote"] == "The exact quoted text from the source document."
+
+    @pytest.mark.asyncio
+    async def test_message_completed_with_file_citation_no_quote(self, client):
+        """Verify annotations work when quote is None (not all citations have quotes)."""
+        citation = _make_file_citation_annotation(
+            text="【4:0†source】", file_id="file-abc123", start_index=10, end_index=24, quote=None
+        )
+        text_block = _make_text_block("Some text【4:0†source】", [citation])
+        msg = _make_thread_message([text_block])
+
+        events = [_make_stream_event("thread.message.completed", msg)]
+        updates = await _collect_updates(client, events)
+
+        assert len(updates) == 1
+        ann = updates[0].contents[0].annotations[0]
+        assert "quote" not in ann["additional_properties"]
 
     @pytest.mark.asyncio
     async def test_message_completed_with_file_path(self, client):
@@ -244,3 +289,23 @@ class TestMessageCompletedAnnotations:
 
         assert len(updates) == 1
         assert updates[0].conversation_id == "thread_custom_456"
+
+    @pytest.mark.asyncio
+    async def test_message_completed_unrecognized_annotation_logged(self, client, caplog):
+        """Verify unrecognized annotation types are logged at debug level and skipped."""
+        unknown_ann = _make_unknown_annotation()
+        citation = _make_file_citation_annotation(text="【1†src】", file_id="file-a", start_index=0, end_index=7)
+        text_block = _make_text_block("Text【1†src】", [unknown_ann, citation])
+        msg = _make_thread_message([text_block])
+
+        events = [_make_stream_event("thread.message.completed", msg)]
+        with caplog.at_level(logging.DEBUG, logger="agent_framework.openai._assistants_client"):
+            updates = await _collect_updates(client, events)
+
+        # The known citation should still be processed
+        assert len(updates) == 1
+        assert len(updates[0].contents[0].annotations) == 1
+        assert updates[0].contents[0].annotations[0]["file_id"] == "file-a"
+
+        # The unrecognized annotation should have been logged
+        assert any("Unhandled annotation type" in record.message for record in caplog.records)
