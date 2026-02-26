@@ -23,7 +23,7 @@ workflows:
   - any-glob-to-any-file:
     - dotnet/src/Microsoft.Agents.AI.Workflows/**
     - dotnet/src/Microsoft.Agents.AI.Workflows.Declarative/**
-    - dotnet/samples/GettingStarted/Workflow/**
+    - dotnet/samples/03-workflows/**
     - python/packages/main/agent_framework/_workflow/**
     - python/samples/getting_started/workflow/**
 

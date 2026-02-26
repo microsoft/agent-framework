@@ -866,3 +866,45 @@ def test_agui_messages_to_snapshot_format_basic():
     assert result[0]["content"] == "Hello"
     assert result[1]["role"] == "assistant"
     assert result[1]["content"] == "Hi there"
+
+
+def test_agui_fresh_approval_is_still_processed():
+    """A fresh approval (no assistant response after it) must still produce function_approval_response.
+
+    On Turn 2, the approval is fresh (no subsequent assistant message), so it
+    must be processed normally to execute the tool.
+    """
+    messages_input = [
+        # Turn 1: user asks something
+        {"role": "user", "content": "What time is it?", "id": "msg_1"},
+        # Turn 1: assistant calls a tool
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_456",
+                    "type": "function",
+                    "function": {"name": "get_datetime", "arguments": "{}"},
+                }
+            ],
+            "id": "msg_2",
+        },
+        # Turn 2: user approves (no assistant message after this)
+        {
+            "role": "tool",
+            "content": json.dumps({"accepted": True}),
+            "toolCallId": "call_456",
+            "id": "msg_3",
+        },
+    ]
+
+    messages = agui_messages_to_agent_framework(messages_input)
+
+    # The fresh approval SHOULD produce a function_approval_response
+    approval_contents = [
+        content for msg in messages for content in (msg.contents or []) if content.type == "function_approval_response"
+    ]
+    assert len(approval_contents) == 1, "Fresh approval should produce function_approval_response"
+    assert approval_contents[0].approved is True
+    assert approval_contents[0].function_call.name == "get_datetime"
