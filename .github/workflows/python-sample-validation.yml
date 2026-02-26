@@ -31,29 +31,12 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Node.js environment
-        uses: actions/setup-node@v4
-
-      - name: Install Copilot CLI
-        run: npm install -g @github/copilot
-
-      - name: Test Copilot CLI
-        run: |
-          copilot -p "What can you do in one sentence?"
-
-      - name: Azure CLI Login
-        uses: azure/login@v2
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Set up python and install the project
-        uses: ./.github/actions/python-setup
-        with:
-          python-version: "3.12"
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
       - name: Run sample validation
@@ -70,8 +53,7 @@ jobs:
   validate-02-agents:
     name: Validate 02-agents
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    environment: integration
     env:
       # Azure AI configuration
       AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
@@ -86,21 +68,17 @@ jobs:
       OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI_RESPONSES_MODEL_ID }}
       # Observability
       ENABLE_INSTRUMENTATION: "true"
-      # GitHub Copilot configuration
-      GITHUB_COPILOT_MODEL: ${{ vars.GITHUB_COPILOT_MODEL }}
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up python and install the project
-        uses: ./.github/actions/python-setup
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
         with:
-          python-version: "3.12"
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
-        env:
-          UV_CACHE_DIR: /tmp/.uv-cache
 
       - name: Run sample validation
         run: |
@@ -116,8 +94,7 @@ jobs:
   validate-03-workflows:
     name: Validate 03-workflows
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    environment: integration
     env:
       # Azure AI configuration
       AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
@@ -126,21 +103,17 @@ jobs:
       AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
       AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_CHAT_DEPLOYMENT_NAME }}
       AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME }}
-      # GitHub Copilot configuration
-      GITHUB_COPILOT_MODEL: ${{ vars.GITHUB_COPILOT_MODEL }}
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up python and install the project
-        uses: ./.github/actions/python-setup
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
         with:
-          python-version: "3.12"
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
-        env:
-          UV_CACHE_DIR: /tmp/.uv-cache
 
       - name: Run sample validation
         run: |
@@ -156,8 +129,7 @@ jobs:
   validate-04-hosting:
     name: Validate 04-hosting
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    environment: integration
     env:
       # Azure AI configuration
       AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
@@ -165,21 +137,17 @@ jobs:
       # Azure OpenAI configuration
       AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
       AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME }}
-      # GitHub Copilot configuration
-      GITHUB_COPILOT_MODEL: ${{ vars.GITHUB_COPILOT_MODEL }}
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up python and install the project
-        uses: ./.github/actions/python-setup
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
         with:
-          python-version: "3.12"
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
-        env:
-          UV_CACHE_DIR: /tmp/.uv-cache
 
       - name: Run sample validation
         run: |
@@ -195,8 +163,7 @@ jobs:
   validate-05-end-to-end:
     name: Validate 05-end-to-end
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    environment: integration
     env:
       # Azure AI configuration
       AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
@@ -209,21 +176,17 @@ jobs:
       AZURE_SEARCH_ENDPOINT: ${{ secrets.AZURE_SEARCH_ENDPOINT }}
       AZURE_SEARCH_API_KEY: ${{ secrets.AZURE_SEARCH_API_KEY }}
       AZURE_SEARCH_INDEX_NAME: ${{ secrets.AZURE_SEARCH_INDEX_NAME }}
-      # GitHub Copilot configuration
-      GITHUB_COPILOT_MODEL: ${{ vars.GITHUB_COPILOT_MODEL }}
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up python and install the project
-        uses: ./.github/actions/python-setup
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
         with:
-          python-version: "3.12"
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
-        env:
-          UV_CACHE_DIR: /tmp/.uv-cache
 
       - name: Run sample validation
         run: |
@@ -239,8 +202,7 @@ jobs:
   validate-autogen-migration:
     name: Validate autogen-migration
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    environment: integration
     env:
       # Azure AI configuration
       AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
@@ -248,21 +210,17 @@ jobs:
       # Azure OpenAI configuration
       AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
       AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_CHAT_DEPLOYMENT_NAME }}
-      # GitHub Copilot configuration
-      GITHUB_COPILOT_MODEL: ${{ vars.GITHUB_COPILOT_MODEL }}
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up python and install the project
-        uses: ./.github/actions/python-setup
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
         with:
-          python-version: "3.12"
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
-        env:
-          UV_CACHE_DIR: /tmp/.uv-cache
 
       - name: Run sample validation
         run: |
@@ -278,8 +236,7 @@ jobs:
   validate-semantic-kernel-migration:
     name: Validate semantic-kernel-migration
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    environment: integration
     env:
       # Azure AI configuration
       AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZURE_AI_PROJECT_ENDPOINT }}
@@ -303,15 +260,13 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up python and install the project
-        uses: ./.github/actions/python-setup
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
         with:
-          python-version: "3.12"
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
-        env:
-          UV_CACHE_DIR: /tmp/.uv-cache
 
       - name: Run sample validation
         run: |
