@@ -16,6 +16,7 @@ jobs:
   validate-01-get-started:
     name: Validate 01-get-started
     runs-on: ubuntu-latest
+    environment: integration
     permissions:
       contents: read
     env:
@@ -38,7 +39,7 @@ jobs:
 
       - name: Test Copilot CLI
         run: |
-          copilot -p "What can you do?"
+          copilot -p "What can you do in one sentence?"
 
       - name: Azure CLI Login
         uses: azure/login@v2
