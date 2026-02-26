@@ -544,11 +544,11 @@ def function_app_for_test(request: pytest.FixtureRequest) -> Iterator[dict[str, 
     func_process: subprocess.Popen[Any] | None = None
     base_url = ""
     port = 0
-    overall_start = time.time()
+    overall_start = time.monotonic()
     attempts_made = 0
 
     for _ in range(max_attempts):
-        remaining = overall_budget - (time.time() - overall_start)
+        remaining = overall_budget - (time.monotonic() - overall_start)
         if remaining < 10:
             # Not enough time for another attempt; bail out.
             break
@@ -571,7 +571,7 @@ def function_app_for_test(request: pytest.FixtureRequest) -> Iterator[dict[str, 
             func_process = None
 
     if func_process is None:
-        elapsed = int(time.time() - overall_start)
+        elapsed = int(time.monotonic() - overall_start)
         error_message = f"Function app failed to start after {attempts_made} attempt(s) ({elapsed}s elapsed)."
         if last_error is not None:
             error_message += f" Last error: {last_error}"
