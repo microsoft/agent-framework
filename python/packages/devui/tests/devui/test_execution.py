@@ -763,7 +763,7 @@ async def test_workflow_error_yields_dict_event_without_crash():
     mock_workflow = MagicMock()
     mock_workflow.name = "bad_wf"
 
-    async def failing_run(*args, **kwargs):
+    def failing_run(*args, **kwargs):
         raise RuntimeError("Sorry, something went wrong.")
 
     mock_workflow.run = failing_run
