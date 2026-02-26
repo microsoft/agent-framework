@@ -1,19 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Unified Purview model definitions and public export surface."""
-
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, MutableMapping, Sequence
 from datetime import datetime
 from enum import Enum, Flag, auto
 from typing import Any, ClassVar, TypeVar, cast
 from uuid import uuid4
 
-from agent_framework._logging import get_logger
 from agent_framework._serialization import SerializationMixin
 
-logger = get_logger("agent_framework.purview")
+logger = logging.getLogger("agent_framework.purview")
 
 # --------------------------------------------------------------------------------------
 # Enums & flag helpers
@@ -179,6 +177,8 @@ def translate_activity(activity: Activity) -> ProtectionScopeActivities:
 # Simple value models
 # --------------------------------------------------------------------------------------
 
+AliasSerializableT = TypeVar("AliasSerializableT", bound="_AliasSerializable")
+
 
 class _AliasSerializable(SerializationMixin):
     """Base class adding alias mapping + pydantic-compat helpers.
@@ -232,7 +232,7 @@ class _AliasSerializable(SerializationMixin):
         return json.dumps(self.model_dump(by_alias=by_alias, exclude_none=exclude_none, **kwargs))
 
     @classmethod
-    def model_validate(cls, value: MutableMapping[str, Any]) -> _AliasSerializable:  # type: ignore[name-defined]
+    def model_validate(cls: type[AliasSerializableT], value: MutableMapping[str, Any]) -> AliasSerializableT:  # type: ignore[name-defined]
         return cls(**value)
 
     # ------------------------------------------------------------------

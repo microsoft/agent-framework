@@ -12,7 +12,7 @@ The A2A agent integration enables communication with remote A2A-compliant agents
 
 ### Basic Usage Example
 
-See the [A2A agent examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/agents/a2a/) which demonstrate:
+See the [A2A agent examples](../../samples/04-hosting/a2a/) which demonstrate:
 
 - Connecting to remote A2A agents
 - Sending messages and receiving responses

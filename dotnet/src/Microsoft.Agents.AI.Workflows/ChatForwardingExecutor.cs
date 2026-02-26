@@ -34,19 +34,29 @@ public sealed class ChatForwardingExecutor(string id, ChatForwardingExecutorOpti
     private readonly ChatRole? _stringMessageChatRole = options?.StringMessageChatRole;
 
     /// <inheritdoc/>
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        if (this._stringMessageChatRole.HasValue)
-        {
-            routeBuilder = routeBuilder.AddHandler<string>(
-                (message, context) => context.SendMessageAsync(new ChatMessage(ChatRole.User, message)));
-        }
+        return protocolBuilder.ConfigureRoutes(ConfigureRoutes)
+                              .SendsMessage<ChatMessage>()
+                              .SendsMessage<List<ChatMessage>>()
+                              .SendsMessage<ChatMessage[]>()
+                              .SendsMessage<TurnToken>();
 
-        return routeBuilder.AddHandler<ChatMessage>(ForwardMessageAsync)
-                           .AddHandler<IEnumerable<ChatMessage>>(ForwardMessagesAsync)
-                           .AddHandler<ChatMessage[]>(ForwardMessagesAsync)
-                           .AddHandler<List<ChatMessage>>(ForwardMessagesAsync)
-                           .AddHandler<TurnToken>(ForwardTurnTokenAsync);
+        void ConfigureRoutes(RouteBuilder routeBuilder)
+        {
+            if (this._stringMessageChatRole.HasValue)
+            {
+                routeBuilder = routeBuilder.AddHandler<string>(
+                    (message, context) => context.SendMessageAsync(new ChatMessage(ChatRole.User, message)));
+            }
+
+            routeBuilder.AddHandler<ChatMessage>(ForwardMessageAsync)
+                        .AddHandler<IEnumerable<ChatMessage>>(ForwardMessagesAsync)
+                        // remove this once we internalize the typecheck logic
+                        .AddHandler<ChatMessage[]>(ForwardMessagesAsync)
+                        //.AddHandler<List<ChatMessage>>(ForwardMessagesAsync)
+                        .AddHandler<TurnToken>(ForwardTurnTokenAsync);
+        }
     }
 
     private static ValueTask ForwardMessageAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken)

@@ -73,7 +73,7 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
             Language = "dotnet-isolated",
             RawBindings =
             [
-                """{"name":"dispatcher","type":"entityTrigger","direction":"In"}""",
+                """{"name":"encodedEntityRequest","type":"entityTrigger","direction":"In"}""",
                 """{"name":"client","type":"durableClient","direction":"In"}"""
             ],
             EntryPoint = BuiltInFunctions.RunAgentEntityFunctionEntryPoint,

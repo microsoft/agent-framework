@@ -3,14 +3,17 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Observability;
 
 namespace Microsoft.Agents.AI.Workflows.Execution;
 
 internal interface ISuperStepRunner
 {
-    string RunId { get; }
+    string SessionId { get; }
 
     string StartExecutorId { get; }
+
+    WorkflowTelemetryContext TelemetryContext { get; }
 
     bool HasUnservicedRequests { get; }
     bool HasUnprocessedMessages { get; }

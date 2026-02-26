@@ -11,13 +11,13 @@ using Moq;
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
 
 /// <summary>
-/// Mock implementation of <see cref="WorkflowAgentProvider"/> for unit testing purposes.
+/// Mock implementation of <see cref="ResponseAgentProvider"/> for unit testing purposes.
 /// </summary>
-internal sealed class MockAgentProvider : Mock<WorkflowAgentProvider>
+internal sealed class MockAgentProvider : Mock<ResponseAgentProvider>
 {
     public IList<string> ExistingConversationIds { get; } = [];
 
-    public List<ChatMessage>? TestMessages { get; set; }
+    public List<ChatMessage> TestMessages { get; set; } = [];
 
     public MockAgentProvider()
     {
@@ -40,6 +40,12 @@ internal sealed class MockAgentProvider : Mock<WorkflowAgentProvider>
                 It.IsAny<bool>(),
                 It.IsAny<CancellationToken>()))
             .Returns(ToAsyncEnumerableAsync(testMessages));
+
+        this.Setup(provider => provider.CreateMessageAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatMessage>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<string, ChatMessage, CancellationToken>((conversationId, message, cancellationToken) => Task.FromResult(this.CaptureChatMessage(message)));
     }
 
     private string CreateConversationId()
@@ -48,6 +54,13 @@ internal sealed class MockAgentProvider : Mock<WorkflowAgentProvider>
         this.ExistingConversationIds.Add(newConversationId);
 
         return newConversationId;
+    }
+
+    private ChatMessage CaptureChatMessage(ChatMessage message)
+    {
+        this.TestMessages.Add(message);
+
+        return message;
     }
 
     private List<ChatMessage> CreateMessages()

@@ -30,6 +30,6 @@ public static class HostedWorkflowBuilderExtensions
         var agentName = name ?? workflowName;
 
         return builder.HostApplicationBuilder.AddAIAgent(agentName, (sp, key) =>
-            sp.GetRequiredKeyedService<Workflow>(workflowName).AsAgent(name: key));
+            sp.GetRequiredKeyedService<Workflow>(workflowName).AsAIAgent(name: key));
     }
 }

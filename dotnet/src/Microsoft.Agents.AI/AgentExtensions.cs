@@ -42,8 +42,8 @@ public static partial class AIAgentExtensions
     /// Optional metadata to customize the function representation, such as name and description.
     /// If not provided, defaults will be inferred from the agent's properties.
     /// </param>
-    /// <param name="thread">
-    /// Optional <see cref="AgentThread"/> to use for function invocations. If not provided, a new thread
+    /// <param name="session">
+    /// Optional <see cref="AgentSession"/> to use for function invocations. If not provided, a new session
     /// will be created for each function call, which may not preserve conversation context.
     /// </param>
     /// <returns>
@@ -59,12 +59,12 @@ public static partial class AIAgentExtensions
     /// </para>
     /// <para>
     /// The resulting <see cref="AIFunction"/> is stateful, referencing both the <paramref name="agent"/> and the optional
-    /// <paramref name="thread"/>. Especially if a specific thread is provided, avoid using the resulting function concurrently
-    /// in multiple conversations or in requests where the parallel function calls may result in concurrent usage of the thread,
+    /// <paramref name="session"/>. Especially if a specific session is provided, avoid using the resulting function concurrently
+    /// in multiple conversations or in requests where the parallel function calls may result in concurrent usage of the session,
     /// as that could lead to undefined and unpredictable behavior.
     /// </para>
     /// </remarks>
-    public static AIFunction AsAIFunction(this AIAgent agent, AIFunctionFactoryOptions? options = null, AgentThread? thread = null)
+    public static AIFunction AsAIFunction(this AIAgent agent, AIFunctionFactoryOptions? options = null, AgentSession? session = null)
     {
         Throw.IfNull(agent);
 
@@ -73,7 +73,12 @@ public static partial class AIAgentExtensions
             [Description("Input query to invoke the agent.")] string query,
             CancellationToken cancellationToken)
         {
-            var response = await agent.RunAsync(query, thread: thread, cancellationToken: cancellationToken).ConfigureAwait(false);
+            // Propagate any additional properties from the parent agent's run to the child agent if the parent is using a FunctionInvokingChatClient.
+            AgentRunOptions? agentRunOptions = FunctionInvokingChatClient.CurrentContext?.Options?.AdditionalProperties is AdditionalPropertiesDictionary dict
+                ? new AgentRunOptions { AdditionalProperties = dict }
+                : null;
+
+            var response = await agent.RunAsync(query, session: session, options: agentRunOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
             return response.Text;
         }
 

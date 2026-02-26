@@ -45,19 +45,58 @@ jobs:
               labels.push("triage")
             }
 
-            // Check if the body or the title contains the word 'python' (case-insensitive)
-            if ((body != null && body.match(/python/i)) || (title != null && title.match(/python/i))) {
-              // Add the 'python' label to the array
-              labels.push("python")
+            // Helper function to extract field value from issue form body
+            // Issue forms format fields as: ### Field Name\n\nValue
+            function getFormFieldValue(body, fieldName) {
+              if (!body) return null
+              const regex = new RegExp(`###\\s*${fieldName}\\s*\\n\\n([^\\n#]+)`, 'i')
+              const match = body.match(regex)
+              return match ? match[1].trim() : null
             }
 
-            // Check if the body or the title contains the words 'dotnet', '.net', 'c#' or 'csharp' (case-insensitive)
-            if ((body != null && body.match(/.net/i)) || (title != null && title.match(/.net/i)) ||
-                (body != null && body.match(/dotnet/i)) || (title != null && title.match(/dotnet/i)) ||
-                (body != null && body.match(/C#/i)) || (title != null && title.match(/C#/i)) ||
-                (body != null && body.match(/csharp/i)) || (title != null && title.match(/csharp/i))) {
-              // Add the '.NET' label to the array
-              labels.push(".NET")
+            // Check for language from issue form dropdown first
+            const languageField = getFormFieldValue(body, 'Language')
+            let languageLabelAdded = false
+
+            if (languageField) {
+              if (languageField === 'Python') {
+                labels.push("python")
+                languageLabelAdded = true
+              } else if (languageField === '.NET') {
+                labels.push(".NET")
+                languageLabelAdded = true
+              }
+              // 'None / Not Applicable' - don't add any language label
+            }
+
+            // Fallback: Check if the body or the title contains the word 'python' (case-insensitive)
+            // Only if language wasn't already determined from the form field
+            if (!languageLabelAdded) {
+              if ((body != null && body.match(/python/i)) || (title != null && title.match(/python/i))) {
+                // Add the 'python' label to the array
+                labels.push("python")
+              }
+
+              // Check if the body or the title contains the words 'dotnet', '.net', 'c#' or 'csharp' (case-insensitive)
+              if ((body != null && body.match(/\.net/i)) || (title != null && title.match(/\.net/i)) ||
+                  (body != null && body.match(/dotnet/i)) || (title != null && title.match(/dotnet/i)) ||
+                  (body != null && body.match(/C#/i)) || (title != null && title.match(/C#/i)) ||
+                  (body != null && body.match(/csharp/i)) || (title != null && title.match(/csharp/i))) {
+                // Add the '.NET' label to the array
+                labels.push(".NET")
+              }
+            }
+
+            // Check for issue type from issue form dropdown
+            const issueTypeField = getFormFieldValue(body, 'Type of Issue')
+            if (issueTypeField) {
+              if (issueTypeField === 'Bug') {
+                labels.push("bug")
+              } else if (issueTypeField === 'Feature Request') {
+                labels.push("enhancement")
+              } else if (issueTypeField === 'Question') {
+                labels.push("question")
+              }
             }
 
             // Add the labels to the issue (only if there are labels to add)

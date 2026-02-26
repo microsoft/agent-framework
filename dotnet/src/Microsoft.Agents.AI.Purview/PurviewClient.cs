@@ -58,7 +58,7 @@ internal sealed class PurviewClient : IPurviewClient
         this._tokenCredential = tokenCredential;
         this._httpClient = httpClient;
 
-        this._scopes = new string[] { $"https://{purviewSettings.GraphBaseUri.Host}/.default" };
+        this._scopes = [$"https://{purviewSettings.GraphBaseUri.Host}/.default"];
         this._graphUri = purviewSettings.GraphBaseUri.ToString().TrimEnd('/');
         this._logger = logger ?? NullLogger.Instance;
     }
@@ -176,7 +176,11 @@ internal sealed class PurviewClient : IPurviewClient
                 throw new PurviewRequestException(DeserializeError);
             }
 
-            this._logger.LogError("Failed to process content. Status code: {StatusCode}", response.StatusCode);
+            if (this._logger.IsEnabled(LogLevel.Error))
+            {
+                this._logger.LogError("Failed to process content. Status code: {StatusCode}", response.StatusCode);
+            }
+
             throw CreateExceptionForStatusCode(response.StatusCode, "processContent");
         }
     }
@@ -241,7 +245,11 @@ internal sealed class PurviewClient : IPurviewClient
                 throw new PurviewRequestException(DeserializeError);
             }
 
-            this._logger.LogError("Failed to retrieve protection scopes. Status code: {StatusCode}", response.StatusCode);
+            if (this._logger.IsEnabled(LogLevel.Error))
+            {
+                this._logger.LogError("Failed to retrieve protection scopes. Status code: {StatusCode}", response.StatusCode);
+            }
+
             throw CreateExceptionForStatusCode(response.StatusCode, "protectionScopes/compute");
         }
     }
@@ -304,7 +312,11 @@ internal sealed class PurviewClient : IPurviewClient
                 throw new PurviewRequestException(DeserializeError);
             }
 
-            this._logger.LogError("Failed to create content activities. Status code: {StatusCode}", response.StatusCode);
+            if (this._logger.IsEnabled(LogLevel.Error))
+            {
+                this._logger.LogError("Failed to create content activities. Status code: {StatusCode}", response.StatusCode);
+            }
+
             throw CreateExceptionForStatusCode(response.StatusCode, "contentActivities");
         }
     }

@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
-    <NoWarn>$(NoWarn);OPENAI001;MEAI001</NoWarn>
+    <NoWarn>$(NoWarn);MEAI001</NoWarn>
     <RootNamespace>Microsoft.Agents.AI.Hosting.OpenAI</RootNamespace>
     <VersionSuffix>alpha</VersionSuffix>
     <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.AspNetCore.Http.Generated</InterceptorsNamespaces>
@@ -26,8 +26,6 @@
 
   <ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible($(TargetFramework), 'net10.0'))">
     <PackageReference Include="System.Linq.AsyncEnumerable" />
-    <PackageReference Include="System.Net.ServerSentEvents" />
-    <PackageReference Include="System.Text.Json" />
   </ItemGroup>
 
   <ItemGroup>

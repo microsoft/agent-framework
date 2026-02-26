@@ -1,17 +1,17 @@
 kind: Prompt
 name: Assistant
 description: Helpful assistant
-instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format. You must include Responses as the type in your response.
+instructions: You are a helpful assistant. You answer questions in the language specified by the user. You return your answers in a JSON format. You must include Responses as the type in your response.
 model:
-    id: =Env.OPENAI_MODEL
+    id: gpt-4.1-mini
     provider: OpenAI
     apiType: Responses
     options:
-        text:
-            verbosity: medium
+        temperature: 0.9
+        topP: 0.95
     connection:
         kind: key
-        key: =Env.OPENAI_APIKEY
+        apiKey: =Env.OPENAI_APIKEY
 outputSchema:
     properties:
         language:

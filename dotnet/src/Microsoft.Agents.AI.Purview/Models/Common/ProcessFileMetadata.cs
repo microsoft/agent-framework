@@ -14,7 +14,7 @@ internal sealed class ProcessFileMetadata : ProcessContentMetadataBase
     /// <summary>
     /// Initializes a new instance of the <see cref="ProcessFileMetadata"/> class.
     /// </summary>
-    public ProcessFileMetadata(ContentBase contentBase, string identifier, bool isTruncated, string name) : base(contentBase, identifier, isTruncated, name)
+    public ProcessFileMetadata(ContentBase contentBase, string identifier, bool isTruncated, string name, string correlationId) : base(contentBase, identifier, isTruncated, name, correlationId)
     {
         this.DataType = ProcessFileMetadataDataType;
     }

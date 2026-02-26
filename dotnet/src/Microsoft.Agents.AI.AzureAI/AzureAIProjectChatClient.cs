@@ -1,13 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
-
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
 namespace Microsoft.Agents.AI.AzureAI;
 
@@ -15,6 +15,7 @@ namespace Microsoft.Agents.AI.AzureAI;
 /// Provides a chat client implementation that integrates with Azure AI Agents, enabling chat interactions using
 /// Azure-specific agent capabilities.
 /// </summary>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 internal sealed class AzureAIProjectChatClient : DelegatingChatClient
 {
     private readonly ChatClientMetadata? _metadata;
@@ -23,11 +24,6 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
     private readonly AgentRecord? _agentRecord;
     private readonly ChatOptions? _chatOptions;
     private readonly AgentReference _agentReference;
-    /// <summary>
-    /// The usage of a no-op model is a necessary change to avoid OpenAIClients to throw exceptions when
-    /// used with Azure AI Agents as the model used is now defined at the agent creation time.
-    /// </summary>
-    private const string NoOpModel = "no-op";
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AzureAIProjectChatClient"/> class.
@@ -42,7 +38,7 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
     internal AzureAIProjectChatClient(AIProjectClient aiProjectClient, AgentReference agentReference, string? defaultModelId, ChatOptions? chatOptions)
         : base(Throw.IfNull(aiProjectClient)
             .GetProjectOpenAIClient()
-            .GetOpenAIResponseClient(defaultModelId ?? NoOpModel)
+            .GetProjectResponsesClientForAgent(agentReference)
             .AsIChatClient())
     {
         this._agentClient = aiProjectClient;
@@ -69,11 +65,25 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
     internal AzureAIProjectChatClient(AIProjectClient aiProjectClient, AgentVersion agentVersion, ChatOptions? chatOptions)
         : this(
               aiProjectClient,
-              new AgentReference(Throw.IfNull(agentVersion).Name, agentVersion.Version),
+              CreateAgentReference(Throw.IfNull(agentVersion)),
               (agentVersion.Definition as PromptAgentDefinition)?.Model,
               chatOptions)
     {
         this._agentVersion = agentVersion;
+    }
+
+    /// <summary>
+    /// Creates an <see cref="AgentReference"/> from an <see cref="AgentVersion"/>.
+    /// Uses the agent version's version if available, otherwise defaults to "latest".
+    /// </summary>
+    /// <param name="agentVersion">The agent version to create a reference from.</param>
+    /// <returns>An <see cref="AgentReference"/> for the specified agent version.</returns>
+    private static AgentReference CreateAgentReference(AgentVersion agentVersion)
+    {
+        // If the version is null, empty, or whitespace, use "latest" as the default.
+        // This handles cases where hosted agents (like MCP agents) may not have a version assigned.
+        var version = string.IsNullOrWhiteSpace(agentVersion.Version) ? "latest" : agentVersion.Version;
+        return new AgentReference(agentVersion.Name, version);
     }
 
     /// <inheritdoc/>
@@ -132,13 +142,15 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
 
         agentEnabledChatOptions.RawRepresentationFactory = (client) =>
         {
-            if (originalFactory?.Invoke(this) is not ResponseCreationOptions responseCreationOptions)
+            if (originalFactory?.Invoke(this) is not CreateResponseOptions responseCreationOptions)
             {
-                responseCreationOptions = new ResponseCreationOptions();
+                responseCreationOptions = new CreateResponseOptions();
             }
 
-            ResponseCreationOptionsExtensions.set_Agent(responseCreationOptions, this._agentReference);
-            ResponseCreationOptionsExtensions.set_Model(responseCreationOptions, null);
+            responseCreationOptions.Agent = this._agentReference;
+#pragma warning disable SCME0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+            responseCreationOptions.Patch.Remove("$.model"u8);
+#pragma warning restore SCME0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
             return responseCreationOptions;
         };

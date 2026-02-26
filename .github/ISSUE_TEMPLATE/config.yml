@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://aka.ms/agent-framework
+    about: Check out the official documentation for guides and API reference.
+  - name: Discussions
+    url: https://github.com/microsoft/agent-framework/discussions
+    about: Ask questions about Agent Framework.

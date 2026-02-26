@@ -2,37 +2,43 @@
 
 using System;
 using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Execution;
 
-internal sealed class ResponseEdgeRunner(IRunnerContext runContext, string sinkId)
+internal sealed class ResponseEdgeRunner(IRunnerContext runContext, string executorId, string sinkId)
     : EdgeRunner<string>(runContext, sinkId)
 {
-    public static ResponseEdgeRunner ForPort(IRunnerContext runContext, RequestPort port)
+    public static ResponseEdgeRunner ForPort(IRunnerContext runContext, string executorId, RequestPort port)
     {
         Throw.IfNull(port);
 
         // The port is an request port, so we can use the port's ID as the sink ID.
-        return new ResponseEdgeRunner(runContext, port.Id);
+        return new ResponseEdgeRunner(runContext, executorId, port.Id);
     }
 
-    protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer)
+    public string ExecutorId => executorId;
+
+    protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer, CancellationToken cancellationToken)
     {
         Debug.Assert(envelope.IsExternal, "Input edges should only be chased from external input");
 
-        using var activity = s_activitySource.StartActivity(ActivityNames.EdgeGroupProcess);
+        using var activity = this.StartActivity();
         activity?
             .SetTag(Tags.EdgeGroupType, nameof(ResponseEdgeRunner))
             .SetTag(Tags.MessageSourceId, envelope.SourceId)
-            .SetTag(Tags.MessageTargetId, this.EdgeData);
+            .SetTag(Tags.MessageTargetId, $"{this.ExecutorId}[{this.EdgeData}]");
 
         try
         {
             Executor target = await this.FindExecutorAsync(stepTracer).ConfigureAwait(false);
-            if (target.CanHandle(envelope.MessageType))
+
+            Type? runtimeType = await this.GetMessageRuntimeTypeAsync(envelope, stepTracer, cancellationToken).ConfigureAwait(false);
+
+            if (CanHandle(target, runtimeType))
             {
                 activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Delivered);
                 return new DeliveryMapping(envelope, target);
@@ -48,5 +54,5 @@ internal sealed class ResponseEdgeRunner(IRunnerContext runContext, string sinkI
         }
     }
 
-    private async ValueTask<Executor> FindExecutorAsync(IStepTracer? tracer) => await this.RunContext.EnsureExecutorAsync(this.EdgeData, tracer).ConfigureAwait(false);
+    private async ValueTask<Executor> FindExecutorAsync(IStepTracer? tracer) => await this.RunContext.EnsureExecutorAsync(this.ExecutorId, tracer).ConfigureAwait(false);
 }

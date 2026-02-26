@@ -9,14 +9,16 @@ public class WorkflowVisualizerTests
 {
     private sealed class MockExecutor(string id) : Executor(id)
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder.AddHandler<string>((msg, ctx) => ctx.SendMessageAsync(msg));
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+            => protocolBuilder.ConfigureRoutes(routeBuilder =>
+                                               routeBuilder.AddHandler<string>((msg, ctx) => ctx.SendMessageAsync(msg)));
     }
 
     private sealed class ListStrTargetExecutor(string id) : Executor(id)
     {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder.AddHandler<string[]>((msgs, ctx) => ctx.SendMessageAsync(string.Join(",", msgs)));
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+            => protocolBuilder.ConfigureRoutes(routeBuilder =>
+                                               routeBuilder.AddHandler<string[]>((msgs, ctx) => ctx.SendMessageAsync(string.Join(",", msgs))));
     }
 
     [Fact]
@@ -112,7 +114,7 @@ public class WorkflowVisualizerTests
         // Build a connected workflow: start fans out to s1 and s2, which then fan-in to t
         var workflow = new WorkflowBuilder("start")
             .AddFanOutEdge(start, [s1, s2])
-            .AddFanInEdge([s1, s2], t)  // AddFanInEdge(target, sources)
+            .AddFanInBarrierEdge([s1, s2], t)  // AddFanInBarrierEdge(target, sources)
             .Build();
 
         var dotContent = workflow.ToDotString();
@@ -200,7 +202,7 @@ public class WorkflowVisualizerTests
         var workflow = new WorkflowBuilder("start")
             .AddEdge<string>(start, a, Condition) // Conditional edge
             .AddFanOutEdge(a, [b, c]) // Fan-out
-            .AddFanInEdge([b, c], end) // Fan-in - AddFanInEdge(target, sources)
+            .AddFanInBarrierEdge([b, c], end) // Fan-in - AddFanInEdge(target, sources)
             .Build();
 
         var dotContent = workflow.ToDotString();
@@ -308,7 +310,7 @@ public class WorkflowVisualizerTests
 
         var workflow = new WorkflowBuilder("start")
             .AddFanOutEdge(start, [s1, s2])
-            .AddFanInEdge([s1, s2], t)
+            .AddFanInBarrierEdge([s1, s2], t)
             .Build();
 
         var mermaidContent = workflow.ToMermaidString();
@@ -379,7 +381,7 @@ public class WorkflowVisualizerTests
         var workflow = new WorkflowBuilder("start")
             .AddEdge<string>(start, a, Condition) // Conditional edge
             .AddFanOutEdge(a, [b, c]) // Fan-out
-            .AddFanInEdge([b, c], end) // Fan-in
+            .AddFanInBarrierEdge([b, c], end) // Fan-in
             .Build();
 
         var mermaidContent = workflow.ToMermaidString();
@@ -393,5 +395,62 @@ public class WorkflowVisualizerTests
 
         // Check fan-in (should have intermediate node)
         mermaidContent.Should().Contain("((fan-in))");
+    }
+
+    [Fact]
+    public void Test_WorkflowViz_Mermaid_Edge_Label_With_Pipe()
+    {
+        // Test that pipe characters in labels are properly escaped
+        var start = new MockExecutor("start");
+        var end = new MockExecutor("end");
+
+        var workflow = new WorkflowBuilder("start")
+            .AddEdge(start, end, label: "High | Low Priority")
+            .Build();
+
+        var mermaidContent = workflow.ToMermaidString();
+
+        // Should escape pipe character
+        mermaidContent.Should().Contain("start -->|High &#124; Low Priority| end");
+        // Should not contain unescaped pipe that would break syntax
+        mermaidContent.Should().NotContain("-->|High | Low");
+    }
+
+    [Fact]
+    public void Test_WorkflowViz_Mermaid_Edge_Label_With_Special_Chars()
+    {
+        // Test that special characters are properly escaped
+        var start = new MockExecutor("start");
+        var end = new MockExecutor("end");
+
+        var workflow = new WorkflowBuilder("start")
+            .AddEdge(start, end, label: "Score >= 90 & < 100")
+            .Build();
+
+        var mermaidContent = workflow.ToMermaidString();
+
+        // Should escape special characters
+        mermaidContent.Should().Contain("&amp;");
+        mermaidContent.Should().Contain("&gt;");
+        mermaidContent.Should().Contain("&lt;");
+    }
+
+    [Fact]
+    public void Test_WorkflowViz_Mermaid_Edge_Label_With_Newline()
+    {
+        // Test that newlines are converted to <br/>
+        var start = new MockExecutor("start");
+        var end = new MockExecutor("end");
+
+        var workflow = new WorkflowBuilder("start")
+            .AddEdge(start, end, label: "Line 1\nLine 2")
+            .Build();
+
+        var mermaidContent = workflow.ToMermaidString();
+
+        // Should convert newline to <br/>
+        mermaidContent.Should().Contain("Line 1<br/>Line 2");
+        // Should not contain literal newline in the label (but the overall output has newlines between statements)
+        mermaidContent.Should().NotContain("Line 1\nLine 2");
     }
 }

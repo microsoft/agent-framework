@@ -1,0 +1,35 @@
+#
+# This workflow tests invoking MCP tools directly from a workflow.
+# Uses the Microsoft Learn MCP server: search tool
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_invoke_mcp_tool_test
+  actions:
+
+    # Set the search query we want to use
+    - kind: SetVariable
+      id: set_search_query
+      variable: Local.SearchQuery
+      value: Azure OpenAI
+
+    # Invoke MCP search tool on Microsoft Learn server
+    - kind: InvokeMcpTool
+      id: invoke_mcp_search
+      serverUrl: https://learn.microsoft.com/api/mcp
+      serverLabel: microsoft_docs
+      toolName: microsoft_docs_search
+      conversationId: =System.ConversationId
+      arguments:
+        query: =Local.SearchQuery
+      output:
+        autoSend: true
+        result: Local.SearchResult
+
+    # Send the result as an activity
+    - kind: SendMessage
+      id: show_search_result
+      message: "Search results: {Local.SearchResult}"
+      # message: "Search results for {Local.SearchQuery}: {Local.SearchResult}"

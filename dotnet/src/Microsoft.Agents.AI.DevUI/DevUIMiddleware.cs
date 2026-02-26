@@ -81,9 +81,13 @@ internal sealed partial class DevUIMiddleware
             }
 
             context.Response.StatusCode = StatusCodes.Status301MovedPermanently;
-            context.Response.Headers.Location = redirectUrl;
+            context.Response.Headers.Location = redirectUrl; // CodeQL [SM04598] justification: The redirect URL is constructed from a server-configured base path (_basePath), not user input. The query string is only appended as parameters and cannot change the redirect destination since this is a relative URL.
 
-            this._logger.LogDebug("Redirecting {OriginalPath} to {RedirectUrl}", NewlineRegex().Replace(path, ""), NewlineRegex().Replace(redirectUrl, ""));
+            if (this._logger.IsEnabled(LogLevel.Debug))
+            {
+                this._logger.LogDebug("Redirecting {OriginalPath} to {RedirectUrl}", NewlineRegex().Replace(path, ""), NewlineRegex().Replace(redirectUrl, ""));
+            }
+
             return;
         }
 
@@ -123,7 +127,11 @@ internal sealed partial class DevUIMiddleware
         {
             if (!this._resourceCache.TryGetValue(resourcePath.Replace('.', '/'), out var cacheEntry))
             {
-                this._logger.LogDebug("Embedded resource not found: {ResourcePath}", resourcePath);
+                if (this._logger.IsEnabled(LogLevel.Debug))
+                {
+                    this._logger.LogDebug("Embedded resource not found: {ResourcePath}", resourcePath);
+                }
+
                 return false;
             }
 
@@ -133,7 +141,12 @@ internal sealed partial class DevUIMiddleware
             if (context.Request.Headers.IfNoneMatch == cacheEntry.ETag)
             {
                 response.StatusCode = StatusCodes.Status304NotModified;
-                this._logger.LogDebug("Resource not modified (304): {ResourcePath}", resourcePath);
+
+                if (this._logger.IsEnabled(LogLevel.Debug))
+                {
+                    this._logger.LogDebug("Resource not modified (304): {ResourcePath}", resourcePath);
+                }
+
                 return true;
             }
 
@@ -161,12 +174,20 @@ internal sealed partial class DevUIMiddleware
 
             await response.Body.WriteAsync(content, context.RequestAborted).ConfigureAwait(false);
 
-            this._logger.LogDebug("Served embedded resource: {ResourcePath} (compressed: {Compressed})", resourcePath, serveCompressed);
+            if (this._logger.IsEnabled(LogLevel.Debug))
+            {
+                this._logger.LogDebug("Served embedded resource: {ResourcePath} (compressed: {Compressed})", resourcePath, serveCompressed);
+            }
+
             return true;
         }
         catch (Exception ex)
         {
-            this._logger.LogError(ex, "Error serving embedded resource: {ResourcePath}", resourcePath);
+            if (this._logger.IsEnabled(LogLevel.Error))
+            {
+                this._logger.LogError(ex, "Error serving embedded resource: {ResourcePath}", resourcePath);
+            }
+
             return false;
         }
     }

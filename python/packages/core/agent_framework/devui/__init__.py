@@ -1,5 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""DevUI integration namespace for optional Agent Framework connectors.
+
+This module lazily re-exports objects from:
+- ``agent-framework-devui``
+
+Supported classes and functions include:
+- DevServer
+- AgentFrameworkRequest
+- DiscoveryResponse
+- ResponseStreamEvent
+- serve
+- main
+"""
+
 import importlib
 from typing import Any
 
@@ -14,8 +28,8 @@ _IMPORTS = [
     "OpenAIResponse",
     "ResponseStreamEvent",
     "main",
+    "register_cleanup",
     "serve",
-    "__version__",
 ]
 
 

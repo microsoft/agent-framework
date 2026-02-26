@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- GitHub.Copilot.SDK only supports .NET 8.0+ -->
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.GitHub.Copilot\Microsoft.Agents.AI.GitHub.Copilot.csproj" />
+  </ItemGroup>
+
+</Project>

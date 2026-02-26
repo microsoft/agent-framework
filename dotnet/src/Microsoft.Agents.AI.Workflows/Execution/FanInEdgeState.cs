@@ -14,7 +14,7 @@ internal sealed class FanInEdgeState
     public FanInEdgeState(FanInEdgeData fanInEdge)
     {
         this.SourceIds = fanInEdge.SourceIds.ToArray();
-        this.Unseen = new(this.SourceIds);
+        this.Unseen = [.. this.SourceIds];
 
         this._pendingMessages = [];
     }
@@ -32,7 +32,7 @@ internal sealed class FanInEdgeState
         this._pendingMessages = pendingMessages;
     }
 
-    public IEnumerable<MessageEnvelope>? ProcessMessage(string sourceId, MessageEnvelope envelope)
+    public IEnumerable<IGrouping<ExecutorIdentity, MessageEnvelope>>? ProcessMessage(string sourceId, MessageEnvelope envelope)
     {
         this.PendingMessages.Add(new(envelope));
         this.Unseen.Remove(sourceId);
@@ -40,14 +40,15 @@ internal sealed class FanInEdgeState
         if (this.Unseen.Count == 0)
         {
             List<PortableMessageEnvelope> takenMessages = Interlocked.Exchange(ref this._pendingMessages, []);
-            this.Unseen = new(this.SourceIds);
+            this.Unseen = [.. this.SourceIds];
 
             if (takenMessages.Count == 0)
             {
                 return null;
             }
 
-            return takenMessages.Select(portable => portable.ToMessageEnvelope());
+            return takenMessages.Select(portable => portable.ToMessageEnvelope())
+                                .GroupBy(keySelector: messageEnvelope => messageEnvelope.Source);
         }
 
         return null;

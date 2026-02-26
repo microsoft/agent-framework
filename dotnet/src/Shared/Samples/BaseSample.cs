@@ -86,12 +86,12 @@ public abstract class BaseSample : TextWriter
     /// Processes and writes the latest agent chat response to the console, including metadata and content details.
     /// </summary>
     /// <remarks>This method formats and outputs the most recent message from the provided <see
-    /// cref="AgentRunResponse"/> object. It includes the message role, author name (if available), text content, and
+    /// cref="AgentResponse"/> object. It includes the message role, author name (if available), text content, and
     /// additional content such as images, function calls, and function results. Usage statistics, including token
     /// counts, are also displayed.</remarks>
-    /// <param name="response">The <see cref="AgentRunResponse"/> object containing the chat messages and usage data.</param>
+    /// <param name="response">The <see cref="AgentResponse"/> object containing the chat messages and usage data.</param>
     /// <param name="printUsage">The flag to indicate whether to print usage information. Defaults to <see langword="true"/>.</param>
-    protected void WriteResponseOutput(AgentRunResponse response, bool? printUsage = true)
+    protected void WriteResponseOutput(AgentResponse response, bool? printUsage = true)
     {
         if (response.Messages.Count == 0)
         {
@@ -150,11 +150,11 @@ public abstract class BaseSample : TextWriter
     /// Writes the streaming agent response updates to the console.
     /// </summary>
     /// <remarks>This method formats and outputs the most recent message from the provided <see
-    /// cref="AgentRunResponseUpdate"/> object. It includes the message role, author name (if available), text content, and
+    /// cref="AgentResponseUpdate"/> object. It includes the message role, author name (if available), text content, and
     /// additional content such as images, function calls, and function results. Usage statistics, including token
     /// counts, are also displayed.</remarks>
-    /// <param name="update">The <see cref="AgentRunResponseUpdate"/> object containing the chat messages and usage data.</param>
-    protected void WriteAgentOutput(AgentRunResponseUpdate update)
+    /// <param name="update">The <see cref="AgentResponseUpdate"/> object containing the chat messages and usage data.</param>
+    protected void WriteAgentOutput(AgentResponseUpdate update)
     {
         if (update.Contents.Count == 0)
         {

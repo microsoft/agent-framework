@@ -3,7 +3,7 @@
  * This is the CORRECT implementation that works with OpenAI types only
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Download,
   FileText,
@@ -80,42 +80,139 @@ function ImageContentRenderer({ content, className }: ContentRendererProps) {
   );
 }
 
+// Helper to convert base64 (or data URI) to blob URL for better browser compatibility
+function useBase64ToBlobUrl(data: string | undefined, mimeType: string): string | null {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!data) {
+      setBlobUrl(null);
+      return;
+    }
+
+    try {
+      // Handle both data URI format and raw base64
+      let base64Data: string;
+      if (data.startsWith('data:')) {
+        // Extract base64 from data URI (e.g., "data:application/pdf;base64,...")
+        const parts = data.split(',');
+        if (parts.length !== 2) {
+          setBlobUrl(null);
+          return;
+        }
+        base64Data = parts[1];
+      } else {
+        // Raw base64 data
+        base64Data = data;
+      }
+
+      const binaryString = atob(base64Data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      const blob = new Blob([bytes], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      setBlobUrl(url);
+
+      // Cleanup on unmount or when data changes
+      return () => {
+        URL.revokeObjectURL(url);
+      };
+    } catch (error) {
+      console.error('Failed to convert base64 to blob URL:', error);
+      setBlobUrl(null);
+    }
+  }, [data, mimeType]);
+
+  return blobUrl;
+}
+
 // File content renderer (handles both input and output files)
 function FileContentRenderer({ content, className }: ContentRendererProps) {
-  if (content.type !== "input_file" && content.type !== "output_file") return null;
+  const [isExpanded, setIsExpanded] = useState(true);
 
-  const fileUrl = content.file_url || content.file_data;
-  const filename = content.filename || "file";
+  // Determine file properties (must be before hooks for conditional logic)
+  const isFileContent = content.type === "input_file" || content.type === "output_file";
+  const fileUrl = isFileContent ? (content.file_url || content.file_data) : undefined;
+  const filename = isFileContent ? (content.filename || "file") : undefined;
 
   // Determine file type from filename or data URI
   const isPdf = filename?.toLowerCase().endsWith(".pdf") || fileUrl?.includes("application/pdf");
   const isAudio = filename?.toLowerCase().match(/\.(mp3|wav|m4a|ogg|flac|aac)$/);
 
-  // For PDFs, try to embed
+  // Convert base64 to blob URL for PDFs (better browser compatibility)
+  // Use file_data (raw base64) if available, otherwise try file_url
+  // Hook must be called unconditionally - pass undefined if not a PDF
+  const pdfData = (isFileContent && isPdf) ? (content.file_data || content.file_url) : undefined;
+  const pdfBlobUrl = useBase64ToBlobUrl(pdfData, 'application/pdf');
+
+  // Early return after all hooks
+  if (!isFileContent) return null;
+
+  // Use blob URL if available, otherwise fall back to original URL
+  const effectivePdfUrl = pdfBlobUrl || fileUrl;
+
+  // Helper to open PDF in new tab
+  const openPdfInNewTab = () => {
+    if (effectivePdfUrl) {
+      window.open(effectivePdfUrl, '_blank');
+    }
+  };
+
+  // For PDFs - show a clean card with actions (inline preview is unreliable across browsers)
   if (isPdf && fileUrl) {
     return (
       <div className={`my-2 ${className || ""}`}>
-        <div className="border rounded-lg overflow-hidden">
-          <iframe
-            src={fileUrl}
-            className="w-full h-96"
-            title={filename}
-          />
+        {/* Header with filename and controls */}
+        <div className="flex items-center gap-2 mb-2 px-1">
+          <FileText className="h-4 w-4 text-red-500" />
+          <span className="text-sm font-medium truncate flex-1">{filename}</span>
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+          >
+            {isExpanded ? (
+              <>
+                <ChevronDown className="h-3 w-3" />
+                Collapse
+              </>
+            ) : (
+              <>
+                <ChevronRight className="h-3 w-3" />
+                Expand
+              </>
+            )}
+          </button>
         </div>
-        <div className="flex items-center gap-2 mt-2">
-          <FileText className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">{filename}</span>
-          {fileUrl && (
-            <a
-              href={fileUrl}
-              download={filename}
-              className="ml-auto text-xs text-primary hover:underline flex items-center gap-1"
-            >
-              <Download className="h-3 w-3" />
-              Download
-            </a>
-          )}
-        </div>
+
+        {/* PDF Card with actions */}
+        {isExpanded && (
+          <div className="border rounded-lg p-6 bg-muted/50 flex flex-col items-center justify-center gap-4">
+            <FileText className="h-16 w-16 text-red-400" />
+            <div className="text-center">
+              <p className="text-sm font-medium mb-1">{filename}</p>
+              <p className="text-xs text-muted-foreground">PDF Document</p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={openPdfInNewTab}
+                className="text-sm bg-primary text-primary-foreground hover:bg-primary/90 flex items-center gap-2 px-4 py-2 rounded-md transition-colors"
+              >
+                Open in new tab
+              </button>
+              <a
+                href={effectivePdfUrl || fileUrl}
+                download={filename}
+                className="text-sm text-foreground hover:bg-accent flex items-center gap-2 px-4 py-2 border rounded-md transition-colors"
+              >
+                <Download className="h-4 w-4" />
+                Download
+              </a>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -206,9 +303,12 @@ function DataContentRenderer({ content, className }: ContentRendererProps) {
 
 // Function approval request renderer - compact version
 function FunctionApprovalRequestRenderer({ content, className }: ContentRendererProps) {
+  // Hooks must be called unconditionally
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Early return after hooks
   if (content.type !== "function_approval_request") return null;
 
-  const [isExpanded, setIsExpanded] = useState(false);
   const { status, function_call } = content;
 
   // Status styling - compact

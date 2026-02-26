@@ -10,7 +10,6 @@
     "conversation_count": 1,
     "min_action_count": 1,
     "min_response_count": 1,
-    "min_message_count": 2,
     "actions": {
       "start": [
         "invoke_poem"

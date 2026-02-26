@@ -1,13 +1,15 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <VersionSuffix>preview</VersionSuffix>
-    <NoWarn>$(NoWarn);MEAI001</NoWarn>
+    <IsReleaseCandidate>true</IsReleaseCandidate>
+    <NoWarn>$(NoWarn);MEAI001;MAAI001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
+    <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
   </PropertyGroup>
@@ -19,6 +21,7 @@
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Extensions.VectorData.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="System.Diagnostics.DiagnosticSource" />
   </ItemGroup>
 
@@ -32,6 +35,7 @@
     <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
 
     <InternalsVisibleTo Include="Microsoft.Agents.AI.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Declarative.UnitTests" />
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.UnitTests"/>
   </ItemGroup>
 

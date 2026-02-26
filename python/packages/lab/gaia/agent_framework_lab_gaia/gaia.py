@@ -30,7 +30,6 @@ class GAIATelemetryConfig:
         self,
         enable_tracing: bool = False,
         otlp_endpoint: str | None = None,
-        applicationinsights_connection_string: str | None = None,
         trace_to_file: bool = False,
         file_path: str | None = None,
     ):
@@ -39,24 +38,27 @@ class GAIATelemetryConfig:
         Args:
             enable_tracing: Whether to enable OpenTelemetry tracing
             otlp_endpoint: OTLP endpoint for trace export
-            applicationinsights_connection_string: Azure Monitor connection string
             trace_to_file: Whether to export traces to local file
             file_path: Path for local file export (defaults to gaia_traces.json)
+
+        Note:
+            For Azure Monitor integration, configure using environment variables
+            (OTEL_EXPORTER_OTLP_ENDPOINT, etc.) or use AzureAIClient.configure_azure_monitor()
+            before creating the GAIA instance.
         """
         self.enable_tracing = enable_tracing
         self.otlp_endpoint = otlp_endpoint
-        self.applicationinsights_connection_string = applicationinsights_connection_string
         self.trace_to_file = trace_to_file
         self.file_path = file_path or "gaia_traces.json"
 
-    def setup_observability(self) -> None:
+    def configure_otel_providers(self) -> None:
         """Set up OpenTelemetry based on configuration."""
         if not self.enable_tracing:
             return
 
-        # If only file tracing is requested (no OTLP or Application Insights),
-        # skip the default setup_observability which adds console exporter
-        if self.trace_to_file and not self.otlp_endpoint and not self.applicationinsights_connection_string:
+        # If only file tracing is requested (no OTLP),
+        # skip the default configure_otel_providers which adds console exporter
+        if self.trace_to_file and not self.otlp_endpoint:
             # Set up minimal tracing with only file export
             from opentelemetry.sdk.trace import TracerProvider
             from opentelemetry.trace import set_tracer_provider
@@ -65,13 +67,17 @@ class GAIATelemetryConfig:
             set_tracer_provider(tracer_provider)
             self._setup_file_export()
         else:
-            # Use full observability setup for OTLP/AppInsights
-            from agent_framework.observability import setup_observability
+            # Use full observability setup for OTLP
+            from agent_framework.observability import configure_otel_providers
 
-            setup_observability(
+            # Set OTLP endpoint env var if provided
+            if self.otlp_endpoint:
+                import os
+
+                os.environ.setdefault("OTEL_EXPORTER_OTLP_ENDPOINT", self.otlp_endpoint)
+
+            configure_otel_providers(
                 enable_sensitive_data=True,  # Enable for detailed task traces
-                otlp_endpoint=self.otlp_endpoint,
-                applicationinsights_connection_string=self.applicationinsights_connection_string,
             )
 
             # Set up local file export if requested
@@ -180,7 +186,7 @@ def gaia_scorer(model_answer: str, ground_truth: str) -> bool:
 
     if is_float(ground_truth):
         # numeric exact match after normalization
-        return _normalize_number_str(model_answer) == float(ground_truth)
+        return abs(_normalize_number_str(model_answer) - float(ground_truth)) < 1e-6
     if any(ch in ground_truth for ch in [",", ";"]):
         # list with per-element compare (number or string)
         gt_elems = _split_string(ground_truth)
@@ -190,7 +196,7 @@ def gaia_scorer(model_answer: str, ground_truth: str) -> bool:
         comparisons = []
         for ma, gt in zip(ma_elems, gt_elems, strict=False):
             if is_float(gt):
-                comparisons.append(_normalize_number_str(ma) == float(gt))
+                comparisons.append(abs(_normalize_number_str(ma) - float(gt)) < 1e-6)
             else:
                 comparisons.append(_normalize_str(ma, remove_punct=False) == _normalize_str(gt, remove_punct=False))
         return all(comparisons)
@@ -333,7 +339,7 @@ class GAIA:
         self.telemetry_config = telemetry_config or GAIATelemetryConfig()
 
         # Set up telemetry
-        self.telemetry_config.setup_observability()
+        self.telemetry_config.configure_otel_providers()
 
         # Initialize tracer
         if self.telemetry_config.enable_tracing:
@@ -365,6 +371,7 @@ class GAIA:
         local_dir = snapshot_download(  # type: ignore
             repo_id="gaia-benchmark/GAIA",
             repo_type="dataset",
+            revision="682dd723ee1e1697e00360edccf2366dc8418dd9",
             token=token,
             local_dir=str(self.data_dir),
             force_download=False,

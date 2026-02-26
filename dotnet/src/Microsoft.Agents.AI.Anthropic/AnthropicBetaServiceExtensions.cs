@@ -31,7 +31,7 @@ public static class AnthropicBetaServiceExtensions
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>The created <see cref="ChatClientAgent"/> AI agent.</returns>
-    public static ChatClientAgent CreateAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this IBetaService betaService,
         string model,
         string? instructions = null,
@@ -45,14 +45,20 @@ public static class AnthropicBetaServiceExtensions
     {
         var options = new ChatClientAgentOptions
         {
-            Instructions = instructions,
             Name = name,
             Description = description,
         };
 
+        if (!string.IsNullOrWhiteSpace(instructions))
+        {
+            options.ChatOptions ??= new();
+            options.ChatOptions.Instructions = instructions;
+        }
+
         if (tools is { Count: > 0 })
         {
-            options.ChatOptions = new ChatOptions { Tools = tools };
+            options.ChatOptions ??= new();
+            options.ChatOptions.Tools = tools;
         }
 
         var chatClient = betaService.AsIChatClient(model, defaultMaxTokens ?? DefaultMaxTokens);
@@ -75,7 +81,7 @@ public static class AnthropicBetaServiceExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the Anthropic Chat Completion service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="betaService"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
-    public static ChatClientAgent CreateAIAgent(
+    public static ChatClientAgent AsAIAgent(
         this IBetaService betaService,
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,

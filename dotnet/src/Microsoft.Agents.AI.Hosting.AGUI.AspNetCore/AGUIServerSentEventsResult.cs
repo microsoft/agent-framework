@@ -20,8 +20,6 @@ internal sealed partial class AGUIServerSentEventsResult : IResult, IDisposable
     private readonly ILogger<AGUIServerSentEventsResult> _logger;
     private Utf8JsonWriter? _jsonWriter;
 
-    public int? StatusCode => StatusCodes.Status200OK;
-
     internal AGUIServerSentEventsResult(IAsyncEnumerable<BaseEvent> events, ILogger<AGUIServerSentEventsResult> logger)
     {
         this._events = events;

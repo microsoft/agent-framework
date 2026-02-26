@@ -1,0 +1,75 @@
+name: human-in-loop-workflow
+description: Interactive workflow that requests user input
+
+actions:
+  # Welcome message
+  - kind: SendActivity
+    id: greeting
+    displayName: Send greeting
+    activity:
+      text: "Welcome to the interactive survey!"
+
+  # Ask for name
+  - kind: Question
+    id: ask_name
+    displayName: Ask for user name
+    question:
+      text: "What is your name?"
+    variable: Local.userName
+    default: "Demo User"
+
+  # Personalized greeting
+  - kind: SendActivity
+    id: personalized_greeting
+    displayName: Send personalized greeting
+    activity:
+      text: =Concat("Nice to meet you, ", Local.userName, "!")
+
+  # Ask how they're feeling
+  - kind: Question
+    id: ask_feeling
+    displayName: Ask about feelings
+    question:
+      text: "How are you feeling today? (great/good/okay/not great)"
+    variable: Local.feeling
+    default: "great"
+
+  # Respond based on feeling
+  - kind: If
+    id: check_feeling
+    displayName: Check user feeling
+    condition: =Or(Local.feeling = "great", Local.feeling = "good")
+    then:
+      - kind: SendActivity
+        activity:
+          text: "That's wonderful to hear! Let's continue."
+    else:
+      - kind: SendActivity
+        activity:
+          text: "I hope things get better! Let me know if there's anything I can help with."
+
+  # Ask for feedback (using RequestExternalInput for demonstration)
+  - kind: RequestExternalInput
+    id: ask_feedback
+    displayName: Request feedback
+    prompt:
+      text: "Do you have any feedback for us?"
+    variable: Local.feedback
+    default: "This workflow is great!"
+
+  # Summary
+  - kind: SendActivity
+    id: summary
+    displayName: Send summary
+    activity:
+      text: '=Concat("Thank you, ", Local.userName, "! Your feedback: ", Local.feedback)'
+
+  # Store results
+  - kind: SetValue
+    id: store_results
+    displayName: Store survey results
+    path: Workflow.Outputs.survey
+    value:
+      name: =Local.userName
+      feeling: =Local.feeling
+      feedback: =Local.feedback

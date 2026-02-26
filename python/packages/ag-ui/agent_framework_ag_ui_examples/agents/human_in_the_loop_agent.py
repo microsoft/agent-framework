@@ -3,8 +3,9 @@
 """Human-in-the-loop agent demonstrating step customization (Feature 5)."""
 
 from enum import Enum
+from typing import Any
 
-from agent_framework import ChatAgent, ChatClientProtocol, ai_function
+from agent_framework import Agent, SupportsChatGetResponse, tool
 from pydantic import BaseModel, Field
 
 
@@ -22,7 +23,7 @@ class TaskStep(BaseModel):
     status: StepStatus = Field(default=StepStatus.ENABLED, description="Whether the step is enabled or disabled")
 
 
-@ai_function(
+@tool(
     name="generate_task_steps",
     description="Generate execution steps for a task",
     approval_mode="always_require",
@@ -42,16 +43,16 @@ def generate_task_steps(steps: list[TaskStep]) -> str:
     return f"Generated {len(steps)} execution steps for the task."
 
 
-def human_in_the_loop_agent(chat_client: ChatClientProtocol) -> ChatAgent:
+def human_in_the_loop_agent(client: SupportsChatGetResponse[Any]) -> Agent[Any]:
     """Create a human-in-the-loop agent using tool-based approach for predictive state.
 
     Args:
-        chat_client: The chat client to use for the agent
+        client: The chat client to use for the agent
 
     Returns:
-        A configured ChatAgent instance with human-in-the-loop capabilities
+        A configured Agent instance with human-in-the-loop capabilities
     """
-    return ChatAgent(
+    return Agent(
         name="human_in_the_loop_agent",
         instructions="""You are a helpful assistant that can perform any task by breaking it down into steps.
 
@@ -75,9 +76,11 @@ def human_in_the_loop_agent(chat_client: ChatClientProtocol) -> ChatAgent:
     9. "Calibrate systems"
     10. "Final testing"
 
-    After calling the function, provide a brief acknowledgment like:
-    "I've created a plan with 10 steps. You can customize which steps to enable before I proceed."
+    IMPORTANT: When you call generate_task_steps, the user will be shown the steps and asked to approve.
+    Do NOT output any text along with the function call - just call the function.
+    After the user approves and the function executes, THEN provide a brief acknowledgment like:
+    "The plan has been created with X steps selected."
     """,
-        chat_client=chat_client,
+        client=client,
         tools=[generate_task_steps],
     )

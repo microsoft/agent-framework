@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.AI;
@@ -8,7 +9,7 @@ namespace Microsoft.Agents.AI.Workflows;
 
 internal static class AIAgentsAbstractionsExtensions
 {
-    public static ChatMessage ToChatMessage(this AgentRunResponseUpdate update) =>
+    public static ChatMessage ToChatMessage(this AgentResponseUpdate update) =>
         new()
         {
             AuthorName = update.AuthorName,
@@ -18,6 +19,29 @@ internal static class AIAgentsAbstractionsExtensions
             MessageId = update.MessageId,
             RawRepresentation = update.RawRepresentation ?? update,
         };
+
+    public static ChatMessage ChatAssistantToUserIfNotFromNamed(this ChatMessage message, string agentName)
+        => message.ChatAssistantToUserIfNotFromNamed(agentName, out _, false);
+
+    private static ChatMessage ChatAssistantToUserIfNotFromNamed(this ChatMessage message, string agentName, out bool changed, bool inplace = true)
+    {
+        changed = false;
+
+        if (message.Role == ChatRole.Assistant &&
+            !StringComparer.Ordinal.Equals(message.AuthorName, agentName) &&
+            message.Contents.All(c => c is TextContent or DataContent or UriContent or UsageContent))
+        {
+            if (!inplace)
+            {
+                message = message.Clone();
+            }
+
+            message.Role = ChatRole.User;
+            changed = true;
+        }
+
+        return message;
+    }
 
     /// <summary>
     /// Iterates through <paramref name="messages"/> looking for <see cref="ChatRole.Assistant"/> messages and swapping
@@ -29,11 +53,9 @@ internal static class AIAgentsAbstractionsExtensions
         List<ChatMessage>? roleChanged = null;
         foreach (var m in messages)
         {
-            if (m.Role == ChatRole.Assistant &&
-                m.AuthorName != targetAgentName &&
-                m.Contents.All(c => c is TextContent or DataContent or UriContent or UsageContent))
+            m.ChatAssistantToUserIfNotFromNamed(targetAgentName, out bool changed);
+            if (changed)
             {
-                m.Role = ChatRole.User;
                 (roleChanged ??= []).Add(m);
             }
         }

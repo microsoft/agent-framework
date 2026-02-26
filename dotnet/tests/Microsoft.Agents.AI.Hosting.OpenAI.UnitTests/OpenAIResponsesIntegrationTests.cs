@@ -49,7 +49,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "One Two Three";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Count to 3");
@@ -90,10 +90,10 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Hello! How can I help you today?";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        OpenAIResponse response = await responseClient.CreateResponseAsync("Hello");
+        ResponseResult response = await responseClient.CreateResponseAsync("Hello");
 
         // Assert
         Assert.NotNull(response);
@@ -117,7 +117,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "This is a test response with multiple words";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Test");
@@ -162,12 +162,12 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
             (Agent1Name, Agent1Instructions, Agent1Response),
             (Agent2Name, Agent2Instructions, Agent2Response));
 
-        OpenAIResponseClient responseClient1 = this.CreateResponseClient(Agent1Name);
-        OpenAIResponseClient responseClient2 = this.CreateResponseClient(Agent2Name);
+        ResponsesClient responseClient1 = this.CreateResponseClient(Agent1Name);
+        ResponsesClient responseClient2 = this.CreateResponseClient(Agent2Name);
 
         // Act
-        OpenAIResponse response1 = await responseClient1.CreateResponseAsync("Hello");
-        OpenAIResponse response2 = await responseClient2.CreateResponseAsync("Hello");
+        ResponseResult response1 = await responseClient1.CreateResponseAsync("Hello");
+        ResponseResult response2 = await responseClient2.CreateResponseAsync("Hello");
 
         // Assert
         string content1 = response1.GetOutputText();
@@ -190,10 +190,10 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "This is the response";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act - Non-streaming
-        OpenAIResponse nonStreamingResponse = await responseClient.CreateResponseAsync("Test");
+        ResponseResult nonStreamingResponse = await responseClient.CreateResponseAsync("Test");
 
         // Act - Streaming
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Test");
@@ -224,10 +224,10 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Complete";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        OpenAIResponse response = await responseClient.CreateResponseAsync("Test");
+        ResponseResult response = await responseClient.CreateResponseAsync("Test");
 
         // Assert
         Assert.Equal(ResponseStatus.Completed, response.Status);
@@ -247,7 +247,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Test response with multiple words";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Test");
@@ -286,7 +286,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Test");
@@ -316,10 +316,10 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Response with metadata";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        OpenAIResponse response = await responseClient.CreateResponseAsync("Test");
+        ResponseResult response = await responseClient.CreateResponseAsync("Test");
 
         // Assert
         Assert.NotNull(response.Id);
@@ -340,7 +340,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         string expectedResponse = string.Join(" ", Enumerable.Range(1, 100).Select(i => $"Word{i}"));
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, expectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Generate long text");
@@ -371,7 +371,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Test output index";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Test");
@@ -407,7 +407,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Hello";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Test");
@@ -437,7 +437,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Hello! How are you? I'm fine. 100% great!";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Test");
@@ -467,10 +467,10 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Symbols: @#$%^&*() Quotes: \"Hello\" 'World' Unicode: 你好 🌍";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        OpenAIResponse response = await responseClient.CreateResponseAsync("Test");
+        ResponseResult response = await responseClient.CreateResponseAsync("Test");
 
         // Assert
         string content = response.GetOutputText();
@@ -489,7 +489,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Testing item IDs";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Test");
@@ -525,12 +525,12 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Response";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act & Assert - Make 5 sequential requests
         for (int i = 0; i < 5; i++)
         {
-            OpenAIResponse response = await responseClient.CreateResponseAsync($"Request {i}");
+            ResponseResult response = await responseClient.CreateResponseAsync($"Request {i}");
             Assert.NotNull(response);
             Assert.Equal(ResponseStatus.Completed, response.Status);
             Assert.Equal(ExpectedResponse, response.GetOutputText());
@@ -549,7 +549,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Streaming response";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act & Assert - Make 3 sequential streaming requests
         for (int i = 0; i < 3; i++)
@@ -581,13 +581,13 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Response";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         List<string> responseIds = [];
         for (int i = 0; i < 10; i++)
         {
-            OpenAIResponse response = await responseClient.CreateResponseAsync($"Request {i}");
+            ResponseResult response = await responseClient.CreateResponseAsync($"Request {i}");
             responseIds.Add(response.Id);
         }
 
@@ -608,7 +608,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Test sequence numbers with multiple words";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Test");
@@ -641,10 +641,10 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Test model info";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        OpenAIResponse response = await responseClient.CreateResponseAsync("Test");
+        ResponseResult response = await responseClient.CreateResponseAsync("Test");
 
         // Assert
         Assert.NotNull(response.Model);
@@ -663,7 +663,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Hello, world! How are you today? I'm doing well.";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Test");
@@ -693,10 +693,10 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "OK";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        OpenAIResponse response = await responseClient.CreateResponseAsync("Hi");
+        ResponseResult response = await responseClient.CreateResponseAsync("Hi");
 
         // Assert
         Assert.NotNull(response);
@@ -716,7 +716,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Test content indices";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Test");
@@ -748,10 +748,10 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Line 1\nLine 2\nLine 3";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        OpenAIResponse response = await responseClient.CreateResponseAsync("Test");
+        ResponseResult response = await responseClient.CreateResponseAsync("Test");
 
         // Assert
         string content = response.GetOutputText();
@@ -771,7 +771,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "First line\nSecond line\nThird line";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Test");
@@ -807,10 +807,10 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
             instructions: Instructions,
             chatClient: new TestHelpers.ImageContentMockChatClient(ImageUrl));
 
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        OpenAIResponse response = await responseClient.CreateResponseAsync("Show me an image");
+        ResponseResult response = await responseClient.CreateResponseAsync("Show me an image");
 
         // Assert
         Assert.NotNull(response);
@@ -834,7 +834,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
             instructions: Instructions,
             chatClient: new TestHelpers.ImageContentMockChatClient(ImageUrl));
 
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Show me an image");
@@ -868,10 +868,10 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
             instructions: Instructions,
             chatClient: new TestHelpers.AudioContentMockChatClient(AudioData, Transcript));
 
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        OpenAIResponse response = await responseClient.CreateResponseAsync("Generate audio");
+        ResponseResult response = await responseClient.CreateResponseAsync("Generate audio");
 
         // Assert
         Assert.NotNull(response);
@@ -896,7 +896,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
             instructions: Instructions,
             chatClient: new TestHelpers.AudioContentMockChatClient(AudioData, Transcript));
 
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Generate audio");
@@ -930,10 +930,10 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
             instructions: Instructions,
             chatClient: new TestHelpers.FunctionCallMockChatClient(FunctionName, Arguments));
 
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        OpenAIResponse response = await responseClient.CreateResponseAsync("What's the weather?");
+        ResponseResult response = await responseClient.CreateResponseAsync("What's the weather?");
 
         // Assert
         Assert.NotNull(response);
@@ -957,7 +957,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
             instructions: Instructions,
             chatClient: new TestHelpers.FunctionCallMockChatClient(FunctionName, Arguments));
 
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Calculate 2+2");
@@ -988,10 +988,10 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
             instructions: Instructions,
             chatClient: new TestHelpers.MixedContentMockChatClient());
 
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        OpenAIResponse response = await responseClient.CreateResponseAsync("Show me various content");
+        ResponseResult response = await responseClient.CreateResponseAsync("Show me various content");
 
         // Assert
         Assert.NotNull(response);
@@ -1014,7 +1014,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
             instructions: Instructions,
             chatClient: new TestHelpers.MixedContentMockChatClient());
 
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Show me various content");
@@ -1047,7 +1047,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Complete text response";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Test");
@@ -1075,7 +1075,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ExpectedResponse = "Response with content parts";
 
         this._httpClient = await this.CreateTestServerAsync(AgentName, Instructions, ExpectedResponse);
-        OpenAIResponseClient responseClient = this.CreateResponseClient(AgentName);
+        ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
         AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("Test");
@@ -1091,9 +1091,119 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         Assert.Contains(updates, u => u is StreamingResponseContentPartAddedUpdate);
     }
 
-    private OpenAIResponseClient CreateResponseClient(string agentName)
+    /// <summary>
+    /// Verifies that when a client provides a conversation ID, the underlying IChatClient
+    /// does NOT receive that conversation ID via ChatOptions.ConversationId.
+    /// This ensures that the host's conversation management is separate from the IChatClient's
+    /// conversation handling (if any).
+    /// </summary>
+    [Fact]
+    public async Task CreateResponse_WithConversationId_DoesNotForwardConversationIdToIChatClientAsync()
     {
-        return new OpenAIResponseClient(
+        // Arrange
+        const string AgentName = "conversation-id-agent";
+        const string Instructions = "You are a helpful assistant.";
+        const string ExpectedResponse = "Response";
+
+        this._httpClient = await this.CreateTestServerWithConversationsAsync(AgentName, Instructions, ExpectedResponse);
+        var mockChatClient = this.ResolveMockChatClient();
+
+        // First, create a conversation
+        var createConversationRequest = new { metadata = new { agent_id = AgentName } };
+        string createConvJson = System.Text.Json.JsonSerializer.Serialize(createConversationRequest);
+        using StringContent createConvContent = new(createConvJson, Encoding.UTF8, "application/json");
+        HttpResponseMessage createConvResponse = await this._httpClient.PostAsync(
+            new Uri("/v1/conversations", UriKind.Relative),
+            createConvContent);
+        Assert.True(createConvResponse.IsSuccessStatusCode, $"Create conversation failed: {createConvResponse.StatusCode}");
+
+        string convResponseJson = await createConvResponse.Content.ReadAsStringAsync();
+        using var convDoc = System.Text.Json.JsonDocument.Parse(convResponseJson);
+        string conversationId = convDoc.RootElement.GetProperty("id").GetString()!;
+
+        // Act - Send request with conversation ID using raw HTTP
+        // (OpenAI SDK doesn't expose ConversationId directly on CreateResponseOptions)
+        var requestBody = new
+        {
+            input = "Test",
+            agent = new { name = AgentName },
+            conversation = conversationId,
+            stream = false
+        };
+        string requestJson = System.Text.Json.JsonSerializer.Serialize(requestBody);
+        using StringContent content = new(requestJson, Encoding.UTF8, "application/json");
+        HttpResponseMessage httpResponse = await this._httpClient.PostAsync(
+            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
+            content);
+
+        // Assert - Response is successful
+        Assert.True(httpResponse.IsSuccessStatusCode, $"Response status: {httpResponse.StatusCode}");
+
+        // Assert - The IChatClient should have received ChatOptions, but without the ConversationId set
+        Assert.NotNull(mockChatClient.LastChatOptions);
+        Assert.Null(mockChatClient.LastChatOptions.ConversationId);
+    }
+
+    /// <summary>
+    /// Verifies that when a client provides a conversation ID in streaming mode, the underlying
+    /// IChatClient does NOT receive that conversation ID via ChatOptions.ConversationId.
+    /// </summary>
+    [Fact]
+    public async Task CreateResponseStreaming_WithConversationId_DoesNotForwardConversationIdToIChatClientAsync()
+    {
+        // Arrange
+        const string AgentName = "conversation-streaming-agent";
+        const string Instructions = "You are a helpful assistant.";
+        const string ExpectedResponse = "Streaming response";
+
+        this._httpClient = await this.CreateTestServerWithConversationsAsync(AgentName, Instructions, ExpectedResponse);
+        var mockChatClient = this.ResolveMockChatClient();
+
+        // First, create a conversation
+        var createConversationRequest = new { metadata = new { agent_id = AgentName } };
+        string createConvJson = System.Text.Json.JsonSerializer.Serialize(createConversationRequest);
+        using StringContent createConvContent = new(createConvJson, Encoding.UTF8, "application/json");
+        HttpResponseMessage createConvResponse = await this._httpClient.PostAsync(
+            new Uri("/v1/conversations", UriKind.Relative),
+            createConvContent);
+        Assert.True(createConvResponse.IsSuccessStatusCode, $"Create conversation failed: {createConvResponse.StatusCode}");
+
+        string convResponseJson = await createConvResponse.Content.ReadAsStringAsync();
+        using var convDoc = System.Text.Json.JsonDocument.Parse(convResponseJson);
+        string conversationId = convDoc.RootElement.GetProperty("id").GetString()!;
+
+        // Act - Send streaming request with conversation ID using raw HTTP
+        var requestBody = new
+        {
+            input = "Test",
+            agent = new { name = AgentName },
+            conversation = conversationId,
+            stream = true
+        };
+        string requestJson = System.Text.Json.JsonSerializer.Serialize(requestBody);
+        using StringContent content = new(requestJson, Encoding.UTF8, "application/json");
+        HttpResponseMessage httpResponse = await this._httpClient.PostAsync(
+            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
+            content);
+
+        // Assert - Response is successful and is SSE
+        Assert.True(httpResponse.IsSuccessStatusCode, $"Response status: {httpResponse.StatusCode}");
+        Assert.Equal("text/event-stream", httpResponse.Content.Headers.ContentType?.MediaType);
+
+        // Consume the SSE stream to complete the request
+        string sseContent = await httpResponse.Content.ReadAsStringAsync();
+
+        // Verify streaming completed successfully by checking for response.completed event
+        Assert.Contains("response.completed", sseContent);
+
+        // Assert - The IChatClient should have received ChatOptions, but without the ConversationId set
+        Assert.NotNull(mockChatClient.LastChatOptions);
+        Assert.Null(mockChatClient.LastChatOptions.ConversationId);
+    }
+
+    private ResponsesClient CreateResponseClient(string agentName)
+    {
+        return new ResponsesClient(
             model: "test-model",
             credential: new ApiKeyCredential("test-api-key"),
             options: new OpenAIClientOptions
@@ -1101,6 +1211,19 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
                 Endpoint = new Uri(this._httpClient!.BaseAddress!, $"/{agentName}/v1/"),
                 Transport = new HttpClientPipelineTransport(this._httpClient)
             });
+    }
+
+    private TestHelpers.SimpleMockChatClient ResolveMockChatClient()
+    {
+        ArgumentNullException.ThrowIfNull(this._app, nameof(this._app));
+
+        var chatClient = this._app.Services.GetRequiredKeyedService<IChatClient>("chat-client");
+        if (chatClient is not TestHelpers.SimpleMockChatClient mockChatClient)
+        {
+            throw new InvalidOperationException("Mock chat client not found or of incorrect type.");
+        }
+
+        return mockChatClient;
     }
 
     private async Task<HttpClient> CreateTestServerAsync(string agentName, string instructions, string responseText = "Test response")
@@ -1116,6 +1239,30 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         this._app = builder.Build();
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
         this._app.MapOpenAIResponses(agent);
+
+        await this._app.StartAsync();
+
+        TestServer testServer = this._app.Services.GetRequiredService<IServer>() as TestServer
+            ?? throw new InvalidOperationException("TestServer not found");
+
+        return testServer.CreateClient();
+    }
+
+    private async Task<HttpClient> CreateTestServerWithConversationsAsync(string agentName, string instructions, string responseText = "Test response")
+    {
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+
+        IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient(responseText);
+        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
+        builder.AddOpenAIResponses();
+        builder.AddOpenAIConversations();
+        builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
+
+        this._app = builder.Build();
+        AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
+        this._app.MapOpenAIResponses(agent);
+        this._app.MapOpenAIConversations();
 
         await this._app.StartAsync();
 

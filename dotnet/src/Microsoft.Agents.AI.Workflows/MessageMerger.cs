@@ -14,10 +14,10 @@ internal sealed class MessageMerger
     {
         public string? ResponseId { get; } = responseId;
 
-        public Dictionary<string, List<AgentRunResponseUpdate>> UpdatesByMessageId { get; } = [];
-        public List<AgentRunResponseUpdate> DanglingUpdates { get; } = [];
+        public Dictionary<string, List<AgentResponseUpdate>> UpdatesByMessageId { get; } = [];
+        public List<AgentResponseUpdate> DanglingUpdates { get; } = [];
 
-        public void AddUpdate(AgentRunResponseUpdate update)
+        public void AddUpdate(AgentResponseUpdate update)
         {
             if (update.MessageId is null)
             {
@@ -25,7 +25,7 @@ internal sealed class MessageMerger
             }
             else
             {
-                if (!this.UpdatesByMessageId.TryGetValue(update.MessageId, out List<AgentRunResponseUpdate>? updates))
+                if (!this.UpdatesByMessageId.TryGetValue(update.MessageId, out List<AgentResponseUpdate>? updates))
                 {
                     this.UpdatesByMessageId[update.MessageId] = updates = [];
                 }
@@ -34,24 +34,24 @@ internal sealed class MessageMerger
             }
         }
 
-        public AgentRunResponse ComputeMerged(string messageId)
+        public AgentResponse ComputeMerged(string messageId)
         {
-            if (this.UpdatesByMessageId.TryGetValue(Throw.IfNull(messageId), out List<AgentRunResponseUpdate>? updates))
+            if (this.UpdatesByMessageId.TryGetValue(Throw.IfNull(messageId), out List<AgentResponseUpdate>? updates))
             {
-                return updates.ToAgentRunResponse();
+                return updates.ToAgentResponse();
             }
 
             throw new KeyNotFoundException($"No updates found for message ID '{messageId}' in response '{this.ResponseId}'.");
         }
 
-        public AgentRunResponse ComputeDangling()
+        public AgentResponse ComputeDangling()
         {
             if (this.DanglingUpdates.Count == 0)
             {
                 throw new InvalidOperationException("No dangling updates to compute a response from.");
             }
 
-            return this.DanglingUpdates.ToAgentRunResponse();
+            return this.DanglingUpdates.ToAgentResponse();
         }
 
         public List<ChatMessage> ComputeFlattened()
@@ -66,7 +66,7 @@ internal sealed class MessageMerger
 
             IList<ChatMessage> AggregateUpdatesToMessage(string messageId)
             {
-                List<AgentRunResponseUpdate> updates = this.UpdatesByMessageId[messageId];
+                List<AgentResponseUpdate> updates = this.UpdatesByMessageId[messageId];
                 if (updates.Count == 0)
                 {
                     throw new InvalidOperationException($"No updates found for message ID '{messageId}' in response '{this.ResponseId}'.");
@@ -80,7 +80,7 @@ internal sealed class MessageMerger
     private readonly Dictionary<string, ResponseMergeState> _mergeStates = [];
     private readonly ResponseMergeState _danglingState = new(null);
 
-    public void AddUpdate(AgentRunResponseUpdate update)
+    public void AddUpdate(AgentResponseUpdate update)
     {
         if (update.ResponseId is null)
         {
@@ -97,7 +97,7 @@ internal sealed class MessageMerger
         }
     }
 
-    private int CompareByDateTimeOffset(AgentRunResponse left, AgentRunResponse right)
+    private int CompareByDateTimeOffset(AgentResponse left, AgentResponse right)
     {
         const int LESS = -1, EQ = 0, GREATER = 1;
 
@@ -119,17 +119,17 @@ internal sealed class MessageMerger
         return left.CreatedAt.Value.CompareTo(right.CreatedAt.Value);
     }
 
-    public AgentRunResponse ComputeMerged(string primaryResponseId, string? primaryAgentId = null, string? primaryAgentName = null)
+    public AgentResponse ComputeMerged(string primaryResponseId, string? primaryAgentId = null, string? primaryAgentName = null)
     {
         List<ChatMessage> messages = [];
-        Dictionary<string, AgentRunResponse> responses = [];
+        Dictionary<string, AgentResponse> responses = [];
         HashSet<string> agentIds = [];
 
         foreach (string responseId in this._mergeStates.Keys)
         {
             ResponseMergeState mergeState = this._mergeStates[responseId];
 
-            List<AgentRunResponse> responseList = mergeState.UpdatesByMessageId.Keys.Select(mergeState.ComputeMerged).ToList();
+            List<AgentResponse> responseList = mergeState.UpdatesByMessageId.Keys.Select(mergeState.ComputeMerged).ToList();
             if (mergeState.DanglingUpdates.Count > 0)
             {
                 responseList.Add(mergeState.ComputeDangling());
@@ -144,7 +144,7 @@ internal sealed class MessageMerger
         AdditionalPropertiesDictionary? additionalProperties = null;
         HashSet<DateTimeOffset> createdTimes = [];
 
-        foreach (AgentRunResponse response in responses.Values)
+        foreach (AgentResponse response in responses.Values)
         {
             if (response.AgentId is not null)
             {
@@ -176,7 +176,7 @@ internal sealed class MessageMerger
         }
         messages.RemoveAll(m => m.Contents.Count == 0);
 
-        return new AgentRunResponse(messages)
+        return new AgentResponse(messages)
         {
             ResponseId = primaryResponseId,
             AgentId = primaryAgentId
@@ -187,7 +187,7 @@ internal sealed class MessageMerger
             AdditionalProperties = additionalProperties
         };
 
-        static AgentRunResponse MergeResponses(AgentRunResponse? current, AgentRunResponse incoming)
+        static AgentResponse MergeResponses(AgentResponse? current, AgentResponse incoming)
         {
             if (current is null)
             {
@@ -214,7 +214,7 @@ internal sealed class MessageMerger
             };
         }
 
-        static IEnumerable<ChatMessage> GetMessagesWithCreatedAt(AgentRunResponse response)
+        static IEnumerable<ChatMessage> GetMessagesWithCreatedAt(AgentResponse response)
         {
             if (response.Messages.Count == 0)
             {
