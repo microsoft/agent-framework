@@ -56,8 +56,12 @@ runs:
             echo "Python 3.12 not found on system, installing via uv..."
             uv python install 3.12
             FUNC_WORKER_PYTHON="$(uv python find 3.12)"
-            echo "FUNC_WORKER_PYTHON=${FUNC_WORKER_PYTHON}" >> "$GITHUB_ENV"
-            echo "Installed Python 3.12 at ${FUNC_WORKER_PYTHON}"
+            if [ -n "${FUNC_WORKER_PYTHON}" ] && [ -f "${FUNC_WORKER_PYTHON}" ]; then
+              echo "FUNC_WORKER_PYTHON=${FUNC_WORKER_PYTHON}" >> "$GITHUB_ENV"
+              echo "Installed Python 3.12 at ${FUNC_WORKER_PYTHON}"
+            else
+              echo "::warning::Could not resolve Python 3.12 path after install"
+            fi
           else
             echo "System Python 3.12 found: $(which python3.12)"
           fi

@@ -370,6 +370,7 @@ def _find_func_worker_python() -> str | None:
         return explicit
 
     # Try versioned system executables (python3.12, python3.11, python3.10).
+    # Azure Functions v4 supports Python 3.10–3.12.
     for minor in range(12, 9, -1):
         path = shutil.which(f"python3.{minor}")
         if path:
@@ -394,6 +395,9 @@ def _start_function_app(sample_path: Path, port: int) -> subprocess.Popen[Any]:
     # a compatible Python when one is available.
     worker_python = _find_func_worker_python()
     if worker_python:
+        # Azure Functions uses double-underscore separators for nested config
+        # keys passed as environment variables (host.json equivalent:
+        # languageWorkers.python.defaultExecutablePath).
         env["languageWorkers__python__defaultExecutablePath"] = worker_python
 
     # On Windows, use CREATE_NEW_PROCESS_GROUP to allow proper termination
