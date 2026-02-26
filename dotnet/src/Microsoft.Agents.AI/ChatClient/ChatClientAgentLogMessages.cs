@@ -56,4 +56,17 @@ internal static partial class ChatClientAgentLogMessages
         string agentId,
         string agentName,
         Type clientType);
+
+    /// <summary>
+    /// Logs <see cref="ChatClientAgent"/> warning about <see cref="ChatHistoryProvider"/> conflict.
+    /// </summary>
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Agent {AgentId}/{AgentName}: Only {ConversationIdName} or {ChatHistoryProviderName} may be used, but not both. The service returned a conversation id indicating server-side chat history management, but the agent has a {ChatHistoryProviderName} configured.")]
+    public static partial void LogAgentChatClientHistoryProviderConflict(
+        this ILogger logger,
+        string conversationIdName,
+        string chatHistoryProviderName,
+        string agentId,
+        string agentName);
 }

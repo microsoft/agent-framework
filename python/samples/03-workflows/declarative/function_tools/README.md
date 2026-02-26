@@ -6,7 +6,7 @@ This sample demonstrates an agent with function tools responding to user queries
 
 The workflow showcases:
 - **Function Tools**: Agent equipped with tools to query menu data
-- **Real Azure OpenAI Agent**: Uses `AzureOpenAIChatClient` to create an agent with tools
+- **Real Azure OpenAI Agent**: Uses `AzureOpenAIResponsesClient` to create an agent with tools
 - **Agent Registration**: Shows how to register agents with the `WorkflowFactory`
 
 ## Tools
@@ -72,7 +72,11 @@ Session Complete
 
 ```python
 # Create the agent with tools
-client = AzureOpenAIChatClient(credential=AzureCliCredential())
+client = AzureOpenAIResponsesClient(
+    project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+    deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    credential=AzureCliCredential(),
+)
 menu_agent = client.as_agent(
     name="MenuAgent",
     instructions="You are a helpful restaurant menu assistant...",

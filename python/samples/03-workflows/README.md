@@ -160,6 +160,14 @@ Sequential orchestration uses a few small adapter nodes for plumbing:
   These may appear in event streams (executor_invoked/executor_completed). They're analogous to
   concurrent’s dispatcher and aggregator and can be ignored if you only care about agent activity.
 
+### AzureOpenAIResponsesClient vs AzureAIAgent
+
+Workflow and orchestration samples use `AzureOpenAIResponsesClient` rather than the CRUD-style `AzureAIAgent` client. The key difference:
+
+- **`AzureOpenAIResponsesClient`** — A lightweight client that uses the underlying Agent Service V2 (Responses API) for non-CRUD-style agents. Orchestrations use this client because agents are created locally and do not require server-side lifecycle management (create/update/delete). This is the recommended client for orchestration patterns (Sequential, Concurrent, Handoff, GroupChat, Magentic).
+
+- **`AzureAIAgent`** — A CRUD-style client for server-managed agents. Use this when you need persistent, server-side agent definitions with features like file search, code interpreter sessions, or thread management provided by the Azure AI Agent Service.
+
 ### Environment Variables
 
 Workflow samples that use `AzureOpenAIResponsesClient` expect:

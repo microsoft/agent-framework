@@ -18,10 +18,11 @@ Run with:
 """
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.declarative import WorkflowFactory
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
@@ -196,8 +197,12 @@ def format_order_confirmation(order_data: dict[str, Any], order_calculation: dic
 
 async def main():
     """Run the agent to function tool workflow."""
-    # Create Azure OpenAI client
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    # Create Azure OpenAI Responses client
+    chat_client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     # Create the order analysis agent with structured output
     order_analysis_agent = chat_client.as_agent(
