@@ -49,16 +49,23 @@ agent.run(task)
 
 **Consequence**: There is currently **no way** to compact messages during the tool loop such that subsequent LLM calls use the reduced context. Any middleware-based approach only affects individual LLM calls but the underlying list keeps growing.
 
+### Message-list correctness constraint: Atomic group preservation
+
+A critical correctness constraint for any compaction strategy: **tool calls and their results must be kept together**. LLM APIs (OpenAI, Azure, etc.) require that an assistant message containing `tool_calls` is always followed by corresponding `tool` result messages. A compaction strategy that removes one without the other will cause API errors. This is extended for reasoning models, at least in the OpenAI Responses API with a Reasoning content, without it you also get failed calls.
+
+Strategies must treat `[assistant message with tool_calls] + [tool result messages]` as atomic groups — either keep the entire group or remove it entirely. Option 1 Variant C (pre-grouped messages) addresses this structurally by having the framework compute `MessageGroup` objects before calling the strategy, so strategy authors never see raw message boundaries.
+
 ### Where Compaction Is Needed
 
-Compaction must be applicable in **four distinct points** in the agent lifecycle:
+Compaction must be applicable in **three primary points** in the agent lifecycle:
 
 | Point | When | Purpose |
 |-------|------|---------|
-| **Post-load** | After `HistoryProvider.get_messages()` returns in `before_run` | Compact history before sending to the model, while keeping the full history in storage |
-| **Pre-write** | Before `HistoryProvider.save_messages()` in `after_run` | Compact before persisting to storage, limiting storage size, _only applies to messages from a run_ |
-| **In-run (tool loop)** | During function calling loops within a single `agent.run()` | Keep context within limits as tool calls accumulate |
-| **On existing storage** | Outside of `agent.run()`, as a maintenance operation | Compact stored history (e.g., cron job, manual trigger) |
+| **In-run** | During the (potentially) multiple calls to a ChatClient's `get_response` within a single `agent.run()` | Keep context within limits as tool calls accumulate and project only included messages per model call |
+| **Pre-write\*** | Before `HistoryProvider.save_messages()` in `after_run` | Compact before persisting to storage, limiting storage size, _only applies to messages from a run_ |
+| **On existing storage\*** | Outside of `agent.run()`, as a maintenance operation | Compact stored history (e.g., cron job, manual trigger) |
+
+**\***: Should pre-write and existing-storage compaction share one unified configuration/setup to reduce duplicate strategy wiring, and then either: each write overrides the full storage, or only new messages are compacted while a separate interface can be called to compact the existing storage?
 
 ### Scope: Not Applicable to Service-Managed Storage
 
@@ -70,205 +77,20 @@ Compaction must be applicable in **four distinct points** in the agent lifecycle
 
 This ADR applies to two scenarios where the **client** constructs and manages the message list sent to the model:
 
-1. **With local storage** (e.g., `InMemoryHistoryProvider`, Redis, Cosmos) — compaction is needed at all four points (post-load, pre-write, in-run, existing storage), currently no compaction is done in our abstractions.
+1. **With local storage** (e.g., `InMemoryHistoryProvider`, Redis, Cosmos) — compaction is needed during a run, currently no compaction is done in our abstractions.
 2. **Without any storage** (`store=False`, no `HistoryProvider`) — in-run compaction is still critical for long-running, tool-heavy agent invocations where the message list grows unbounded within a single `agent.run()` call
-
-### Compaction Strategies (Examples)
-
-A compaction strategy takes a list of messages and returns a (potentially shorter) list, in almost all cases, there is certain logic that needs to be applied universally, such as retaining system messages, not breaking up function call and result pairs (for Responses that includes Reasoning as well, see [below](#atomic-group-preservation) for more info) as tool calls, etc. Beyond that, strategies can be as simple or complex as needed:
-
-- **Truncation**: Keep only the last N messages or N tokens, this is a likely done as a kind of zigzag, where the history grows, then get's truncated to some value below the token limit, then grows again, etc. This can be done on a simple message count basis, a character count basis, or more complex token counting basis.
-- **Summarization**: Replace older messages with an LLM-generated summary (depending on the implementation this could be done, by replacing the summarized messages, or by inserting a summary message in between and not loading messages older then the summarized ones)
-- **Selective removal**: Remove tool call/result pairs while keeping user/assistant turns
-- **Sliding window with anchor**: Keep system message + last N messages
-- **Custom logic**: The design should be extendible so that users can implement their own strategies.
-
-### Atomic Group Preservation
-
-A critical constraint for any compaction strategy: **tool calls and their results must be kept together**. LLM APIs (OpenAI, Azure, etc.) require that an assistant message containing `tool_calls` is always followed by corresponding `tool` result messages. A compaction strategy that removes one without the other will cause API errors. This is extended for reasoning models, at least in the OpenAI Responses API with a Reasoning content, without it you also get failed calls.
-
-Strategies must treat `[assistant message with tool_calls] + [tool result messages]` as atomic groups — either keep the entire group or remove it entirely. We can explore automatic grouping logic in the strategy implementation to enforce this constraint, to ensure not every strategy implementer needs to manually handle this. Option 1 Variant C (pre-grouped messages) addresses this structurally by having the framework compute `MessageGroup` objects before calling the strategy, so strategy authors never see raw message boundaries.
-
-### Leveraging Source Attribution
-
-[ADR-0016](./0016-python-context-middleware.md#4-source-attribution-via-source_id) introduces `source_id` attribution on messages — each message tracks which `ContextProvider` added it. Compaction strategies can use this attribution to make informed decisions about what to compact and what to preserve:
-
-- **Preserve RAG context**: Messages from a RAG provider (e.g. `source_id: "rag"`) may be critical and should survive compaction
-- **Remove ephemeral context**: Messages marked as ephemeral (e.g., `source_id: "time"`) can be safely removed
-- **Protect user input**: Messages without a `source_id` (direct user input) should typically be preserved
-- **Selective tool result compaction**: Tool results from specific providers can be summarized while others are kept verbatim
-
-This means strategies don't need to rely solely on message position or role — they can make semantically meaningful compaction decisions based on the origin of each message.
-
-### Implementation details
-
-#### Trigger mechanism for in-run compaction
-
-Running compaction after **every** tool call is wasteful — most iterations the context is well within limits. Instead, compaction should only trigger when a threshold is exceeded. There are several approaches to consider:
-
-1. **Message count threshold**: Trigger when the message list exceeds N messages. Simple to implement and predictable, but message count is a poor proxy for token usage — a single tool result can contain thousands of tokens while counting as one message.
-
-2. **Character/token count threshold**: Trigger when the estimated token count exceeds a budget. More accurate but requires a token counting mechanism (exact tokenization is model-specific and expensive; character-based heuristics like `len(text) / 4` are fast but approximate).
-
-3. **Iteration-based**: Trigger every N tool loop iterations (e.g., every 10th iteration). Predictable cadence but doesn't account for actual context growth — 10 iterations with small results may not need compaction while 3 iterations with large results might.
-
-4. **Strategy-internal**: Let the `CompactionStrategy.compact()` method decide internally — it receives the full message list and can return it unchanged if no compaction is needed. This is the simplest integration point (always call `compact()`, let the strategy no-op when appropriate) but has the overhead of calling into the strategy every iteration.
-
-The recommended approach is **strategy-internal with a lightweight guard**: the `compact()` method is called after each tool result, but strategy implementations should include a fast short-circuit check (e.g., `if len(messages) < self.threshold: return False`) to minimize overhead when compaction is not needed. This keeps the tool loop simple (always call `compact()`) while letting each strategy define its own trigger logic.
-
-The following example illustrates this for Variant A (in-place flat list). See Variant C under Option 1 for the simpler pre-grouped equivalent.
-
-```python
-class SlidingWindowStrategy(CompactionStrategy):
-    """Example with built-in trigger logic and atomic group preservation (Variant A)."""
-
-    def __init__(self, max_messages: int, *, compact_to: int | None = None):
-        self.max_messages = max_messages
-        self.compact_to = compact_to or max_messages // 2
-
-    async def compact(self, messages: list[ChatMessage]) -> bool:
-        # Fast short-circuit: no-op if under threshold
-        if len(messages) <= self.max_messages:
-            return False
-
-        # Partition into anchors (system messages) and the rest
-        anchors: list[ChatMessage] = []
-        rest: list[ChatMessage] = []
-        for m in messages:
-            (anchors if m.role == "system" else rest).append(m)
-
-        # Group into atomic units: [assistant w/ tool_calls + tool results]
-        # count as one group; standalone messages are their own group
-        groups: list[list[ChatMessage]] = []
-        i = 0
-        while i < len(rest):
-            msg = rest[i]
-            if msg.role == "assistant" and getattr(msg, "tool_calls", None):
-                # Collect this assistant message + all following tool results
-                group = [msg]
-                i += 1
-                while i < len(rest) and rest[i].role == "tool":
-                    group.append(rest[i])
-                    i += 1
-                groups.append(group)
-            else:
-                groups.append([msg])
-                i += 1
-
-        # Keep the last N groups (by message count) that fit within compact_to
-        kept: list[ChatMessage] = []
-        count = 0
-        for group in reversed(groups):
-            if count + len(group) > self.compact_to:
-                break
-            kept = group + kept
-            count += len(group)
-
-        # Mutate in place
-        messages.clear()
-        messages.extend(anchors + kept)
-        return True
-```
-
-#### Compaction on post-load, pre-write, and in-run
-
-Given a situation where a compaction strategy is known, the following would need to happen:
-1. At that moment in the run, the message list is passed to the strategy's `compact()` method, which returns whether compaction occurred (and depending on the variant, either mutates in place or returns a new list).
-1. The caller continues with the (potentially reduced) list for the next steps (sending to the model, saving to storage, or continuing the tool loop with the reduced context)
-1. We need to decide how to handle a failed compaction (e.g., the strategy raises an exception) — likely we should have a fallback to continue without compaction rather than failing the entire agent run.
-
-#### Compaction on existing storage
-
-ADR-0016's `HistoryProvider.save_messages()` is an **append** operation — `after_run` collects the new messages from the current invocation and appends them to storage. There is no built-in way to **replace** the full stored history with a compacted version.
-
-For compaction on existing storage (and pre-write compaction that rewrites history), we need a way to overwrite rather than append. Two options:
-
-1. **Add a `replace_messages()` method** to `HistoryProvider`:
-
-```python
-class HistoryProvider(ContextProvider):
-    @abstractmethod
-    async def save_messages(self, session_id: str | None, messages: Sequence[ChatMessage]) -> None:
-        """Append messages to storage for this session."""
-        ...
-
-    async def replace_messages(self, session_id: str | None, messages: Sequence[ChatMessage]) -> None:
-        """Replace all stored messages for this session. Used for compaction.
-
-        Default implementation raises NotImplementedError. Providers that support
-        compaction on existing storage must override this method.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support replace_messages. "
-            "Override this method to enable storage compaction."
-        )
-```
-
-2. **Add a `overwrite` parameter** to `save_messages()`:
-
-```python
-class HistoryProvider(ContextProvider):
-    @abstractmethod
-    async def save_messages(
-        self,
-        session_id: str | None,
-        messages: Sequence[ChatMessage],
-        *,
-        overwrite: bool = False,
-    ) -> None:
-        """Persist messages for this session.
-
-        Args:
-            overwrite: If True, replace all existing messages instead of appending.
-                       Used for compaction workflows.
-        """
-        ...
-```
-
-Either approach enables the compaction-on-existing-storage workflow:
-
-```python
-history = await provider.get_messages(session_id)
-compacted = await strategy.compact(history)
-await provider.replace_messages(session_id, compacted)  # Option 1
-# or
-await provider.save_messages(session_id, compacted, overwrite=True)  # Option 2
-```
-
-This could then be combined with a convenience method on the provider for compaction:
-
-```python
-
-class HistoryProvider:
-
-    compaction_strategy: CompactionStrategy | None = None  # Optional default strategy for this provider
-
-    async def compact_storage(self, session_id: str | None, *, strategy: CompactionStrategy | None = None) -> None:
-        """Compact stored history for this session using the given strategy."""
-        history = await self.get_messages(session_id)
-        used_strategy = strategy or self._get_strategy("existing") or self._get_strategy("post_load")
-        if used_strategy is None:
-            raise ValueError("No compaction strategy configured for existing storage.")
-        await used_strategy.compact(history)
-        await self.replace_messages(session_id, history)  # or save_messages with overwrite
-        # or
-        await self.save_messages(session_id, history, overwrite=True)
-```
-
-This design choice is orthogonal to the compaction strategy options below — any option requires one of these `HistoryProvider` extensions and optionally the convenience method.
 
 ## Decision Drivers
 
-- **Applicable everywhere**: The same strategy object must work at post-load, pre-write, in-run (tool loop), and on existing storage
-- **Composable with HistoryProvider**: Works naturally with the `HistoryProvider` subclass from ADR-0016
-- **Composable with function calling**: Can be applied during the tool loop without requiring `ContextProvider` to run mid-loop
-- **Cross-platform consistency**: The .NET SDK uses `IChatReducer` on `InMemoryChatHistoryProvider` with a `ChatReducerTriggerEvent` enum
-- **Attribution-aware**: Can leverage `source_id` attribution on messages to make informed compaction decisions (e.g., preserve RAG context, remove ephemeral messages)
-- **Chainable**: Multiple strategies must be composable in sequence (e.g., summarize older messages then truncate to fit token budget). In-place mutation on the same `list[ChatMessage]` enables piping one strategy into the next
+- **Applicable across primary points**: The strategy model must work at pre-write, in-run, and on existing storage, this means it must be:
+    - **Composable with HistoryProvider**: Works naturally with the `HistoryProvider` subclass from ADR-0016
+    - **Composable with function calling/chat clients**: Can be applied during the inner loop of the chat clients
+- **Message-list correctness**: Compaction must preserve required assistant/tool/result ordering and reasoning/tool-call pairings so the model input stays valid
+- **Chainable**/**Composable**: Multiple strategies must be composable (e.g., summarize older messages then truncate to fit token budget).
 
 ## Considered Options
 
-- Standalone `CompactionStrategy` object composed into `HistoryProvider` and `FunctionInvocationConfiguration`
+- Standalone `CompactionStrategy` object composed into `HistoryProvider` and `ChatClient`
 - `CompactionStrategy` as a mixin for `HistoryProvider` subclasses
 - Separate `CompactionProvider` set directly on the agent
 - Mutable message access in `ChatMiddleware`
@@ -280,18 +102,18 @@ This design choice is orthogonal to the compaction strategy options below — an
 
 Define an abstract `CompactionStrategy` that can be **composed into any `HistoryProvider`** and also passed to the agent for in-run compaction.
 
-There are three sub-variants for the `compact()` signature, which differ in mutability semantics and input structure:
+There are three sub-variants for the method signature, which differ in mutability semantics and input structure, all of them use `__call__` to be easily used as a callable, and allow simple strategies to be expressed as simple functions, and if you need additional state or helper methods you can implement a class with `__call__`:
 
 #### Variant A: In-place mutation
 
 The strategy mutates the provided list directly and returns `bool` indicating whether compaction occurred. Zero-allocation in the no-op case, and the tool loop doesn't need to reassign the list.
 
 ```python
-class CompactionStrategy(ABC):
+@runtime_checkable
+class CompactionStrategy(Protocol):
     """Abstract strategy for compacting a list of messages in place."""
 
-    @abstractmethod
-    async def compact(self, messages: list[ChatMessage]) -> bool:
+    async def __call__(self, messages: list[Message]) -> bool:
         """Compact messages in place. Returns True if compaction occurred."""
         ...
 ```
@@ -301,11 +123,11 @@ class CompactionStrategy(ABC):
 The strategy returns a new list (leaving the original unchanged) plus a `bool` indicating whether compaction occurred. This is safer when the caller needs the original list preserved (e.g., for logging or fallback), and is a more functional style that avoids side-effect surprises.
 
 ```python
-class CompactionStrategy(ABC):
+@runtime_checkable
+class CompactionStrategy(Protocol):
     """Abstract strategy for compacting a list of messages."""
 
-    @abstractmethod
-    async def compact(self, messages: Sequence[ChatMessage]) -> tuple[list[ChatMessage], bool]:
+    async def __call__(self, messages: Sequence[Message]) -> tuple[list[Message], bool]:
         """Return (compacted_messages, did_compact)."""
         ...
 ```
@@ -315,8 +137,8 @@ Tool loop integration requires reassignment:
 ```python
 # Inside the function invocation loop
 messages.append(tool_result_message)
-if config.get("compaction_strategy"):
-    compacted, did_compact = await config["compaction_strategy"].compact(messages)
+if compacter := config.get("compaction_strategy"):
+    compacted, did_compact = await compacter(messages)
     if did_compact:
         messages.clear()
         messages.extend(compacted)
@@ -324,14 +146,16 @@ if config.get("compaction_strategy"):
 
 #### Variant C: Pre-grouped messages
 
-Instead of receiving a flat list, the strategy receives pre-computed logical groups. This shifts the atomic-group-preservation burden from every strategy implementation to the framework, so strategy authors can focus on which groups to keep/remove/summarize without manually parsing message boundaries.
+Variant C models compaction as a callable that receives `MessageGroups` only. For in-place behavior, strategies mutate grouped state directly and return whether a change was applied.
+
+Instead of requiring every strategy to parse boundaries manually, the framework can build pre-computed logical groups and pass those to the strategies. This shifts the atomic-group-preservation burden into shared grouping logic so strategy authors can focus on compaction logic.
 
 ```python
 @dataclass
 class MessageGroup:
     """A logical group of messages that must be kept or removed together."""
     kind: Literal["system", "user", "assistant_text", "tool_call"]
-    messages: list[ChatMessage]
+    messages: list[Message]
 
     @property
     def length(self) -> int:
@@ -339,14 +163,54 @@ class MessageGroup:
         return len(self.messages)
 
 
-class CompactionStrategy(ABC):
-    """Abstract strategy operating on pre-grouped messages."""
+@dataclass
+class MessageGroups:
+    groups: list[MessageGroup]
 
-    @abstractmethod
-    async def compact(self, groups: list[MessageGroup]) -> bool:
-        """Compact groups in place. Returns True if compaction occurred.
+    @classmethod
+    def from_messages(cls, messages: list[Message]) -> "MessageGroups":
+        """Build grouped state from a flat message list."""
+        groups: list[MessageGroup] = []
+        i = 0
+        while i < len(messages):
+            msg = messages[i]
+            if msg.role == "system":
+                groups.append(MessageGroup(kind="system", messages=[msg]))
+                i += 1
+            elif msg.role == "user":
+                groups.append(MessageGroup(kind="user", messages=[msg]))
+                i += 1
+            elif msg.role == "assistant" and getattr(msg, "tool_calls", None):
+                group_msgs = [msg]
+                i += 1
+                while i < len(messages) and messages[i].role == "tool":
+                    group_msgs.append(messages[i])
+                    i += 1
+                groups.append(MessageGroup(kind="tool_call", messages=group_msgs))
+            else:
+                groups.append(MessageGroup(kind="assistant_text", messages=[msg]))
+                i += 1
+        return cls(groups)
 
-        Groups are pre-computed by the framework:
+    def summary(self) -> dict[str, int]:
+        return {
+            "group_count": len(self.groups),
+            "message_count": sum(len(g.messages) for g in self.groups),
+            "tool_call_count": sum(1 for g in self.groups if g.kind == "tool_call"),
+        }
+
+    def to_messages(self) -> list[Message]:
+        """Flatten grouped state back into a flat message list."""
+        return [msg for group in self.groups for msg in group.messages]
+
+
+class CompactionStrategy(Protocol):
+    """Callable strategy for group-aware compaction."""
+
+    async def __call__(self, groups: MessageGroups) -> bool:
+        """Compact by mutating grouped state. Returns True if changed.
+
+        Group kinds:
         - "system": system message(s)
         - "user": a single user message
         - "assistant_text": an assistant message without tool calls
@@ -356,70 +220,247 @@ class CompactionStrategy(ABC):
         ...
 ```
 
-The framework handles grouping before calling `compact()` and flattening afterward:
+Class-based strategies implement `__call__` directly:
 
 ```python
-def _to_groups(messages: list[ChatMessage]) -> list[MessageGroup]:
-    """Parse a flat message list into logical groups."""
-    groups: list[MessageGroup] = []
-    i = 0
-    while i < len(messages):
-        msg = messages[i]
-        if msg.role == "system":
-            groups.append(MessageGroup(kind="system", messages=[msg]))
-            i += 1
-        elif msg.role == "user":
-            groups.append(MessageGroup(kind="user", messages=[msg]))
-            i += 1
-        elif msg.role == "assistant" and getattr(msg, "tool_calls", None):
-            group_msgs = [msg]
-            i += 1
-            while i < len(messages) and messages[i].role == "tool":
-                group_msgs.append(messages[i])
-                i += 1
-            groups.append(MessageGroup(kind="tool_call", messages=group_msgs))
-        else:
-            groups.append(MessageGroup(kind="assistant_text", messages=[msg]))
-            i += 1
-    return groups
-
-
-def _flatten_groups(groups: list[MessageGroup]) -> list[ChatMessage]:
-    """Flatten groups back into a flat message list."""
-    return [msg for group in groups for msg in group.messages]
-
-
-# Usage at a compaction point:
-groups = _to_groups(messages)
-did_compact = await strategy.compact(groups)
-if did_compact:
-    messages.clear()
-    messages.extend(_flatten_groups(groups))
+class ExcludeOldestGroupsStrategy:
+    async def __call__(self, groups: MessageGroups) -> bool:
+        # Mutate grouped state in place.
+        ...
 ```
 
-**Note on tool loop integration:** For in-run compaction with Variant C, the tool loop should maintain a `list[MessageGroup]` alongside the flat message list rather than re-parsing groups from scratch on every iteration. As the loop produces new messages, it appends them directly as groups (e.g., a `tool_call` group after collecting the assistant message and its tool results, or a standalone `assistant_text` group). The flat message list is only rebuilt from the groups when needed (after compaction, or before sending to the LLM). This avoids the O(n) re-grouping cost on every tool call iteration.
+The framework builds and flattens grouped state through `MessageGroups` methods:
+
+```python
+# Usage at a compaction point:
+groups = MessageGroups.from_messages(messages)
+logger.debug("Pre-compaction summary: %s", groups.summary())
+# optional also emit OTEL events next to these loggers, but not sure if needed
+await strategy(groups)
+logger.debug("Post-compaction summary: %s", groups.summary())
+response = await get_response(messages=groups.to_messages())
+# add messages from response into new group and to the groups.
+```
+
+**Note on tool loop integration:** For in-run compaction with Variant C, the function-invocation layer will maintain a `MessageGroups` object (instead of repeatedly rebuilding groups from a flat list). As the loop produces new messages, it appends them directly as groups (e.g., a `tool_call` group after collecting the assistant message and its tool results, or a standalone `assistant_text` group). The flat message list is only rebuilt from groups when needed (after compaction, or before sending to the LLM). This avoids O(n) re-grouping on every tool-call iteration.
+
+#### Variant D: Exclude-based groups (builds on Variant C)
+
+Variant D extends Variant C by adding explicit exclusion metadata on groups. Strategies still use the callable shape from Variant C, but compaction is represented by toggling `excluded=True/False` (with optional `exclude_reason`) rather than deleting messages from loop history.
+
+```python
+@dataclass
+class MessageGroup:
+    kind: Literal["system", "user", "assistant_text", "tool_call"]
+    messages: list[Message]
+    excluded: bool = False
+    exclude_reason: str | None = None
+
+
+@dataclass
+class MessageGroups:
+    groups: list[MessageGroup]
+
+    def summary(self) -> dict[str, int]:
+        return {
+            "group_count": len(self.groups),
+            "message_count": sum(len(g.messages) for g in self.groups),
+            "tool_call_count": sum(1 for g in self.groups if g.kind == "tool_call"),
+            "included_group_count": sum(1 for g in self.groups if not g.excluded),
+            "included_message_count": sum(len(g.messages) for g in self.groups if not g.excluded),
+            "included_tool_call_count": sum(
+                1 for g in self.groups if g.kind == "tool_call" and not g.excluded
+            ),
+        }
+
+    def get_messages(self, *, excluded: bool = False) -> list[Message]:
+        if excluded:
+            return [msg for g in self.groups for msg in g.messages]
+        return [msg for g in self.groups if not g.excluded for msg in g.messages]
+
+    def included_messages(self) -> list[Message]:
+        return self.get_messages(excluded=False)
+```
+
+During compaction, strategies/orchestrators mutate `group.excluded`/`group.exclude_reason` (including re-including groups with `excluded=False`) instead of discarding data.
+
+#### Variant E: Tokenization and MessageGroup accounting (builds on Variant C)
+
+Variant E adds tokenization metadata and cached token rollups to grouped state. This is independent of exclusion: token-aware strategies can use token metrics even if no groups are excluded. When combined with Variant D, token budgets can be enforced against included messages.
+
+To make token-budget compaction deterministic:
+1. Before **every** `get_response` call in the tool loop, tokenize every message currently in `all_messages` (regardless of source).
+2. Persist per-content token counts in `content.additional_properties["_token_count"]`.
+3. Build/update grouped state from tokenized messages and use cached rollups for threshold checks and summaries.
+
+```python
+class TokenizerProtocol(Protocol):
+    def count_tokens(self, content: AIContent, *, model_id: str | None = None) -> int: ...
+
+
+@dataclass
+class MessageGroup:
+    kind: Literal["system", "user", "assistant_text", "tool_call"]
+    messages: list[Message]
+    _token_count_cache: int | None = None
+
+    def token_count(self) -> int:
+        if self._token_count_cache is None:
+            self._token_count_cache = sum(
+                content.additional_properties.get("_token_count", 0)
+                for message in self.messages
+                for content in message.contents
+            )
+        return self._token_count_cache
+
+
+@dataclass
+class MessageGroups:
+    groups: list[MessageGroup]
+    _total_tokens_cache: int | None = None
+
+    def total_tokens(self) -> int:
+        if self._total_tokens_cache is None:
+            self._total_tokens_cache = sum(group.token_count() for group in self.groups)
+        return self._total_tokens_cache
+
+    def summary(self) -> dict[str, int]:
+        return {
+            "group_count": len(self.groups),
+            "message_count": sum(len(g.messages) for g in self.groups),
+            "tool_call_count": sum(1 for g in self.groups if g.kind == "tool_call"),
+            "total_tokens": self.total_tokens(),
+            "tool_call_tokens": sum(g.token_count() for g in self.groups if g.kind == "tool_call"),
+        }
+```
+And the following helper method should also be added:
+
+```python
+def _to_tokenized_groups(
+    messages: list[Message], *, tokenizer: TokenizerProtocol
+) -> MessageGroups:
+    tokenize_messages(messages, tokenizer=tokenizer)
+    return MessageGroups.from_messages(messages)
+```
+
+#### Variant F: Combined grouped callable + exclude + tokenization (C + D + E)
+
+Variant F combines Variant C's callable grouped interface, Variant D's exclusion semantics, and Variant E's token accounting in one integrated model. This gives one state container for projection (`excluded`) and budget control (`token_count`), while preserving full history for final-return and diagnostics.
+
+For Variant F, `MessageGroups.from_messages(...)` accepts an optional tokenizer and handles both tokenization and grouping before strategy execution:
+
+```python
+class TokenizerProtocol(Protocol):
+    def count_tokens(self, content: AIContent, *, model_id: str | None = None) -> int: ...
+
+
+@dataclass
+class MessageGroup:
+    kind: Literal["system", "user", "assistant_text", "tool_call"]
+    messages: list[Message]
+    excluded: bool = False
+    exclude_reason: str | None = None
+    _token_count_cache: int | None = None
+
+    def token_count(self) -> int:
+        if self._token_count_cache is None:
+            self._token_count_cache = sum(
+                content.additional_properties.get("_token_count", 0)
+                for message in self.messages
+                for content in message.contents
+            )
+        return self._token_count_cache
+
+
+@dataclass
+class MessageGroups:
+    groups: list[MessageGroup]
+    _total_tokens_cache: int | None = None
+
+    @classmethod
+    def from_messages(
+        cls,
+        messages: list[Message],
+        *,
+        tokenizer: TokenizerProtocol | None = None,
+    ) -> "MessageGroups":
+        if tokenizer is not None:
+            tokenize_messages(messages, tokenizer=tokenizer)
+        groups: list[MessageGroup] = []
+        i = 0
+        while i < len(messages):
+            msg = messages[i]
+            if msg.role == "system":
+                groups.append(MessageGroup(kind="system", messages=[msg]))
+                i += 1
+            elif msg.role == "user":
+                groups.append(MessageGroup(kind="user", messages=[msg]))
+                i += 1
+            elif msg.role == "assistant" and getattr(msg, "tool_calls", None):
+                group_msgs = [msg]
+                i += 1
+                while i < len(messages) and messages[i].role == "tool":
+                    group_msgs.append(messages[i])
+                    i += 1
+                groups.append(MessageGroup(kind="tool_call", messages=group_msgs))
+            else:
+                groups.append(MessageGroup(kind="assistant_text", messages=[msg]))
+                i += 1
+        return cls(groups)
+
+    def get_messages(self, *, excluded: bool = False) -> list[Message]:
+        if excluded:
+            return [msg for g in self.groups for msg in g.messages]
+        return [msg for g in self.groups if not g.excluded for msg in g.messages]
+
+    def included_messages(self) -> list[Message]:
+        return self.get_messages(excluded=False)
+
+    def total_tokens(self) -> int:
+        if self._total_tokens_cache is None:
+            self._total_tokens_cache = sum(group.token_count() for group in self.groups)
+        return self._total_tokens_cache
+
+    def included_token_count(self) -> int:
+        return sum(g.token_count() for g in self.groups if not g.excluded)
+
+    def summary(self) -> dict[str, int]:
+        return {
+            "group_count": len(self.groups),
+            "message_count": sum(len(g.messages) for g in self.groups),
+            "tool_call_count": sum(1 for g in self.groups if g.kind == "tool_call"),
+            "included_group_count": sum(1 for g in self.groups if not g.excluded),
+            "included_message_count": sum(len(g.messages) for g in self.groups if not g.excluded),
+            "included_tool_call_count": sum(
+                1 for g in self.groups if g.kind == "tool_call" and not g.excluded
+            ),
+            "total_tokens": self.total_tokens(),
+            "tool_call_tokens": sum(g.token_count() for g in self.groups if g.kind == "tool_call"),
+            "included_tokens": self.included_token_count(),
+        }
+
+
+class CompactionStrategy(Protocol):
+    async def __call__(self, groups: MessageGroups) -> None:
+        """Mutate the provided groups in place."""
+        ...
+```
 
 **Trade-offs between variants:**
 
-| Aspect | Variant A (in-place) | Variant B (return new) | Variant C (pre-grouped) |
-|--------|---------------------|----------------------|------------------------|
-| **Allocation** | Zero in no-op case | Always allocates tuple | Grouping overhead always |
-| **Safety** | Caller loses original | Original preserved | Caller loses original groups |
-| **Strategy complexity** | Must handle atomic groups | Must handle atomic groups | Groups pre-computed by framework |
-| **Chaining** | Natural (same list) | Pipe output to next input | Natural (same group list) |
-| **Framework complexity** | Minimal | Reassignment logic | Grouping + flattening logic |
+| Aspect | Variant A (in-place) | Variant B (return new) | Variant C (pre-grouped callable) | Variant D (exclude-based, on C) | Variant E (tokenization/accounting, on C) | Variant F (C + D + E combined) |
+|--------|---------------------|----------------------|-----------------------------------|---------------------------------|------------------------------------------|-------------------------------|
+| **Allocation** | Zero in no-op case | Always allocates tuple | Grouping overhead always | Grouping + exclusion-state bookkeeping | Grouping + tokenization/cache overhead | Grouping + exclusion + token/cache overhead |
+| **Safety** | Caller loses original | Original preserved | Caller loses original groups | Full grouped history preserved; model sees included projection | Same message inclusion as base variant; adds token observability | Full grouped history preserved with included/token projections |
+| **Strategy complexity** | Must handle atomic groups | Must handle atomic groups | Groups pre-computed by framework | Exclude/re-include policy on grouped state | Token-aware compaction policy and budget checks | Unified exclude + token budget policy on grouped state |
+| **Chaining** | Natural (same list) | Pipe output to next input | Natural (same group list) | Natural (same group state, exclude/re-include allowed) | Natural (same group state with shared token metrics) | Natural (same group state; compose exclude and budget passes) |
+| **Framework complexity** | Minimal | Reassignment logic | Grouping + flattening logic | Grouping + flattening + exclusion semantics | Grouping + tokenizer integration + cache invalidation | Highest: grouping + exclusion + tokenizer + cache invalidation |
 
 **Usage with `HistoryProvider`:**
 
-The `compaction_strategy` parameter accepts either a single `CompactionStrategy` (applied at all applicable points) or a `CompactionStrategies` TypedDict for per-point configuration:
+The `compaction_strategy` parameter accepts either a single `CompactionStrategy` or it can take a composed/chained strategy.
 
 ```python
-class CompactionStrategies(TypedDict, total=False):
-    """Per-point compaction strategy configuration."""
-    post_load: CompactionStrategy
-    pre_write: CompactionStrategy
-    existing: CompactionStrategy
-
 
 class HistoryProvider(ContextProvider):
     def __init__(
@@ -429,33 +470,23 @@ class HistoryProvider(ContextProvider):
         load_messages: bool = True,
         store_inputs: bool = True,
         store_responses: bool = True,
-        # NEW: optional compaction — single strategy or per-point dict
-        compaction_strategy: CompactionStrategy | CompactionStrategies | None = None,
+        # NEW: optional compaction strategy, can be a single strategy or a chained/composed strategy
+        compaction_strategy: CompactionStrategy | None = None,
+        # NEW: optional tokenizer for token-aware compaction strategies
+        tokenizer: TokenizerProtocol | None = None,
     ): ...
-
-    def _get_strategy(self, point: str) -> CompactionStrategy | None:
-        """Resolve the strategy for a given compaction point."""
-        if self.compaction_strategy is None:
-            return None
-        if isinstance(self.compaction_strategy, CompactionStrategy):
-            return self.compaction_strategy
-        return self.compaction_strategy.get(point)
-
-    async def before_run(self, agent, session, context, state) -> None:
-        history = await self.get_messages(context.session_id)
-        if strategy := self._get_strategy("post_load"):
-            await strategy.compact(history)
-        context.extend_messages(self.source_id, history)
 
     async def after_run(self, agent, session, context, state) -> None:
         messages_to_store = self._collect_messages(context)
-        if strategy := self._get_strategy("pre_write"):
-            await strategy.compact(messages_to_store)
+        groups = MessageGroups.from_messages(messages_to_store, tokenizer=self.tokenizer)
+        if self.compaction_strategy:
+            await self.compaction_strategy(groups)
+        messages_to_store = groups.to_messages()
         if messages_to_store:
             await self.save_messages(context.session_id, messages_to_store)
 ```
 
-**Simple usage (single strategy for all points):**
+**Simple usage:**
 
 ```python
 strategy = SlidingWindowStrategy(max_messages=100)
@@ -467,25 +498,31 @@ agent = client.create_agent(
 )
 ```
 
-**Per-point usage (different strategies for different points):**
+There are two ways we can do this:
+1. Before writing to storage in `after_run`, compaction is called on the new messages,
+    combined with: a new `compact` method, that reads the full history, calls the compaction strategy with the full history, then writes the compacted result back to storage (also requires a `overwrite` flag on the `save_messages` method). This makes removing old messages from storage a explicit action that the user initiaties instead of being implicitly triggered by `after_run` writes, but it also means compaction strategies only see new messages instead of the full history (unless they read it themselves), the `compact` method could then also have a override for the strategy to use (and/or the tokenizer in case of Variant E/F).
 
-```python
-agent = client.create_agent(
-    context_providers=[
-        InMemoryHistoryProvider(
-            "memory",
-            compaction_strategy={
-                "post_load": SlidingWindowStrategy(max_messages=100),
-                "pre_write": SummarizationStrategy(client, max_messages_before_summary=50),
-            },
-        ),
-    ],
-)
-```
+    ```python
+    class HistoryProvider(ContextProvider):
+        ...
+        async def compact(self, session_id: str, *, strategy: CompactionStrategy | None = None, tokenizer: TokenizerProtocol | None = None) -> None:
+            history = await self.get_messages(session_id)
+            if tokenizer:
+                tokenize_messages(history, tokenizer=tokenizer)
+            applicable_strategy = strategy or self.compaction_strategy
+            await applicable_strategy(history)  # compaction mutates history in place or returns new list depending on variant
+            await self.save_messages(session_id, history, overwrite=True)  # write compacted history back to storage
+    ```
+
+2. Before writing the history is loaded (could already be in-memory from `before_run`), compaction is called on the full history (old + new), then the compacted result is written back to storage. This allows compaction strategies to consider the full history when deciding what to keep, but it also means the provider needs to support writing the full history back (not just appending new messages).
+
+Given the explicit nature, and the ability to do the heavy lifting of reading, compacting and writing outside of the agent loop, we decide to go with the first setup, if we decide to use Option 1 overall.
 
 **Usage for in-run compaction (tool loop):**
 
-In-run compaction is configured via `FunctionInvocationConfiguration`, the existing TypedDict that controls the function calling loop (max iterations, error handling, etc.). Adding a `compaction_strategy` field keeps all loop-related configuration in one place:
+In-run compaction is executed within the Function Calling Layer, this loop is controlled by the existing TypedDict that controls the function calling loop (max iterations, error handling, etc.). Adding compaction and return-shape fields keeps loop-related behavior in one place.
+
+For Variant E and Variant F, a tokenizer must also be configured because token counts are part of compaction decisions, this could be optional to allow simple compaction strategies that don't use token metrics. For Variant F specifically, use `MessageGroups.from_messages(..., tokenizer=...)` so tokenization and grouping happen together before strategy invocation.
 
 ```python
 class FunctionInvocationConfiguration(TypedDict, total=False):
@@ -496,91 +533,120 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
     additional_tools: Sequence[ToolProtocol]
     include_detailed_errors: bool
     compaction_strategy: CompactionStrategy | None  # NEW
+    tokenizer: TokenizerProtocol | None  # NEW; required for Variant E/F
+    include_excluded_messages_in_final_response: bool  # NEW; default True
 ```
 
-During the function calling loop, after each tool result is appended, the strategy is applied:
+However these should *also* be first-class parameters on `Agent`, then propagated and stored into `FunctionInvocationConfiguration` at agent creation time:
+
+```python
+agent = Agent(
+    client=chat_client,
+    context_providers=[
+        InMemoryHistoryProvider("memory", compaction_strategy=boundary_strategy),
+    ],
+    compaction_strategy=compaction_strategy,
+    tokenizer=model_tokenizer,  # required for Variant E/F
+)
+```
+
+During the function calling loop, the strategy should be applied immediately before **every** `get_response` call (each model roundtrip):
 
 ```python
 # Inside the function invocation loop (e.g., in _try_execute_function_calls)
-messages.append(tool_result_message)
+logger = logging.getLogger(__name__)
+groups = MessageGroups.from_messages(
+    all_messages,
+    tokenizer=config["tokenizer"],  # required for Variant E/F
+)
+group_metrics = groups.summary()
+
 if config.get("compaction_strategy"):
-    await config["compaction_strategy"].compact(messages)
+    before_compaction = groups.summary()
+    await config["compaction_strategy"](groups)
+    after_compaction = groups.summary()
+    logger.info(
+        "In-run compaction applied",
+        strategy=type(config["compaction_strategy"]).__name__,
+        summary_before=before_compaction,
+        summary_after=after_compaction,
+    )
+    # Strategies can set groups.groups[i].excluded True/False with reasons
+
+response = await super_get_response(messages=groups.included_messages(), ...)
+# tokenize and store response messages, append to all_messages/groups as new groups, then next loop iteration will re-apply compaction with updated state
 ```
 
-This means the same `CompactionStrategy` object can be reused across `HistoryProvider` (boundary compaction) and `FunctionInvocationConfiguration` (in-run compaction):
+After the loop completes, final response shape is controlled by config:
 
 ```python
-strategy = SlidingWindowStrategy(max_messages=100)
-
-agent = chat_client.create_agent(
-    context_providers=[
-        InMemoryHistoryProvider("memory", compaction_strategy=strategy),
-    ],
-    function_invocation_configuration={
-        "max_iterations": 40,
-        "compaction_strategy": strategy,  # Same strategy for tool loop
-    },
-)
+return_messages = groups.get_messages(excluded=config.get("include_excluded_messages_in_final_response", True))
 ```
 
-Or leverage different strategies for different points (e.g., summarization on post-load, sliding window in-run):
-
-```python
-agent = client.create_agent(
-    context_providers=[
-        InMemoryHistoryProvider(
-            "memory",
-            compaction_strategy={
-                "pre_write": SummarizationStrategy(client, max_messages_before_summary=50),
-            },
-        ),
-    ],
-    function_invocation_configuration={
-        "max_iterations": 40,
-        "compaction_strategy": SlidingWindowStrategy(max_messages=20),
-    },
-)
-```
-
-**Usage on existing storage (maintenance):**
-
-```python
-# Compact stored history outside of agent.run()
-strategy = SlidingWindowStrategy(max_messages=100)
-history = await my_history_provider.get_messages(session_id)
-await strategy.compact(history)
-await my_history_provider.save_messages(session_id, history)
-```
+Even with Variant A as the baseline, grouped exclusion metadata can be maintained in the function-invocation layer while only included messages are sent to `get_response`.
 
 **Built-in strategies:**
 
 ```python
 class TruncationStrategy(CompactionStrategy):
     """Keep the last N messages, optionally preserving the system message."""
-    def __init__(self, max_messages: int, preserve_system: bool = True): ...
+    def __init__(self, *, max_messages: int, max_tokens: int, preserve_system: bool = True): ...
 
 class SlidingWindowStrategy(CompactionStrategy):
     """Keep system message + last N messages."""
-    def __init__(self, max_messages: int): ...
+    def __init__(self, *, max_messages: int, max_tokens: int): ...
 
 class SummarizationStrategy(CompactionStrategy):
     """Summarize older messages using an LLM."""
-    def __init__(self, chat_client: ..., max_messages_before_summary: int): ...
+    def __init__(self, *, client: ..., max_messages_before_summary: int, max_tokens_before_summary: int): ...
+
+# etc
 ```
 
-- Good, because the same strategy object works at all four compaction points (post-load, pre-write, in-run, existing storage)
+**Opinionated token budget based composed strategy pattern (Variant F):**
+
+This ADR proposes shipping a built-in composed strategy that enforces a token budget by running a list of regular strategies from top to bottom until the conversation fits the budget. This is intentionally opinionated and serves as a practical default/inspiration; advanced users can still implement custom orchestration logic. In the function loop, this strategy should drive `MessageGroup.excluded` flags so model calls project only included groups while preserving the full list.
+
+```python
+class TokenBudgetComposedStrategy(CompactionStrategy):
+    def __init__(
+        self,
+        *,
+        token_budget: int,
+        strategies: Sequence[CompactionStrategy],
+        early_stop: bool = False,  # optional flag to stop after first strategy that meets the budget, or run all strategies regardless
+    ):
+        self.token_budget = token_budget
+        self.strategies = strategies
+        self.early_stop = early_stop
+
+    async def __call__(self, groups: MessageGroups) -> None:
+        if groups.included_token_count() <= self.token_budget:
+            return
+
+        for strategy in self.strategies:
+            await strategy(groups)
+
+            if self.early_stop and groups.included_token_count() <= self.token_budget:
+                break
+```
+
+This pattern keeps composition explicit and deterministic: ordered strategies, shared token metric, exclusion-flag semantics, optional re-inclusion by later strategies, and early stop as soon as budget is satisfied.
+
+- Good, because the same strategy model works at the three primary compaction points (pre-write, in-run, existing storage)
 - Good, because strategies are fully reusable — one instance can be shared across providers and agents
 - Good, because new strategies can be added without modifying `HistoryProvider`
 - Good, because with Variant A (in-place), the tool loop integration is zero-allocation in the no-op case
 - Good, because with Variant B (return new list), the caller retains the original list for logging or fallback
-- Good, because with Variant C (pre-grouped), strategy authors don't need to implement atomic group preservation — the framework handles grouping/flattening, making strategies simpler and less error-prone
+- Good, because with Variants C-F (pre-grouped), strategy authors don't need to implement atomic group preservation — the framework handles grouping/flattening, making strategies simpler and less error-prone
+- Good, because with Variants C-F, compaction mutates one shared `MessageGroups` object in place, which is simpler to reason about and avoids extra state copies
 - Good, because it is easy to test strategies in isolation
 - Good, because strategies can inspect `source_id` attribution on messages for informed decisions
-- Good, because in-run compaction fits naturally into `FunctionInvocationConfiguration`, keeping all loop settings together
-- Good, because **chaining is natural** — for Variants A/C, each strategy mutates the same list in sequence; for Variant B, output pipes into the next input
-- Neutral, because Variant C adds framework complexity (grouping/flattening) but reduces strategy complexity
+- Good, because in-run settings can be first-class `Agent` parameters while still being stored in `FunctionInvocationConfiguration` for loop execution
+- Good, because **chaining is natural** — for Variants A/C-F, each strategy mutates the same shared object in sequence; for Variant B, output pipes into the next input
+- Neutral, because Variants C-F add framework complexity (grouping/flattening/tokenization/exclusion accounting) but reduce strategy complexity
 - Bad, because it adds a new concept (`CompactionStrategy`) alongside the existing `ContextProvider`/`HistoryProvider` hierarchy
-- Bad, because Variant C introduces a `MessageGroup` model that must stay in sync with any future message role changes
+- Bad, because Variants C-F introduce a `MessageGroup` model that must stay in sync with any future message role changes
 
 ### Option 2: `CompactionStrategy` as a Mixin for `HistoryProvider`
 
@@ -652,7 +718,7 @@ await provider.save_messages(session_id, compacted)
 - Good, because the provider controls its own compaction logic
 - Neutral, because mixins are idiomatic Python but can be harder to reason about in complex hierarchies
 - Bad, because **compaction strategy is coupled to the provider** — cannot share the same strategy across different providers, or in-run.
-- Bad, because different strategies per compaction point (post-load vs pre-write) require additional configuration or separate methods
+- Bad, because different strategies per compaction point (pre-write vs existing) require additional configuration or separate methods
 - Bad, because in-run compaction via `FunctionInvocationConfiguration` requires extracting the mixin from the provider list — unclear which one to use if multiple exist
 - Bad, because `isinstance` checks are fragile and don't compose well
 - Bad, because testing compaction requires instantiating a full provider rather than testing the strategy in isolation
@@ -677,7 +743,7 @@ class CompactionProvider(ContextProvider):
         ...
 
     async def before_run(self, agent, session, context, state) -> None:
-        """Compact messages loaded by previous providers (post-load)."""
+        """Compact messages loaded by previous providers before model invocation."""
         all_messages = context.get_all_messages()
         compacted = await self.compact(all_messages)
         context.replace_messages(compacted)
@@ -783,11 +849,7 @@ For boundary compaction, the same middleware runs at the chat client level. For 
 
 ## Decision Outcome
 
-Chosen option: "{to be decided}", because this ADR is currently proposed and awaiting team discussion.
-
-### Consequences
-
-- To be determined based on the chosen option.
+Chosen option: **Option 1: Standalone `CompactionStrategy` Object** with Variant F (combined grouped callable + exclude + tokenization) as the primary strategy model, plus a built-in `TokenBudgetComposedStrategy` that implements a common token-budget orchestration pattern, as well as several simple built-in strategies (truncation, sliding window, summarization) that should work both with and without tokens.
 
 ## Comparison to .NET Implementation
 
@@ -797,24 +859,216 @@ The .NET SDK uses `IChatReducer` composed into `InMemoryChatHistoryProvider`:
 |--------|------|-----------------|
 | Interface | `IChatReducer` with `ReduceAsync(messages) -> messages` | `CompactionStrategy.compact()` with three signature variants (Options 1-3) / `ChatMiddleware` mutation (Option 4) |
 | Attachment | Property on `InMemoryChatHistoryProvider` | Composed into `HistoryProvider` (Option 1) / mixin (Option 2) / separate provider (Option 3) / middleware (Option 4) |
-| Trigger | `ChatReducerTriggerEvent` enum: `AfterMessageAdded`, `BeforeMessagesRetrieval` | Post-load + pre-write + in-run + storage maintenance (Options 1-3) / in-run + post-load only (Option 4) |
+| Trigger | `ChatReducerTriggerEvent` enum: `AfterMessageAdded`, `BeforeMessagesRetrieval` | Pre-write + in-run + storage maintenance (Options 1-3 primary scope); post-load-style behavior can be covered by in-run pre-send projection |
 | Scope | Only within `InMemoryChatHistoryProvider` | Applicable to any `HistoryProvider` and the tool loop (Option 1) |
 
 Option 1's `CompactionStrategy` is the closest equivalent to .NET's `IChatReducer`, with a broader scope.
 
+### Achieving the same scenarios in MEAI/.NET
+
+| Python scenario | .NET/MEAI mechanism | How it maps |
+|-----------------|---------------------|-------------|
+| **Pre-write compaction** | `InMemoryChatHistoryProvider` + `ChatReducerTriggerEvent.AfterMessageAdded` | Reducer runs in `StoreChatHistoryAsync` after new request/response messages are added to storage (closest equivalent to pre-write persistence compaction). |
+| **Agent-level whole-list compaction (pre-send overlap with post-load)** | `ChatClientAgent` message assembly + chat-client decoration via `clientFactory` / `ChatClientAgentRunOptions.ChatClientFactory` | `ChatClientAgent` builds the full invocation message list (`ChatHistoryProvider` + `AIContextProviders` + input). A delegating `IChatClient` can compact that assembled list immediately before forwarding `GetResponseAsync`. |
+| **In-run compaction before every `get_response` call** | Function-invocation chat-client layer (`FunctionInvokingChatClient`) plus delegating `IChatClient` wrapper | The function-calling layer performs repeated model roundtrips; wrapping this layer allows compaction to execute before each `GetResponseAsync` call. |
+| **Variant C grouped-state maintenance (`MessageGroup`)** | Keep grouped state in the same function-invocation/delegating-chat-client layer | Maintain and update grouped state across loop iterations in that layer, then flatten only for model calls. |
+| **Compaction on existing storage** | `InMemoryChatHistoryProvider.GetMessages(...)` + `SetMessages(...)` (or custom provider equivalent) | Read stored history, apply reducer/strategy, and write back compacted history as a maintenance operation. |
+
 ### Coverage Matrix
 
-How each option addresses the four compaction points and the current architectural limitations:
+How each option addresses the three primary compaction points and the current architectural limitations:
 
 | Compaction Point | Option 1 (Strategy) | Option 2 (Mixin) | Option 3 (Provider) | Option 4 (Middleware) |
 |-----------------|---------------------|-------------------|---------------------|-----------------------|
-| **Post-load** | ✅ `HistoryProvider` param | ✅ `compact()` override | ✅ `before_run` | ✅ Middleware before LLM |
 | **Pre-write** | ✅ `HistoryProvider` param | ⚠️ Needs extra method | ⚠️ `after_run` override | ❌ Not supported |
 | **In-run (tool loop)** | ✅ `FunctionInvocationConfiguration` | ⚠️ Awkward extraction | ⚠️ `isinstance` wiring | ⚠️ Requires refactoring copy semantics |
 | **Existing storage** | ✅ Standalone `compact()` | ✅ Provider's `compact()` | ✅ Standalone `compact()` | ❌ Not supported |
 | **Solves copy problem** | ✅ Runs inside loop | ⚠️ Indirectly | ⚠️ Indirectly | ⚠️ Requires deep refactor |
 | **Chaining** | ✅ Natural composition via wrapper | ❌ Coupled to provider | ⚠️ Boundary only, not in-run | ⚠️ Implicit via stacking |
 | **New concepts** | 1 (`CompactionStrategy`) | 1 (mixin) | 0.5 (reuses `ContextProvider`, but adds new method) | 0 (reuses `ChatMiddleware`) |
+
+
+## Appendix
+
+### Appendix A: Strategy and constraint background
+
+### Compaction Strategies (Examples)
+
+A compaction strategy takes a list of messages and returns a (potentially shorter) list, in almost all cases, there is certain logic that needs to be applied universally, such as retaining system messages, not breaking up function call and result pairs (for Responses that includes Reasoning as well, see [context section above](#message-list-correctness-constraint-atomic-group-preservation) for more info) as tool calls, etc. Beyond that, strategies can be as simple or complex as needed:
+
+- **Truncation**: Keep only the last N messages or N tokens, this is a likely done as a kind of zigzag, where the history grows, then get's truncated to some value below the token limit, then grows again, etc. This can be done on a simple message count basis, a character count basis, or more complex token counting basis.
+- **Summarization**: Replace older messages with an LLM-generated summary (depending on the implementation this could be done, by replacing the summarized messages, or by inserting a summary message in between and not loading messages older then the summarized ones)
+- **Selective removal**: Remove tool call/result pairs while keeping user/assistant turns
+- **Sliding window with anchor**: Keep system message + last N messages
+- **Custom logic**: The design should be extendible so that users can implement their own strategies.
+
+### Leveraging Source Attribution
+
+[ADR-0016](./0016-python-context-middleware.md#4-source-attribution-via-source_id) introduces `source_id` attribution on messages — each message tracks which `ContextProvider` added it. Compaction strategies can use this attribution to make informed decisions about what to compact and what to preserve:
+
+- **Preserve RAG context**: Messages from a RAG provider (e.g. `source_id: "rag"`) may be critical and should survive compaction
+- **Remove ephemeral context**: Messages marked as ephemeral (e.g., `source_id: "time"`) can be safely removed
+- **Protect user input**: Messages without a `source_id` (direct user input) should typically be preserved
+- **Selective tool result compaction**: Tool results from specific providers can be summarized while others are kept verbatim
+
+This means strategies don't need to rely solely on message position or role — they can make semantically meaningful compaction decisions based on the origin of each message.
+
+### Appendix B: Additional implementation notes
+
+#### Trigger mechanism for in-run compaction
+
+Running compaction after **every** tool call is wasteful — most iterations the context is well within limits. Instead, compaction should only trigger when a threshold is exceeded. There are several approaches to consider:
+
+1. **Message count threshold**: Trigger when the message list exceeds N messages. Simple to implement and predictable, but message count is a poor proxy for token usage — a single tool result can contain thousands of tokens while counting as one message.
+
+2. **Character/token count threshold**: Trigger when the estimated token count exceeds a budget. More accurate but requires a token counting mechanism (exact tokenization is model-specific and expensive; character-based heuristics like `len(text) / 4` are fast but approximate).
+
+3. **Iteration-based**: Trigger every N tool loop iterations (e.g., every 10th iteration). Predictable cadence but doesn't account for actual context growth — 10 iterations with small results may not need compaction while 3 iterations with large results might.
+
+4. **Strategy-internal**: Let the `CompactionStrategy.compact()` method decide internally — it receives the full message list and can return it unchanged if no compaction is needed. This is the simplest integration point (always call `compact()`, let the strategy no-op when appropriate) but has the overhead of calling into the strategy every iteration.
+
+The recommended approach is **strategy-internal with a lightweight guard**: the `compact()` method is called after each tool result, but strategy implementations should include a fast short-circuit check (e.g., `if len(messages) < self.threshold: return False`) to minimize overhead when compaction is not needed. This keeps the tool loop simple (always call `compact()`) while letting each strategy define its own trigger logic.
+
+The following example illustrates this for Variant A (in-place flat list). See Variant C under Option 1 for the simpler pre-grouped equivalent.
+
+```python
+class SlidingWindowStrategy(CompactionStrategy):
+    """Example with built-in trigger logic and atomic group preservation (Variant A)."""
+
+    def __init__(self, max_messages: int, *, compact_to: int | None = None):
+        self.max_messages = max_messages
+        self.compact_to = compact_to or max_messages // 2
+
+    async def compact(self, messages: list[ChatMessage]) -> bool:
+        # Fast short-circuit: no-op if under threshold
+        if len(messages) <= self.max_messages:
+            return False
+
+        # Partition into anchors (system messages) and the rest
+        anchors: list[ChatMessage] = []
+        rest: list[ChatMessage] = []
+        for m in messages:
+            (anchors if m.role == "system" else rest).append(m)
+
+        # Group into atomic units: [assistant w/ tool_calls + tool results]
+        # count as one group; standalone messages are their own group
+        groups: list[list[ChatMessage]] = []
+        i = 0
+        while i < len(rest):
+            msg = rest[i]
+            if msg.role == "assistant" and getattr(msg, "tool_calls", None):
+                # Collect this assistant message + all following tool results
+                group = [msg]
+                i += 1
+                while i < len(rest) and rest[i].role == "tool":
+                    group.append(rest[i])
+                    i += 1
+                groups.append(group)
+            else:
+                groups.append([msg])
+                i += 1
+
+        # Keep the last N groups (by message count) that fit within compact_to
+        kept: list[ChatMessage] = []
+        count = 0
+        for group in reversed(groups):
+            if count + len(group) > self.compact_to:
+                break
+            kept = group + kept
+            count += len(group)
+
+        # Mutate in place
+        messages.clear()
+        messages.extend(anchors + kept)
+        return True
+```
+
+#### Compaction on pre-write and in-run
+
+Given a situation where a compaction strategy is known, the following would need to happen:
+1. At that moment in the run, the message list is passed to the strategy's `compact()` method, which returns whether compaction occurred (and depending on the variant, either mutates in place or returns a new list).
+1. The caller continues with the (potentially reduced) list for the next steps (sending to the model, saving to storage, or continuing the tool loop with the reduced context)
+1. We need to decide how to handle a failed compaction (e.g., the strategy raises an exception) — likely we should have a fallback to continue without compaction rather than failing the entire agent run.
+
+#### Compaction on existing storage
+
+ADR-0016's `HistoryProvider.save_messages()` is an **append** operation — `after_run` collects the new messages from the current invocation and appends them to storage. There is no built-in way to **replace** the full stored history with a compacted version.
+
+For compaction on existing storage (and pre-write compaction that rewrites history), we need a way to overwrite rather than append. Two options:
+
+1. **Add a `replace_messages()` method** to `HistoryProvider`:
+
+```python
+class HistoryProvider(ContextProvider):
+    @abstractmethod
+    async def save_messages(self, session_id: str | None, messages: Sequence[ChatMessage]) -> None:
+        """Append messages to storage for this session."""
+        ...
+
+    async def replace_messages(self, session_id: str | None, messages: Sequence[ChatMessage]) -> None:
+        """Replace all stored messages for this session. Used for compaction.
+
+        Default implementation raises NotImplementedError. Providers that support
+        compaction on existing storage must override this method.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support replace_messages. "
+            "Override this method to enable storage compaction."
+        )
+```
+
+2. **Add a `overwrite` parameter** to `save_messages()`:
+
+```python
+class HistoryProvider(ContextProvider):
+    @abstractmethod
+    async def save_messages(
+        self,
+        session_id: str | None,
+        messages: Sequence[ChatMessage],
+        *,
+        overwrite: bool = False,
+    ) -> None:
+        """Persist messages for this session.
+
+        Args:
+            overwrite: If True, replace all existing messages instead of appending.
+                       Used for compaction workflows.
+        """
+        ...
+```
+
+Either approach enables the compaction-on-existing-storage workflow:
+
+```python
+history = await provider.get_messages(session_id)
+compacted = await strategy.compact(history)
+await provider.replace_messages(session_id, compacted)  # Option 1
+# or
+await provider.save_messages(session_id, compacted, overwrite=True)  # Option 2
+```
+
+This could then be combined with a convenience method on the provider for compaction:
+
+```python
+
+class HistoryProvider:
+
+    compaction_strategy: CompactionStrategy | None = None  # Optional default strategy for this provider
+
+    async def compact_storage(self, session_id: str | None, *, strategy: CompactionStrategy | None = None) -> None:
+        """Compact stored history for this session using the given strategy."""
+        history = await self.get_messages(session_id)
+        used_strategy = strategy or self._get_strategy("existing") or self._get_strategy("pre_write")
+        if used_strategy is None:
+            raise ValueError("No compaction strategy configured for existing storage.")
+        await used_strategy.compact(history)
+        await self.replace_messages(session_id, history)  # or save_messages with overwrite
+        # or
+        await self.save_messages(session_id, history, overwrite=True)
+```
+
+This design choice is orthogonal to the compaction strategy options below — any option requires one of these `HistoryProvider` extensions and optionally the convenience method.
 
 ## More Information
 
