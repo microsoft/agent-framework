@@ -6,7 +6,7 @@ Neo4j offers two context providers for the Agent Framework, each serving a diffe
 |---|---|---|
 | **What it does** | Read-write memory — stores conversations, builds knowledge graphs, learns from interactions | Read-only retrieval from a pre-existing knowledge base with optional graph traversal |
 | **Data source** | Agent interactions (grows over time) | Pre-loaded documents and indexes |
-| **Package** | [`neo4j-agent-memory`](https://github.com/neo4j-labs/agent-memory) | [`agent-framework-neo4j`](https://github.com/neo4j-labs/neo4j-maf-provider) |
+| **Package** | [`neo4j-agent-memory`](https://pypi.org/project/neo4j-agent-memory/) | [`agent-framework-neo4j`](https://pypi.org/project/agent-framework-neo4j/) |
 | **Database setup** | Empty — creates its own schema | Requires pre-indexed documents with vector or fulltext indexes |
 | **Example use case** | "Remember my preferences", "What did we discuss last time?" | "Search our documents", "What risks does Acme Corp face?" |
 
