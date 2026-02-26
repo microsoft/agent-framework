@@ -14,11 +14,7 @@ from agent_framework import (
     chat_middleware,
     tool,
 )
-from agent_framework.exceptions import (
-    ServiceInvalidRequestError,
-    ServiceResponseException,
-    SettingNotFoundError,
-)
+from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException, SettingNotFoundError
 from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
@@ -30,11 +26,8 @@ from agent_framework_ollama import OllamaChatClient
 # region Service Setup
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("OLLAMA_MODEL_ID", "") in ("", "test-model"),
-    reason="No real Ollama chat model provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("OLLAMA_MODEL_ID", "") in ("", "test-model"),
+    reason="No real Ollama chat model provided; skipping integration tests.",
 )
 
 
@@ -186,7 +179,6 @@ def test_with_invalid_settings(ollama_unit_test_env: dict[str, str]) -> None:
         OllamaChatClient(
             host="http://localhost:12345",
             model_id=None,
-            env_file_path="test.env",
         )
 
 
@@ -235,7 +227,7 @@ async def test_empty_messages() -> None:
         host="http://localhost:12345",
         model_id="test-model",
     )
-    with pytest.raises(ServiceInvalidRequestError):
+    with pytest.raises(ChatClientInvalidRequestException):
         await ollama_chat_client.get_response(messages=[])
 
 
@@ -285,7 +277,7 @@ async def test_cmc_chat_failure(
 
     ollama_client = OllamaChatClient()
 
-    with pytest.raises(ServiceResponseException) as exc_info:
+    with pytest.raises(ChatClientException) as exc_info:
         await ollama_client.get_response(messages=chat_history)
 
     assert "Ollama chat request failed" in str(exc_info.value)
@@ -340,7 +332,7 @@ async def test_cmc_streaming_chat_failure(
 
     ollama_client = OllamaChatClient()
 
-    with pytest.raises(ServiceResponseException) as exc_info:
+    with pytest.raises(ChatClientException) as exc_info:
         async for _ in ollama_client.get_response(messages=chat_history, stream=True):
             pass
 
@@ -437,7 +429,7 @@ async def test_cmc_with_invalid_data_content_media_type(
     chat_history: list[Message],
     mock_streaming_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
-    with pytest.raises(ServiceInvalidRequestError):
+    with pytest.raises(ChatClientInvalidRequestException):
         mock_chat.return_value = mock_streaming_chat_completion_response
         # Remote Uris are not supported by Ollama client
         chat_history.append(
@@ -460,7 +452,7 @@ async def test_cmc_with_invalid_content_type(
     chat_history: list[Message],
     mock_chat_completion_response: AsyncStream[OllamaChatResponse],
 ) -> None:
-    with pytest.raises(ServiceInvalidRequestError):
+    with pytest.raises(ChatClientInvalidRequestException):
         mock_chat.return_value = mock_chat_completion_response
         # Remote Uris are not supported by Ollama client
         chat_history.append(
@@ -475,6 +467,8 @@ async def test_cmc_with_invalid_content_type(
         await ollama_client.get_response(messages=chat_history)
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_integration_with_tool_call(
     chat_history: list[Message],
@@ -490,6 +484,8 @@ async def test_cmc_integration_with_tool_call(
     assert tool_result.result == "Hello World"
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_integration_with_chat_completion(
     chat_history: list[Message],
@@ -502,6 +498,8 @@ async def test_cmc_integration_with_chat_completion(
     assert "hello" in result.text.lower()
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_streaming_integration_with_tool_call(
     chat_history: list[Message],
@@ -527,6 +525,8 @@ async def test_cmc_streaming_integration_with_tool_call(
                 assert tool_call.name == "hello_world"
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_cmc_streaming_integration_with_chat_completion(
     chat_history: list[Message],

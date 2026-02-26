@@ -5,12 +5,12 @@ import os
 from random import randint
 from typing import Annotated
 
-import dotenv
 from agent_framework import Agent, tool
 from agent_framework.azure import AzureAIClient
 from agent_framework.observability import get_tracer
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
@@ -26,10 +26,12 @@ for this sample to work.
 """
 
 # For loading the `AZURE_AI_PROJECT_ENDPOINT` environment variable
-dotenv.load_dotenv()
+load_dotenv()
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity.
+# Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -63,11 +65,11 @@ async def main():
                 instructions="You are a weather assistant.",
                 id="edvan-weather-agent",
             )
-            thread = agent.get_new_thread()
+            session = agent.create_session()
             for question in questions:
                 print(f"\nUser: {question}")
                 print(f"{agent.name}: ", end="")
-                async for update in agent.run(question, thread=thread, stream=True):
+                async for update in agent.run(question, session=session, stream=True):
                     if update.text:
                         print(update.text, end="")
 

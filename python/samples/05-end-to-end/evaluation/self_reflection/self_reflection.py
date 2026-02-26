@@ -2,10 +2,11 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "pandas",
+#     "pyarrow",
 # ]
 # ///
 # Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/getting_started/evaluation/self_reflection/self_reflection.py
+#   uv run samples/05-end-to-end/evaluation/self_reflection/self_reflection.py
 
 # Copyright (c) Microsoft. All rights reserved.
 # type: ignore
@@ -13,12 +14,13 @@ import argparse
 import asyncio
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import openai
 import pandas as pd
 from agent_framework import Agent, Message
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.ai.projects import AIProjectClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -50,11 +52,38 @@ Usage as CLI with extra options:
                               --output resources/results.jsonl \\
                               --max-reflections 3 \\
                               -n 10  # Optional: process only first 10 prompts
+
+=============== Example output ===============
+
+============================================================
+SUMMARY
+============================================================
+Total prompts processed: 31
+  ✓ Successful: 30
+  ✗ Failed: 1
+
+Groundedness Scores:
+  Average best score: 4.77/5
+  Perfect scores (5/5): 25/30 (83.3%)
+
+Improvement Analysis:
+  Average first score: 4.50/5
+  Average final score: 4.70/5
+  Average improvement: +0.20
+  Responses that improved: 4/30 (13.3%)
+
+Iteration Statistics:
+  Average best iteration: 1.17
+  Best on first try: 25/30 (83.3%)
+============================================================
+
+✓ Processing complete!
+
 """
 
 
-DEFAULT_AGENT_MODEL = "gpt-4.1"
-DEFAULT_JUDGE_MODEL = "gpt-4.1"
+DEFAULT_AGENT_MODEL = "gpt-5.2"
+DEFAULT_JUDGE_MODEL = "gpt-5.2"
 
 
 def create_openai_client():
@@ -62,6 +91,13 @@ def create_openai_client():
     credential = AzureCliCredential()
     project_client = AIProjectClient(endpoint=endpoint, credential=credential)
     return project_client.get_openai_client()
+
+
+def create_async_project_client():
+    from azure.ai.projects.aio import AIProjectClient as AsyncAIProjectClient
+    from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
+
+    return AsyncAIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=AsyncAzureCliCredential())
 
 
 def create_eval(client: openai.OpenAI, judge_model: str) -> openai.types.EvalCreateResponse:
@@ -80,13 +116,15 @@ def create_eval(client: openai.OpenAI, judge_model: str) -> openai.types.EvalCre
         "include_sample_schema": True,
     })
 
-    testing_criteria = [{
-        "type": "azure_ai_evaluator",
-        "name": "groundedness",
-        "evaluator_name": "builtin.groundedness",
-        "data_mapping": {"query": "{{item.query}}", "response": "{{item.response}}", "context": "{{item.context}}"},
-        "initialization_parameters": {"deployment_name": f"{judge_model}"},
-    }]
+    testing_criteria = [
+        {
+            "type": "azure_ai_evaluator",
+            "name": "groundedness",
+            "evaluator_name": "builtin.groundedness",
+            "data_mapping": {"query": "{{item.query}}", "response": "{{item.response}}", "context": "{{item.context}}"},
+            "initialization_parameters": {"deployment_name": f"{judge_model}"},
+        }
+    ]
 
     return client.evals.create(
         name="Eval",
@@ -96,11 +134,11 @@ def create_eval(client: openai.OpenAI, judge_model: str) -> openai.types.EvalCre
 
 
 def run_eval(
-        client: openai.OpenAI,
-        eval_object: openai.types.EvalCreateResponse,
-        query: str,
-        response: str,
-        context: str,
+    client: openai.OpenAI,
+    eval_object: openai.types.EvalCreateResponse,
+    query: str,
+    response: str,
+    context: str,
 ):
     eval_run_object = client.evals.runs.create(
         eval_id=eval_object.id,
@@ -129,7 +167,9 @@ def run_eval(
     for _ in range(0, MAX_RETRY):
         run = client.evals.runs.retrieve(run_id=eval_run_response.id, eval_id=eval_object.id)
         if run.status == "failed":
-            print(f"Eval run failed. Run ID: {run.id}, Status: {run.status}, Error: {getattr(run, 'error', 'Unknown error')}")
+            print(
+                f"Eval run failed. Run ID: {run.id}, Status: {run.status}, Error: {getattr(run, 'error', 'Unknown error')}"
+            )
             continue
         if run.status == "completed":
             return list(client.evals.runs.output_items.list(run_id=run.id, eval_id=eval_object.id))
@@ -201,7 +241,7 @@ async def execute_query_with_self_reflection(
             continue
         score = eval_run_output_items[0].results[0].score
         end_time_eval = time.time()
-        total_groundedness_eval_time += (end_time_eval - start_time_eval)
+        total_groundedness_eval_time += end_time_eval - start_time_eval
 
         # Store score in structured format
         iteration_scores.append(score)
@@ -253,13 +293,14 @@ async def execute_query_with_self_reflection(
 
 
 async def run_self_reflection_batch(
+    project_client: AIProjectClient,
     input_file: str,
     output_file: str,
     agent_model: str = DEFAULT_AGENT_MODEL,
     judge_model: str = DEFAULT_JUDGE_MODEL,
     max_self_reflections: int = 3,
     env_file: str | None = None,
-    limit: int | None = None
+    limit: int | None = None,
 ):
     """
     Run self-reflection on a batch of prompts.
@@ -280,16 +321,15 @@ async def run_self_reflection_batch(
         load_dotenv(override=True)
 
     # Create agent, it loads environment variables AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT automatically
-    agent = AzureOpenAIChatClient(
-        credential=AzureCliCredential(),
+    responses_client = AzureOpenAIResponsesClient(
+        project_client=project_client,
         deployment_name=agent_model,
-    ).as_agent(
-        instructions="You are a helpful agent.",
     )
 
     # Load input data
-    print(f"Loading prompts from: {input_file}")
-    df = pd.read_json(input_file, lines=True)
+    input_path = (Path(__file__).parent / input_file).resolve()
+    print(f"Loading prompts from: {input_path}")
+    df = pd.read_json(path_or_buf=input_path, lines=True, engine="pyarrow")
     print(f"Loaded {len(df)} prompts")
 
     # Apply limit if specified
@@ -298,8 +338,15 @@ async def run_self_reflection_batch(
         print(f"Processing first {len(df)} prompts (limited by -n {limit})")
 
     # Validate required columns
-    required_columns = ["system_instruction", "user_request", "context_document",
-                       "full_prompt", "domain", "type", "high_level_type"]
+    required_columns = [
+        "system_instruction",
+        "user_request",
+        "context_document",
+        "full_prompt",
+        "domain",
+        "type",
+        "high_level_type",
+    ]
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         raise ValueError(f"Input file missing required columns: {missing_columns}")
@@ -321,7 +368,7 @@ async def run_self_reflection_batch(
         try:
             result = await execute_query_with_self_reflection(
                 client=client,
-                agent=agent,
+                agent=responses_client.as_agent(instructions=row["system_instruction"]),
                 eval_object=eval_object,
                 full_user_query=row["full_prompt"],
                 context=row["context_document"],
@@ -341,13 +388,15 @@ async def run_self_reflection_batch(
                 "agent_response_model": agent_model,
                 "agent_response": result,
                 "error": None,
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
             }
             results.append(result_data)
 
-            print(f"  ✓ Completed with score: {result['best_response_score']}/5 "
-                  f"(best at iteration {result['best_iteration']}/{result['num_retries']}, "
-                  f"time: {result['total_end_to_end_time']:.1f}s)\n")
+            print(
+                f"  ✓ Completed with score: {result['best_response_score']}/5 "
+                f"(best at iteration {result['best_iteration']}/{result['num_retries']}, "
+                f"time: {result['total_end_to_end_time']:.1f}s)\n"
+            )
 
         except Exception as e:
             print(f"  ✗ Error: {str(e)}\n")
@@ -365,7 +414,7 @@ async def run_self_reflection_batch(
                 "agent_response_model": agent_model,
                 "agent_response": None,
                 "error": str(e),
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
             }
             results.append(error_data)
             continue
@@ -373,8 +422,9 @@ async def run_self_reflection_batch(
     # Create DataFrame and save
     results_df = pd.DataFrame(results)
 
-    print(f"\nSaving results to: {output_file}")
-    results_df.to_json(output_file, orient="records", lines=True)
+    output_path = (Path(__file__).parent / output_file).resolve()
+    print(f"\nSaving results to: {output_path}")
+    results_df.to_json(output_path, orient="records", lines=True)
 
     # Generate detailed summary
     successful_runs = results_df[results_df["error"].isna()]
@@ -391,14 +441,20 @@ async def run_self_reflection_batch(
         # Extract scores and iteration data from nested agent_response dict
         best_scores = [r["best_response_score"] for r in successful_runs["agent_response"] if r is not None]
         iterations = [r["best_iteration"] for r in successful_runs["agent_response"] if r is not None]
-        iteration_scores_list = [r["iteration_scores"] for r in successful_runs["agent_response"] if r is not None and "iteration_scores" in r]
+        iteration_scores_list = [
+            r["iteration_scores"]
+            for r in successful_runs["agent_response"]
+            if r is not None and "iteration_scores" in r
+        ]
 
         if best_scores:
             avg_score = sum(best_scores) / len(best_scores)
             perfect_scores = sum(1 for s in best_scores if s == 5)
             print("\nGroundedness Scores:")
             print(f"  Average best score: {avg_score:.2f}/5")
-            print(f"  Perfect scores (5/5): {perfect_scores}/{len(best_scores)} ({100 * perfect_scores / len(best_scores):.1f}%)")
+            print(
+                f"  Perfect scores (5/5): {perfect_scores}/{len(best_scores)} ({100 * perfect_scores / len(best_scores):.1f}%)"
+            )
 
             # Calculate improvement metrics
             if iteration_scores_list:
@@ -416,7 +472,9 @@ async def run_self_reflection_batch(
                     print(f"  Average first score: {avg_first_score:.2f}/5")
                     print(f"  Average final score: {avg_last_score:.2f}/5")
                     print(f"  Average improvement: +{avg_improvement:.2f}")
-                    print(f"  Responses that improved: {improved_count}/{len(improvements)} ({100 * improved_count / len(improvements):.1f}%)")
+                    print(
+                        f"  Responses that improved: {improved_count}/{len(improvements)} ({100 * improved_count / len(improvements):.1f}%)"
+                    )
 
             # Show iteration statistics
             if iterations:
@@ -432,26 +490,43 @@ async def run_self_reflection_batch(
 async def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(description="Run self-reflection loop on LLM prompts with groundedness evaluation")
-    parser.add_argument("--input", "-i", default="resources/suboptimal_groundedness_prompts.jsonl", help="Input JSONL file with prompts")
+    parser.add_argument(
+        "--input", "-i", default="resources/suboptimal_groundedness_prompts.jsonl", help="Input JSONL file with prompts"
+    )
     parser.add_argument("--output", "-o", default="resources/results.jsonl", help="Output JSONL file for results")
-    parser.add_argument("--agent-model", "-m", default=DEFAULT_AGENT_MODEL, help=f"Agent model deployment name (default: {DEFAULT_AGENT_MODEL})")
-    parser.add_argument("--judge-model", "-e", default=DEFAULT_JUDGE_MODEL, help=f"Judge model deployment name (default: {DEFAULT_JUDGE_MODEL})")
-    parser.add_argument("--max-reflections", type=int, default=3, help="Maximum number of self-reflection iterations (default: 3)")
+    parser.add_argument(
+        "--agent-model",
+        "-m",
+        default=DEFAULT_AGENT_MODEL,
+        help=f"Agent model deployment name (default: {DEFAULT_AGENT_MODEL})",
+    )
+    parser.add_argument(
+        "--judge-model",
+        "-e",
+        default=DEFAULT_JUDGE_MODEL,
+        help=f"Judge model deployment name (default: {DEFAULT_JUDGE_MODEL})",
+    )
+    parser.add_argument(
+        "--max-reflections", type=int, default=3, help="Maximum number of self-reflection iterations (default: 3)"
+    )
     parser.add_argument("--env-file", help="Path to .env file with Azure OpenAI credentials")
-    parser.add_argument("--limit", "-n", type=int, default=None, help="Process only the first N prompts from the input file")
+    parser.add_argument(
+        "--limit", "-n", type=int, default=None, help="Process only the first N prompts from the input file"
+    )
 
     args = parser.parse_args()
 
     # Run the batch processing
     try:
         await run_self_reflection_batch(
+            project_client=create_async_project_client(),
             input_file=args.input,
             output_file=args.output,
             agent_model=args.agent_model,
             judge_model=args.judge_model,
             max_self_reflections=args.max_reflections,
             env_file=args.env_file,
-            limit=args.limit
+            limit=args.limit,
         )
         print("\n✓ Processing complete!")
 
@@ -462,4 +537,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    exit(asyncio.run(main()))
+    asyncio.run(main())

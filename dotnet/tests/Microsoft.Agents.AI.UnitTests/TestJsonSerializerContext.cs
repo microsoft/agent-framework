@@ -15,4 +15,5 @@ namespace Microsoft.Agents.AI.UnitTests;
 [JsonSerializable(typeof(string[]))]
 [JsonSerializable(typeof(Dictionary<string, object?>))]
 [JsonSerializable(typeof(ChatClientAgentSessionTests.Animal))]
+[JsonSerializable(typeof(ChatClientAgentSession))]
 internal sealed partial class TestJsonSerializerContext : JsonSerializerContext;

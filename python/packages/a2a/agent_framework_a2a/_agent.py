@@ -31,7 +31,7 @@ from a2a.types import Role as A2ARole
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     Content,
     ContinuationToken,
@@ -40,6 +40,7 @@ from agent_framework import (
     normalize_messages,
     prepend_agent_framework_to_user_agent,
 )
+from agent_framework._types import AgentRunInputs
 from agent_framework.observability import AgentTelemetryLayer
 
 __all__ = ["A2AAgent", "A2AContinuationToken"]
@@ -208,10 +209,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[False] = ...,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         continuation_token: A2AContinuationToken | None = None,
         background: bool = False,
         **kwargs: Any,
@@ -220,10 +221,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: Literal[True],
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         continuation_token: A2AContinuationToken | None = None,
         background: bool = False,
         **kwargs: Any,
@@ -231,10 +232,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         continuation_token: A2AContinuationToken | None = None,
         background: bool = False,
         **kwargs: Any,
@@ -246,7 +247,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
-            thread: The conversation thread associated with the message(s).
+            session: The conversation session associated with the message(s).
             continuation_token: Optional token to resume a long-running task
                 instead of starting a new one.
             background: When True, in-progress task updates surface continuation

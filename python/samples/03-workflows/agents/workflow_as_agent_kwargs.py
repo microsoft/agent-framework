@@ -9,7 +9,11 @@ from agent_framework import tool
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Workflow as Agent with kwargs Propagation to @tool Tools
@@ -38,7 +42,7 @@ Prerequisites:
 # Define tools that accept custom context via **kwargs
 # NOTE: approval_mode="never_require" is for sample brevity.
 # Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and
-# samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_user_data(
     query: Annotated[str, Field(description="What user data to retrieve")],

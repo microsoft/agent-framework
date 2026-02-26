@@ -14,7 +14,7 @@ from agent_framework import (
     Agent,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     ChatResponse,
     ChatResponseUpdate,
     Content,
@@ -22,15 +22,11 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
-from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.openai import OpenAIAssistantsClient
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
-    reason="No real OPENAI_API_KEY provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
+    reason="No real OPENAI_API_KEY provided; skipping integration tests.",
 )
 
 INTEGRATION_TEST_MODEL = "gpt-4.1-nano"
@@ -145,7 +141,7 @@ def test_init_auto_create_client(
 
 def test_init_validation_fail() -> None:
     """Test OpenAIAssistantsClient initialization with validation failure."""
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         # Force failure by providing invalid model ID type
         OpenAIAssistantsClient(model_id=123, api_key="valid-key")  # type: ignore
 
@@ -153,17 +149,15 @@ def test_init_validation_fail() -> None:
 @pytest.mark.parametrize("exclude_list", [["OPENAI_CHAT_MODEL_ID"]], indirect=True)
 def test_init_missing_model_id(openai_unit_test_env: dict[str, str]) -> None:
     """Test OpenAIAssistantsClient initialization with missing model ID."""
-    with pytest.raises(ServiceInitializationError):
-        OpenAIAssistantsClient(
-            api_key=openai_unit_test_env.get("OPENAI_API_KEY", "test-key"), env_file_path="nonexistent.env"
-        )
+    with pytest.raises(ValueError):
+        OpenAIAssistantsClient(api_key=openai_unit_test_env.get("OPENAI_API_KEY", "test-key"))
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
 def test_init_missing_api_key(openai_unit_test_env: dict[str, str]) -> None:
     """Test OpenAIAssistantsClient initialization with missing API key."""
-    with pytest.raises(ServiceInitializationError):
-        OpenAIAssistantsClient(model_id="gpt-4", env_file_path="nonexistent.env")
+    with pytest.raises(ValueError):
+        OpenAIAssistantsClient(model_id="gpt-4")
 
 
 def test_init_with_default_headers(openai_unit_test_env: dict[str, str]) -> None:
@@ -701,6 +695,7 @@ def test_prepare_options_basic(mock_async_openai: MagicMock) -> None:
     assert run_options["model"] == "gpt-4"
     assert run_options["temperature"] == 0.7
     assert run_options["top_p"] == 0.9
+    assert "tool_choice" not in run_options
     assert tool_results is None
 
 
@@ -731,6 +726,52 @@ def test_prepare_options_with_tool_tool(mock_async_openai: MagicMock) -> None:
     assert run_options["tools"][0]["type"] == "function"
     assert "function" in run_options["tools"][0]
     assert run_options["tool_choice"] == "auto"
+
+
+def test_prepare_options_with_tools_without_tool_choice(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options keeps tool_choice unset when not provided."""
+
+    client = create_test_openai_assistants_client(mock_async_openai)
+
+    @tool(approval_mode="never_require")
+    def test_function(query: str) -> str:
+        """A test function."""
+        return f"Result for {query}"
+
+    options = {
+        "tools": [test_function],
+    }
+
+    messages = [Message(role="user", text="Hello")]
+    run_options, _ = client._prepare_options(messages, options)  # type: ignore
+
+    assert "tools" in run_options
+    assert "tool_choice" not in run_options
+
+
+def test_prepare_options_with_single_tool_tool(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_options with a single FunctionTool (non-sequence)."""
+    client = create_test_openai_assistants_client(mock_async_openai)
+
+    @tool(approval_mode="never_require")
+    def test_function(query: str) -> str:
+        """A test function."""
+        return f"Result for {query}"
+
+    options = {
+        "tools": test_function,
+        "tool_choice": "auto",
+    }
+
+    messages = [Message(role="user", text="Hello")]
+    run_options, tool_results = client._prepare_options(messages, options)  # type: ignore
+
+    assert "tools" in run_options
+    assert len(run_options["tools"]) == 1
+    assert run_options["tools"][0]["type"] == "function"
+    assert "function" in run_options["tools"][0]
+    assert run_options["tool_choice"] == "auto"
+    assert tool_results is None
 
 
 def test_prepare_options_with_code_interpreter(mock_async_openai: MagicMock) -> None:
@@ -1031,6 +1072,7 @@ def get_weather(
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_get_response() -> None:
     """Test OpenAI Assistants Client response."""
@@ -1056,6 +1098,7 @@ async def test_get_response() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_get_response_tools() -> None:
     """Test OpenAI Assistants Client response with tools."""
@@ -1077,6 +1120,7 @@ async def test_get_response_tools() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_streaming() -> None:
     """Test OpenAI Assistants Client streaming response."""
@@ -1108,6 +1152,7 @@ async def test_streaming() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_streaming_tools() -> None:
     """Test OpenAI Assistants Client streaming response with tools."""
@@ -1138,6 +1183,7 @@ async def test_streaming_tools() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_with_existing_assistant() -> None:
     """Test OpenAI Assistants Client with existing assistant ID."""
@@ -1166,6 +1212,7 @@ async def test_with_existing_assistant() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 @pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue")
 async def test_file_search() -> None:
@@ -1192,6 +1239,7 @@ async def test_file_search() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 @pytest.mark.skip(reason="OpenAI file search functionality is currently broken - tracked in GitHub issue")
 async def test_file_search_streaming() -> None:
@@ -1226,6 +1274,7 @@ async def test_file_search_streaming() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_agent_basic_run():
     """Test Agent basic run functionality with OpenAIAssistantsClient."""
@@ -1243,6 +1292,7 @@ async def test_openai_assistants_agent_basic_run():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_agent_basic_run_streaming():
     """Test Agent basic streaming functionality with OpenAIAssistantsClient."""
@@ -1263,71 +1313,73 @@ async def test_openai_assistants_agent_basic_run_streaming():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
-async def test_openai_assistants_agent_thread_persistence():
-    """Test Agent thread persistence across runs with OpenAIAssistantsClient."""
+async def test_openai_assistants_agent_session_persistence():
+    """Test Agent session persistence across runs with OpenAIAssistantsClient."""
     async with Agent(
         client=OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
-        # Create a new thread that will be reused
-        thread = agent.get_new_thread()
+        # Create a new session that will be reused
+        session = agent.create_session()
 
         # First message - establish context
         first_response = await agent.run(
-            "Remember this number: 42. What number did I just tell you to remember?", thread=thread
+            "Remember this number: 42. What number did I just tell you to remember?", session=session
         )
         assert isinstance(first_response, AgentResponse)
         assert "42" in first_response.text
 
         # Second message - test conversation memory
         second_response = await agent.run(
-            "What number did I tell you to remember in my previous message?", thread=thread
+            "What number did I tell you to remember in my previous message?", session=session
         )
         assert isinstance(second_response, AgentResponse)
         assert "42" in second_response.text
 
-        # Verify thread has been populated with conversation ID
-        assert thread.service_thread_id is not None
+        # Verify session has been populated with conversation ID
+        assert session.service_session_id is not None
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
-async def test_openai_assistants_agent_existing_thread_id():
-    """Test Agent with existing thread ID to continue conversations across agent instances."""
-    # First, create a conversation and capture the thread ID
-    existing_thread_id = None
+async def test_openai_assistants_agent_existing_session_id():
+    """Test Agent with existing session ID to continue conversations across agent instances."""
+    # First, create a conversation and capture the session ID
+    existing_session_id = None
 
     async with Agent(
         client=OpenAIAssistantsClient(model_id=INTEGRATION_TEST_MODEL),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     ) as agent:
-        # Start a conversation and get the thread ID
-        thread = agent.get_new_thread()
-        response1 = await agent.run("What's the weather in Paris?", thread=thread)
+        # Start a conversation and get the session ID
+        session = agent.create_session()
+        response1 = await agent.run("What's the weather in Paris?", session=session)
 
         # Validate first response
         assert isinstance(response1, AgentResponse)
         assert response1.text is not None
         assert any(word in response1.text.lower() for word in ["weather", "paris"])
 
-        # The thread ID is set after the first response
-        existing_thread_id = thread.service_thread_id
-        assert existing_thread_id is not None
+        # The session ID is set after the first response
+        existing_session_id = session.service_session_id
+        assert existing_session_id is not None
 
-    # Now continue with the same thread ID in a new agent instance
+    # Now continue with the same session ID in a new agent instance
 
     async with Agent(
-        client=OpenAIAssistantsClient(thread_id=existing_thread_id),
+        client=OpenAIAssistantsClient(thread_id=existing_session_id),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     ) as agent:
-        # Create a thread with the existing ID
-        thread = AgentThread(service_thread_id=existing_thread_id)
+        # Create a session with the existing ID
+        session = AgentSession(service_session_id=existing_session_id)
 
         # Ask about the previous conversation
-        response2 = await agent.run("What was the last city I asked about?", thread=thread)
+        response2 = await agent.run("What was the last city I asked about?", session=session)
 
         # Validate that the agent remembers the previous conversation
         assert isinstance(response2, AgentResponse)
@@ -1337,6 +1389,7 @@ async def test_openai_assistants_agent_existing_thread_id():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_openai_assistants_agent_code_interpreter():
     """Test Agent with code interpreter through OpenAIAssistantsClient."""
@@ -1357,6 +1410,7 @@ async def test_openai_assistants_agent_code_interpreter():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with OpenAI Assistants Client."""

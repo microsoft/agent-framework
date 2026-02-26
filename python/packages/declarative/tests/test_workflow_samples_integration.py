@@ -216,53 +216,22 @@ class TestHandlerCoverage:
 
         return action_kinds
 
-    def test_handlers_exist_for_sample_actions(self, all_action_kinds):
-        """Test that handlers exist for all action kinds in samples."""
-        from agent_framework_declarative._workflows._handlers import list_action_handlers
+    def test_executors_exist_for_sample_actions(self, all_action_kinds):
+        """Test that executors exist for all action kinds used in samples."""
+        from agent_framework_declarative._workflows._declarative_builder import ALL_ACTION_EXECUTORS
 
-        registered_handlers = set(list_action_handlers())
+        registered_executors = set(ALL_ACTION_EXECUTORS.keys())
 
-        # Handlers we expect but may not be in samples
-        expected_handlers = {
-            "SetValue",
-            "SetVariable",
-            "SetTextVariable",
-            "SetMultipleVariables",
-            "ResetVariable",
-            "ClearAllVariables",
-            "AppendValue",
-            "SendActivity",
-            "EmitEvent",
-            "Foreach",
-            "If",
-            "Switch",
-            "ConditionGroup",
-            "GotoAction",
-            "BreakLoop",
-            "ContinueLoop",
-            "RepeatUntil",
-            "TryCatch",
-            "ThrowException",
-            "EndWorkflow",
-            "EndConversation",
-            "InvokeAzureAgent",
-            "InvokePromptAgent",
-            "CreateConversation",
-            "AddConversationMessage",
-            "CopyConversationMessages",
-            "RetrieveConversationMessages",
-            "Question",
-            "RequestExternalInput",
-            "WaitForInput",
+        # Kinds handled structurally by the builder (not registered as executors)
+        structural_kinds = {
+            "OnConversationStart",  # Trigger kind, not an action
+            "ConditionGroup",  # Decomposed into evaluator/join nodes
+            "GotoAction",  # Resolved as graph edges, not executor nodes
+            "Goto",  # Alias for GotoAction
         }
 
-        # Check that sample action kinds have handlers
-        missing_handlers = all_action_kinds - registered_handlers - {"OnConversationStart"}  # Trigger kind, not action
+        missing_executors = all_action_kinds - registered_executors - structural_kinds
 
-        if missing_handlers:
-            # Informational, not a failure, as some actions may be future work
-            pass
-
-        # Check that we have handlers for the expected core set
-        core_handlers = registered_handlers & expected_handlers
-        assert len(core_handlers) > 10, "Expected more core handlers to be registered"
+        assert not missing_executors, (
+            f"Missing executors for action kinds used in workflow samples: {sorted(missing_executors)}"
+        )

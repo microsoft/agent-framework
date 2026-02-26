@@ -90,13 +90,6 @@ def _should_skip_azure_functions_integration_tests() -> tuple[bool, str]:
     """Determine whether Azure Functions integration tests should be skipped."""
     _load_env_file_if_present()
 
-    run_integration_tests = os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    if not run_integration_tests:
-        return (
-            True,
-            "Integration tests are disabled. Set RUN_INTEGRATION_TESTS=true to enable Azure Functions sample tests.",
-        )
-
     # Check for Azure Functions Core Tools
     if not _check_func_cli_available():
         return (

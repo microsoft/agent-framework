@@ -7,7 +7,7 @@ This sample demonstrates how to use the Durable Extension for Agent Framework to
 - Defining a simple agent with the Microsoft Agent Framework and wiring it into
   an Azure Functions app via the Durable Extension for Agent Framework.
 - Calling the agent through generated HTTP endpoints (`/api/agents/Joker/run`).
-- Managing conversation state with thread identifiers, so multiple clients can
+- Managing conversation state with session identifiers, so multiple clients can
   interact with the agent concurrently without sharing context.
 
 ## Prerequisites

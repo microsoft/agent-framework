@@ -6,6 +6,10 @@ from typing import Literal
 from agent_framework import Agent
 from agent_framework.anthropic import AnthropicClient
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """TypedDict-based Chat Options.
 
@@ -22,6 +26,11 @@ which provides:
 
 The sample shows usage with both OpenAI and Anthropic clients, demonstrating
 how provider-specific options work for ChatClient and Agent. But the same approach works for other providers too.
+
+The following environment variables are used:
+    - ANTHROPIC_API_KEY=...
+    - OPENAI_API_KEY=...
+
 """
 
 
@@ -109,14 +118,13 @@ async def demo_openai_chat_client_reasoning_models() -> None:
     print("\n=== OpenAI ChatClient with TypedDict Options ===\n")
 
     # Create OpenAI client
-    client = OpenAIChatClient[OpenAIReasoningChatOptions]()
+    client = OpenAIChatClient[OpenAIReasoningChatOptions](model_id="o3")
 
     # With specific options, you get full IDE autocomplete!
     # Try typing `client.get_response("Hello", options={` and see the suggestions
     response = await client.get_response(
         "What is 2 + 2?",
         options={
-            "model_id": "o3",
             "max_tokens": 100,
             "allow_multiple_tool_calls": True,
             # OpenAI-specific options work:
@@ -140,12 +148,11 @@ async def demo_openai_agent() -> None:
     # or on the client when constructing the client instance:
     #   client = OpenAIChatClient[OpenAIReasoningChatOptions]()
     agent = Agent[OpenAIReasoningChatOptions](
-        client=OpenAIChatClient(),
+        client=OpenAIChatClient(model_id="o3"),
         name="weather-assistant",
         instructions="You are a helpful assistant. Answer concisely.",
         # Options can be set at construction time
         default_options={
-            "model_id": "o3",
             "max_tokens": 100,
             "allow_multiple_tool_calls": True,
             # OpenAI-specific options work:

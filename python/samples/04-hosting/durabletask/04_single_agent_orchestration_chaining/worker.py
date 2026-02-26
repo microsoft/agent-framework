@@ -20,8 +20,12 @@ from collections.abc import Generator
 from agent_framework import Agent, AgentResponse
 from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from azure.identity import AzureCliCredential, DefaultAzureCredential
+from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.task import OrchestrationContext, Task
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -87,30 +91,27 @@ def single_agent_chaining_orchestration(
     # Get the writer agent using the agent context
     writer = agent_context.get_agent(WRITER_AGENT_NAME)
 
-    # Create a new thread for the conversation - this will be shared across both runs
-    writer_thread = writer.get_new_thread()
+    # Create a new session for the conversation - this will be shared across both runs
+    writer_session = writer.create_session()
 
-    logger.debug(f"[Orchestration] Created thread: {writer_thread.session_id}")
+    logger.debug(f"[Orchestration] Created session: {writer_session.session_id}")
 
     prompt = "Write a concise inspirational sentence about learning."
     # First run: Generate an initial inspirational sentence
     logger.info("[Orchestration] First agent run: Generating initial sentence about: %s", prompt)
     initial_response = yield writer.run(
         messages=prompt,
-        thread=writer_thread,
+        session=writer_session,
     )
     logger.info(f"[Orchestration] Initial response: {initial_response.text}")
 
     # Second run: Refine the initial response on the same thread
-    improved_prompt = (
-        f"Improve this further while keeping it under 25 words: "
-        f"{initial_response.text}"
-    )
+    improved_prompt = f"Improve this further while keeping it under 25 words: {initial_response.text}"
 
     logger.info("[Orchestration] Second agent run: Refining the sentence: %s", improved_prompt)
     refined_response = yield writer.run(
         messages=improved_prompt,
-        thread=writer_thread,
+        session=writer_session,
     )
 
     logger.info(f"[Orchestration] Refined response: {refined_response.text}")
@@ -120,9 +121,7 @@ def single_agent_chaining_orchestration(
 
 
 def get_worker(
-    taskhub: str | None = None,
-    endpoint: str | None = None,
-    log_handler: logging.Handler | None = None
+    taskhub: str | None = None, endpoint: str | None = None, log_handler: logging.Handler | None = None
 ) -> DurableTaskSchedulerWorker:
     """Create a configured DurableTaskSchedulerWorker.
 
@@ -147,7 +146,7 @@ def get_worker(
         secure_channel=endpoint_url != "http://localhost:8080",
         taskhub=taskhub_name,
         token_credential=credential,
-        log_handler=log_handler
+        log_handler=log_handler,
     )
 
 
@@ -172,7 +171,7 @@ def setup_worker(worker: DurableTaskSchedulerWorker) -> DurableAIAgentWorker:
 
     # Register the orchestration function
     logger.debug("Registering orchestration function...")
-    worker.add_orchestrator(single_agent_chaining_orchestration)    # type: ignore
+    worker.add_orchestrator(single_agent_chaining_orchestration)  # type: ignore
     logger.debug(f"✓ Registered orchestration: {single_agent_chaining_orchestration.__name__}")
 
     return agent_worker

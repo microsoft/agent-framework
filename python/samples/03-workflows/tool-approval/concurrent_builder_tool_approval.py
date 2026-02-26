@@ -14,6 +14,10 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Concurrent Workflow with Tool Approval Requests
@@ -50,7 +54,7 @@ Prerequisites:
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
 # See:
 # samples/02-agents/tools/function_tool_with_approval.py
-# samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_stock_price(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     """Get the current stock price for a given symbol."""

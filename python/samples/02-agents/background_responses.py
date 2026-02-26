@@ -4,6 +4,10 @@ import asyncio
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """Background Responses Sample.
 
@@ -33,12 +37,12 @@ async def non_streaming_polling() -> None:
     """Demonstrate non-streaming background run with polling."""
     print("=== Non-Streaming Polling ===\n")
 
-    thread = agent.get_new_thread()
+    session = agent.create_session()
 
     # 2. Start a background run — returns immediately.
     response = await agent.run(
         messages="Briefly explain the theory of relativity in two sentences.",
-        thread=thread,
+        session=session,
         options={"background": True},
     )
 
@@ -50,7 +54,7 @@ async def non_streaming_polling() -> None:
         poll_count += 1
         await asyncio.sleep(2)
         response = await agent.run(
-            thread=thread,
+            session=session,
             options={"continuation_token": response.continuation_token},
         )
         print(f"  Poll {poll_count}: continuation_token={'set' if response.continuation_token else 'None'}")
@@ -63,14 +67,14 @@ async def streaming_with_resumption() -> None:
     """Demonstrate streaming background run with simulated interruption and resumption."""
     print("=== Streaming with Resumption ===\n")
 
-    thread = agent.get_new_thread()
+    session = agent.create_session()
 
     # 2. Start a streaming background run.
     last_token = None
     stream = agent.run(
         messages="Briefly list three benefits of exercise.",
         stream=True,
-        thread=thread,
+        session=session,
         options={"background": True},
     )
 
@@ -91,7 +95,7 @@ async def streaming_with_resumption() -> None:
         print("Resumed stream:")
         stream = agent.run(
             stream=True,
-            thread=thread,
+            session=session,
             options={"continuation_token": last_token},
         )
         async for update in stream:

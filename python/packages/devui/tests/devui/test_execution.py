@@ -538,7 +538,7 @@ def test_extract_workflow_hil_responses_handles_stringified_json():
 
 async def test_executor_handles_streaming_agent():
     """Test executor handles agents with run(stream=True) method."""
-    from agent_framework import AgentResponse, AgentResponseUpdate, AgentThread, Content, Message
+    from agent_framework import AgentResponse, AgentResponseUpdate, AgentSession, Content, Message
 
     class StreamingAgent:
         """Agent with run() method supporting stream parameter."""
@@ -547,7 +547,7 @@ async def test_executor_handles_streaming_agent():
         name = "Streaming Test Agent"
         description = "Test agent with run(stream=True)"
 
-        def run(self, messages=None, *, stream=False, thread=None, **kwargs):
+        def run(self, messages=None, *, stream=False, session=None, **kwargs):
             if stream:
                 # Return an async generator for streaming
                 return self._stream_impl(messages)
@@ -566,8 +566,8 @@ async def test_executor_handles_streaming_agent():
                 role="assistant",
             )
 
-        def get_new_thread(self, **kwargs):
-            return AgentThread()
+        def create_session(self, **kwargs):
+            return AgentSession()
 
     # Create executor and register agent
     discovery = EntityDiscovery(None)
@@ -754,7 +754,7 @@ class StreamingAgent:
     name = "Streaming Test Agent"
     description = "Test agent for streaming"
 
-    async def run(self, input_str, *, stream: bool = False, thread=None, **kwargs):
+    async def run(self, input_str, *, stream: bool = False, session=None, **kwargs):
         if stream:
             async def _stream():
                 for i, word in enumerate(f"Processing {input_str}".split()):

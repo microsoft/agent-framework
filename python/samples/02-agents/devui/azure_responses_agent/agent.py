@@ -23,6 +23,10 @@ from typing import Annotated
 
 from agent_framework import Agent, tool
 from agent_framework.azure import AzureOpenAIResponsesClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +54,7 @@ def analyze_content(
     return f"Analyzing content for: {query}"
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def summarize_document(
     length: Annotated[str, "Desired summary length: 'brief', 'medium', or 'detailed'"] = "medium",

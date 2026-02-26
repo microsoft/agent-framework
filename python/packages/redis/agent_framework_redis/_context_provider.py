@@ -2,9 +2,8 @@
 
 """New-pattern Redis context provider using BaseContextProvider.
 
-This module provides ``_RedisContextProvider``, a side-by-side implementation of
-:class:`RedisProvider` built on the new :class:`BaseContextProvider` hooks pattern.
-It will be renamed to ``RedisContextProvider`` in PR2 when the old class is removed.
+This module provides ``RedisContextProvider``, built on the new
+:class:`BaseContextProvider` hooks pattern.
 """
 
 from __future__ import annotations
@@ -13,15 +12,14 @@ import json
 import sys
 from functools import reduce
 from operator import and_
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 import numpy as np
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework.exceptions import (
     AgentException,
-    ServiceInitializationError,
-    ServiceInvalidRequestError,
+    IntegrationInvalidRequestException,
 )
 from redisvl.index import AsyncSearchIndex
 from redisvl.query import HybridQuery, TextQuery
@@ -43,24 +41,19 @@ if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
 
 
-class _RedisContextProvider(BaseContextProvider):
+class RedisContextProvider(BaseContextProvider):
     """Redis context provider using the new BaseContextProvider hooks pattern.
 
     Stores context in Redis and retrieves scoped context via full-text or
-    optional hybrid vector search. This is the new-pattern equivalent of
-    :class:`RedisProvider`.
-
-    Note:
-        This class uses a temporary ``_`` prefix to coexist with the existing
-        :class:`RedisProvider`. It will be renamed to ``RedisContextProvider``
-        in PR2.
+    optional hybrid vector search.
     """
 
     DEFAULT_CONTEXT_PROMPT = "## Memories\nConsider the following memories when answering user questions:"
+    DEFAULT_SOURCE_ID: ClassVar[str] = "redis"
 
     def __init__(
         self,
-        source_id: str,
+        source_id: str = DEFAULT_SOURCE_ID,
         redis_url: str = "redis://localhost:6379",
         index_name: str = "context",
         prefix: str = "context",
@@ -135,7 +128,7 @@ class _RedisContextProvider(BaseContextProvider):
         if not input_text.strip():
             return
 
-        memories = await self._redis_search(text=input_text, session_id=context.session_id)
+        memories = await self._redis_search(text=input_text)
         line_separated_memories = "\n".join(
             str(memory.get("content", "")) for memory in memories if memory.get("content")
         )
@@ -291,7 +284,7 @@ class _RedisContextProvider(BaseContextProvider):
         existing_sig = _schema_signature(existing_schema)
         current_sig = _schema_signature(current_schema)
         if existing_sig != current_sig:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Existing Redis index schema is incompatible with the current configuration.\n"
                 f"Existing (significant): {json.dumps(existing_sig, indent=2, sort_keys=True)}\n"
                 f"Current  (significant): {json.dumps(current_sig, indent=2, sort_keys=True)}\n"
@@ -319,7 +312,7 @@ class _RedisContextProvider(BaseContextProvider):
             d.setdefault("thread_id", session_id)
             d.setdefault("conversation_id", session_id)
             if "content" not in d:
-                raise ServiceInvalidRequestError("add() requires a 'content' field in data")
+                raise IntegrationInvalidRequestException("add() requires a 'content' field in data")
             if self.vector_field_name:
                 d.setdefault(self.vector_field_name, None)
             prepared.append(d)
@@ -343,7 +336,7 @@ class _RedisContextProvider(BaseContextProvider):
         filter_expression: Any | None = None,
         return_fields: list[str] | None = None,
         num_results: int = 10,
-        alpha: float = 0.7,
+        linear_alpha: float = 0.7,
     ) -> list[dict[str, Any]]:
         """Runs a text or hybrid vector-text search with optional filters."""
         await self._ensure_index()
@@ -351,7 +344,7 @@ class _RedisContextProvider(BaseContextProvider):
 
         q = (text or "").strip()
         if not q:
-            raise ServiceInvalidRequestError("text_search() requires non-empty text")
+            raise IntegrationInvalidRequestException("text_search() requires non-empty text")
         num_results = max(int(num_results or 10), 1)
 
         combined_filter = self._build_filter_from_dict({
@@ -380,7 +373,7 @@ class _RedisContextProvider(BaseContextProvider):
                     vector_field_name=self.vector_field_name,
                     text_scorer=text_scorer,
                     filter_expression=combined_filter,
-                    alpha=alpha,
+                    linear_alpha=linear_alpha,
                     dtype=self.redis_vectorizer.dtype,
                     num_results=num_results,
                     return_fields=return_fields,
@@ -400,14 +393,12 @@ class _RedisContextProvider(BaseContextProvider):
             text_results = await self.redis_index.query(query)
             return cast(list[dict[str, Any]], text_results)
         except Exception as exc:  # pragma: no cover
-            raise ServiceInvalidRequestError(f"Redis text search failed: {exc}") from exc
+            raise IntegrationInvalidRequestException(f"Redis text search failed: {exc}") from exc
 
     def _validate_filters(self) -> None:
         """Validates that at least one filter is provided."""
         if not self.agent_id and not self.user_id and not self.application_id:
-            raise ServiceInitializationError(
-                "At least one of the filters: agent_id, user_id, or application_id is required."
-            )
+            raise ValueError("At least one of the filters: agent_id, user_id, or application_id is required.")
 
     async def search_all(self, page_size: int = 200) -> list[dict[str, Any]]:
         """Returns all documents in the index."""
@@ -429,4 +420,4 @@ class _RedisContextProvider(BaseContextProvider):
         """Async context manager exit."""
 
 
-__all__ = ["_RedisContextProvider"]
+__all__ = ["RedisContextProvider"]

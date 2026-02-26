@@ -5,7 +5,7 @@
 # ]
 # ///
 # Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/getting_started/agents/copilotstudio/copilotstudio_with_explicit_settings.py
+#   uv run samples/02-agents/providers/copilotstudio/copilotstudio_with_explicit_settings.py
 
 # Copyright (c) Microsoft. All rights reserved.
 
@@ -13,6 +13,7 @@ import asyncio
 import os
 
 from agent_framework.microsoft import CopilotStudioAgent, acquire_token
+from dotenv import load_dotenv
 from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
 
 """
@@ -22,11 +23,15 @@ This sample demonstrates explicit configuration of CopilotStudioAgent with manua
 token management and custom ConnectionSettings for production environments.
 """
 
+
 # Environment variables needed:
 # COPILOTSTUDIOAGENT__ENVIRONMENTID - Environment ID where your copilot is deployed
 # COPILOTSTUDIOAGENT__SCHEMANAME - Agent identifier/schema name of your copilot
 # COPILOTSTUDIOAGENT__AGENTAPPID - Client ID for authentication
 # COPILOTSTUDIOAGENT__TENANTID - Tenant ID for authentication
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def example_with_connection_settings() -> None:

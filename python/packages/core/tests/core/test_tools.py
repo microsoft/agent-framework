@@ -108,6 +108,90 @@ def test_tool_decorator_with_json_schema_dict():
     assert search("hello") == "Searching for: hello (max 10)"
 
 
+async def test_tool_decorator_with_json_schema_invoke_uses_mapping():
+    """Test that schema-based tools can be invoked directly with mapping arguments."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "max_results": {"type": "integer"},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str, max_results: int = 10) -> str:
+        return f"{query}:{max_results}"
+
+    result = await search.invoke(arguments={"query": "hello", "max_results": 3})
+    assert result == "hello:3"
+
+
+async def test_tool_decorator_with_json_schema_invoke_missing_required():
+    """Test schema-required fields are checked for mapping arguments."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str) -> str:
+        return query
+
+    with pytest.raises(TypeError, match="Missing required argument"):
+        await search.invoke(arguments={})
+
+
+async def test_tool_decorator_with_json_schema_invoke_invalid_type():
+    """Test schema type checks run for mapping arguments."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "max_results": {"type": "integer"},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str, max_results: int = 10) -> str:
+        return f"{query}:{max_results}"
+
+    with pytest.raises(TypeError, match="Invalid type for 'max_results'"):
+        await search.invoke(arguments={"query": "hello", "max_results": "three"})
+
+
+def test_tool_decorator_with_json_schema_preserves_custom_properties():
+    """Test schema passthrough keeps custom JSON schema properties."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "priority": {
+                "type": "string",
+                "enum": ["low", "medium", "high"],
+                "x-custom-field": "custom-value",
+            },
+        },
+        "required": ["priority"],
+        "additionalProperties": False,
+    }
+
+    @tool(name="process", description="Process tool", schema=json_schema)
+    def process(priority: str) -> str:
+        return priority
+
+    params = process.parameters()
+    assert not params.get("additionalProperties")
+    assert params["properties"]["priority"]["x-custom-field"] == "custom-value"
+
+
 def test_tool_decorator_schema_none_default():
     """Test that schema=None (default) still infers from function signature."""
 
@@ -555,7 +639,7 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "pydantic_call"
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
     assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool with Pydantic args"
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x":5,"y":10}'
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 5, "y": 10}'
 
 
 async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanExporter):

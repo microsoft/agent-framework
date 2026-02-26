@@ -1,12 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using Microsoft.Agents.AI.Workflows.InProc;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 internal static class ExecutionExtensions
 {
-    public static IWorkflowExecutionEnvironment ToWorkflowExecutionEnvironment(this ExecutionEnvironment environment)
+    public static InProcessExecutionEnvironment ToWorkflowExecutionEnvironment(this ExecutionEnvironment environment)
     {
         return environment switch
         {

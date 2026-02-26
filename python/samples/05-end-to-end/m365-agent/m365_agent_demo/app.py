@@ -22,6 +22,7 @@ from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIChatClient
 from aiohttp import web
 from aiohttp.web_middlewares import middleware
+from dotenv import load_dotenv
 from microsoft_agents.activity import load_configuration_from_env
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import CloudAdapter, start_agent_process
@@ -35,6 +36,9 @@ from microsoft_agents.hosting.core import (
     TurnState,
 )
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Demo application using Microsoft Agent 365 SDK.
@@ -79,7 +83,7 @@ def load_app_config() -> AppConfig:
     return AppConfig(use_anonymous_mode=use_anonymous_mode, port=port, agents_sdk_config=agents_sdk_config)
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

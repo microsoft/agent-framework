@@ -14,7 +14,7 @@ Shell commands have full access to your system within the permissions of the run
 import asyncio
 from typing import Any
 
-from agent_framework_claude import ClaudeAgent
+from agent_framework.anthropic import ClaudeAgent
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
 
@@ -47,7 +47,7 @@ async def main() -> None:
     )
 
     async with agent:
-        query = "List the first 3 Python files in the current directory"
+        query = "List the first 3 markdown (.md) files in the current directory"
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result.text}\n")

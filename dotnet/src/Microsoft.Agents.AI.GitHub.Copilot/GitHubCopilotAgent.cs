@@ -104,7 +104,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
         if (session is not GitHubCopilotAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(GitHubCopilotAgentSession)}' can be serialized by this agent.");
         }
 
         return new(typedSession.Serialize(jsonSerializerOptions));
@@ -115,7 +115,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         JsonElement serializedState,
         JsonSerializerOptions? jsonSerializerOptions = null,
         CancellationToken cancellationToken = default)
-        => new(new GitHubCopilotAgentSession(serializedState, jsonSerializerOptions));
+        => new(GitHubCopilotAgentSession.Deserialize(serializedState, jsonSerializerOptions));
 
     /// <inheritdoc/>
     protected override Task<AgentResponse> RunCoreAsync(
@@ -139,7 +139,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         if (session is not GitHubCopilotAgentSession typedSession)
         {
             throw new InvalidOperationException(
-                $"The provided session type {session.GetType()} is not compatible with the agent. Only GitHub Copilot agent created sessions are supported.");
+                $"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(GitHubCopilotAgentSession)}' can be used by this agent.");
         }
 
         // Ensure the client is started
@@ -147,21 +147,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
         // Create or resume a session with streaming enabled
         SessionConfig sessionConfig = this._sessionConfig != null
-            ? new SessionConfig
-            {
-                Model = this._sessionConfig.Model,
-                Tools = this._sessionConfig.Tools,
-                SystemMessage = this._sessionConfig.SystemMessage,
-                AvailableTools = this._sessionConfig.AvailableTools,
-                ExcludedTools = this._sessionConfig.ExcludedTools,
-                Provider = this._sessionConfig.Provider,
-                OnPermissionRequest = this._sessionConfig.OnPermissionRequest,
-                McpServers = this._sessionConfig.McpServers,
-                CustomAgents = this._sessionConfig.CustomAgents,
-                SkillDirectories = this._sessionConfig.SkillDirectories,
-                DisabledSkills = this._sessionConfig.DisabledSkills,
-                Streaming = true
-            }
+            ? CopySessionConfig(this._sessionConfig)
             : new SessionConfig { Streaming = true };
 
         CopilotSession copilotSession;
@@ -284,15 +270,63 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
     private ResumeSessionConfig CreateResumeConfig()
     {
+        return CopyResumeSessionConfig(this._sessionConfig);
+    }
+
+    /// <summary>
+    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance
+    /// with <see cref="SessionConfig.Streaming"/> set to <c>true</c>.
+    /// </summary>
+    internal static SessionConfig CopySessionConfig(SessionConfig source)
+    {
+        return new SessionConfig
+        {
+            Model = source.Model,
+            ReasoningEffort = source.ReasoningEffort,
+            Tools = source.Tools,
+            SystemMessage = source.SystemMessage,
+            AvailableTools = source.AvailableTools,
+            ExcludedTools = source.ExcludedTools,
+            Provider = source.Provider,
+            OnPermissionRequest = source.OnPermissionRequest,
+            OnUserInputRequest = source.OnUserInputRequest,
+            Hooks = source.Hooks,
+            WorkingDirectory = source.WorkingDirectory,
+            ConfigDir = source.ConfigDir,
+            McpServers = source.McpServers,
+            CustomAgents = source.CustomAgents,
+            SkillDirectories = source.SkillDirectories,
+            DisabledSkills = source.DisabledSkills,
+            InfiniteSessions = source.InfiniteSessions,
+            Streaming = true
+        };
+    }
+
+    /// <summary>
+    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new
+    /// <see cref="ResumeSessionConfig"/> with <see cref="ResumeSessionConfig.Streaming"/> set to <c>true</c>.
+    /// </summary>
+    internal static ResumeSessionConfig CopyResumeSessionConfig(SessionConfig? source)
+    {
         return new ResumeSessionConfig
         {
-            Tools = this._sessionConfig?.Tools,
-            Provider = this._sessionConfig?.Provider,
-            OnPermissionRequest = this._sessionConfig?.OnPermissionRequest,
-            McpServers = this._sessionConfig?.McpServers,
-            CustomAgents = this._sessionConfig?.CustomAgents,
-            SkillDirectories = this._sessionConfig?.SkillDirectories,
-            DisabledSkills = this._sessionConfig?.DisabledSkills,
+            Model = source?.Model,
+            ReasoningEffort = source?.ReasoningEffort,
+            Tools = source?.Tools,
+            SystemMessage = source?.SystemMessage,
+            AvailableTools = source?.AvailableTools,
+            ExcludedTools = source?.ExcludedTools,
+            Provider = source?.Provider,
+            OnPermissionRequest = source?.OnPermissionRequest,
+            OnUserInputRequest = source?.OnUserInputRequest,
+            Hooks = source?.Hooks,
+            WorkingDirectory = source?.WorkingDirectory,
+            ConfigDir = source?.ConfigDir,
+            McpServers = source?.McpServers,
+            CustomAgents = source?.CustomAgents,
+            SkillDirectories = source?.SkillDirectories,
+            DisabledSkills = source?.DisabledSkills,
+            InfiniteSessions = source?.InfiniteSessions,
             Streaming = true
         };
     }
@@ -427,9 +461,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                     string tempFilePath = await dataContent.SaveToAsync(tempDir, cancellationToken).ConfigureAwait(false);
 
                     attachments ??= [];
-                    attachments.Add(new UserMessageDataAttachmentsItem
+                    attachments.Add(new UserMessageDataAttachmentsItemFile
                     {
-                        Type = UserMessageDataAttachmentsItemType.File,
                         Path = tempFilePath,
                         DisplayName = Path.GetFileName(tempFilePath)
                     });

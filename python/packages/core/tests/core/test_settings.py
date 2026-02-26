@@ -8,7 +8,7 @@ from typing import TypedDict
 
 import pytest
 
-from agent_framework._settings import SecretString, load_settings
+from agent_framework import SecretString, load_settings
 
 
 class SimpleSettings(TypedDict, total=False):
@@ -26,6 +26,12 @@ class RequiredFieldSettings(TypedDict, total=False):
 class SecretSettings(TypedDict, total=False):
     api_key: SecretString | None
     username: str | None
+
+
+class ExclusiveSettings(TypedDict, total=False):
+    source_a: str | None
+    source_b: str | None
+    other: str | None
 
 
 class TestLoadSettingsBasic:
@@ -100,7 +106,7 @@ class TestDotenvFile:
         finally:
             os.unlink(env_path)
 
-    def test_env_vars_override_dotenv(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_dotenv_overrides_env_vars_when_env_file_path_is_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TEST_APP_API_KEY", "real-env-key")
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
@@ -111,15 +117,34 @@ class TestDotenvFile:
         try:
             settings = load_settings(SimpleSettings, env_prefix="TEST_APP_", env_file_path=env_path)
 
-            assert settings["api_key"] == "real-env-key"
+            assert settings["api_key"] == "dotenv-key"
         finally:
             os.unlink(env_path)
 
-    def test_missing_dotenv_file(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("TEST_APP_API_KEY", raising=False)
-        settings = load_settings(SimpleSettings, env_prefix="TEST_APP_", env_file_path="/nonexistent/.env")
+    def test_env_vars_are_used_when_env_file_path_is_not_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TEST_APP_API_KEY", "real-env-key")
+        settings = load_settings(SimpleSettings, env_prefix="TEST_APP_")
 
-        assert settings["api_key"] is None
+        assert settings["api_key"] == "real-env-key"
+
+    def test_overrides_beat_dotenv_and_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TEST_APP_TIMEOUT", "120")
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
+            f.write("TEST_APP_TIMEOUT=90\n")
+            f.flush()
+            env_path = f.name
+
+        try:
+            settings = load_settings(SimpleSettings, env_prefix="TEST_APP_", env_file_path=env_path, timeout=60)
+
+            assert settings["timeout"] == 60
+        finally:
+            os.unlink(env_path)
+
+    def test_missing_dotenv_file_raises(self) -> None:
+        with pytest.raises(FileNotFoundError):
+            load_settings(SimpleSettings, env_prefix="TEST_APP_", env_file_path="/nonexistent/.env")
 
 
 class TestSecretString:
@@ -220,9 +245,8 @@ class TestOverrideTypeValidation:
     """Test override type validation."""
 
     def test_invalid_type_raises(self) -> None:
-        from agent_framework.exceptions import ServiceInitializationError
 
-        with pytest.raises(ServiceInitializationError, match="Invalid type for setting 'api_key'"):
+        with pytest.raises(ValueError, match="Invalid type for setting 'api_key'"):
             load_settings(SimpleSettings, env_prefix="TEST_", api_key={"bad": "type"})
 
     def test_valid_types_accepted(self) -> None:
@@ -236,3 +260,89 @@ class TestOverrideTypeValidation:
 
         assert isinstance(settings["api_key"], SecretString)
         assert settings["api_key"] == "plain-string"
+
+
+class TestMutuallyExclusive:
+    """Test mutually exclusive field validation via tuple entries in required_fields."""
+
+    def test_exactly_one_set_passes(self) -> None:
+        settings = load_settings(
+            ExclusiveSettings,
+            env_prefix="TEST_",
+            required_fields=[("source_a", "source_b")],
+            source_a="value-a",
+        )
+
+        assert settings["source_a"] == "value-a"
+        assert settings["source_b"] is None
+
+    def test_none_set_raises(self) -> None:
+        from agent_framework.exceptions import SettingNotFoundError
+
+        with pytest.raises(SettingNotFoundError, match="none was set"):
+            load_settings(
+                ExclusiveSettings,
+                env_prefix="TEST_",
+                required_fields=[("source_a", "source_b")],
+            )
+
+    def test_both_set_raises(self) -> None:
+        from agent_framework.exceptions import SettingNotFoundError
+
+        with pytest.raises(SettingNotFoundError, match="multiple were set"):
+            load_settings(
+                ExclusiveSettings,
+                env_prefix="TEST_",
+                required_fields=[("source_a", "source_b")],
+                source_a="a",
+                source_b="b",
+            )
+
+    def test_env_var_counts_as_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TEST_SOURCE_B", "env-b")
+
+        settings = load_settings(
+            ExclusiveSettings,
+            env_prefix="TEST_",
+            required_fields=[("source_a", "source_b")],
+        )
+
+        assert settings["source_b"] == "env-b"
+
+    def test_env_var_and_override_both_set_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_framework.exceptions import SettingNotFoundError
+
+        monkeypatch.setenv("TEST_SOURCE_B", "env-b")
+
+        with pytest.raises(SettingNotFoundError, match="multiple were set"):
+            load_settings(
+                ExclusiveSettings,
+                env_prefix="TEST_",
+                required_fields=[("source_a", "source_b")],
+                source_a="a",
+            )
+
+    def test_other_fields_unaffected(self) -> None:
+        settings = load_settings(
+            ExclusiveSettings,
+            env_prefix="TEST_",
+            required_fields=[("source_a", "source_b")],
+            source_a="a",
+            other="extra",
+        )
+
+        assert settings["source_a"] == "a"
+        assert settings["other"] == "extra"
+
+    def test_mixed_required_and_exclusive(self) -> None:
+        settings = load_settings(
+            ExclusiveSettings,
+            env_prefix="TEST_",
+            required_fields=["other", ("source_a", "source_b")],
+            source_b="b",
+            other="required-val",
+        )
+
+        assert settings["other"] == "required-val"
+        assert settings["source_b"] == "b"
+        assert settings["source_a"] is None

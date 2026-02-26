@@ -11,7 +11,7 @@ import pytest
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseChatClient,
     ChatOptions,
     ChatResponse,
@@ -49,13 +49,13 @@ class StreamingChatClientStub(
         super().__init__(function_middleware=[])
         self._stream_fn = stream_fn
         self._response_fn = response_fn
-        self.last_thread: AgentThread | None = None
-        self.last_service_thread_id: str | None = None
+        self.last_session: AgentSession | None = None
+        self.last_service_session_id: str | None = None
 
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[Any],
@@ -65,7 +65,7 @@ class StreamingChatClientStub(
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = ...,
@@ -75,7 +75,7 @@ class StreamingChatClientStub(
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = ...,
@@ -84,14 +84,14 @@ class StreamingChatClientStub(
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
-        self.last_thread = kwargs.get("thread")
-        self.last_service_thread_id = self.last_thread.service_thread_id if self.last_thread else None
+        self.last_session = kwargs.get("session")
+        self.last_service_session_id = self.last_session.service_session_id if self.last_session else None
         return cast(
             Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
             super().get_response(
@@ -175,29 +175,29 @@ class StubAgent(SupportsAgentRun):
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[False] = ...,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: Literal[True],
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
         self,
-        messages: str | Message | Sequence[str | Message] | None = None,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         if stream:
@@ -218,8 +218,8 @@ class StubAgent(SupportsAgentRun):
 
         return _get_response()
 
-    def get_new_thread(self, **kwargs: Any) -> AgentThread:
-        return AgentThread()
+    def create_session(self, **kwargs: Any) -> AgentSession:
+        return AgentSession()
 
 
 # Fixtures

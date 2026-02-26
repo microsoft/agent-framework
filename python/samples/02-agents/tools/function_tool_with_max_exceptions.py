@@ -5,6 +5,10 @@ from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Some tools are very expensive to run, so you may want to limit the number of times
@@ -36,31 +40,30 @@ async def main():
         instructions="Use the provided tools.",
         tools=[safe_divide],
     )
-    thread = agent.get_new_thread()
+    session = agent.create_session()
     print("=" * 60)
     print("Step 1: Call divide(10, 0) - tool raises exception")
-    response = await agent.run("Divide 10 by 0", thread=thread)
+    response = await agent.run("Divide 10 by 0", session=session)
     print(f"Response: {response.text}")
     print("=" * 60)
     print("Step 2: Call divide(100, 0) - will refuse to execute due to max_invocation_exceptions")
-    response = await agent.run("Divide 100 by 0", thread=thread)
+    response = await agent.run("Divide 100 by 0", session=session)
     print(f"Response: {response.text}")
     print("=" * 60)
     print(f"Number of tool calls attempted: {safe_divide.invocation_count}")
     print(f"Number of tool calls failed: {safe_divide.invocation_exception_count}")
-    print("Replay the conversation:")
-    assert thread.message_store
-    assert thread.message_store.list_messages
-    for idx, msg in enumerate(await thread.message_store.list_messages()):
-        if msg.text:
-            print(f"{idx + 1}  {msg.author_name or msg.role}: {msg.text} ")
-        for content in msg.contents:
-            if content.type == "function_call":
-                print(
-                    f"{idx + 1}  {msg.author_name}: calling function: {content.name} with arguments: {content.arguments}"
-                )
-            if content.type == "function_result":
-                print(f"{idx + 1}  {msg.role}: {content.result if content.result else content.exception}")
+    # TODO: Use history providers to replay the conversation
+    # print("Replay the conversation:")
+    # for idx, msg in enumerate(messages):
+    #     if msg.text:
+    #         print(f"{idx + 1}  {msg.author_name or msg.role}: {msg.text} ")
+    #     for content in msg.contents:
+    #         if content.type == "function_call":
+    #             print(
+    #                 f"{idx + 1}  {msg.author_name}: calling function: {content.name} with arguments: {content.arguments}"
+    #             )
+    #         if content.type == "function_result":
+    #             print(f"{idx + 1}  {msg.role}: {content.result if content.result else content.exception}")
 
 
 """
@@ -68,8 +71,6 @@ Expected Output:
 ============================================================
 Step 1: Call divide(10, 0) - tool raises exception
     Tool failed with error: division by zero
-[2025-10-31 15:39:53 - /Users/edvan/Work/agent-framework/python/packages/core/agent_framework/_tools.py:718 - ERROR]
-Function failed. Error: division by zero
 Response: Division by zero is undefined in standard arithmetic. There is no finite value for 10 ÷ 0.
 
 If you want alternatives:
@@ -81,9 +82,6 @@ If you want alternatives:
 Would you like me to show a safe division snippet in a specific language, or compute something else?
 ============================================================
 Step 2: Call divide(100, 0) - will refuse to execute due to max_invocations
-[2025-10-31 15:40:09 - /Users/edvan/Work/agent-framework/python/packages/core/agent_framework/_tools.py:718 - ERROR]
-Function failed. Error: Function 'safe_divide' has reached its maximum exception limit, you tried to use this
-tool too many times and it kept failing.
 Response: Division by zero is undefined in standard arithmetic, so 100 ÷ 0 has no finite value.
 
 If you’re coding and want safe handling, here are quick patterns in a few languages:

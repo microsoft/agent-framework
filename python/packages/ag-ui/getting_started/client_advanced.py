@@ -15,7 +15,7 @@ import asyncio
 import os
 from typing import cast
 
-from agent_framework import ChatResponse, ChatResponseUpdate, ResponseStream, tool
+from agent_framework import ChatResponse, ChatResponseUpdate, Message, ResponseStream, tool
 from agent_framework.ag_ui import AGUIChatClient
 
 
@@ -73,7 +73,7 @@ async def streaming_example(client: AGUIChatClient, thread_id: str | None = None
     print("Assistant: ", end="", flush=True)
 
     stream = client.get_response(
-        "Tell me a short joke",
+        [Message(role="user", text="Tell me a short joke")],
         stream=True,
         options={"metadata": metadata} if metadata else None,
     )
@@ -100,7 +100,7 @@ async def non_streaming_example(client: AGUIChatClient, thread_id: str | None = 
 
     print("\nUser: What is 2 + 2?\n")
 
-    response = await client.get_response("What is 2 + 2?", metadata=metadata)
+    response = await client.get_response([Message(role="user", text="What is 2 + 2?")], metadata=metadata)
 
     print(f"Assistant: {response.text}")
 
@@ -139,7 +139,7 @@ async def tool_example(client: AGUIChatClient, thread_id: str | None = None):
     print("(Server must be configured with matching tools to execute them)\n")
 
     response = await client.get_response(
-        "What's the weather in Seattle?", tools=[get_weather, calculate], metadata=metadata
+        [Message(role="user", text="What's the weather in Seattle?")], tools=[get_weather, calculate], metadata=metadata
     )
 
     print(f"Assistant: {response.text}")
@@ -174,14 +174,16 @@ async def conversation_example(client: AGUIChatClient):
 
     # First turn
     print("User: My name is Alice\n")
-    response1 = await client.get_response("My name is Alice")
+    response1 = await client.get_response([Message(role="user", text="My name is Alice")])
     print(f"Assistant: {response1.text}")
     thread_id = response1.additional_properties.get("thread_id")
     print(f"\n[Thread: {thread_id}]")
 
     # Second turn - using same thread
     print("\nUser: What's my name?\n")
-    response2 = await client.get_response("What's my name?", options={"metadata": {"thread_id": thread_id}})
+    response2 = await client.get_response(
+        [Message(role="user", text="What's my name?")], options={"metadata": {"thread_id": thread_id}}
+    )
     print(f"Assistant: {response2.text}")
 
     # Check if context was maintained
@@ -191,7 +193,9 @@ async def conversation_example(client: AGUIChatClient):
     # Third turn
     print("\nUser: Can you also tell me what 10 * 5 is?\n")
     response3 = await client.get_response(
-        "Can you also tell me what 10 * 5 is?", options={"metadata": {"thread_id": thread_id}}, tools=[calculate]
+        [Message(role="user", text="Can you also tell me what 10 * 5 is?")],
+        options={"metadata": {"thread_id": thread_id}},
+        tools=[calculate],
     )
     print(f"Assistant: {response3.text}")
 

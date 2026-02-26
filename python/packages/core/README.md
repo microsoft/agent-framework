@@ -213,14 +213,14 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-**Note**: Sequential, Concurrent, Group Chat, Handoff, and Magentic orchestrations are available. See examples in [orchestration samples](../../samples/02-agents/orchestrations).
+**Note**: Sequential, Concurrent, Group Chat, Handoff, and Magentic orchestrations are available. See examples in [orchestration samples](../../samples/03-workflows/orchestrations).
 
 ## More Examples & Samples
 
 - [Getting Started with Agents](../../samples/02-agents): Basic agent creation and tool usage
 - [Chat Client Examples](../../samples/02-agents/chat_client): Direct chat client usage patterns
 - [Azure AI Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/azure-ai): Azure AI integration
-- [.NET Workflows Samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/GettingStarted/Workflows): Advanced multi-agent patterns (.NET)
+- [Workflows Samples](../../samples/03-workflows): Advanced multi-agent patterns
 
 ## Agent Framework Documentation
 

@@ -9,6 +9,7 @@ using System.Net.ServerSentEvents;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -335,35 +336,31 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
     }
 
     protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
-        new(new FakeInMemoryAgentSession());
+        new(new FakeAgentSession());
 
     protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
-        new(new FakeInMemoryAgentSession(serializedState, jsonSerializerOptions));
+        new(serializedState.Deserialize<FakeAgentSession>(jsonSerializerOptions)!);
 
     protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
-        if (session is not FakeInMemoryAgentSession fakeSession)
+        if (session is not FakeAgentSession fakeSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(FakeAgentSession)}' can be serialized by this agent.");
         }
 
-        return new(fakeSession.Serialize(jsonSerializerOptions));
+        return new(JsonSerializer.SerializeToElement(fakeSession, jsonSerializerOptions));
     }
 
-    private sealed class FakeInMemoryAgentSession : InMemoryAgentSession
+    private sealed class FakeAgentSession : AgentSession
     {
-        public FakeInMemoryAgentSession()
-            : base()
+        public FakeAgentSession()
         {
         }
 
-        public FakeInMemoryAgentSession(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null)
-            : base(serializedSession, jsonSerializerOptions)
+        [JsonConstructor]
+        public FakeAgentSession(AgentSessionStateBag stateBag) : base(stateBag)
         {
         }
-
-        internal new JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
-            => base.Serialize(jsonSerializerOptions);
     }
 
     public override object? GetService(Type serviceType, object? serviceKey = null) => null;

@@ -12,8 +12,7 @@ agent_framework/
 ├── _types.py            # Core types (Message, ChatResponse, Content, etc.)
 ├── _tools.py            # Tool definitions and function invocation
 ├── _middleware.py       # Middleware system for request/response interception
-├── _threads.py          # AgentThread and message store abstractions
-├── _memory.py           # Context providers for memory/RAG
+├── _sessions.py         # AgentSession and context provider abstractions
 ├── _mcp.py              # Model Context Protocol support
 ├── _workflows/          # Workflow orchestration (sequential, concurrent, handoff, etc.)
 ├── openai/              # Built-in OpenAI client
@@ -57,16 +56,12 @@ agent_framework/
 - **`FunctionMiddleware`** - Intercepts function/tool invocations
 - **`AgentContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware
 
-### Threads (`_threads.py`)
+### Sessions (`_sessions.py`)
 
-- **`AgentThread`** - Manages conversation history for an agent
-- **`ChatMessageStoreProtocol`** - Protocol for persistent message storage
-- **`ChatMessageStore`** - Default in-memory implementation
-
-### Memory (`_memory.py`)
-
-- **`ContextProvider`** - Protocol for providing additional context to agents (RAG, memory systems)
-- **`Context`** - Container for context data
+- **`AgentSession`** - Manages conversation state and session metadata
+- **`SessionContext`** - Context object for session-scoped data during agent runs
+- **`BaseContextProvider`** - Base class for context providers (RAG, memory systems)
+- **`BaseHistoryProvider`** - Base class for conversation history storage
 
 ### Workflows (`_workflows/`)
 

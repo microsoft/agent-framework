@@ -13,7 +13,7 @@ from pytest import fixture
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseChatClient,
     ChatMiddlewareLayer,
     ChatResponse,
@@ -261,7 +261,7 @@ def chat_client_base(enable_function_calling: bool, max_iterations: int) -> Mock
 
 
 # region Agents
-class MockAgentThread(AgentThread):
+class MockAgentSession(AgentSession):
     pass
 
 
@@ -284,41 +284,41 @@ class MockAgent(SupportsAgentRun):
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
         if stream:
-            return self._run_stream_impl(messages=messages, thread=thread, **kwargs)
-        return self._run_impl(messages=messages, thread=thread, **kwargs)
+            return self._run_stream_impl(messages=messages, session=session, **kwargs)
+        return self._run_impl(messages=messages, session=session, **kwargs)
 
     async def _run_impl(
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
-        logger.debug(f"Running mock agent, with: {messages=}, {thread=}, {kwargs=}")
+        logger.debug(f"Running mock agent, with: {messages=}, {session=}, {kwargs=}")
         return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Response")])])
 
     async def _run_stream_impl(
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
-        logger.debug(f"Running mock agent stream, with: {messages=}, {thread=}, {kwargs=}")
+        logger.debug(f"Running mock agent stream, with: {messages=}, {session=}, {kwargs=}")
         yield AgentResponseUpdate(contents=[Content.from_text("Response")])
 
-    def get_new_thread(self) -> AgentThread:
-        return MockAgentThread()
+    def create_session(self) -> AgentSession:
+        return MockAgentSession()
 
 
 @fixture
-def agent_thread() -> AgentThread:
-    return MockAgentThread()
+def agent_session() -> AgentSession:
+    return MockAgentSession()
 
 
 @fixture

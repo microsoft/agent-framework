@@ -21,7 +21,7 @@ public class DynamicRequestPortTests
         public RequestPortTestContext()
         {
             this.Executor = new(ExecutorId, PortId);
-            this.Executor.Configure(this.ExternalRequestContext);
+            this.Executor.AttachRequestContext(this.ExternalRequestContext);
         }
 
         public TestRunContext RunContext { get; } = new();
@@ -50,7 +50,7 @@ public class DynamicRequestPortTests
         }
 
         public ValueTask<object?> InvokeExecutorWithResponseAsync(ExternalResponse response)
-            => this.Executor.ExecuteAsync(response, new(typeof(ExternalResponse)), this.RunContext.BindWorkflowContext(this.Executor.Id));
+            => this.Executor.ExecuteCoreAsync(response, new(typeof(ExternalResponse)), this.RunContext.BindWorkflowContext(this.Executor.Id));
     }
 
     private sealed class ExternalRequestContext : IExternalRequestContext, IExternalRequestSink

@@ -38,9 +38,9 @@ public class ExecutorRouteGeneratorTests
 
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
-        generated.Should().Contain("protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)");
-        generated.Should().Contain(".AddHandler<string>(this.HandleMessage)");
+        var generated = result.RunResult.GeneratedTrees[0];
+
+        generated.Should().AddHandler("this.HandleMessage", "string");
     }
 
     [Fact]
@@ -205,9 +205,9 @@ public class ExecutorRouteGeneratorTests
 
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
-        generated.Should().Contain("protected override ISet<Type> ConfigureYieldTypes()");
-        generated.Should().Contain("types.Add(typeof(global::TestNamespace.OutputMessage))");
+        var generated = result.RunResult.GeneratedTrees[0];
+
+        generated.Should().RegisterYieldedOutputType("global::TestNamespace.OutputMessage");
     }
 
     [Fact]
@@ -236,9 +236,8 @@ public class ExecutorRouteGeneratorTests
 
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
-        generated.Should().Contain("protected override ISet<Type> ConfigureSentTypes()");
-        generated.Should().Contain("types.Add(typeof(global::TestNamespace.SendMessage))");
+        var generated = result.RunResult.GeneratedTrees[0];
+        generated.Should().RegisterSentMessageType("global::TestNamespace.SendMessage");
     }
 
     [Fact]
@@ -268,9 +267,8 @@ public class ExecutorRouteGeneratorTests
 
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
-        generated.Should().Contain("protected override ISet<Type> ConfigureSentTypes()");
-        generated.Should().Contain("types.Add(typeof(global::TestNamespace.BroadcastMessage))");
+        var generated = result.RunResult.GeneratedTrees[0];
+        generated.Should().RegisterSentMessageType("global::TestNamespace.BroadcastMessage");
     }
 
     [Fact]
@@ -300,9 +298,8 @@ public class ExecutorRouteGeneratorTests
 
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
-        generated.Should().Contain("protected override ISet<Type> ConfigureYieldTypes()");
-        generated.Should().Contain("types.Add(typeof(global::TestNamespace.YieldedMessage))");
+        var generated = result.RunResult.GeneratedTrees[0];
+        generated.Should().RegisterYieldedOutputType("global::TestNamespace.YieldedMessage");
     }
 
     #endregion
@@ -336,20 +333,10 @@ public class ExecutorRouteGeneratorTests
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
         result.RunResult.Diagnostics.Should().BeEmpty();
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
+        var generated = result.RunResult.GeneratedTrees[0];
 
-        // Verify partial declarations are present
-        generated.Should().Contain("partial class OuterClass");
-        generated.Should().Contain("partial class TestExecutor");
-
-        // Verify proper nesting structure with braces
-        // The outer class should open before the inner class
-        var outerIndex = generated.IndexOf("partial class OuterClass", StringComparison.Ordinal);
-        var innerIndex = generated.IndexOf("partial class TestExecutor", StringComparison.Ordinal);
-        outerIndex.Should().BeLessThan(innerIndex, "outer class should appear before inner class");
-
-        // Verify handler registration is present
-        generated.Should().Contain(".AddHandler<string>(this.HandleMessage)");
+        generated.Should().HaveHierarchy("OuterClass", "TestExecutor")
+                      .And.AddHandler("this.HandleMessage", "string");
     }
 
     [Fact]
@@ -382,22 +369,10 @@ public class ExecutorRouteGeneratorTests
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
         result.RunResult.Diagnostics.Should().BeEmpty();
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
+        var generated = result.RunResult.GeneratedTrees[0];
 
-        // Verify all three partial declarations are present in correct order
-        generated.Should().Contain("partial class Outer");
-        generated.Should().Contain("partial class Inner");
-        generated.Should().Contain("partial class TestExecutor");
-
-        var outerIndex = generated.IndexOf("partial class Outer", StringComparison.Ordinal);
-        var innerIndex = generated.IndexOf("partial class Inner", StringComparison.Ordinal);
-        var executorIndex = generated.IndexOf("partial class TestExecutor", StringComparison.Ordinal);
-
-        outerIndex.Should().BeLessThan(innerIndex, "Outer should appear before Inner");
-        innerIndex.Should().BeLessThan(executorIndex, "Inner should appear before TestExecutor");
-
-        // Verify handler registration
-        generated.Should().Contain(".AddHandler<string>(this.HandleMessage)");
+        generated.Should().HaveHierarchy("Outer", "Inner", "TestExecutor")
+                      .And.AddHandler("this.HandleMessage", "string");
     }
 
     [Fact]
@@ -433,26 +408,10 @@ public class ExecutorRouteGeneratorTests
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
         result.RunResult.Diagnostics.Should().BeEmpty();
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
+        var generated = result.RunResult.GeneratedTrees[0];
 
-        // All four partial class declarations should be present
-        generated.Should().Contain("partial class Level1");
-        generated.Should().Contain("partial class Level2");
-        generated.Should().Contain("partial class Level3");
-        generated.Should().Contain("partial class TestExecutor");
-
-        // Verify correct ordering
-        var level1Index = generated.IndexOf("partial class Level1", StringComparison.Ordinal);
-        var level2Index = generated.IndexOf("partial class Level2", StringComparison.Ordinal);
-        var level3Index = generated.IndexOf("partial class Level3", StringComparison.Ordinal);
-        var executorIndex = generated.IndexOf("partial class TestExecutor", StringComparison.Ordinal);
-
-        level1Index.Should().BeLessThan(level2Index);
-        level2Index.Should().BeLessThan(level3Index);
-        level3Index.Should().BeLessThan(executorIndex);
-
-        // Verify handler registration
-        generated.Should().Contain(".AddHandler<int>(this.HandleMessage)");
+        generated.Should().HaveHierarchy("Level1", "Level2", "Level3", "TestExecutor")
+                      .And.AddHandler("this.HandleMessage", "int");
     }
 
     [Fact]
@@ -480,15 +439,11 @@ public class ExecutorRouteGeneratorTests
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
         result.RunResult.Diagnostics.Should().BeEmpty();
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
+        var generated = result.RunResult.GeneratedTrees[0];
 
-        // Should not contain namespace declaration
-        generated.Should().NotContain("namespace ");
-
-        // Should still have proper partial hierarchy
-        generated.Should().Contain("partial class OuterClass");
-        generated.Should().Contain("partial class TestExecutor");
-        generated.Should().Contain(".AddHandler<string>(this.HandleMessage)");
+        generated.Should().NotHaveNamespace()
+                      .And.HaveHierarchy("OuterClass", "TestExecutor")
+                      .And.AddHandler("this.HandleMessage", "string");
     }
 
     [Fact]
@@ -576,7 +531,7 @@ public class ExecutorRouteGeneratorTests
         // - 1 for Outer class
         // - 1 for Inner class
         // - 1 for TestExecutor class
-        // - 1 for ConfigureRoutes method
+        // - 1 for ConfigureProtocol method
         // = 4 pairs minimum
         openBraces.Should().BeGreaterThanOrEqualTo(4, "should have braces for all nested classes and method");
     }
@@ -633,11 +588,11 @@ public class ExecutorRouteGeneratorTests
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
         result.RunResult.Diagnostics.Should().BeEmpty();
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
+        var generated = result.RunResult.GeneratedTrees[0];
 
         // Should have both handlers registered
-        generated.Should().Contain(".AddHandler<string>(this.HandleString)");
-        generated.Should().Contain(".AddHandler<int>(this.HandleIntAsync)");
+        generated.Should().AddHandler("this.HandleString", "string")
+                      .And.AddHandler("this.HandleIntAsync", "int");
 
         // Verify the generated code compiles with all three partials combined
         var compilationErrors = result.OutputCompilation.GetDiagnostics()
@@ -688,11 +643,11 @@ public class ExecutorRouteGeneratorTests
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
         result.RunResult.Diagnostics.Should().BeEmpty();
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
+        var generated = result.RunResult.GeneratedTrees[0];
 
         // Both handlers from different files should be registered
-        generated.Should().Contain(".AddHandler<string>(this.HandleFromFile1)");
-        generated.Should().Contain(".AddHandler<int>(this.HandleFromFile2)");
+        generated.Should().AddHandler("this.HandleFromFile1", "string")
+                      .And.AddHandler("this.HandleFromFile2", "int");
     }
 
     [Fact]
@@ -739,29 +694,13 @@ public class ExecutorRouteGeneratorTests
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
         result.RunResult.Diagnostics.Should().BeEmpty();
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
+        var generated = result.RunResult.GeneratedTrees[0];
 
-        // Verify ConfigureSentTypes override
-        var sendsStart = generated.IndexOf("protected override ISet<Type> ConfigureSentTypes()", StringComparison.Ordinal);
-        sendsStart.Should().NotBe(-1, "should generate ConfigureSentTypes override");
-
-        var sendsEnd = generated.IndexOf("}", sendsStart, StringComparison.Ordinal);
-        sendsEnd.Should().NotBe(-1, "should close ConfigureSentTypes override");
-
-        generated.Substring(sendsStart, sendsEnd - sendsStart).Should().ContainAll(
-            "types.Add(typeof(string));",
-            "types.Add(typeof(int));");
-
-        // Verify ConfigureYieldTypes override
-        var yieldsStart = generated.IndexOf("protected override ISet<Type> ConfigureYieldTypes()", StringComparison.Ordinal);
-        yieldsStart.Should().NotBe(-1, "should generate ConfigureYieldTypes override");
-
-        var yieldsEnd = generated.IndexOf("}", yieldsStart, StringComparison.Ordinal);
-        yieldsEnd.Should().NotBe(-1, "should close ConfigureYieldTypes override");
-
-        generated.Substring(yieldsStart, yieldsEnd - yieldsStart).Should().ContainAll(
-            "types.Add(typeof(string));",
-            "types.Add(typeof(int));");
+        // Verify SendsMessage and YieldsOutput from both partials are combined correctly
+        generated.Should().RegisterSentMessageType("string")
+                      .And.RegisterSentMessageType("int")
+                      .And.RegisterYieldedOutputType("string")
+                      .And.RegisterYieldedOutputType("string");
     }
 
     #endregion
@@ -896,7 +835,7 @@ public class ExecutorRouteGeneratorTests
     #region No Generation Tests
 
     [Fact]
-    public void ClassWithManualConfigureRoutes_DoesNotGenerate()
+    public void ClassWithManualConfigureProtocol_DoesNotGenerate()
     {
         var source = """
             using System.Threading;
@@ -909,9 +848,9 @@ public class ExecutorRouteGeneratorTests
             {
                 public TestExecutor() : base("test") { }
 
-                protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+                protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
                 {
-                    return routeBuilder;
+                    return protocolBuilder;
                 }
 
                 [MessageHandler]
@@ -954,130 +893,6 @@ public class ExecutorRouteGeneratorTests
     #region Protocol-Only Generation Tests
 
     [Fact]
-    public void ProtocolOnly_SendsMessage_WithManualRoutes_GeneratesConfigureSentTypes()
-    {
-        var source = """
-            using System;
-            using System.Threading;
-            using System.Threading.Tasks;
-            using Microsoft.Agents.AI.Workflows;
-
-            namespace TestNamespace;
-
-            public class BroadcastMessage { }
-
-            [SendsMessage(typeof(BroadcastMessage))]
-            public partial class TestExecutor : Executor
-            {
-                public TestExecutor() : base("test") { }
-
-                protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-                {
-                    return routeBuilder;
-                }
-            }
-            """;
-
-        var result = GeneratorTestHelper.RunGenerator(source);
-
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
-        result.RunResult.Diagnostics.Should().BeEmpty();
-
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
-
-        // Should NOT generate ConfigureRoutes (user has manual implementation)
-        generated.Should().NotContain("protected override RouteBuilder ConfigureRoutes");
-
-        // Should generate ConfigureSentTypes
-        generated.Should().Contain("protected override ISet<Type> ConfigureSentTypes()");
-        generated.Should().Contain("types.Add(typeof(global::TestNamespace.BroadcastMessage))");
-    }
-
-    [Fact]
-    public void ProtocolOnly_YieldsOutput_WithManualRoutes_GeneratesConfigureYieldTypes()
-    {
-        var source = """
-            using System;
-            using System.Threading;
-            using System.Threading.Tasks;
-            using Microsoft.Agents.AI.Workflows;
-
-            namespace TestNamespace;
-
-            public class OutputMessage { }
-
-            [YieldsOutput(typeof(OutputMessage))]
-            public partial class TestExecutor : Executor
-            {
-                public TestExecutor() : base("test") { }
-
-                protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-                {
-                    return routeBuilder;
-                }
-            }
-            """;
-
-        var result = GeneratorTestHelper.RunGenerator(source);
-
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
-        result.RunResult.Diagnostics.Should().BeEmpty();
-
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
-
-        // Should NOT generate ConfigureRoutes (user has manual implementation)
-        generated.Should().NotContain("protected override RouteBuilder ConfigureRoutes");
-
-        // Should generate ConfigureYieldTypes
-        generated.Should().Contain("protected override ISet<Type> ConfigureYieldTypes()");
-        generated.Should().Contain("types.Add(typeof(global::TestNamespace.OutputMessage))");
-    }
-
-    [Fact]
-    public void ProtocolOnly_BothAttributes_WithManualRoutes_GeneratesBothOverrides()
-    {
-        var source = """
-            using System;
-            using System.Threading;
-            using System.Threading.Tasks;
-            using Microsoft.Agents.AI.Workflows;
-
-            namespace TestNamespace;
-
-            public class SendMessage { }
-            public class YieldMessage { }
-
-            [SendsMessage(typeof(SendMessage))]
-            [YieldsOutput(typeof(YieldMessage))]
-            public partial class TestExecutor : Executor
-            {
-                public TestExecutor() : base("test") { }
-
-                protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-                {
-                    return routeBuilder;
-                }
-            }
-            """;
-
-        var result = GeneratorTestHelper.RunGenerator(source);
-
-        result.RunResult.GeneratedTrees.Should().HaveCount(1);
-        result.RunResult.Diagnostics.Should().BeEmpty();
-
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
-
-        // Should NOT generate ConfigureRoutes
-        generated.Should().NotContain("protected override RouteBuilder ConfigureRoutes");
-
-        // Should generate both protocol overrides
-        generated.Should().Contain("protected override ISet<Type> ConfigureSentTypes()");
-        generated.Should().Contain("types.Add(typeof(global::TestNamespace.SendMessage))");
-        generated.Should().Contain("protected override ISet<Type> ConfigureYieldTypes()");
-        generated.Should().Contain("types.Add(typeof(global::TestNamespace.YieldMessage))");
-    }
-
-    [Fact]
     public void ProtocolOnly_MultipleSendsMessageAttributes_GeneratesAllTypes()
     {
         var source = """
@@ -1098,11 +913,6 @@ public class ExecutorRouteGeneratorTests
             public partial class TestExecutor : Executor
             {
                 public TestExecutor() : base("test") { }
-
-                protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-                {
-                    return routeBuilder;
-                }
             }
             """;
 
@@ -1110,10 +920,11 @@ public class ExecutorRouteGeneratorTests
 
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
-        generated.Should().Contain("types.Add(typeof(global::TestNamespace.MessageA))");
-        generated.Should().Contain("types.Add(typeof(global::TestNamespace.MessageB))");
-        generated.Should().Contain("types.Add(typeof(global::TestNamespace.MessageC))");
+        var generated = result.RunResult.GeneratedTrees[0];
+
+        generated.Should().RegisterSentMessageType("global::TestNamespace.MessageA")
+                      .And.RegisterSentMessageType("global::TestNamespace.MessageB")
+                      .And.RegisterSentMessageType("global::TestNamespace.MessageC");
     }
 
     [Fact]
@@ -1133,11 +944,6 @@ public class ExecutorRouteGeneratorTests
             public class TestExecutor : Executor
             {
                 public TestExecutor() : base("test") { }
-
-                protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-                {
-                    return routeBuilder;
-                }
             }
             """;
 
@@ -1193,11 +999,6 @@ public class ExecutorRouteGeneratorTests
                 public partial class TestExecutor : Executor
                 {
                     public TestExecutor() : base("test") { }
-
-                    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-                    {
-                        return routeBuilder;
-                    }
                 }
             }
             """;
@@ -1207,14 +1008,12 @@ public class ExecutorRouteGeneratorTests
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
         result.RunResult.Diagnostics.Should().BeEmpty();
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
+        var generated = result.RunResult.GeneratedTrees[0];
 
         // Verify partial declarations are present
-        generated.Should().Contain("partial class OuterClass");
-        generated.Should().Contain("partial class TestExecutor");
-
+        generated.Should().HaveHierarchy("OuterClass", "TestExecutor")
         // Verify protocol types are generated
-        generated.Should().Contain("types.Add(typeof(global::TestNamespace.BroadcastMessage))");
+                      .And.RegisterSentMessageType("global::TestNamespace.BroadcastMessage");
     }
 
     [Fact]
@@ -1234,11 +1033,6 @@ public class ExecutorRouteGeneratorTests
             public partial class GenericExecutor<T> : Executor where T : class
             {
                 public GenericExecutor() : base("generic") { }
-
-                protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-                {
-                    return routeBuilder;
-                }
             }
             """;
 
@@ -1246,9 +1040,10 @@ public class ExecutorRouteGeneratorTests
 
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
-        generated.Should().Contain("partial class GenericExecutor<T>");
-        generated.Should().Contain("types.Add(typeof(global::TestNamespace.BroadcastMessage))");
+        var generated = result.RunResult.GeneratedTrees[0];
+
+        generated.Should().HaveHierarchy("GenericExecutor<T>")
+                      .And.RegisterSentMessageType("global::TestNamespace.BroadcastMessage");
     }
 
     #endregion
@@ -1278,9 +1073,10 @@ public class ExecutorRouteGeneratorTests
 
         result.RunResult.GeneratedTrees.Should().HaveCount(1);
 
-        var generated = result.RunResult.GeneratedTrees[0].ToString();
-        generated.Should().Contain("partial class GenericExecutor<T>");
-        generated.Should().Contain(".AddHandler<T>(this.HandleMessage)");
+        var generated = result.RunResult.GeneratedTrees[0];
+
+        generated.Should().HaveHierarchy("GenericExecutor<T>")
+                      .And.AddHandler("this.HandleMessage", "T");
     }
 
     #endregion

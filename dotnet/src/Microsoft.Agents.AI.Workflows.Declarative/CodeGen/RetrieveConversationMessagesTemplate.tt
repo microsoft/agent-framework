@@ -12,7 +12,7 @@
 /// <summary>
 /// Retrieves a specific message from an agent conversation.
 /// </summary>
-internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "<#= this.Id #>", session)
+internal sealed class <#= this.Name #>Executor(FormulaSession session, ResponseAgentProvider agentProvider) : ActionExecutor(id: "<#= this.Id #>", session)
 {
     // <inheritdoc />
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)

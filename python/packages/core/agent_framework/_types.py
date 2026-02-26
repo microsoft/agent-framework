@@ -4,18 +4,29 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 import sys
 from asyncio import iscoroutine
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import (
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from copy import deepcopy
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
 from pydantic import BaseModel
 
-from ._logging import get_logger
 from ._serialization import SerializationMixin
-from ._tools import FunctionTool, tool
+from ._tools import ToolTypes
+from ._tools import normalize_tools as _normalize_tools
 from .exceptions import AdditionItemMismatch, ContentError
 
 if sys.version_info >= (3, 13):
@@ -27,41 +38,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-__all__ = [
-    "AgentResponse",
-    "AgentResponseUpdate",
-    "Annotation",
-    "ChatOptions",
-    "ChatResponse",
-    "ChatResponseUpdate",
-    "Content",
-    "ContinuationToken",
-    "FinalT",
-    "FinishReason",
-    "FinishReasonLiteral",
-    "Message",
-    "OuterFinalT",
-    "OuterUpdateT",
-    "ResponseStream",
-    "Role",
-    "RoleLiteral",
-    "TextSpanRegion",
-    "ToolMode",
-    "UpdateT",
-    "UsageDetails",
-    "add_usage_details",
-    "detect_media_type_from_base64",
-    "map_chat_to_agent_update",
-    "merge_chat_options",
-    "normalize_messages",
-    "normalize_tools",
-    "prepend_instructions_to_messages",
-    "validate_chat_options",
-    "validate_tool_mode",
-    "validate_tools",
-]
-
-logger = get_logger("agent_framework")
+logger = logging.getLogger("agent_framework")
 
 
 # region Content Parsing Utilities
@@ -305,7 +282,8 @@ def _serialize_value(value: Any, exclude_none: bool) -> Any:
 
 # region Constants and types
 _T = TypeVar("_T")
-EmbeddingT = TypeVar("EmbeddingT")
+EmbeddingT = TypeVar("EmbeddingT", default="list[float]")
+EmbeddingInputT = TypeVar("EmbeddingInputT", default="str")
 ChatResponseT = TypeVar("ChatResponseT", bound="ChatResponse")
 ToolModeT = TypeVar("ToolModeT", bound="ToolMode")
 AgentResponseT = TypeVar("AgentResponseT", bound="AgentResponse")
@@ -399,6 +377,12 @@ class UsageDetails(TypedDict, total=False):
 
     This is a non-closed dictionary, so any specific provider fields can be added as needed.
     Whenever they can be mapped to standard fields, they will be.
+
+    Keys:
+        input_token_count: The number of input tokens used.
+        output_token_count: The number of output tokens generated.
+        total_token_count: The total number of tokens (input + output).
+
     """
 
     input_token_count: int | None
@@ -564,6 +548,7 @@ class Content:
     def from_text_reasoning(
         cls: type[ContentT],
         *,
+        id: str | None = None,
         text: str | None = None,
         protected_data: str | None = None,
         annotations: Sequence[Annotation] | None = None,
@@ -573,6 +558,7 @@ class Content:
         """Create text reasoning content."""
         return cls(
             "text_reasoning",
+            id=id,
             text=text,
             protected_data=protected_data,
             annotations=annotations,
@@ -1536,47 +1522,11 @@ class Message(SerializationMixin):
         return " ".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
 
 
-def prepare_messages(
-    messages: str | Content | Message | Sequence[str | Content | Message],
-    system_instructions: str | Sequence[str] | None = None,
-) -> list[Message]:
-    """Convert various message input formats into a list of Message objects.
-
-    Args:
-        messages: The input messages in various supported formats. Can be:
-            - A string (converted to a user message)
-            - A Content object (wrapped in a user Message)
-            - A Message object
-            - A sequence containing any mix of the above
-        system_instructions: The system instructions. They will be inserted to the start of the messages list.
-
-    Returns:
-        A list of Message objects.
-    """
-    if system_instructions is not None:
-        if isinstance(system_instructions, str):
-            system_instructions = [system_instructions]
-        system_instruction_messages = [Message("system", [instr]) for instr in system_instructions]
-    else:
-        system_instruction_messages = []
-
-    if isinstance(messages, str):
-        return [*system_instruction_messages, Message("user", [messages])]
-    if isinstance(messages, Content):
-        return [*system_instruction_messages, Message("user", [messages])]
-    if isinstance(messages, Message):
-        return [*system_instruction_messages, messages]
-
-    return_messages: list[Message] = system_instruction_messages
-    for msg in messages:
-        if isinstance(msg, (str, Content)):
-            msg = Message("user", [msg])
-        return_messages.append(msg)
-    return return_messages
+AgentRunInputs = str | Content | Message | Sequence[str | Content | Message]
 
 
 def normalize_messages(
-    messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+    messages: AgentRunInputs | None = None,
 ) -> list[Message]:
     """Normalize message inputs to a list of Message objects.
 
@@ -1791,7 +1741,7 @@ class ContinuationToken(TypedDict):
             # Restore and resume
             token = json.loads(token_json)
             response = await agent.run(
-                thread=thread,
+                session=session,
                 options={"continuation_token": token},
             )
     """
@@ -2323,6 +2273,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: type[ResponseModelBoundT],
+        value: Any | None = None,
     ) -> AgentResponse[ResponseModelBoundT]: ...
 
     @overload
@@ -2332,6 +2283,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: None = None,
+        value: Any | None = None,
     ) -> AgentResponse[Any]: ...
 
     @classmethod
@@ -2340,6 +2292,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: type[BaseModel] | None = None,
+        value: Any | None = None,
     ) -> AgentResponseT:
         """Joins multiple updates into a single AgentResponse.
 
@@ -2348,8 +2301,9 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data.
+            value: Optional pre-parsed structured output value to set directly on the response.
         """
-        msg = cls(messages=[], response_format=output_format_type)
+        msg = cls(messages=[], response_format=output_format_type, value=value)
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -2940,13 +2894,7 @@ class _ChatOptionsBase(TypedDict, total=False):
     presence_penalty: float
 
     # Tool configuration (forward reference to avoid circular import)
-    tools: (
-        FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None
-    )
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None
     tool_choice: ToolMode | Literal["auto", "required", "none"]
     allow_multiple_tool_calls: bool
 
@@ -3033,18 +2981,11 @@ async def validate_chat_options(options: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_tools(
-    tools: (
-        FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None
-    ),
-) -> list[FunctionTool | MutableMapping[str, Any]]:
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+) -> list[ToolTypes]:
     """Normalize tools into a list.
 
-    Converts callables to FunctionTool objects and ensures all tools are either
-    FunctionTool instances or MutableMappings.
+    Converts callables to FunctionTool objects and preserves existing tool objects.
 
     Args:
         tools: Tools to normalize - can be a single tool, callable, or sequence.
@@ -3069,37 +3010,16 @@ def normalize_tools(
             # List of tools
             tools = normalize_tools([my_tool, another_tool])
     """
-    final_tools: list[FunctionTool | MutableMapping[str, Any]] = []
-    if not tools:
-        return final_tools
-    if not isinstance(tools, Sequence) or isinstance(tools, (str, MutableMapping)):
-        # Single tool (not a sequence, or is a mapping which shouldn't be treated as sequence)
-        if not isinstance(tools, (FunctionTool, MutableMapping)):
-            return [tool(tools)]
-        return [tools]
-    for tool_item in tools:
-        if isinstance(tool_item, (FunctionTool, MutableMapping)):
-            final_tools.append(tool_item)
-        else:
-            # Convert callable to FunctionTool
-            final_tools.append(tool(tool_item))
-    return final_tools
+    return _normalize_tools(tools)
 
 
 async def validate_tools(
-    tools: (
-        FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None
-    ),
-) -> list[FunctionTool | MutableMapping[str, Any]]:
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+) -> list[ToolTypes]:
     """Validate and normalize tools into a list.
 
     Converts callables to FunctionTool objects, expands MCP tools to their constituent
-    functions (connecting them if needed), and ensures all tools are either FunctionTool
-    instances or MutableMappings.
+    functions (connecting them if needed), while preserving non-callable tool objects.
 
     Args:
         tools: Tools to validate - can be a single tool, callable, or sequence.
@@ -3128,7 +3048,7 @@ async def validate_tools(
     normalized = normalize_tools(tools)
 
     # Handle MCP tool expansion (async-only)
-    final_tools: list[FunctionTool | MutableMapping[str, Any]] = []
+    final_tools: list[ToolTypes] = []
     for tool_ in normalized:
         # Import MCPTool here to avoid circular imports
         from ._mcp import MCPTool
@@ -3146,20 +3066,21 @@ async def validate_tools(
 
 def validate_tool_mode(
     tool_choice: ToolMode | Literal["auto", "required", "none"] | None,
-) -> ToolMode:
+) -> ToolMode | None:
     """Validate and normalize tool_choice to a ToolMode dict.
 
     Args:
         tool_choice: The tool choice value to validate.
 
     Returns:
-        A ToolMode dict (contains keys: "mode", and optionally "required_function_name").
+        A ToolMode dict (contains keys: "mode", and optionally
+        "required_function_name"), or ``None`` when not provided.
 
     Raises:
         ContentError: If the tool_choice string is invalid.
     """
-    if not tool_choice:
-        return {"mode": "none"}
+    if tool_choice is None:
+        return None
     if isinstance(tool_choice, str):
         if tool_choice not in ("auto", "required", "none"):
             raise ContentError(f"Invalid tool choice: {tool_choice}")
@@ -3258,3 +3179,129 @@ def merge_chat_options(
             result[key] = value
 
     return result
+
+
+# region Embedding Types
+
+
+class EmbeddingGenerationOptions(TypedDict, total=False):
+    """Common request settings for embedding generation.
+
+    All fields are optional (total=False) to allow partial specification.
+    Provider-specific TypedDicts extend this with additional options.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import EmbeddingGenerationOptions
+
+            options: EmbeddingGenerationOptions = {
+                "model_id": "text-embedding-3-small",
+                "dimensions": 1536,
+            }
+    """
+
+    model_id: str
+    dimensions: int
+
+
+class Embedding(Generic[EmbeddingT]):
+    """A single embedding vector with metadata.
+
+    Generic over the embedding vector type, e.g. ``Embedding[list[float]]``,
+    ``Embedding[list[int]]``, or ``Embedding[bytes]``.
+
+    Args:
+        vector: The embedding vector data.
+        model_id: The model used to generate this embedding.
+        dimensions: Explicit dimension count (computed from vector length if omitted).
+        created_at: Timestamp of when the embedding was generated.
+        additional_properties: Additional metadata.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Embedding
+
+            embedding = Embedding(
+                vector=[0.1, 0.2, 0.3],
+                model_id="text-embedding-3-small",
+            )
+            assert embedding.dimensions == 3
+    """
+
+    def __init__(
+        self,
+        vector: EmbeddingT,
+        *,
+        model_id: str | None = None,
+        dimensions: int | None = None,
+        created_at: datetime | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ) -> None:
+        self.vector = vector
+        self._dimensions = dimensions
+        self.model_id = model_id
+        self.created_at = created_at
+        self.additional_properties = additional_properties or {}
+
+    @property
+    def dimensions(self) -> int | None:
+        """Return the number of dimensions in the embedding vector.
+
+        Uses the explicitly provided value if set, otherwise computes from vector length.
+        """
+        if self._dimensions is not None:
+            return self._dimensions
+        if isinstance(self.vector, (list, tuple, bytes)):
+            return len(self.vector)
+        return None
+
+
+EmbeddingOptionsT = TypeVar(
+    "EmbeddingOptionsT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="EmbeddingGenerationOptions",
+)
+
+
+class GeneratedEmbeddings(list[Embedding[EmbeddingT]], Generic[EmbeddingT, EmbeddingOptionsT]):
+    """A list of generated embeddings with usage metadata.
+
+    Extends list for direct iteration and indexing.
+    Generic over both the embedding vector type and the options type used for generation.
+
+    Args:
+        embeddings: Sequence of Embedding objects.
+        options: The options used to generate these embeddings.
+        usage: Token usage information (e.g. prompt_tokens, total_tokens).
+        additional_properties: Additional metadata.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Embedding, GeneratedEmbeddings
+
+            embeddings = GeneratedEmbeddings(
+                [Embedding(vector=[0.1, 0.2]), Embedding(vector=[0.3, 0.4])],
+                usage={"prompt_tokens": 10, "total_tokens": 10},
+            )
+            assert len(embeddings) == 2
+            assert embeddings.usage["prompt_tokens"] == 10
+    """
+
+    def __init__(
+        self,
+        embeddings: Iterable[Embedding[EmbeddingT]] | None = None,
+        *,
+        options: EmbeddingOptionsT | None = None,
+        usage: UsageDetails | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(embeddings or [])
+        self.options = options
+        self.usage = usage
+        self.additional_properties = additional_properties or {}
+
+
+# endregion

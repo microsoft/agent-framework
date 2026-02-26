@@ -12,7 +12,7 @@ from agent_framework import (
     WorkflowRunState,
 )
 from agent_framework._workflows._checkpoint_encoding import (
-    _PICKLE_MARKER,
+    _PICKLE_MARKER,  # type: ignore
     encode_checkpoint_value,
 )
 from agent_framework._workflows._events import WorkflowEvent

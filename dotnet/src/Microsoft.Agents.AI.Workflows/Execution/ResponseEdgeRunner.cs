@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Shared.Diagnostics;
@@ -21,7 +22,7 @@ internal sealed class ResponseEdgeRunner(IRunnerContext runContext, string execu
 
     public string ExecutorId => executorId;
 
-    protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer)
+    protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer, CancellationToken cancellationToken)
     {
         Debug.Assert(envelope.IsExternal, "Input edges should only be chased from external input");
 
@@ -34,7 +35,10 @@ internal sealed class ResponseEdgeRunner(IRunnerContext runContext, string execu
         try
         {
             Executor target = await this.FindExecutorAsync(stepTracer).ConfigureAwait(false);
-            if (target.CanHandle(envelope.MessageType))
+
+            Type? runtimeType = await this.GetMessageRuntimeTypeAsync(envelope, stepTracer, cancellationToken).ConfigureAwait(false);
+
+            if (CanHandle(target, runtimeType))
             {
                 activity?.SetEdgeRunnerDeliveryStatus(EdgeRunnerDeliveryStatus.Delivered);
                 return new DeliveryMapping(envelope, target);

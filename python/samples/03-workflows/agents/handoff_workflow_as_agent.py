@@ -15,6 +15,10 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """Sample: Handoff Workflow as Agent with Human-in-the-Loop.
 
@@ -40,7 +44,7 @@ Key Concepts:
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
 # See:
 # samples/02-agents/tools/function_tool_with_approval.py
-# samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def process_refund(order_number: Annotated[str, "Order number to process refund for"]) -> str:
     """Simulated function to process a refund for a given order number."""

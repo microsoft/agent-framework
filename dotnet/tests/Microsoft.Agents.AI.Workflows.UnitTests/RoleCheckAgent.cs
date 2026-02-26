@@ -46,5 +46,5 @@ internal sealed class RoleCheckAgent(bool allowOtherAssistantRoles, string? id =
         };
     }
 
-    private sealed class RoleCheckAgentSession : InMemoryAgentSession;
+    private sealed class RoleCheckAgentSession : AgentSession;
 }

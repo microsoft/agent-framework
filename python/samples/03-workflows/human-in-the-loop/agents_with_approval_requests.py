@@ -18,7 +18,11 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from typing_extensions import Never
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Agents in a workflow with AI functions requiring approval
@@ -57,7 +61,7 @@ Prerequisites:
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
 # See:
 # samples/02-agents/tools/function_tool_with_approval.py
-# samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_current_date() -> str:
     """Get the current date in YYYY-MM-DD format."""
@@ -196,12 +200,7 @@ class EmailPreprocessor(Executor):
     @handler
     async def preprocess(self, email: Email, ctx: WorkflowContext[str]) -> None:
         """Preprocess the incoming email."""
-        email_payload = (
-            f"Incoming email:\n"
-            f"From: {email.sender}\n"
-            f"Subject: {email.subject}\n"
-            f"Body: {email.body}"
-        )
+        email_payload = f"Incoming email:\nFrom: {email.sender}\nSubject: {email.subject}\nBody: {email.body}"
         message = email_payload
         if email.sender in self.special_email_addresses:
             note = (

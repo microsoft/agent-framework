@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
@@ -26,11 +27,10 @@ from agent_framework import (
     Message,
     ResponseStream,
     UsageDetails,
-    get_logger,
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidResponseError
+from agent_framework.exceptions import ChatClientInvalidResponseException
 from agent_framework.observability import ChatTelemetryLayer
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
@@ -50,7 +50,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-logger = get_logger("agent_framework.bedrock")
+logger = logging.getLogger("agent_framework.bedrock")
 
 
 __all__ = [
@@ -260,7 +260,7 @@ class BedrockChatClient(
         Examples:
             .. code-block:: python
 
-                from agent_framework.bedrock import BedrockChatClient
+                from agent_framework.amazon import BedrockChatClient
 
                 # Basic usage with default credentials
                 client = BedrockChatClient(model_id="<model name>")
@@ -362,13 +362,13 @@ class BedrockChatClient(
     ) -> dict[str, Any]:
         model_id = options.get("model_id") or self.model_id
         if not model_id:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Bedrock model_id is required. Set via chat options or BEDROCK_CHAT_MODEL_ID environment variable."
             )
 
         system_prompts, conversation = self._prepare_bedrock_messages(messages)
         if not conversation:
-            raise ServiceInitializationError("At least one non-system message is required for Bedrock requests.")
+            raise ValueError("At least one non-system message is required for Bedrock requests.")
         # Prepend instructions from options if they exist
         if instructions := options.get("instructions"):
             system_prompts = [{"text": instructions}, *system_prompts]
@@ -400,7 +400,7 @@ class BedrockChatClient(
                     else:
                         tool_config["toolChoice"] = {"any": {}}
                 case _:
-                    raise ServiceInitializationError(f"Unsupported tool mode for Bedrock: {tool_mode.get('mode')}")
+                    raise ValueError(f"Unsupported tool mode for Bedrock: {tool_mode.get('mode')}")
         if tool_config:
             run_options["toolConfig"] = tool_config
 
@@ -629,7 +629,9 @@ class BedrockChatClient(
             if isinstance(tool_use, MutableMapping):
                 tool_name = tool_use.get("name")
                 if not tool_name:
-                    raise ServiceInvalidResponseError("Bedrock response missing required tool name in toolUse block.")
+                    raise ChatClientInvalidResponseException(
+                        "Bedrock response missing required tool name in toolUse block."
+                    )
                 contents.append(
                     Content.from_function_call(
                         call_id=tool_use.get("toolUseId") or self._generate_tool_call_id(),

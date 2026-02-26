@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import (
@@ -9,7 +10,6 @@ from collections.abc import (
     Awaitable,
     Callable,
     Mapping,
-    MutableMapping,
     Sequence,
 )
 from typing import (
@@ -27,20 +27,20 @@ from typing import (
 
 from pydantic import BaseModel
 
-from ._logging import get_logger
-from ._memory import ContextProvider
 from ._serialization import SerializationMixin
-from ._threads import ChatMessageStoreProtocol
 from ._tools import (
     FunctionInvocationConfiguration,
-    FunctionTool,
+    ToolTypes,
 )
 from ._types import (
     ChatResponse,
     ChatResponseUpdate,
+    EmbeddingGenerationOptions,
+    EmbeddingInputT,
+    EmbeddingT,
+    GeneratedEmbeddings,
     Message,
     ResponseStream,
-    prepare_messages,
     validate_chat_options,
 )
 
@@ -60,20 +60,9 @@ if TYPE_CHECKING:
 
 InputT = TypeVar("InputT", contravariant=True)
 
-EmbeddingT = TypeVar("EmbeddingT")
 BaseChatClientT = TypeVar("BaseChatClientT", bound="BaseChatClient")
 
-logger = get_logger()
-
-__all__ = [
-    "BaseChatClient",
-    "SupportsChatGetResponse",
-    "SupportsCodeInterpreterTool",
-    "SupportsFileSearchTool",
-    "SupportsImageGenerationTool",
-    "SupportsMCPTool",
-    "SupportsWebSearchTool",
-]
+logger = logging.getLogger("agent_framework")
 
 
 # region SupportsChatGetResponse Protocol
@@ -141,7 +130,7 @@ class SupportsChatGetResponse(Protocol[OptionsContraT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -151,7 +140,7 @@ class SupportsChatGetResponse(Protocol[OptionsContraT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsContraT | ChatOptions[None] | None = None,
@@ -161,7 +150,7 @@ class SupportsChatGetResponse(Protocol[OptionsContraT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsContraT | ChatOptions[Any] | None = None,
@@ -170,7 +159,7 @@ class SupportsChatGetResponse(Protocol[OptionsContraT]):
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsContraT | ChatOptions[Any] | None = None,
@@ -256,15 +245,23 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             client = CustomChatClient()
 
             # Use the client to get responses
-            response = await client.get_response("Hello, how are you?")
+            response = await client.get_response([Message(role="user", text="Hello, how are you?")])
             # Or stream responses
-            async for update in client.get_response("Hello!", stream=True):
+            async for update in client.get_response([Message(role="user", text="Hello!")], stream=True):
                 print(update)
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "unknown"
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
-    # This is used for OTel setup, should be overridden in subclasses
+    STORES_BY_DEFAULT: ClassVar[bool] = False
+    """Whether this client stores conversation history server-side by default.
+
+    Clients that use server-side storage (e.g., OpenAI Responses API with ``store=True``
+    as default, Azure AI Agent sessions) should override this to ``True``.
+    When ``True``, the agent skips auto-injecting ``InMemoryHistoryProvider`` unless the
+    user explicitly sets ``store=False``.
+    """
+    # OTEL_PROVIDER_NAME is used for OTel setup, should be overridden in subclasses
 
     def __init__(
         self,
@@ -370,7 +367,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
@@ -380,7 +377,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
@@ -390,7 +387,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     @overload
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -399,7 +396,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
 
     def get_response(
         self,
-        messages: str | Message | Sequence[str | Message],
+        messages: Sequence[Message],
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
@@ -416,9 +413,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         Returns:
             When streaming a response stream of ChatResponseUpdates, otherwise an Awaitable ChatResponse.
         """
-        prepared_messages = prepare_messages(messages)
         return self._inner_get_response(
-            messages=prepared_messages,
+            messages=messages,
             stream=stream,
             options=options or {},  # type: ignore[arg-type]
             **kwargs,
@@ -442,14 +438,9 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         name: str | None = None,
         description: str | None = None,
         instructions: str | None = None,
-        tools: FunctionTool
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[FunctionTool | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | Mapping[str, Any] | None = None,
-        chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        context_provider: ContextProvider | None = None,
+        context_providers: Sequence[Any] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
@@ -471,9 +462,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 including temperature, max_tokens, model_id, tool_choice, and more.
                 Note: response_format typing does not flow into run outputs when set via default_options,
                 and dict literals are accepted without specialized option typing.
-            chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
-                If not provided, the default in-memory store will be used.
-            context_provider: Context providers to include during agent invocation.
+            context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
             function_invocation_configuration: Optional function invocation configuration override.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
@@ -509,8 +498,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             instructions=instructions,
             tools=tools,
             default_options=cast(Any, default_options),
-            chat_message_store_factory=chat_message_store_factory,
-            context_provider=context_provider,
+            context_providers=context_providers,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
             **kwargs,
@@ -670,6 +658,139 @@ class SupportsFileSearchTool(Protocol):
 
         Returns:
             A tool configuration ready to pass to ChatAgent.
+        """
+        ...
+
+
+# endregion
+
+
+# region SupportsGetEmbeddings Protocol
+
+# Contravariant TypeVars for the Protocol
+EmbeddingInputContraT = TypeVar(
+    "EmbeddingInputContraT",
+    default="str",
+    contravariant=True,
+)
+EmbeddingOptionsContraT = TypeVar(
+    "EmbeddingOptionsContraT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="EmbeddingGenerationOptions",
+    contravariant=True,
+)
+
+
+@runtime_checkable
+class SupportsGetEmbeddings(Protocol[EmbeddingInputContraT, EmbeddingT, EmbeddingOptionsContraT]):
+    """Protocol for an embedding client that can generate embeddings.
+
+    This protocol enables duck-typing for embedding generation. Any class that
+    implements ``get_embeddings`` with a compatible signature satisfies this protocol.
+
+    Generic over the input type (defaults to ``str``), output embedding type
+    (defaults to ``list[float]``), and options type.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import SupportsGetEmbeddings
+
+
+            async def use_embeddings(client: SupportsGetEmbeddings) -> None:
+                result = await client.get_embeddings(["Hello, world!"])
+                for embedding in result:
+                    print(embedding.vector)
+    """
+
+    additional_properties: dict[str, Any]
+
+    def get_embeddings(
+        self,
+        values: Sequence[EmbeddingInputContraT],
+        *,
+        options: EmbeddingOptionsContraT | None = None,
+    ) -> Awaitable[GeneratedEmbeddings[EmbeddingT]]:
+        """Generate embeddings for the given values.
+
+        Args:
+            values: The values to generate embeddings for.
+            options: Optional embedding generation options.
+
+        Returns:
+            Generated embeddings with metadata.
+        """
+        ...
+
+
+# endregion
+
+
+# region BaseEmbeddingClient
+
+# Covariant for the BaseEmbeddingClient
+EmbeddingOptionsT = TypeVar(
+    "EmbeddingOptionsT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="EmbeddingGenerationOptions",
+    covariant=True,
+)
+
+
+class BaseEmbeddingClient(SerializationMixin, ABC, Generic[EmbeddingInputT, EmbeddingT, EmbeddingOptionsT]):
+    """Abstract base class for embedding clients.
+
+    Subclasses implement ``get_embeddings`` to provide the actual
+    embedding generation logic.
+
+    Generic over the input type (defaults to ``str``), output embedding type
+    (defaults to ``list[float]``), and options type.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import BaseEmbeddingClient, Embedding, GeneratedEmbeddings
+            from collections.abc import Sequence
+
+
+            class CustomEmbeddingClient(BaseEmbeddingClient):
+                async def get_embeddings(self, values, *, options=None):
+                    return GeneratedEmbeddings([Embedding(vector=[0.1, 0.2, 0.3]) for _ in values])
+    """
+
+    OTEL_PROVIDER_NAME: ClassVar[str] = "unknown"
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
+
+    def __init__(
+        self,
+        *,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize a BaseEmbeddingClient instance.
+
+        Args:
+            additional_properties: Additional properties to pass to the client.
+            **kwargs: Additional keyword arguments passed to parent classes (for MRO).
+        """
+        self.additional_properties = additional_properties or {}
+        super().__init__(**kwargs)
+
+    @abstractmethod
+    async def get_embeddings(
+        self,
+        values: Sequence[EmbeddingInputT],
+        *,
+        options: EmbeddingOptionsT | None = None,
+    ) -> GeneratedEmbeddings[EmbeddingT]:
+        """Generate embeddings for the given values.
+
+        Args:
+            values: The values to generate embeddings for.
+            options: Optional embedding generation options.
+
+        Returns:
+            Generated embeddings with metadata.
         """
         ...
 

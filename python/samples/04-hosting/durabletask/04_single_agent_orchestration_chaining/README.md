@@ -6,7 +6,7 @@ This sample demonstrates how to chain multiple invocations of the same agent usi
 
 - Using durable orchestrations to coordinate sequential agent invocations.
 - Chaining agent calls where the output of one run becomes input to the next.
-- Maintaining conversation context across sequential runs using a shared thread.
+- Maintaining conversation context across sequential runs using a shared session.
 - Using `DurableAIAgentOrchestrationContext` to access agents within orchestrations.
 
 ## Environment Setup
@@ -42,7 +42,7 @@ The orchestration will execute the writer agent twice sequentially:
 
 ```
 [Orchestration] Starting single agent chaining...
-[Orchestration] Created thread: abc-123
+[Orchestration] Created session: abc-123
 [Orchestration] First agent run: Generating initial sentence...
 [Orchestration] Initial response: Every small step forward is progress toward mastery.
 [Orchestration] Second agent run: Refining the sentence...
@@ -62,7 +62,7 @@ You can view the state of the orchestration in the Durable Task Scheduler dashbo
 1. Open your browser and navigate to `http://localhost:8082`
 2. In the dashboard, you can view:
    - The sequential execution of both agent runs
-   - The conversation thread shared between runs
+   - The conversation session shared between runs
    - Input and output at each step
    - Overall orchestration state and history
 

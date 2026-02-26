@@ -65,7 +65,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
     public void ConfigureTelemetry_DefaultIsNull()
     {
         // Arrange
-        Mock<WorkflowAgentProvider> mockProvider = CreateMockProvider();
+        Mock<ResponseAgentProvider> mockProvider = CreateMockProvider();
 
         // Act
         DeclarativeWorkflowOptions options = new(mockProvider.Object);
@@ -78,7 +78,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
     public void ConfigureTelemetry_CanBeSet()
     {
         // Arrange
-        Mock<WorkflowAgentProvider> mockProvider = CreateMockProvider();
+        Mock<ResponseAgentProvider> mockProvider = CreateMockProvider();
         bool callbackInvoked = false;
 
         // Act
@@ -103,7 +103,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
     public void TelemetryActivitySource_DefaultIsNull()
     {
         // Arrange
-        Mock<WorkflowAgentProvider> mockProvider = CreateMockProvider();
+        Mock<ResponseAgentProvider> mockProvider = CreateMockProvider();
 
         // Act
         DeclarativeWorkflowOptions options = new(mockProvider.Object);
@@ -116,7 +116,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
     public void TelemetryActivitySource_CanBeSet()
     {
         // Arrange
-        Mock<WorkflowAgentProvider> mockProvider = CreateMockProvider();
+        Mock<ResponseAgentProvider> mockProvider = CreateMockProvider();
 
         // Act
         DeclarativeWorkflowOptions options = new(mockProvider.Object)
@@ -133,7 +133,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
     {
         // Arrange
         using Activity testActivity = new Activity("DefaultTelemetryTest").Start()!;
-        Mock<WorkflowAgentProvider> mockProvider = CreateMockProvider();
+        Mock<ResponseAgentProvider> mockProvider = CreateMockProvider();
         DeclarativeWorkflowOptions options = new(mockProvider.Object)
         {
             ConfigureTelemetry = _ => { },
@@ -161,7 +161,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
     {
         // Arrange
         using Activity testActivity = new Activity("TelemetryActivitySourceTest").Start()!;
-        Mock<WorkflowAgentProvider> mockProvider = CreateMockProvider();
+        Mock<ResponseAgentProvider> mockProvider = CreateMockProvider();
         DeclarativeWorkflowOptions options = new(mockProvider.Object)
         {
             TelemetryActivitySource = this._activitySource,
@@ -188,7 +188,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
     {
         // Arrange
         using Activity testActivity = new Activity("ConfigureTelemetryTest").Start()!;
-        Mock<WorkflowAgentProvider> mockProvider = CreateMockProvider();
+        Mock<ResponseAgentProvider> mockProvider = CreateMockProvider();
         bool configureInvoked = false;
         DeclarativeWorkflowOptions options = new(mockProvider.Object)
         {
@@ -223,7 +223,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
     {
         // Arrange
         using Activity testActivity = new Activity("NoTelemetryTest").Start()!;
-        Mock<WorkflowAgentProvider> mockProvider = CreateMockProvider();
+        Mock<ResponseAgentProvider> mockProvider = CreateMockProvider();
         DeclarativeWorkflowOptions options = new(mockProvider.Object)
         {
             LoggerFactory = NullLoggerFactory.Instance
@@ -245,9 +245,9 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
         Assert.Empty(capturedActivities);
     }
 
-    private static Mock<WorkflowAgentProvider> CreateMockProvider()
+    private static Mock<ResponseAgentProvider> CreateMockProvider()
     {
-        Mock<WorkflowAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
+        Mock<ResponseAgentProvider> mockAgentProvider = new(MockBehavior.Strict);
         mockAgentProvider
             .Setup(provider => provider.CreateConversationAsync(It.IsAny<CancellationToken>()))
             .Returns(() => Task.FromResult(Guid.NewGuid().ToString("N")));

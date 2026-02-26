@@ -5,6 +5,10 @@ from typing import Annotated, Any
 import anyio
 from agent_framework import tool
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 This sample demonstrates how to expose an Agent as an MCP server.
@@ -17,7 +21,7 @@ with the following configuration:
         "agent-framework": {
             "command": "uv",
             "args": [
-                "--directory=<path to project>/agent-framework/python/samples/getting_started/mcp",
+                "--directory=<path to project>/agent-framework/python/samples/02-agents/mcp",
                 "run",
                 "agent_as_mcp_server.py"
             ],
@@ -32,7 +36,7 @@ with the following configuration:
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_specials() -> Annotated[str, "Returns the specials from the menu."]:
     return """

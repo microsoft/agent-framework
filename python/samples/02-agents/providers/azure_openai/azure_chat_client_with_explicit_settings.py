@@ -8,7 +8,11 @@ from typing import Annotated
 from agent_framework import tool
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Azure OpenAI Chat Client with Explicit Settings Example
@@ -20,7 +24,7 @@ settings rather than relying on environment variable defaults.
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
 # see samples/02-agents/tools/function_tool_with_approval.py
-# and samples/02-agents/tools/function_tool_with_approval_and_threads.py.
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

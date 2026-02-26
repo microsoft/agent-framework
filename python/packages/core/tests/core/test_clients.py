@@ -21,13 +21,13 @@ def test_chat_client_type(client: SupportsChatGetResponse):
 
 
 async def test_chat_client_get_response(client: SupportsChatGetResponse):
-    response = await client.get_response(Message(role="user", text="Hello"))
+    response = await client.get_response([Message(role="user", text="Hello")])
     assert response.text == "test response"
     assert response.messages[0].role == "assistant"
 
 
 async def test_chat_client_get_response_streaming(client: SupportsChatGetResponse):
-    async for update in client.get_response(Message(role="user", text="Hello"), stream=True):
+    async for update in client.get_response([Message(role="user", text="Hello")], stream=True):
         assert update.text == "test streaming response " or update.text == "another update"
         assert update.role == "assistant"
 
@@ -38,13 +38,13 @@ def test_base_client(chat_client_base: SupportsChatGetResponse):
 
 
 async def test_base_client_get_response(chat_client_base: SupportsChatGetResponse):
-    response = await chat_client_base.get_response(Message(role="user", text="Hello"))
+    response = await chat_client_base.get_response([Message(role="user", text="Hello")])
     assert response.messages[0].role == "assistant"
     assert response.messages[0].text == "test response - Hello"
 
 
 async def test_base_client_get_response_streaming(chat_client_base: SupportsChatGetResponse):
-    async for update in chat_client_base.get_response(Message(role="user", text="Hello"), stream=True):
+    async for update in chat_client_base.get_response([Message(role="user", text="Hello")], stream=True):
         assert update.text == "update - Hello" or update.text == "another update"
 
 
@@ -59,7 +59,9 @@ async def test_chat_client_instructions_handling(chat_client_base: SupportsChatG
         "_inner_get_response",
         side_effect=fake_inner_get_response,
     ) as mock_inner_get_response:
-        await chat_client_base.get_response("hello", options={"instructions": instructions})
+        await chat_client_base.get_response(
+            [Message(role="user", text="hello")], options={"instructions": instructions}
+        )
         mock_inner_get_response.assert_called_once()
         _, kwargs = mock_inner_get_response.call_args
         messages = kwargs.get("messages", [])

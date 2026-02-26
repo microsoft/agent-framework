@@ -36,6 +36,7 @@ from .._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
+    normalize_tools,
 )
 from .._types import (
     ChatOptions,
@@ -46,7 +47,6 @@ from .._types import (
     ResponseStream,
     UsageDetails,
 )
-from ..exceptions import ServiceInitializationError
 from ..observability import ChatTelemetryLayer
 from ._shared import OpenAIConfigMixin, OpenAISettings
 
@@ -67,12 +67,6 @@ else:
 
 if TYPE_CHECKING:
     from .._middleware import MiddlewareTypes
-
-__all__ = [
-    "AssistantToolResources",
-    "OpenAIAssistantsClient",
-    "OpenAIAssistantsOptions",
-]
 
 
 # region OpenAI Assistants Options TypedDict
@@ -355,11 +349,11 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         )
 
         if not async_client and not openai_settings["api_key"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
         if not openai_settings["chat_model_id"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
@@ -457,7 +451,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         # If no assistant is provided, create a temporary assistant
         if self.assistant_id is None:
             if not self.model_id:
-                raise ServiceInitializationError("Parameter 'model_id' is required for assistant creation.")
+                raise ValueError("Parameter 'model_id' is required for assistant creation.")
 
             client = await self._ensure_client()
             created_assistant = await client.beta.assistants.create(
@@ -675,6 +669,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         tool_choice = options.get("tool_choice")
         tools = options.get("tools")
         response_format = options.get("response_format")
+        tool_resources = options.get("tool_resources")
 
         if max_tokens is not None:
             run_options["max_completion_tokens"] = max_tokens
@@ -688,30 +683,33 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         if allow_multiple_tool_calls is not None:
             run_options["parallel_tool_calls"] = allow_multiple_tool_calls
 
+        if tool_resources is not None:
+            run_options["tool_resources"] = tool_resources
+
         tool_mode = validate_tool_mode(tool_choice)
         tool_definitions: list[MutableMapping[str, Any]] = []
         # Always include tools if provided, regardless of tool_choice
         # tool_choice="none" means the model won't call tools, but tools should still be available
-        if tools is not None:
-            for tool in tools:
-                if isinstance(tool, FunctionTool):
-                    tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
-                elif isinstance(tool, MutableMapping):
-                    # Pass through dict-based tools directly (from static factory methods)
-                    tool_definitions.append(tool)
+        for tool in normalize_tools(tools):
+            if isinstance(tool, FunctionTool):
+                tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
+            elif isinstance(tool, MutableMapping):
+                # Pass through dict-based tools directly (from static factory methods)
+                tool_definitions.append(tool)
 
         if len(tool_definitions) > 0:
             run_options["tools"] = tool_definitions
 
-        if (mode := tool_mode["mode"]) == "required" and (
-            func_name := tool_mode.get("required_function_name")
-        ) is not None:
-            run_options["tool_choice"] = {
-                "type": "function",
-                "function": {"name": func_name},
-            }
-        else:
-            run_options["tool_choice"] = mode
+        if tool_mode is not None:
+            if (mode := tool_mode["mode"]) == "required" and (
+                func_name := tool_mode.get("required_function_name")
+            ) is not None:
+                run_options["tool_choice"] = {
+                    "type": "function",
+                    "function": {"name": func_name},
+                }
+            else:
+                run_options["tool_choice"] = mode
 
         if response_format is not None:
             if isinstance(response_format, dict):

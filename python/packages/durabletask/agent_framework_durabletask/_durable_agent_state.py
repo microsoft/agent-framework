@@ -30,6 +30,7 @@ All classes support bidirectional conversion between:
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import MutableMapping
 from datetime import datetime, timezone
 from enum import Enum
@@ -40,14 +41,13 @@ from agent_framework import (
     Content,
     Message,
     UsageDetails,
-    get_logger,
 )
 from dateutil import parser as date_parser
 
 from ._constants import ContentTypes, DurableStateFields
 from ._models import RunRequest, serialize_response_format
 
-logger = get_logger("agent_framework.durabletask.durable_agent_state")
+logger = logging.getLogger("agent_framework.durabletask")
 
 
 class DurableAgentStateEntryJsonType(str, Enum):

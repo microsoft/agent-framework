@@ -9,7 +9,7 @@ from agent_framework import (
     AgentExecutor,
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     Executor,
     Message,
@@ -21,7 +21,7 @@ from agent_framework import (
 
 
 class DummyAgent(BaseAgent):
-    def run(self, messages=None, *, stream: bool = False, thread: AgentThread | None = None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session: AgentSession | None = None, **kwargs):  # type: ignore[override]
         if stream:
             return self._run_stream_impl()
         return self._run_impl(messages)

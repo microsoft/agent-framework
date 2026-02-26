@@ -8,6 +8,10 @@ from typing import Any
 from agent_framework.azure import AzureAIAgentsProvider
 from azure.ai.agents.models import OpenApiAnonymousAuthDetails, OpenApiTool
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 The following sample demonstrates how to create a simple, Azure AI agent that
@@ -23,7 +27,7 @@ USER_INPUTS = [
 
 def load_openapi_specs() -> tuple[dict[str, Any], dict[str, Any]]:
     """Load OpenAPI specification files."""
-    resources_path = Path(__file__).parents[2] / "shared" / "resources"
+    resources_path = Path(__file__).parents[3] / "shared" / "resources"
 
     with open(resources_path / "weather.json") as weather_file:
         weather_spec = json.load(weather_file)
@@ -76,16 +80,16 @@ async def main() -> None:
             tools=[*openapi_countries.definitions, *openapi_weather.definitions],
         )
 
-        # 5. Simulate conversation with the agent maintaining thread context
+        # 5. Simulate conversation with the agent maintaining session context
         print("=== Azure AI Agent with OpenAPI Tools ===\n")
 
-        # Create a thread to maintain conversation context across multiple runs
-        thread = agent.get_new_thread()
+        # Create a session to maintain conversation context across multiple runs
+        session = agent.create_session()
 
         for user_input in USER_INPUTS:
             print(f"User: {user_input}")
-            # Pass the thread to maintain context across multiple agent.run() calls
-            response = await agent.run(user_input, thread=thread)
+            # Pass the session to maintain context across multiple agent.run() calls
+            response = await agent.run(user_input, session=session)
             print(f"Agent: {response.text}\n")
 
 

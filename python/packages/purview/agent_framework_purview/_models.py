@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, MutableMapping, Sequence
 from datetime import datetime
 from enum import Enum, Flag, auto
 from typing import Any, ClassVar, TypeVar, cast
 from uuid import uuid4
 
-from agent_framework._logging import get_logger
 from agent_framework._serialization import SerializationMixin
 
-logger = get_logger("agent_framework.purview")
+logger = logging.getLogger("agent_framework.purview")
 
 # --------------------------------------------------------------------------------------
 # Enums & flag helpers

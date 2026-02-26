@@ -36,11 +36,11 @@ Once comfortable with these, explore the rest of the samples below.
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | Azure Chat Agents (Streaming)          | [agents/azure_chat_agents_streaming.py](./agents/azure_chat_agents_streaming.py)                               | Add Azure Chat agents as edges and handle streaming events                                           |
 | Azure AI Agents (Streaming)            | [agents/azure_ai_agents_streaming.py](./agents/azure_ai_agents_streaming.py)                                   | Add Azure AI agents as edges and handle streaming events                                             |
-| Azure AI Agents (Shared Thread)        | [agents/azure_ai_agents_with_shared_thread.py](./agents/azure_ai_agents_with_shared_thread.py)                 | Share a common message thread between multiple Azure AI agents in a workflow                         |
+| Azure AI Agents (Shared Thread)        | [agents/azure_ai_agents_with_shared_session.py](./agents/azure_ai_agents_with_shared_session.py)                 | Share a common message session between multiple Azure AI agents in a workflow                        |
 | Custom Agent Executors                 | [agents/custom_agent_executors.py](./agents/custom_agent_executors.py)                                         | Create executors to handle agent run methods                                                         |
 | Workflow as Agent (Reflection Pattern) | [agents/workflow_as_agent_reflection_pattern.py](./agents/workflow_as_agent_reflection_pattern.py)             | Wrap a workflow so it can behave like an agent (reflection pattern)                                  |
 | Workflow as Agent + HITL               | [agents/workflow_as_agent_human_in_the_loop.py](./agents/workflow_as_agent_human_in_the_loop.py)               | Extend workflow-as-agent with human-in-the-loop capability                                           |
-| Workflow as Agent with Thread          | [agents/workflow_as_agent_with_thread.py](./agents/workflow_as_agent_with_thread.py)                           | Use AgentThread to maintain conversation history across workflow-as-agent invocations                |
+| Workflow as Agent with Session         | [agents/workflow_as_agent_with_session.py](./agents/workflow_as_agent_with_session.py)                           | Use AgentSession to maintain conversation history across workflow-as-agent invocations                |
 | Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @ai_function tools |
 
 ### checkpoint
@@ -127,16 +127,18 @@ Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magen
 
 YAML-based declarative workflows allow you to define multi-agent orchestration patterns without writing Python code. See the [declarative workflows README](./declarative/README.md) for more details on YAML workflow syntax and available actions.
 
-| Sample               | File                                                                     | Concepts                                                      |
-| -------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| Conditional Workflow | [declarative/conditional_workflow/](./declarative/conditional_workflow/) | Nested conditional branching based on user input              |
-| Customer Support     | [declarative/customer_support/](./declarative/customer_support/)         | Multi-agent customer support with routing                     |
-| Deep Research        | [declarative/deep_research/](./declarative/deep_research/)               | Research workflow with planning, searching, and synthesis     |
-| Function Tools       | [declarative/function_tools/](./declarative/function_tools/)             | Invoking Python functions from declarative workflows          |
-| Human-in-Loop        | [declarative/human_in_loop/](./declarative/human_in_loop/)               | Interactive workflows that request user input                 |
-| Marketing            | [declarative/marketing/](./declarative/marketing/)                       | Marketing content generation workflow                         |
-| Simple Workflow      | [declarative/simple_workflow/](./declarative/simple_workflow/)           | Basic workflow with variable setting, conditionals, and loops |
-| Student Teacher      | [declarative/student_teacher/](./declarative/student_teacher/)           | Student-teacher interaction pattern                           |
+| Sample | File | Concepts |
+|---|---|---|
+| Agent to Function Tool | [declarative/agent_to_function_tool/](./declarative/agent_to_function_tool/) | Chain agent output to InvokeFunctionTool actions |
+| Conditional Workflow | [declarative/conditional_workflow/](./declarative/conditional_workflow/) | Nested conditional branching based on user input |
+| Customer Support | [declarative/customer_support/](./declarative/customer_support/) | Multi-agent customer support with routing |
+| Deep Research | [declarative/deep_research/](./declarative/deep_research/) | Research workflow with planning, searching, and synthesis |
+| Function Tools | [declarative/function_tools/](./declarative/function_tools/) | Invoking Python functions from declarative workflows |
+| Human-in-Loop | [declarative/human_in_loop/](./declarative/human_in_loop/) | Interactive workflows that request user input |
+| Invoke Function Tool | [declarative/invoke_function_tool/](./declarative/invoke_function_tool/) | Call registered Python functions with InvokeFunctionTool |
+| Marketing | [declarative/marketing/](./declarative/marketing/) | Marketing content generation workflow |
+| Simple Workflow | [declarative/simple_workflow/](./declarative/simple_workflow/) | Basic workflow with variable setting, conditionals, and loops |
+| Student Teacher | [declarative/student_teacher/](./declarative/student_teacher/) | Student-teacher interaction pattern |
 
 ### resources
 
@@ -157,6 +159,14 @@ Sequential orchestration uses a few small adapter nodes for plumbing:
 - "complete" publishes the final output event (type='output')
   These may appear in event streams (executor_invoked/executor_completed). They're analogous to
   concurrent’s dispatcher and aggregator and can be ignored if you only care about agent activity.
+
+### AzureOpenAIResponsesClient vs AzureAIAgent
+
+Workflow and orchestration samples use `AzureOpenAIResponsesClient` rather than the CRUD-style `AzureAIAgent` client. The key difference:
+
+- **`AzureOpenAIResponsesClient`** — A lightweight client that uses the underlying Agent Service V2 (Responses API) for non-CRUD-style agents. Orchestrations use this client because agents are created locally and do not require server-side lifecycle management (create/update/delete). This is the recommended client for orchestration patterns (Sequential, Concurrent, Handoff, GroupChat, Magentic).
+
+- **`AzureAIAgent`** — A CRUD-style client for server-managed agents. Use this when you need persistent, server-side agent definitions with features like file search, code interpreter sessions, or thread management provided by the Azure AI Agent Service.
 
 ### Environment Variables
 

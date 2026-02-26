@@ -1,9 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Collections.Generic;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
@@ -39,17 +36,14 @@ public sealed class ChatClientAgentOptions
     public ChatOptions? ChatOptions { get; set; }
 
     /// <summary>
-    /// Gets or sets a factory function to create an instance of <see cref="ChatHistoryProvider"/>
-    /// which will be used to provide chat history for this agent.
+    /// Gets or sets the <see cref="ChatHistoryProvider"/> instance to use for providing chat history for this agent.
     /// </summary>
-    public Func<ChatHistoryProviderFactoryContext, CancellationToken, ValueTask<ChatHistoryProvider>>? ChatHistoryProviderFactory { get; set; }
+    public ChatHistoryProvider? ChatHistoryProvider { get; set; }
 
     /// <summary>
-    /// Gets or sets a factory function to create an instance of <see cref="AIContextProvider"/>
-    /// which will be used to create a context provider for each new thread, and can then
-    /// provide additional context for each agent run.
+    /// Gets or sets the list of <see cref="AIContextProvider"/> instances to use for providing additional context for each agent run.
     /// </summary>
-    public Func<AIContextProviderFactoryContext, CancellationToken, ValueTask<AIContextProvider>>? AIContextProviderFactory { get; set; }
+    public IEnumerable<AIContextProvider>? AIContextProviders { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether to use the provided <see cref="IChatClient"/> instance as is,
@@ -66,6 +60,36 @@ public sealed class ChatClientAgentOptions
     public bool UseProvidedChatClientAsIs { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether to set the <see cref="ChatClientAgent.ChatHistoryProvider"/> to <see langword="null"/>
+    /// if the underlying AI service indicates that it manages chat history (for example, by returning a conversation id in the response), but a <see cref="ChatHistoryProvider"/> is configured for the agent.
+    /// </summary>
+    /// <remarks>
+    /// Note that even if this setting is set to <see langword="false"/>, the <see cref="ChatHistoryProvider"/> will still not be used if the underlying AI service indicates that it manages chat history.
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="true"/>.
+    /// </value>
+    public bool ClearOnChatHistoryProviderConflict { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to log a warning if the underlying AI service indicates that it manages chat history
+    /// (for example, by returning a conversation id in the response), but a <see cref="ChatHistoryProvider"/> is configured for the agent.
+    /// </summary>
+    /// <value>
+    /// Default is <see langword="true"/>.
+    /// </value>
+    public bool WarnOnChatHistoryProviderConflict { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether an exception is thrown if the underlying AI service indicates that it manages chat history
+    /// (for example, by returning a conversation id in the response), but a <see cref="ChatHistoryProvider"/> is configured for the agent.
+    /// </summary>
+    /// <value>
+    /// Default is <see langword="true"/>.
+    /// </value>
+    public bool ThrowOnChatHistoryProviderConflict { get; set; } = true;
+
+    /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
     public ChatClientAgentOptions Clone()
@@ -75,41 +99,11 @@ public sealed class ChatClientAgentOptions
             Name = this.Name,
             Description = this.Description,
             ChatOptions = this.ChatOptions?.Clone(),
-            ChatHistoryProviderFactory = this.ChatHistoryProviderFactory,
-            AIContextProviderFactory = this.AIContextProviderFactory,
+            ChatHistoryProvider = this.ChatHistoryProvider,
+            AIContextProviders = this.AIContextProviders is null ? null : new List<AIContextProvider>(this.AIContextProviders),
+            UseProvidedChatClientAsIs = this.UseProvidedChatClientAsIs,
+            ClearOnChatHistoryProviderConflict = this.ClearOnChatHistoryProviderConflict,
+            WarnOnChatHistoryProviderConflict = this.WarnOnChatHistoryProviderConflict,
+            ThrowOnChatHistoryProviderConflict = this.ThrowOnChatHistoryProviderConflict,
         };
-
-    /// <summary>
-    /// Context object passed to the <see cref="AIContextProviderFactory"/> to create a new instance of <see cref="AIContextProvider"/>.
-    /// </summary>
-    public sealed class AIContextProviderFactoryContext
-    {
-        /// <summary>
-        /// Gets or sets the serialized state of the <see cref="AIContextProvider"/>, if any.
-        /// </summary>
-        /// <value><see langword="default"/> if there is no state, e.g. when the <see cref="AIContextProvider"/> is first created.</value>
-        public JsonElement SerializedState { get; set; }
-
-        /// <summary>
-        /// Gets or sets the JSON serialization options to use when deserializing the <see cref="SerializedState"/>.
-        /// </summary>
-        public JsonSerializerOptions? JsonSerializerOptions { get; set; }
-    }
-
-    /// <summary>
-    /// Context object passed to the <see cref="ChatHistoryProviderFactory"/> to create a new instance of <see cref="ChatHistoryProvider"/>.
-    /// </summary>
-    public sealed class ChatHistoryProviderFactoryContext
-    {
-        /// <summary>
-        /// Gets or sets the serialized state of the <see cref="ChatHistoryProvider"/>, if any.
-        /// </summary>
-        /// <value><see langword="default"/> if there is no state, e.g. when the <see cref="ChatHistoryProvider"/> is first created.</value>
-        public JsonElement SerializedState { get; set; }
-
-        /// <summary>
-        /// Gets or sets the JSON serialization options to use when deserializing the <see cref="SerializedState"/>.
-        /// </summary>
-        public JsonSerializerOptions? JsonSerializerOptions { get; set; }
-    }
 }

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -16,6 +17,8 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
     protected override string? IdCore => id;
     public override string? Name => name ?? base.Name;
 
+    public InMemoryChatHistoryProvider ChatHistoryProvider { get; } = new();
+
     protected override async ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
     {
         return serializedState.Deserialize<EchoAgentSession>(jsonSerializerOptions) ?? await this.CreateSessionAsync(cancellationToken);
@@ -25,18 +28,18 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
     {
         if (session is not EchoAgentSession typedSession)
         {
-            throw new InvalidOperationException("The provided session is not compatible with the agent. Only sessions created by the agent can be serialized.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(EchoAgentSession)}' can be serialized by this agent.");
         }
 
-        return new(typedSession.Serialize(jsonSerializerOptions));
+        return new(JsonSerializer.SerializeToElement(typedSession, jsonSerializerOptions));
     }
 
     protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
         new(new EchoAgentSession());
 
-    private static ChatMessage UpdateSession(ChatMessage message, InMemoryAgentSession? session = null)
+    private ChatMessage UpdateSession(ChatMessage message, AgentSession? session = null)
     {
-        session?.ChatHistoryProvider.Add(message);
+        this.ChatHistoryProvider.GetMessages(session).Add(message);
 
         return message;
     }
@@ -45,7 +48,7 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
     {
         foreach (ChatMessage message in messages)
         {
-            UpdateSession(message, session as InMemoryAgentSession);
+            this.UpdateSession(message, session);
         }
 
         IEnumerable<ChatMessage> echoMessages
@@ -53,14 +56,14 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
               where message.Role == ChatRole.User &&
                     !string.IsNullOrEmpty(message.Text)
               select
-                    UpdateSession(new ChatMessage(ChatRole.Assistant, $"{prefix}{message.Text}")
+                    this.UpdateSession(new ChatMessage(ChatRole.Assistant, $"{prefix}{message.Text}")
                     {
                         AuthorName = this.Name ?? this.Id,
                         CreatedAt = DateTimeOffset.Now,
                         MessageId = Guid.NewGuid().ToString("N")
-                    }, session as InMemoryAgentSession);
+                    }, session);
 
-        return echoMessages.Concat(this.GetEpilogueMessages(options).Select(m => UpdateSession(m, session as InMemoryAgentSession)));
+        return echoMessages.Concat(this.GetEpilogueMessages(options).Select(m => this.UpdateSession(m, session)));
     }
 
     protected virtual IEnumerable<ChatMessage> GetEpilogueMessages(AgentRunOptions? options = null)
@@ -99,11 +102,11 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
         }
     }
 
-    private sealed class EchoAgentSession : InMemoryAgentSession
+    private sealed class EchoAgentSession : AgentSession
     {
-        internal new JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
-        {
-            return base.Serialize(jsonSerializerOptions);
-        }
+        internal EchoAgentSession() { }
+
+        [JsonConstructor]
+        internal EchoAgentSession(AgentSessionStateBag stateBag) : base(stateBag) { }
     }
 }

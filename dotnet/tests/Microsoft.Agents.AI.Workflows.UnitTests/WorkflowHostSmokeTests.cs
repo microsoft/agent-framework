@@ -32,18 +32,16 @@ public class WorkflowHostSmokeTests
 {
     private sealed class AlwaysFailsAIAgent(bool failByThrowing) : AIAgent
     {
-        private sealed class Session : InMemoryAgentSession
+        private sealed class Session : AgentSession
         {
             public Session() { }
 
-            public Session(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null)
-                : base(serializedSession, jsonSerializerOptions)
-            { }
+            public Session(AgentSessionStateBag stateBag) : base(stateBag) { }
         }
 
         protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         {
-            return new(new Session(serializedState, jsonSerializerOptions));
+            return new(serializedState.Deserialize<Session>(jsonSerializerOptions)!);
         }
 
         protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
@@ -94,7 +92,7 @@ public class WorkflowHostSmokeTests
         Workflow workflow = CreateWorkflow(failByThrowing);
 
         // Act
-        List<AgentResponseUpdate> updates = await workflow.AsAgent("WorkflowAgent", includeExceptionDetails: includeExceptionDetails)
+        List<AgentResponseUpdate> updates = await workflow.AsAIAgent("WorkflowAgent", includeExceptionDetails: includeExceptionDetails)
                                                              .RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"))
                                                              .ToListAsync();
 

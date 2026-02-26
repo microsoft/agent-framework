@@ -11,7 +11,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
-internal sealed class CreateConversationExecutor(CreateConversation model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state) :
+internal sealed class CreateConversationExecutor(CreateConversation model, ResponseAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<CreateConversation>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)

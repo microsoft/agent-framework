@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Unit tests for AgentSessionId and DurableAgentThread."""
+"""Unit tests for AgentSessionId and DurableAgentSession."""
 
 import pytest
-from agent_framework import AgentThread
+from agent_framework import AgentSession
 
-from agent_framework_durabletask._models import AgentSessionId, DurableAgentThread
+from agent_framework_durabletask._models import AgentSessionId, DurableAgentSession
 
 
 class TestAgentSessionId:
@@ -121,154 +121,162 @@ class TestAgentSessionId:
         assert "Invalid agent session ID format" in str(exc_info.value)
 
 
-class TestDurableAgentThread:
-    """Test suite for DurableAgentThread."""
+class TestDurableAgentSession:
+    """Test suite for DurableAgentSession."""
 
-    def test_init_with_session_id(self) -> None:
-        """Test DurableAgentThread initialization with session ID."""
+    def test_init_with_durable_session_id(self) -> None:
+        """Test DurableAgentSession initialization with durable session ID."""
         session_id = AgentSessionId(name="TestAgent", key="test-key")
-        thread = DurableAgentThread(session_id=session_id)
+        session = DurableAgentSession(durable_session_id=session_id)
 
-        assert thread.session_id is not None
-        assert thread.session_id == session_id
+        assert session.durable_session_id is not None
+        assert session.durable_session_id == session_id
 
-    def test_init_without_session_id(self) -> None:
-        """Test DurableAgentThread initialization without session ID."""
-        thread = DurableAgentThread()
+    def test_init_without_durable_session_id(self) -> None:
+        """Test DurableAgentSession initialization without durable session ID."""
+        session = DurableAgentSession()
 
-        assert thread.session_id is None
+        assert session.durable_session_id is None
 
-    def test_session_id_setter(self) -> None:
-        """Test setting a session ID to an existing thread."""
-        thread = DurableAgentThread()
-        assert thread.session_id is None
+    def test_durable_session_id_setter(self) -> None:
+        """Test setting a durable session ID to an existing session."""
+        session = DurableAgentSession()
+        assert session.durable_session_id is None
 
         session_id = AgentSessionId(name="TestAgent", key="test-key")
-        thread.session_id = session_id
+        session.durable_session_id = session_id
 
-        assert thread.session_id is not None
-        assert thread.session_id == session_id
-        assert thread.session_id.name == "TestAgent"
+        assert session.durable_session_id is not None
+        assert session.durable_session_id == session_id
+        assert session.durable_session_id.name == "TestAgent"
 
     def test_from_session_id(self) -> None:
-        """Test creating DurableAgentThread from session ID."""
+        """Test creating DurableAgentSession from session ID."""
         session_id = AgentSessionId(name="TestAgent", key="test-key")
-        thread = DurableAgentThread.from_session_id(session_id)
+        session = DurableAgentSession.from_session_id(session_id)
 
-        assert isinstance(thread, DurableAgentThread)
-        assert thread.session_id is not None
-        assert thread.session_id == session_id
-        assert thread.session_id.name == "TestAgent"
-        assert thread.session_id.key == "test-key"
+        assert isinstance(session, DurableAgentSession)
+        assert session.durable_session_id is not None
+        assert session.durable_session_id == session_id
+        assert session.durable_session_id.name == "TestAgent"
+        assert session.durable_session_id.key == "test-key"
 
-    def test_from_session_id_with_service_thread_id(self) -> None:
-        """Test creating DurableAgentThread with service thread ID."""
+    def test_from_session_id_with_service_session_id(self) -> None:
+        """Test creating DurableAgentSession with service session ID."""
         session_id = AgentSessionId(name="TestAgent", key="test-key")
-        thread = DurableAgentThread.from_session_id(session_id, service_thread_id="service-123")
+        session = DurableAgentSession.from_session_id(session_id, service_session_id="service-123")
 
-        assert thread.session_id is not None
-        assert thread.session_id == session_id
-        assert thread.service_thread_id == "service-123"
+        assert session.durable_session_id is not None
+        assert session.durable_session_id == session_id
+        assert session.service_session_id == "service-123"
 
-    async def test_serialize_with_session_id(self) -> None:
-        """Test serialization includes session ID."""
+    def test_to_dict_with_durable_session_id(self) -> None:
+        """Test serialization includes durable session ID."""
         session_id = AgentSessionId(name="TestAgent", key="test-key")
-        thread = DurableAgentThread(session_id=session_id)
+        session = DurableAgentSession(durable_session_id=session_id)
 
-        serialized = await thread.serialize()
+        serialized = session.to_dict()
 
         assert isinstance(serialized, dict)
         assert "durable_session_id" in serialized
         assert serialized["durable_session_id"] == "@TestAgent@test-key"
 
-    async def test_serialize_without_session_id(self) -> None:
-        """Test serialization without session ID."""
-        thread = DurableAgentThread()
+    def test_to_dict_without_durable_session_id(self) -> None:
+        """Test serialization without durable session ID."""
+        session = DurableAgentSession()
 
-        serialized = await thread.serialize()
+        serialized = session.to_dict()
 
         assert isinstance(serialized, dict)
         assert "durable_session_id" not in serialized
 
-    async def test_deserialize_with_session_id(self) -> None:
-        """Test deserialization restores session ID."""
+    def test_from_dict_with_durable_session_id(self) -> None:
+        """Test deserialization restores durable session ID."""
         serialized = {
-            "service_thread_id": "thread-123",
+            "type": "session",
+            "session_id": "session-123",
+            "service_session_id": "service-123",
+            "state": {},
             "durable_session_id": "@TestAgent@test-key",
         }
 
-        thread = await DurableAgentThread.deserialize(serialized)
+        session = DurableAgentSession.from_dict(serialized)
 
-        assert isinstance(thread, DurableAgentThread)
-        assert thread.session_id is not None
-        assert thread.session_id.name == "TestAgent"
-        assert thread.session_id.key == "test-key"
-        assert thread.service_thread_id == "thread-123"
+        assert isinstance(session, DurableAgentSession)
+        assert session.durable_session_id is not None
+        assert session.durable_session_id.name == "TestAgent"
+        assert session.durable_session_id.key == "test-key"
+        assert session.service_session_id == "service-123"
 
-    async def test_deserialize_without_session_id(self) -> None:
-        """Test deserialization without session ID."""
+    def test_from_dict_without_durable_session_id(self) -> None:
+        """Test deserialization without durable session ID."""
         serialized = {
-            "service_thread_id": "thread-456",
+            "type": "session",
+            "session_id": "session-456",
+            "service_session_id": "service-456",
+            "state": {},
         }
 
-        thread = await DurableAgentThread.deserialize(serialized)
+        session = DurableAgentSession.from_dict(serialized)
 
-        assert isinstance(thread, DurableAgentThread)
-        assert thread.session_id is None
-        assert thread.service_thread_id == "thread-456"
+        assert isinstance(session, DurableAgentSession)
+        assert session.durable_session_id is None
+        assert session.session_id == "session-456"
 
-    async def test_round_trip_serialization(self) -> None:
-        """Test round-trip serialization preserves session ID."""
+    def test_round_trip_serialization(self) -> None:
+        """Test round-trip serialization preserves durable session ID."""
         session_id = AgentSessionId(name="TestAgent", key="test-key-789")
-        original = DurableAgentThread(session_id=session_id)
+        original = DurableAgentSession(durable_session_id=session_id)
 
-        serialized = await original.serialize()
-        restored = await DurableAgentThread.deserialize(serialized)
+        serialized = original.to_dict()
+        restored = DurableAgentSession.from_dict(serialized)
 
-        assert isinstance(restored, DurableAgentThread)
-        assert restored.session_id is not None
-        assert restored.session_id.name == session_id.name
-        assert restored.session_id.key == session_id.key
+        assert isinstance(restored, DurableAgentSession)
+        assert restored.durable_session_id is not None
+        assert restored.durable_session_id.name == session_id.name
+        assert restored.durable_session_id.key == session_id.key
 
-    async def test_deserialize_invalid_session_id_type(self) -> None:
-        """Test deserialization with invalid session ID type raises error."""
+    def test_from_dict_invalid_durable_session_id_type(self) -> None:
+        """Test deserialization with invalid durable session ID type raises error."""
         serialized = {
-            "service_thread_id": "thread-123",
+            "type": "session",
+            "session_id": "session-123",
+            "state": {},
             "durable_session_id": 12345,  # Invalid type
         }
 
         with pytest.raises(ValueError, match="durable_session_id must be a string"):
-            await DurableAgentThread.deserialize(serialized)
+            DurableAgentSession.from_dict(serialized)
 
 
-class TestAgentThreadCompatibility:
-    """Test suite for compatibility between AgentThread and DurableAgentThread."""
+class TestAgentSessionCompatibility:
+    """Test suite for compatibility between AgentSession and DurableAgentSession."""
 
-    async def test_agent_thread_serialize(self) -> None:
-        """Test that base AgentThread can be serialized."""
-        thread = AgentThread()
+    def test_agent_session_to_dict(self) -> None:
+        """Test that base AgentSession can be serialized."""
+        session = AgentSession()
 
-        serialized = await thread.serialize()
+        serialized = session.to_dict()
 
         assert isinstance(serialized, dict)
-        assert "service_thread_id" in serialized
+        assert "session_id" in serialized
 
-    async def test_agent_thread_deserialize(self) -> None:
-        """Test that base AgentThread can be deserialized."""
-        thread = AgentThread()
-        serialized = await thread.serialize()
+    def test_agent_session_from_dict(self) -> None:
+        """Test that base AgentSession can be deserialized."""
+        session = AgentSession()
+        serialized = session.to_dict()
 
-        restored = await AgentThread.deserialize(serialized)
+        restored = AgentSession.from_dict(serialized)
 
-        assert isinstance(restored, AgentThread)
-        assert restored.service_thread_id == thread.service_thread_id
+        assert isinstance(restored, AgentSession)
+        assert restored.session_id == session.session_id
 
-    async def test_durable_thread_is_agent_thread(self) -> None:
-        """Test that DurableAgentThread is an AgentThread."""
-        thread = DurableAgentThread()
+    def test_durable_session_is_agent_session(self) -> None:
+        """Test that DurableAgentSession is an AgentSession."""
+        session = DurableAgentSession()
 
-        assert isinstance(thread, AgentThread)
-        assert isinstance(thread, DurableAgentThread)
+        assert isinstance(session, AgentSession)
+        assert isinstance(session, DurableAgentSession)
 
 
 class TestModelIntegration:
@@ -281,19 +289,19 @@ class TestModelIntegration:
 
         assert session_id_str.startswith("@AgentEntity@")
 
-    async def test_thread_with_session_preserves_on_serialization(self) -> None:
-        """Test that thread with session ID preserves it through serialization."""
+    def test_session_with_durable_id_preserves_on_serialization(self) -> None:
+        """Test that session with durable session ID preserves it through serialization."""
         session_id = AgentSessionId(name="TestAgent", key="preserved-key")
-        thread = DurableAgentThread.from_session_id(session_id)
+        session = DurableAgentSession.from_session_id(session_id)
 
         # Serialize and deserialize
-        serialized = await thread.serialize()
-        restored = await DurableAgentThread.deserialize(serialized)
+        serialized = session.to_dict()
+        restored = DurableAgentSession.from_dict(serialized)
 
-        # Session ID should be preserved
-        assert restored.session_id is not None
-        assert restored.session_id.name == "TestAgent"
-        assert restored.session_id.key == "preserved-key"
+        # Durable session ID should be preserved
+        assert restored.durable_session_id is not None
+        assert restored.durable_session_id.name == "TestAgent"
+        assert restored.durable_session_id.key == "preserved-key"
 
 
 if __name__ == "__main__":

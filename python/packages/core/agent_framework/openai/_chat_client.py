@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import (
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from datetime import datetime, timezone
 from itertools import chain
 from typing import Any, Generic, Literal
@@ -15,18 +23,21 @@ from openai.types import CompletionUsage
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
+from openai.types.chat.chat_completion_message_custom_tool_call import (
+    ChatCompletionMessageCustomToolCall,
+)
 from openai.types.chat.completion_create_params import WebSearchOptions
 from pydantic import BaseModel
 
 from .._clients import BaseChatClient
-from .._logging import get_logger
 from .._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from .._settings import load_settings
 from .._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
+    ToolTypes,
+    normalize_tools,
 )
 from .._types import (
     ChatOptions,
@@ -39,9 +50,8 @@ from .._types import (
     UsageDetails,
 )
 from ..exceptions import (
-    ServiceInitializationError,
-    ServiceInvalidRequestError,
-    ServiceResponseException,
+    ChatClientException,
+    ChatClientInvalidRequestException,
 )
 from ..observability import ChatTelemetryLayer
 from ._exceptions import OpenAIContentFilterException
@@ -60,9 +70,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
-__all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
-
-logger = get_logger("agent_framework.openai")
+logger = logging.getLogger("agent_framework.openai")
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
@@ -234,12 +242,12 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             f"{type(self)} service encountered a content error: {ex}",
                             inner_exception=ex,
                         ) from ex
-                    raise ServiceResponseException(
+                    raise ChatClientException(
                         f"{type(self)} service failed to complete the prompt: {ex}",
                         inner_exception=ex,
                     ) from ex
                 except Exception as ex:
-                    raise ServiceResponseException(
+                    raise ChatClientException(
                         f"{type(self)} service failed to complete the prompt: {ex}",
                         inner_exception=ex,
                     ) from ex
@@ -259,12 +267,12 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         f"{type(self)} service encountered a content error: {ex}",
                         inner_exception=ex,
                     ) from ex
-                raise ServiceResponseException(
+                raise ChatClientException(
                     f"{type(self)} service failed to complete the prompt: {ex}",
                     inner_exception=ex,
                 ) from ex
             except Exception as ex:
-                raise ServiceResponseException(
+                raise ChatClientException(
                     f"{type(self)} service failed to complete the prompt: {ex}",
                     inner_exception=ex,
                 ) from ex
@@ -273,21 +281,24 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
     # region content creation
 
-    def _prepare_tools_for_openai(self, tools: Sequence[Any]) -> dict[str, Any]:
+    def _prepare_tools_for_openai(
+        self,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
+    ) -> dict[str, Any]:
         """Prepare tools for the OpenAI Chat Completions API.
 
         Converts FunctionTool to JSON schema format. Web search tools are routed
         to web_search_options parameter. All other tools pass through unchanged.
 
         Args:
-            tools: Sequence of tools to prepare.
+            tools: Tool(s) to prepare.
 
         Returns:
             Dict containing tools and optionally web_search_options.
         """
         chat_tools: list[Any] = []
         web_search_options: dict[str, Any] | None = None
-        for tool in tools:
+        for tool in normalize_tools(tools):
             if isinstance(tool, FunctionTool):
                 chat_tools.append(tool.to_json_schema_spec())
             elif isinstance(tool, MutableMapping) and tool.get("type") == "web_search":
@@ -317,7 +328,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if messages and "messages" not in run_options:
             run_options["messages"] = self._prepare_messages_for_openai(messages)
         if "messages" not in run_options:
-            raise ServiceInvalidRequestError("Messages are required for chat completions")
+            raise ChatClientInvalidRequestException("Messages are required for chat completions")
 
         # Translation between options keys and Chat Completion API
         for old_key, new_key in OPTION_TRANSLATIONS.items():
@@ -340,15 +351,16 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             run_options.pop("tool_choice", None)
         elif tool_choice := run_options.pop("tool_choice", None):
             tool_mode = validate_tool_mode(tool_choice)
-            if (mode := tool_mode.get("mode")) == "required" and (
-                func_name := tool_mode.get("required_function_name")
-            ) is not None:
-                run_options["tool_choice"] = {
-                    "type": "function",
-                    "function": {"name": func_name},
-                }
-            else:
-                run_options["tool_choice"] = mode
+            if tool_mode is not None:
+                if (mode := tool_mode.get("mode")) == "required" and (
+                    func_name := tool_mode.get("required_function_name")
+                ) is not None:
+                    run_options["tool_choice"] = {
+                        "type": "function",
+                        "function": {"name": func_name},
+                    }
+                else:
+                    run_options["tool_choice"] = mode
 
         # response format
         if response_format := options.get("response_format"):
@@ -392,21 +404,16 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     ) -> ChatResponseUpdate:
         """Parse a streaming response update from OpenAI."""
         chunk_metadata = self._get_metadata_from_streaming_chat_response(chunk)
-        if chunk.usage:
-            return ChatResponseUpdate(
-                role="assistant",
-                contents=[
-                    Content.from_usage(
-                        usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk
-                    )
-                ],
-                model_id=chunk.model,
-                additional_properties=chunk_metadata,
-                response_id=chunk.id,
-                message_id=chunk.id,
-            )
         contents: list[Content] = []
         finish_reason: FinishReason | None = None
+
+        # Process usage data (may coexist with text/tool content in providers like Gemini).
+        # See https://github.com/microsoft/agent-framework/issues/3434
+        if chunk.usage:
+            contents.append(
+                Content.from_usage(usage_details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk)
+            )
+
         for choice in chunk.choices:
             chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
             contents.extend(self._parse_tool_calls_from_openai(choice))
@@ -529,6 +536,17 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
     def _prepare_message_for_openai(self, message: Message) -> list[dict[str, Any]]:
         """Prepare a chat message for OpenAI."""
+        # System/developer messages must use plain string content because some
+        # OpenAI-compatible endpoints reject list content for non-user roles.
+        if message.role in ("system", "developer"):
+            texts = [content.text for content in message.contents if content.type == "text" and content.text]
+            if texts:
+                sys_args: dict[str, Any] = {"role": message.role, "content": "\n".join(texts)}
+                if message.author_name:
+                    sys_args["name"] = message.author_name
+                return [sys_args]
+            return []
+
         all_messages: list[dict[str, Any]] = []
         for content in message.contents:
             # Skip approval content - it's internal framework state, not for the LLM
@@ -565,6 +583,17 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     args["content"].append(self._prepare_content_for_openai(content))  # type: ignore
             if "content" in args or "tool_calls" in args:
                 all_messages.append(args)
+
+        # Flatten text-only content lists to plain strings for broader
+        # compatibility with OpenAI-like endpoints (e.g. Foundry Local).
+        # See https://github.com/microsoft/agent-framework/issues/4084
+        for msg in all_messages:
+            msg_content: Any = msg.get("content")
+            if isinstance(msg_content, list) and all(
+                isinstance(c, dict) and c.get("type") == "text" for c in msg_content
+            ):
+                msg["content"] = "\n".join(c.get("text", "") for c in msg_content)
+
         return all_messages
 
     def _prepare_content_for_openai(self, content: Content) -> dict[str, Any]:
@@ -728,11 +757,11 @@ class OpenAIChatClient(  # type: ignore[misc]
         )
 
         if not async_client and not openai_settings["api_key"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
         if not openai_settings["chat_model_id"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )

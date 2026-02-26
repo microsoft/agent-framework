@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterable, Sequence
 
-from agent_framework import ChatResponse, ChatResponseUpdate, Content, ResponseStream, Role
+from agent_framework import ChatResponse, ChatResponseUpdate, Content, Message, ResponseStream
 
 """ResponseStream: A Deep Dive
 
@@ -256,8 +256,7 @@ async def main() -> None:
         """Result hook that wraps the response text in quotes."""
         if response.text:
             return ChatResponse(
-                messages=f'"{response.text}"',
-                role=Role.ASSISTANT,
+                messages=[Message(text=f'"{response.text}"', role="assistant")],
                 additional_properties=response.additional_properties,
             )
         return response
@@ -294,8 +293,7 @@ async def main() -> None:
         # In real code, this would create an AgentResponse
         text = "".join(u.text or "" for u in updates)
         return ChatResponse(
-            text=f"[AGENT FINAL] {text}",
-            role=Role.ASSISTANT,
+            messages=[Message(text=f"[AGENT FINAL] {text}", role="assistant")],
             additional_properties={"layer": "agent"},
         )
 

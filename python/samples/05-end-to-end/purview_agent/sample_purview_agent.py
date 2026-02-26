@@ -37,6 +37,10 @@ from azure.identity import (
     CertificateCredential,
     InteractiveBrowserCredential,
 )
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 JOKER_NAME = "Joker"
 JOKER_INSTRUCTIONS = "You are good at telling jokes. Keep responses concise."
@@ -164,9 +168,7 @@ async def run_with_agent_middleware() -> None:
     print("First response (agent middleware):\n", first)
 
     second: AgentResponse = await agent.run(
-        Message(
-            role="user", text="That was funny. Tell me another one.", additional_properties={"user_id": user_id}
-        )
+        Message(role="user", text="That was funny. Tell me another one.", additional_properties={"user_id": user_id})
     )
     print("Second response (agent middleware):\n", second)
 
@@ -252,9 +254,7 @@ async def run_with_custom_cache_provider() -> None:
     print("Using SimpleDictCacheProvider")
 
     first: AgentResponse = await agent.run(
-        Message(
-            role="user", text="Tell me a joke about a programmer.", additional_properties={"user_id": user_id}
-        )
+        Message(role="user", text="Tell me a joke about a programmer.", additional_properties={"user_id": user_id})
     )
     print("First response (custom provider):\n", first)
 

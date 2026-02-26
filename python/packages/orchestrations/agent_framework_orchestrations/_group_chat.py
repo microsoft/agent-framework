@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
-from agent_framework import Agent, AgentThread, Message, SupportsAgentRun
+from agent_framework import Agent, AgentSession, Message, SupportsAgentRun
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
@@ -291,7 +291,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         max_rounds: int | None = None,
         termination_condition: TerminationCondition | None = None,
         retry_attempts: int | None = None,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
     ) -> None:
         """Initialize the GroupChatOrchestrator.
 
@@ -302,7 +302,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             max_rounds: Optional limit on selection rounds to prevent infinite loops.
             termination_condition: Optional callable that halts the conversation when it returns True
             retry_attempts: Optional number of retry attempts for the agent in case of failure.
-            thread: Optional agent thread to use for the orchestrator agent.
+            session: Optional agent session to use for the orchestrator agent.
         """
         super().__init__(
             resolve_agent_id(agent),
@@ -313,7 +313,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         )
         self._agent = agent
         self._retry_attempts = retry_attempts
-        self._thread = thread or agent.get_new_thread()
+        self._session = session or agent.create_session()
         # Cache for messages since last agent invocation
         # This is different from the full conversation history maintained by the base orchestrator
         self._cache: list[Message] = []
@@ -471,7 +471,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             # Run the agent in non-streaming mode for simplicity
             agent_response = await self._agent.run(
                 messages=conversation,
-                thread=self._thread,
+                session=self._session,
                 options={"response_format": AgentOrchestrationOutput},
             )
             # Parse and validate the structured output
@@ -547,8 +547,8 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         """Capture current orchestrator state for checkpointing."""
         state = await super().on_checkpoint_save()
         state["cache"] = self._cache
-        serialized_thread = await self._thread.serialize()
-        state["thread"] = serialized_thread
+        serialized_session = self._session.to_dict()
+        state["session"] = serialized_session
 
         return state
 
@@ -557,9 +557,9 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         """Restore executor state from checkpoint."""
         await super().on_checkpoint_restore(state)
         self._cache = state.get("cache", [])
-        serialized_thread = state.get("thread")
-        if serialized_thread:
-            self._thread = await self._agent.deserialize_thread(serialized_thread)
+        serialized_session = state.get("session")
+        if serialized_session:
+            self._session = AgentSession.from_dict(serialized_session)
 
 
 # endregion

@@ -16,8 +16,6 @@ namespace ResponseResult.IntegrationTests;
 
 public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 {
-    private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
-
     private ResponsesClient _openAIResponseClient = null!;
     private ChatClientAgent _agent = null!;
 
@@ -50,12 +48,14 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
             return [.. previousMessages, responseMessage];
         }
 
-        if (typedSession.ChatHistoryProvider is null)
+        var chatHistoryProvider = agent.GetService<ChatHistoryProvider>();
+
+        if (chatHistoryProvider is null)
         {
             return [];
         }
 
-        return (await typedSession.ChatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
+        return (await chatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     private static ChatMessage ConvertToChatMessage(ResponseItem item)
@@ -96,8 +96,8 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 
     public async Task InitializeAsync()
     {
-        this._openAIResponseClient = new OpenAIClient(s_config.ApiKey)
-            .GetResponsesClient(s_config.ChatModelId);
+        this._openAIResponseClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey))
+            .GetResponsesClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName));
 
         this._agent = await this.CreateChatClientAgentAsync();
     }

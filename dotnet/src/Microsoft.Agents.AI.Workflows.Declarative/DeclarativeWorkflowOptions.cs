@@ -13,12 +13,18 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// <summary>
 /// Configuration options for workflow execution.
 /// </summary>
-public sealed class DeclarativeWorkflowOptions(WorkflowAgentProvider agentProvider)
+public sealed class DeclarativeWorkflowOptions(ResponseAgentProvider agentProvider)
 {
     /// <summary>
     /// Defines the agent provider.
     /// </summary>
-    public WorkflowAgentProvider AgentProvider { get; } = Throw.IfNull(agentProvider);
+    public ResponseAgentProvider AgentProvider { get; } = Throw.IfNull(agentProvider);
+
+    /// <summary>
+    /// Gets or sets the MCP tool handler for invoking MCP tools within workflows.
+    /// If not set, MCP tool invocations will fail with an appropriate error message.
+    /// </summary>
+    public IMcpToolHandler? McpToolHandler { get; init; }
 
     /// <summary>
     /// Defines the configuration settings for the workflow.

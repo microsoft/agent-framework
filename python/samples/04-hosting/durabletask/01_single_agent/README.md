@@ -6,7 +6,7 @@ This sample demonstrates how to create a worker-client setup that hosts a single
 
 - Using the Microsoft Agent Framework to define a simple AI agent with a name and instructions.
 - Registering durable agents with the worker and interacting with them via a client.
-- Conversation management (via threads) for isolated interactions.
+- Conversation management (via sessions) for isolated interactions.
 - Worker-client architecture for distributed agent execution.
 
 ## Environment Setup
@@ -46,7 +46,7 @@ Using taskhub: default
 Using endpoint: http://localhost:8080
 
 Getting reference to Joker agent...
-Created conversation thread: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+Created conversation session: a1b2c3d4-e5f6-7890-abcd-ef1234567890
 
 User: Tell me a short joke about cloud computing.
 

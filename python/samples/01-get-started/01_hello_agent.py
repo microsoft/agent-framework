@@ -5,12 +5,18 @@ import os
 
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Hello Agent — Simplest possible agent
 
 This sample creates a minimal agent using AzureOpenAIResponsesClient via an
 Azure AI Foundry project endpoint, and runs it in both non-streaming and streaming modes.
+
+There are XML tags in all of the get started samples, those are used to display the same code in the docs repo.
 
 Environment variables:
   AZURE_AI_PROJECT_ENDPOINT        — Your Azure AI Foundry project endpoint

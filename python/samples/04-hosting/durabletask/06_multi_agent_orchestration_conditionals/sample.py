@@ -25,10 +25,7 @@ from client import get_client, run_client
 from dotenv import load_dotenv
 from worker import get_worker, setup_worker
 
-logging.basicConfig(
-    level=logging.INFO,
-    force=True
-)
+logging.basicConfig(level=logging.INFO, force=True)
 logger = logging.getLogger()
 
 
@@ -57,7 +54,7 @@ def main():
             run_client(
                 client,
                 email_id="email-001",
-                email_content="Hello! I wanted to reach out about our upcoming project meeting scheduled for next week."
+                email_content="Hello! I wanted to reach out about our upcoming project meeting scheduled for next week.",
             )
 
             # Test 2: Spam email
@@ -66,7 +63,7 @@ def main():
             run_client(
                 client,
                 email_id="email-002",
-                email_content="URGENT! You've won $1,000,000! Click here now to claim your prize! Limited time offer! Don't miss out!"
+                email_content="URGENT! You've won $1,000,000! Click here now to claim your prize! Limited time offer! Don't miss out!",
             )
 
         except Exception as e:

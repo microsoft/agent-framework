@@ -7,11 +7,11 @@ from typing import Any
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentThread,
+    AgentSession,
     BaseAgent,
     Content,
+    InMemoryHistoryProvider,
     Message,
-    Role,
     normalize_messages,
 )
 
@@ -60,7 +60,7 @@ class EchoAgent(BaseAgent):
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
         stream: bool = False,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> "AsyncIterable[AgentResponseUpdate] | asyncio.Future[AgentResponse]":
         """Execute the agent and return a response.
@@ -68,7 +68,7 @@ class EchoAgent(BaseAgent):
         Args:
             messages: The message(s) to process.
             stream: If True, return an async iterable of updates. If False, return an awaitable response.
-            thread: The conversation thread (optional).
+            session: The conversation session (optional).
             **kwargs: Additional keyword arguments.
 
         Returns:
@@ -76,14 +76,14 @@ class EchoAgent(BaseAgent):
             When stream=True: An async iterable of AgentResponseUpdate objects.
         """
         if stream:
-            return self._run_stream(messages=messages, thread=thread, **kwargs)
-        return self._run(messages=messages, thread=thread, **kwargs)
+            return self._run_stream(messages=messages, session=session, **kwargs)
+        return self._run(messages=messages, session=session, **kwargs)
 
     async def _run(
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming implementation."""
@@ -92,8 +92,10 @@ class EchoAgent(BaseAgent):
 
         if not normalized_messages:
             response_message = Message(
-                role=Role.ASSISTANT,
-                contents=[Content.from_text(text="Hello! I'm a custom echo agent. Send me a message and I'll echo it back.")],
+                role="assistant",
+                contents=[
+                    Content.from_text(text="Hello! I'm a custom echo agent. Send me a message and I'll echo it back.")
+                ],
             )
         else:
             # For simplicity, echo the last user message
@@ -103,11 +105,13 @@ class EchoAgent(BaseAgent):
             else:
                 echo_text = f"{self.echo_prefix}[Non-text message received]"
 
-            response_message = Message(role=Role.ASSISTANT, contents=[Content.from_text(text=echo_text)])
+            response_message = Message(role="assistant", contents=[Content.from_text(text=echo_text)])
 
-        # Notify the thread of new messages if provided
-        if thread is not None:
-            await self._notify_thread_of_new_messages(thread, normalized_messages, response_message)
+        # Store messages in session state if provided
+        if session is not None:
+            stored = session.state.setdefault(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {}).setdefault("messages", [])
+            stored.extend(normalized_messages)
+            stored.append(response_message)
 
         return AgentResponse(messages=[response_message])
 
@@ -115,7 +119,7 @@ class EchoAgent(BaseAgent):
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Streaming implementation."""
@@ -140,16 +144,18 @@ class EchoAgent(BaseAgent):
 
             yield AgentResponseUpdate(
                 contents=[Content.from_text(text=chunk_text)],
-                role=Role.ASSISTANT,
+                role="assistant",
             )
 
             # Small delay to simulate streaming
             await asyncio.sleep(0.1)
 
-        # Notify the thread of the complete response if provided
-        if thread is not None:
-            complete_response = Message(role=Role.ASSISTANT, contents=[Content.from_text(text=response_text)])
-            await self._notify_thread_of_new_messages(thread, normalized_messages, complete_response)
+        # Store messages in session state if provided
+        if session is not None:
+            complete_response = Message(role="assistant", contents=[Content.from_text(text=response_text)])
+            stored = session.state.setdefault(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {}).setdefault("messages", [])
+            stored.extend(normalized_messages)
+            stored.append(complete_response)
 
 
 async def main() -> None:
@@ -180,26 +186,27 @@ async def main() -> None:
             print(chunk.text, end="", flush=True)
     print()
 
-    # Example with threads
-    print("\n--- Using Custom Agent with Thread ---")
-    thread = echo_agent.get_new_thread()
+    # Example with sessions
+    print("\n--- Using Custom Agent with Session ---")
+    session = echo_agent.create_session()
 
     # First message
-    result1 = await echo_agent.run("First message", thread=thread)
+    result1 = await echo_agent.run("First message", session=session)
     print("User: First message")
     print(f"Agent: {result1.messages[0].text}")
 
     # Second message in same thread
-    result2 = await echo_agent.run("Second message", thread=thread)
+    result2 = await echo_agent.run("Second message", session=session)
     print("User: Second message")
     print(f"Agent: {result2.messages[0].text}")
 
     # Check conversation history
-    if thread.message_store:
-        messages = await thread.message_store.list_messages()
-        print(f"\nThread contains {len(messages)} messages in history")
+    memory_state = session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {})
+    messages = memory_state.get("messages", [])
+    if messages:
+        print(f"\nSession contains {len(messages)} messages in history")
     else:
-        print("\nThread has no message store configured")
+        print("\nSession has no messages stored")
 
 
 if __name__ == "__main__":

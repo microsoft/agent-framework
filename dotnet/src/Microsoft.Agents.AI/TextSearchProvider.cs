@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -33,17 +32,17 @@ namespace Microsoft.Agents.AI;
 /// multi-turn context to the retrieval layer without permanently altering the conversation history.
 /// </para>
 /// </remarks>
-public sealed class TextSearchProvider : AIContextProvider
+public sealed class TextSearchProvider : MessageAIContextProvider
 {
     private const string DefaultPluginSearchFunctionName = "Search";
     private const string DefaultPluginSearchFunctionDescription = "Allows searching for additional information to help answer the user question.";
     private const string DefaultContextPrompt = "## Additional Context\nConsider the following information from source documents when responding to the user:";
     private const string DefaultCitationsPrompt = "Include citations to the source document with document name and link if document name and link is available.";
 
+    private readonly ProviderSessionState<TextSearchProviderState> _sessionState;
     private readonly Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> _searchAsync;
     private readonly ILogger<TextSearchProvider>? _logger;
     private readonly AITool[] _tools;
-    private readonly Queue<string> _recentMessagesText;
     private readonly List<ChatRole> _recentMessageRolesIncluded;
     private readonly int _recentMessageMemoryLimit;
     private readonly TextSearchProviderOptions.TextSearchBehavior _searchTime;
@@ -55,18 +54,19 @@ public sealed class TextSearchProvider : AIContextProvider
     /// Initializes a new instance of the <see cref="TextSearchProvider"/> class.
     /// </summary>
     /// <param name="searchAsync">Delegate that executes the search logic. Must not be <see langword="null"/>.</param>
-    /// <param name="serializedState">A <see cref="JsonElement"/> representing the serialized provider state.</param>
-    /// <param name="jsonSerializerOptions">Optional serializer options (unused - source generated context is used).</param>
     /// <param name="options">Optional configuration options.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="searchAsync"/> is <see langword="null"/>.</exception>
     public TextSearchProvider(
         Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> searchAsync,
-        JsonElement serializedState,
-        JsonSerializerOptions? jsonSerializerOptions = null,
         TextSearchProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
     {
+        this._sessionState = new ProviderSessionState<TextSearchProviderState>(
+            _ => new TextSearchProviderState(),
+            options?.StateKey ?? this.GetType().Name,
+            AgentJsonUtilities.DefaultOptions);
         // Validate and assign parameters
         this._searchAsync = Throw.IfNull(searchAsync);
         this._logger = loggerFactory?.CreateLogger<TextSearchProvider>();
@@ -76,25 +76,6 @@ public sealed class TextSearchProvider : AIContextProvider
         this._contextPrompt = options?.ContextPrompt ?? DefaultContextPrompt;
         this._citationsPrompt = options?.CitationsPrompt ?? DefaultCitationsPrompt;
         this._contextFormatter = options?.ContextFormatter;
-
-        // Restore recent messages from serialized state if provided
-        List<string>? restoredMessages = null;
-        if (serializedState.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-        {
-            this._recentMessagesText = new();
-        }
-        else
-        {
-            var jso = jsonSerializerOptions ?? AgentJsonUtilities.DefaultOptions;
-            var state = serializedState.Deserialize(jso.GetTypeInfo(typeof(TextSearchProviderState))) as TextSearchProviderState;
-            if (state?.RecentMessagesText is { Count: > 0 })
-            {
-                restoredMessages = state.RecentMessagesText;
-            }
-
-            // Restore recent messages respecting the limit (may truncate if limit changed afterwards).
-            this._recentMessagesText = restoredMessages is null ? new() : new(restoredMessages.Take(this._recentMessageMemoryLimit));
-        }
 
         // Create the on-demand search tool (only used if behavior is OnDemandFunctionCalling)
         this._tools =
@@ -107,20 +88,54 @@ public sealed class TextSearchProvider : AIContextProvider
     }
 
     /// <inheritdoc />
-    protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    public override string StateKey => this._sessionState.StateKey;
+
+    /// <inheritdoc />
+    protected override async ValueTask<AIContext> ProvideAIContextAsync(AIContextProvider.InvokingContext context, CancellationToken cancellationToken = default)
     {
         if (this._searchTime != TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke)
         {
             // Expose the search tool for on-demand invocation.
-            return new AIContext { Tools = this._tools }; // No automatic message injection.
+            return new AIContext
+            {
+                Tools = this._tools
+            };
         }
+
+        return new AIContext
+        {
+            Messages = await this.ProvideMessagesAsync(
+                new InvokingContext(context.Agent, context.Session, context.AIContext.Messages ?? []),
+                cancellationToken).ConfigureAwait(false)
+        };
+    }
+
+    /// <inheritdoc />
+    protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
+        // This code path is invoked using InvokingAsync on MessageAIContextProvider, which does not support tools and instructions,
+        // and OnDemandFunctionCalling requires tools.
+        if (this._searchTime != TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke)
+        {
+            throw new InvalidOperationException($"Using the {nameof(TextSearchProvider)} as a {nameof(MessageAIContextProvider)} is not supported when {nameof(TextSearchProviderOptions.SearchTime)} is set to {TextSearchProviderOptions.TextSearchBehavior.OnDemandFunctionCalling}.");
+        }
+
+        return base.InvokingCoreAsync(context, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    protected override async ValueTask<IEnumerable<ChatMessage>> ProvideMessagesAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
+        // Retrieve recent messages from the session state.
+        var recentMessagesText = this._sessionState.GetOrInitializeState(context.Session).RecentMessagesText
+            ?? [];
 
         // Aggregate text from memory + current request messages.
         var sbInput = new StringBuilder();
-        var requestMessagesText = context.RequestMessages
-            .Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External)
+        var requestMessagesText =
+            (context.RequestMessages ?? [])
             .Where(x => !string.IsNullOrWhiteSpace(x?.Text)).Select(x => x.Text);
-        foreach (var messageText in this._recentMessagesText.Concat(requestMessagesText))
+        foreach (var messageText in recentMessagesText.Concat(requestMessagesText))
         {
             if (sbInput.Length > 0)
             {
@@ -144,7 +159,7 @@ public sealed class TextSearchProvider : AIContextProvider
 
             if (materialized.Count == 0)
             {
-                return new AIContext();
+                return [];
             }
 
             // Format search results
@@ -155,20 +170,17 @@ public sealed class TextSearchProvider : AIContextProvider
                 this._logger.LogTrace("TextSearchProvider: Search Results\nInput:{Input}\nOutput:{MessageText}", input, formatted);
             }
 
-            return new AIContext
-            {
-                Messages = [new ChatMessage(ChatRole.User, formatted) { AdditionalProperties = new AdditionalPropertiesDictionary() { ["IsTextSearchProviderOutput"] = true } }]
-            };
+            return [new ChatMessage(ChatRole.User, formatted)];
         }
         catch (Exception ex)
         {
             this._logger?.LogError(ex, "TextSearchProvider: Failed to search for data due to error");
-            return new AIContext();
+            return [];
         }
     }
 
     /// <inheritdoc />
-    protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    protected override ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
         int limit = this._recentMessageMemoryLimit;
         if (limit <= 0)
@@ -176,56 +188,34 @@ public sealed class TextSearchProvider : AIContextProvider
             return default; // Memory disabled.
         }
 
-        if (context.InvokeException is not null)
+        if (context.Session is null)
         {
-            return default; // Do not update memory on failed invocations.
+            return default; // No session to store state in.
         }
 
-        var messagesText = context.RequestMessages
-            .Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External)
+        // Retrieve existing recent messages from the session state.
+        var recentMessagesText = this._sessionState.GetOrInitializeState(context.Session).RecentMessagesText
+            ?? [];
+
+        var newMessagesText = context.RequestMessages
             .Concat(context.ResponseMessages ?? [])
             .Where(m =>
                 this._recentMessageRolesIncluded.Contains(m.Role) &&
-                !string.IsNullOrWhiteSpace(m.Text) &&
-                // Filter out any messages that were added by this class in InvokingAsync, since we don't want
-                // a feedback loop where previous search results are used to find new search results.
-                (m.AdditionalProperties == null || m.AdditionalProperties.TryGetValue("IsTextSearchProviderOutput", out bool isTextSearchProviderOutput) == false || !isTextSearchProviderOutput))
-            .Select(m => m.Text)
-            .ToList();
-        if (messagesText.Count > limit)
-        {
-            // If the current request/response exceeds the limit, only keep the most recent messages from it.
-            messagesText = messagesText.Skip(messagesText.Count - limit).ToList();
-        }
+                !string.IsNullOrWhiteSpace(m.Text))
+            .Select(m => m.Text);
 
-        foreach (var message in messagesText)
-        {
-            this._recentMessagesText.Enqueue(message);
-        }
+        // Combine existing messages with new messages, then take the most recent up to the limit.
+        var allMessages = recentMessagesText.Concat(newMessagesText).ToList();
+        var updatedMessages = allMessages.Count > limit
+            ? allMessages.Skip(allMessages.Count - limit).ToList()
+            : allMessages;
 
-        while (this._recentMessagesText.Count > limit)
-        {
-            this._recentMessagesText.Dequeue();
-        }
+        // Store updated state back to the session.
+        this._sessionState.SaveState(
+            context.Session,
+            new TextSearchProviderState { RecentMessagesText = updatedMessages });
 
         return default;
-    }
-
-    /// <summary>
-    /// Serializes the current provider state to a <see cref="JsonElement"/> containing any overridden prompts or descriptions.
-    /// </summary>
-    /// <param name="jsonSerializerOptions">Optional serializer options (ignored, source generated context is used).</param>
-    /// <returns>A <see cref="JsonElement"/> with overridden values, or default if nothing was overridden.</returns>
-    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
-    {
-        // Only persist values that differ from defaults plus recent memory configuration & messages.
-        TextSearchProviderState state = new();
-        if (this._recentMessageMemoryLimit > 0 && this._recentMessagesText.Count > 0)
-        {
-            state.RecentMessagesText = this._recentMessagesText.Take(this._recentMessageMemoryLimit).ToList();
-        }
-
-        return JsonSerializer.SerializeToElement(state, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(TextSearchProviderState)));
     }
 
     /// <summary>
@@ -322,8 +312,14 @@ public sealed class TextSearchProvider : AIContextProvider
         public object? RawRepresentation { get; set; }
     }
 
-    internal sealed class TextSearchProviderState
+    /// <summary>
+    /// Represents the per-session state of a <see cref="TextSearchProvider"/> stored in the <see cref="AgentSession.StateBag"/>.
+    /// </summary>
+    public sealed class TextSearchProviderState
     {
+        /// <summary>
+        /// Gets or sets the list of recent message texts retained for multi-turn search context.
+        /// </summary>
         public List<string>? RecentMessagesText { get; set; }
     }
 }

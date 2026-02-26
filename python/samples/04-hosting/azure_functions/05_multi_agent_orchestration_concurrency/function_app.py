@@ -20,6 +20,10 @@ from agent_framework import AgentResponse
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +60,6 @@ app.add_agent(agents[1])
 @app.orchestration_trigger(context_name="context")
 def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext) -> Generator[Any, Any, dict[str, str]]:
     """Fan out to two domain-specific agents and aggregate their responses."""
-
     prompt = context.get_input()
     if not prompt or not str(prompt).strip():
         raise ValueError("Prompt is required")
@@ -64,12 +67,12 @@ def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext) -
     physicist = app.get_agent(context, PHYSICIST_AGENT_NAME)
     chemist = app.get_agent(context, CHEMIST_AGENT_NAME)
 
-    physicist_thread = physicist.get_new_thread()
-    chemist_thread = chemist.get_new_thread()
+    physicist_session = physicist.create_session()
+    chemist_session = chemist.create_session()
 
     # Create tasks from agent.run() calls
-    physicist_task = physicist.run(messages=str(prompt), thread=physicist_thread)
-    chemist_task = chemist.run(messages=str(prompt), thread=chemist_thread)
+    physicist_task = physicist.run(messages=str(prompt), session=physicist_session)
+    chemist_task = chemist.run(messages=str(prompt), session=chemist_session)
 
     # Execute both tasks concurrently using task_all
     task_results = yield context.task_all([physicist_task, chemist_task])

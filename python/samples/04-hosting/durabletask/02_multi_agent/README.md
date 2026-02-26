@@ -6,7 +6,7 @@ This sample demonstrates how to host multiple AI agents with different tools in 
 
 - Hosting multiple agents (WeatherAgent and MathAgent) in a single worker process.
 - Each agent with its own specialized tools and instructions.
-- Interacting with different agents using separate conversation threads.
+- Interacting with different agents using separate conversation sessions.
 - Worker-client architecture for multi-agent systems.
 
 ## Environment Setup
@@ -49,7 +49,7 @@ Using endpoint: http://localhost:8080
 Testing WeatherAgent
 ================================================================================
 
-Created weather conversation thread: <guid>
+Created weather conversation session: <guid>
 User: What is the weather in Seattle?
 
 🔧 [TOOL CALLED] get_weather(location=Seattle)
@@ -61,7 +61,7 @@ WeatherAgent: The current weather in Seattle is sunny with a temperature of 72°
 Testing MathAgent
 ================================================================================
 
-Created math conversation thread: <guid>
+Created math conversation session: <guid>
 User: Calculate a 20% tip on a $50 bill
 
 🔧 [TOOL CALLED] calculate_tip(bill_amount=50.0, tip_percentage=20.0)
