@@ -72,6 +72,8 @@ public static class Program
                 await RunWorkflowAsync(
                     AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 5 })
                         .AddParticipants(from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, client))
+                        .WithName("Translation Round Robin Workflow")
+                        .WithDescription("A workflow where three translation agents take turns responding in a round-robin fashion.")
                         .Build(),
                     [new(ChatRole.User, "Hello, world!")]);
                 break;
