@@ -137,13 +137,22 @@ internal static class BuiltInFunctions
             return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest, "Body must contain a non-empty 'eventName' and a 'response' property.");
         }
 
-        // Verify the orchestration exists and is waiting for the specified event
+        // Verify the orchestration exists and is in a valid state
         OrchestrationMetadata? metadata = await client.GetInstanceAsync(runId, getInputsAndOutputs: true);
         if (metadata is null)
         {
             return await CreateErrorResponseAsync(req, context, HttpStatusCode.NotFound, $"Workflow run '{runId}' not found.");
         }
 
+        if (metadata.RuntimeStatus is OrchestrationRuntimeStatus.Completed
+            or OrchestrationRuntimeStatus.Failed
+            or OrchestrationRuntimeStatus.Terminated)
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest,
+                $"Workflow run '{runId}' is in terminal state '{metadata.RuntimeStatus}'.");
+        }
+
+        // Verify the workflow is waiting for the specified event
         if (DurableWorkflowLiveStatus.TryParse(metadata.SerializedCustomStatus, out DurableWorkflowLiveStatus liveStatus)
             && !liveStatus.PendingEvents.Exists(p => string.Equals(p.EventName, request.EventName, StringComparison.Ordinal)))
         {

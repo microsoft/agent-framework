@@ -39,10 +39,13 @@ Use `WatchStreamAsync` to observe events. When the workflow reaches a `RequestPo
 ```csharp
 await foreach (WorkflowEvent evt in run.WatchStreamAsync())
 {
-    case DurableWorkflowWaitingForInputEvent requestEvent:
-        ApprovalRequest? request = requestEvent.GetInputAs<ApprovalRequest>();
-        await run.SendResponseAsync(requestEvent, new ApprovalResponse(Approved: true, Comments: "Approved."));
-        break;
+    switch (evt)
+    {
+        case DurableWorkflowWaitingForInputEvent requestEvent:
+            ApprovalRequest? request = requestEvent.GetInputAs<ApprovalRequest>();
+            await run.SendResponseAsync(requestEvent, new ApprovalResponse(Approved: true, Comments: "Approved."));
+            break;
+    }
 }
 ```
 

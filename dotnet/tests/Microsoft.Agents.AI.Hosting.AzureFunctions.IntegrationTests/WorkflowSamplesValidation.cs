@@ -123,8 +123,11 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         string samplePath = Path.Combine(s_samplesPath, "03_WorkflowHITL");
         await this.RunSampleTestAsync(samplePath, requiresOpenAI: false, async (logs) =>
         {
+            // Use a unique run ID to avoid conflicts with previous test runs
+            string runId = $"hitl-test-{Guid.NewGuid():N}";
+
             // Step 1: Start the expense reimbursement workflow
-            Uri runUri = new($"http://localhost:{AzureFunctionsPort}/api/workflows/ExpenseReimbursement/run?runId=hitl-test-001");
+            Uri runUri = new($"http://localhost:{AzureFunctionsPort}/api/workflows/ExpenseReimbursement/run?runId={runId}");
             this._outputHelper.WriteLine($"Starting ExpenseReimbursement workflow via POST request to {runUri}...");
 
             using HttpContent runContent = new StringContent("EXP-2025-001", Encoding.UTF8, "text/plain");
@@ -149,7 +152,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
                 timeout: s_orchestrationTimeout);
 
             // Step 3: Send approval response to resume the workflow
-            Uri respondUri = new($"http://localhost:{AzureFunctionsPort}/api/workflows/ExpenseReimbursement/respond/hitl-test-001");
+            Uri respondUri = new($"http://localhost:{AzureFunctionsPort}/api/workflows/ExpenseReimbursement/respond/{runId}");
             this._outputHelper.WriteLine($"Sending approval response via POST request to {respondUri}...");
 
             using HttpContent respondContent = new StringContent(
