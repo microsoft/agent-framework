@@ -1,0 +1,48 @@
+name: Sample Validation Setup
+description: Sets up the environment for sample validation (checkout, Node.js, Copilot CLI, Azure login, Python)
+
+inputs:
+  azure-client-id:
+    description: Azure Client ID for OIDC login
+    required: true
+  azure-tenant-id:
+    description: Azure Tenant ID for OIDC login
+    required: true
+  azure-subscription-id:
+    description: Azure Subscription ID for OIDC login
+    required: true
+  python-version:
+    description: The Python version to set up
+    required: false
+    default: "3.12"
+  os:
+    description: The operating system to set up
+    required: false
+    default: "Linux"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Node.js environment
+      uses: actions/setup-node@v4
+
+    - name: Install Copilot CLI
+      shell: bash
+      run: npm install -g @github/copilot
+
+    - name: Test Copilot CLI
+      shell: bash
+      run: copilot -p "What can you do in one sentence?"
+
+    - name: Azure CLI Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ inputs.azure-client-id }}
+        tenant-id: ${{ inputs.azure-tenant-id }}
+        subscription-id: ${{ inputs.azure-subscription-id }}
+
+    - name: Set up python and install the project
+      uses: ./.github/actions/python-setup
+      with:
+        python-version: ${{ inputs.python-version }}
+        os: ${{ inputs.os }}
