@@ -1009,7 +1009,7 @@ class TestClaudeAgentTelemetry:
 
         with (
             patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
-            patch("agent_framework_claude._agent.get_span") as mock_get_span,
+            patch("agent_framework.observability._get_span") as mock_get_span,
         ):
             mock_span = MagicMock()
             mock_get_span.return_value.__enter__ = MagicMock(return_value=mock_span)
@@ -1035,7 +1035,7 @@ class TestClaudeAgentTelemetry:
 
         with (
             patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
-            patch("agent_framework_claude._agent.get_span") as mock_get_span,
+            patch("agent_framework.observability._get_span") as mock_get_span,
         ):
             agent = ClaudeAgent(name="test-agent")
             response = await agent.run("Hello")
@@ -1054,7 +1054,7 @@ class TestClaudeAgentTelemetry:
 
         with (
             patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
-            patch("agent_framework_claude._agent.get_tracer") as mock_get_tracer,
+            patch("agent_framework.observability.get_tracer") as mock_get_tracer,
         ):
             mock_span = MagicMock()
             mock_tracer = MagicMock()
@@ -1095,8 +1095,8 @@ class TestClaudeAgentTelemetry:
 
         with (
             patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
-            patch("agent_framework_claude._agent.get_span") as mock_get_span,
-            patch("agent_framework_claude._agent.capture_exception") as mock_capture_exc,
+            patch("agent_framework.observability._get_span") as mock_get_span,
+            patch("agent_framework.observability.capture_exception") as mock_capture_exc,
         ):
             mock_span = MagicMock()
             mock_get_span.return_value.__enter__ = MagicMock(return_value=mock_span)
@@ -1122,7 +1122,7 @@ class TestClaudeAgentTelemetry:
 
         with (
             patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
-            patch("agent_framework_claude._agent.get_span") as mock_get_span,
+            patch("agent_framework.observability._get_span") as mock_get_span,
         ):
             mock_span = MagicMock()
             mock_get_span.return_value.__enter__ = MagicMock(return_value=mock_span)

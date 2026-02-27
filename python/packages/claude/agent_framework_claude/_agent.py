@@ -5,10 +5,8 @@ from __future__ import annotations
 import contextlib
 import logging
 import sys
-import weakref
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from pathlib import Path
-from time import perf_counter, time_ns
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, overload
 
 from agent_framework import (
@@ -29,23 +27,7 @@ from agent_framework import (
     normalize_tools,
 )
 from agent_framework.exceptions import AgentException
-from agent_framework.observability import (
-    OBSERVABILITY_SETTINGS,
-    OtelAttr,
-    get_tracer,
-)
-# These internal helpers are used by AgentTelemetryLayer to build spans.
-# ClaudeAgent cannot inherit AgentTelemetryLayer (MRO conflict with its own
-# run()), so we reuse the same helpers directly.  If the core package later
-# exposes public equivalents, this import block should be updated.
-from agent_framework.observability import (
-    _capture_messages as capture_messages,
-    _capture_response as capture_response,
-    _get_response_attributes as get_response_attributes,
-    _get_span as get_span,
-    _get_span_attributes as get_span_attributes,
-    capture_exception,
-)
+from agent_framework.observability import AgentTelemetryLayer
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeSDKClient,
@@ -190,7 +172,72 @@ OptionsT = TypeVar(
 )
 
 
-class ClaudeAgent(BaseAgent, Generic[OptionsT]):
+class _ClaudeAgentRunImpl:
+    """Core run() implementation for ClaudeAgent.
+
+    Separated into a mixin so that AgentTelemetryLayer.run() can wrap it
+    via MRO: ClaudeAgent → AgentTelemetryLayer → _ClaudeAgentRunImpl → BaseAgent.
+    """
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        options: Any = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentResponseUpdate]: ...
+
+    @overload
+    async def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        options: Any = None,
+        **kwargs: Any,
+    ) -> AgentResponse[Any]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        options: Any = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentResponseUpdate] | Awaitable[AgentResponse[Any]]:
+        """Run the agent with the given messages.
+
+        Args:
+            messages: The messages to process.
+
+        Keyword Args:
+            stream: If True, returns an async iterable of updates. If False (default),
+                returns an awaitable AgentResponse.
+            session: The conversation session. If session has service_session_id set,
+                the agent will resume that session.
+            options: Runtime options (model, permission_mode can be changed per-request).
+            kwargs: Additional keyword arguments.
+
+        Returns:
+            When stream=True: An ResponseStream for streaming updates.
+            When stream=False: An Awaitable[AgentResponse] with the complete response.
+        """
+        response = ResponseStream(
+            self._get_stream(messages, session=session, options=options, **kwargs),  # type: ignore[attr-defined]
+            finalizer=self._finalize_response,  # type: ignore[attr-defined]
+        )
+
+        if stream:
+            return response
+        return response.get_final_response()
+
+
+class ClaudeAgent(AgentTelemetryLayer, _ClaudeAgentRunImpl, BaseAgent, Generic[OptionsT]):
     """Claude Agent using Claude Code CLI.
 
     Wraps the Claude Agent SDK to provide agentic capabilities including
@@ -587,171 +634,19 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
             return ""
         return "\n".join([msg.text or "" for msg in messages])
 
-    @overload
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: Literal[True],
-        session: AgentSession | None = None,
-        options: OptionsT | MutableMapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]: ...
+    @property
+    def default_options(self) -> dict[str, Any]:
+        """Expose options for AgentTelemetryLayer compatibility.
 
-    @overload
-    async def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: Literal[False] = ...,
-        session: AgentSession | None = None,
-        options: OptionsT | MutableMapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AgentResponse[Any]: ...
-
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: bool = False,
-        session: AgentSession | None = None,
-        options: OptionsT | MutableMapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate] | Awaitable[AgentResponse[Any]]:
-        """Run the agent with the given messages.
-
-        Args:
-            messages: The messages to process.
-
-        Keyword Args:
-            stream: If True, returns an async iterable of updates. If False (default),
-                returns an awaitable AgentResponse.
-            session: The conversation session. If session has service_session_id set,
-                the agent will resume that session.
-            options: Runtime options (model, permission_mode can be changed per-request).
-            kwargs: Additional keyword arguments.
-
-        Returns:
-            When stream=True: An ResponseStream for streaming updates.
-            When stream=False: An Awaitable[AgentResponse] with the complete response.
+        AgentTelemetryLayer expects an ``instructions`` key to capture the
+        system prompt in telemetry spans.  ClaudeAgent stores the system
+        prompt as ``system_prompt``, so this property maps accordingly.
         """
-        response = ResponseStream(
-            self._get_stream(messages, session=session, options=options, **kwargs),
-            finalizer=self._finalize_response,
-        )
-
-        if not OBSERVABILITY_SETTINGS.ENABLED:
-            if stream:
-                return response
-            return response.get_final_response()
-
-        provider_name = self.AGENT_PROVIDER_NAME
-        attributes = get_span_attributes(
-            operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
-            provider_name=provider_name,
-            agent_id=self.id,
-            agent_name=self.name or self.id,
-            agent_description=self.description,
-            thread_id=session.service_session_id if session else None,
-        )
-
-        if stream:
-            return self._run_with_telemetry_stream(
-                response, attributes, provider_name, messages,
-            )
-
-        return self._run_with_telemetry(
-            response, attributes, provider_name, messages,
-        )
-
-    def _run_with_telemetry_stream(
-        self,
-        result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]],
-        attributes: dict[str, Any],
-        provider_name: str,
-        messages: AgentRunInputs | None,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
-        """Wrap a streaming run with OpenTelemetry tracing."""
-        operation = attributes.get(OtelAttr.OPERATION, "operation")
-        span_name = attributes.get(OtelAttr.AGENT_NAME, "unknown")
-        span = get_tracer().start_span(f"{operation} {span_name}")
-        span.set_attributes(attributes)
-
-        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
-            capture_messages(
-                span=span,
-                provider_name=provider_name,
-                messages=messages,
-                system_instructions=self._default_options.get("system_prompt"),
-            )
-
-        span_state = {"closed": False}
-        duration_state: dict[str, float] = {}
-        start_time = perf_counter()
-
-        def _close_span() -> None:
-            if span_state["closed"]:
-                return
-            span_state["closed"] = True
-            span.end()
-
-        def _record_duration() -> None:
-            duration_state["duration"] = perf_counter() - start_time
-
-        async def _finalize_stream() -> None:
-            try:
-                response = await result_stream.get_final_response()
-                duration = duration_state.get("duration")
-                response_attributes = get_response_attributes(attributes, response)
-                capture_response(span=span, attributes=response_attributes, duration=duration)
-                if (
-                    OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
-                    and isinstance(response, AgentResponse)
-                    and response.messages
-                ):
-                    capture_messages(
-                        span=span, provider_name=provider_name, messages=response.messages, output=True,
-                    )
-            except Exception as exception:
-                capture_exception(span=span, exception=exception, timestamp=time_ns())
-            finally:
-                _close_span()
-
-        wrapped_stream = result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
-        weakref.finalize(wrapped_stream, _close_span)
-        return wrapped_stream
-
-    async def _run_with_telemetry(
-        self,
-        result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]],
-        attributes: dict[str, Any],
-        provider_name: str,
-        messages: AgentRunInputs | None,
-    ) -> AgentResponse[Any]:
-        """Wrap a non-streaming run with OpenTelemetry tracing."""
-        with get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
-            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
-                capture_messages(
-                    span=span,
-                    provider_name=provider_name,
-                    messages=messages,
-                    system_instructions=self._default_options.get("system_prompt"),
-                )
-            start_time = perf_counter()
-            try:
-                response = await result_stream.get_final_response()
-            except Exception as exception:
-                capture_exception(span=span, exception=exception, timestamp=time_ns())
-                raise
-            duration = perf_counter() - start_time
-            if response:
-                response_attributes = get_response_attributes(attributes, response)
-                capture_response(span=span, attributes=response_attributes, duration=duration)
-                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
-                    capture_messages(
-                        span=span, provider_name=provider_name, messages=response.messages, output=True,
-                    )
-            return response
+        opts = dict(self._default_options)
+        system_prompt = opts.pop("system_prompt", None)
+        if system_prompt is not None:
+            opts["instructions"] = system_prompt
+        return opts
 
     def _finalize_response(self, updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
         """Build AgentResponse and propagate structured_output as value.
