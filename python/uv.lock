@@ -587,7 +587,7 @@ requires-dist = [
     { name = "loguru", marker = "extra == 'tau2'", specifier = ">=0.7.3,<0.7.4" },
     { name = "numpy", marker = "extra == 'tau2'", specifier = ">=2.2.6,<3" },
     { name = "orjson", marker = "extra == 'gaia'", specifier = ">=3.8.0,<4" },
-    { name = "pyarrow", marker = "extra == 'gaia'" },
+    { name = "pyarrow", marker = "extra == 'gaia'", specifier = ">=10,<24" },
     { name = "pydantic", marker = "extra == 'gaia'", specifier = ">=2,<4" },
     { name = "pydantic", marker = "extra == 'tau2'", specifier = ">=2,<4" },
     { name = "sympy", marker = "extra == 'math'", specifier = ">=1.13.0,<2" },

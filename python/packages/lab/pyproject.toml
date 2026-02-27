@@ -32,7 +32,7 @@ gaia = [
   "tqdm>=4.60.0,<5",
   "huggingface-hub>=0.20.0,<0.20.1",
   "orjson>=3.8.0,<4",
-  "pyarrow",  # For reading parquet files
+  "pyarrow>=10,<24",  # For reading parquet files
 ]
 
 # Lightning RL training module dependencies

@@ -397,12 +397,11 @@ All non-core packages declare a lower bound on `agent-framework-core` (e.g., `"a
 The guiding principle for external dependencies is to make the range of allowed versions as broad as possible, even it that means we have to do some conditional imports, and other tricks to allow small changes in versions.
 So we use bounded ranges for external package dependencies in `pyproject.toml`:
 
-- For stable dependencies (`>=1.0.0`), use `>=<known_good>,<next_major>` (for example: `openai>=1.99.0,<2`).
+
+- For stable dependencies (`>=1.0.0`), use a lower bound at a known-good version and an explicit upper bound that reflects the maximum major version we currently support (for example: `openai>=1.99.0,<3`).
 - For prerelease (`dev`/`a`/`b`/`rc`) dependencies, use a known-good lower bound with a hard upper boundary in the same prerelease line (for example: `azure-ai-projects>=2.0.0b3,<2.0.0b4`).
 - For `<1.0.0` dependencies, use patch-bounded caps (`>=<known_good>,<next_patch>`), not minor-bounded caps (for example: `a2a-sdk>=0.3.5,<0.3.6`).
-- Prefer keeping support for multiple major versions when practical. If APIs differ between supported majors, version-conditional imports/branches are acceptable to preserve compatibility.
-- Validate dependency bounds project by project using the dependency-range validation script (`uv run poe validate-dependency-ranges`), and include both typing and tests for the final gate.
-
+- Prefer keeping support for multiple major versions when practical. This may mean that the upper bound spans multiple major versions when the dependency maintains backward compatibility; if APIs differ between supported majors, version-conditional imports/branches are acceptable to preserve compatibility. For `<1.0.0>` and prerelease dependencies, also make the bounds as broad as possible but only for known packages, not for new ones, as the odds of breaking changes being introduced are higher.
 
 ### Installation Options
 
