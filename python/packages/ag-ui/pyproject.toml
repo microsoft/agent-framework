@@ -24,13 +24,17 @@ classifiers = [
 dependencies = [
     "agent-framework-core>=1.0.0rc4",
     "ag-ui-protocol==0.1.13",
-    "fastapi>=0.104.0,<0.133.1",
-    "uvicorn>=0.30.0,<0.30.1"
+    "fastapi>=0.115.0,<0.133.1",
+    "uvicorn>=0.30.0,<0.30.6"
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0,<9",
+    "pytest>=8.0.0,<9.0.2",
+    "pytest-asyncio>=1.0.0,<2",
+    "pytest-cov>=6.0.0,<7",
+    "pytest-xdist[psutil]>=3.2.0,<4",
+    "agent-framework-orchestrations>=1.0.0b260225",
     "httpx>=0.27.0,<0.29",
 ]
 

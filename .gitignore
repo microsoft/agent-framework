@@ -206,6 +206,7 @@ WARP.md
 **/projectBrief.md
 **/tmpclaude*
 python/scripts/dependency-range-results.json
+python/scripts/dependency-lower-bound-results.json
 
 # Azurite storage emulator files
 */__azurite_db_blob__.json*

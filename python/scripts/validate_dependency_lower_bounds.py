@@ -339,7 +339,12 @@ def _build_internal_graph(workspace_root: Path, package_map: dict[str, Path]) ->
         pyproject_file = package_path / "pyproject.toml"
         with pyproject_file.open("rb") as f:
             data = tomli.load(f)
-        dependencies = data.get("project", {}).get("dependencies", []) or []
+        project = data.get("project", {}) or {}
+        dependencies: list[str] = list(project.get("dependencies", []) or [])
+        for values in (project.get("optional-dependencies", {}) or {}).values():
+            dependencies.extend([value for value in (values or []) if isinstance(value, str)])
+        for values in (data.get("dependency-groups", {}) or {}).values():
+            dependencies.extend([value for value in (values or []) if isinstance(value, str)])
         internal = set()
         for dependency in dependencies:
             parsed = _parse_requirement(dependency)
@@ -460,7 +465,18 @@ def _build_trial_lower_bounds(
     # `packaging` treats .dev/.a/.b/.rc as prereleases; only probe them when current spec already uses them.
     if not allow_prerelease:
         candidates = [version for version in candidates if not version.is_prerelease]
-    candidates.sort(reverse=True)
+    if lower.major >= 1:
+        major_floor = Version(f"{lower.major}.0.0")
+        candidates = [version for version in candidates if version.major == lower.major and version >= major_floor]
+    else:
+        minor_floor = Version(f"0.{lower.minor}.0")
+        candidates = [
+            version
+            for version in candidates
+            if version.major == 0 and version.minor == lower.minor and version >= minor_floor
+        ]
+
+    candidates.sort()
     if max_candidates > 0:
         return candidates[:max_candidates]
     return candidates
@@ -479,6 +495,7 @@ def _run_tasks(
 ) -> tuple[bool, str | None]:
     env = dict(os.environ)
     env["UV_PRERELEASE"] = "allow"
+    env.pop("VIRTUAL_ENV", None)
     for task_name in tasks:
         command = [
             "uv",
@@ -486,6 +503,7 @@ def _run_tasks(
             "--directory",
             str(project_dir),
             "run",
+            "--active",
             "--isolated",
             "--resolution",
             resolution,
@@ -616,10 +634,14 @@ def _optimize_dependency(
             candidate_versions=[],
             attempted_versions=attempted_versions,
             attempts=attempts,
-            skipped_reason="No lower candidate bounds found.",
+            skipped_reason="No lower candidate bounds found within allowed boundary.",
         )
 
-    for candidate in candidates:
+    low = 0
+    high = len(candidates) - 1
+    while low <= high:
+        midpoint = (low + high) // 2
+        candidate = candidates[midpoint]
         attempted_versions.append(str(candidate))
         trial_requirements = [entry.with_lower(candidate) for entry in dependency.entries]
         replacements = list(zip(current_requirements, trial_requirements, strict=True))
@@ -629,6 +651,7 @@ def _optimize_dependency(
         if dry_run:
             attempts.append(DependencyAttempt(trial_lower=str(candidate), status="dry_run_pass"))
             current_requirements = trial_requirements
+            high = midpoint - 1
             continue
 
         success, error = _run_tasks(
@@ -644,11 +667,12 @@ def _optimize_dependency(
         if success:
             attempts.append(DependencyAttempt(trial_lower=str(candidate), status="passed"))
             current_requirements = trial_requirements
+            high = midpoint - 1
             continue
 
         attempts.append(DependencyAttempt(trial_lower=str(candidate), status="failed", error=error))
         _replace_requirements(temp_pyproject, [(new, old) for old, new in replacements])
-        continue
+        low = midpoint + 1
 
     changed = current_requirements != dependency.original_requirements
     return DependencyOutcome(

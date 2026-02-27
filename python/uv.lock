@@ -152,7 +152,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "a2a-sdk", specifier = ">=0.3.5,<0.3.24" },
+    { name = "a2a-sdk", specifier = ">=0.2.1,<0.3.24" },
     { name = "agent-framework-core", editable = "packages/core" },
 ]
 
@@ -169,18 +169,26 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "agent-framework-orchestrations", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pytest", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytest-asyncio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytest-cov", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytest-xdist", extra = ["psutil"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "ag-ui-protocol", specifier = "==0.1.13" },
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "fastapi", specifier = ">=0.104.0,<0.133.1" },
+    { name = "agent-framework-orchestrations", marker = "extra == 'dev'", editable = "packages/orchestrations" },
+    { name = "fastapi", specifier = ">=0.115.0,<0.133.1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0,<0.29" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0,<9" },
-    { name = "uvicorn", specifier = ">=0.30.0,<0.30.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0,<9.0.2" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.0.0,<2" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0.0,<7" },
+    { name = "pytest-xdist", extras = ["psutil"], marker = "extra == 'dev'", specifier = ">=3.2.0,<4" },
+    { name = "uvicorn", specifier = ">=0.30.0,<0.30.6" },
 ]
 provides-extras = ["dev"]
 
@@ -213,8 +221,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "aiohttp", specifier = ">=3.13.3,<4" },
-    { name = "azure-ai-agents", specifier = ">=1.2.0b5,<1.2.0b6" },
+    { name = "aiohttp", specifier = ">=3.7.0,<4" },
+    { name = "azure-ai-agents", specifier = ">=1.0.0,<1.2.0b6" },
     { name = "azure-ai-inference", specifier = ">=1.0.0b9,<1.0.0b10" },
 ]
 
@@ -230,7 +238,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "azure-search-documents", specifier = ">=11.7.0b2,<11.7.0b3" },
+    { name = "azure-search-documents", specifier = ">=11.0.0,<11.7.0b3" },
 ]
 
 [[package]]
@@ -263,8 +271,8 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-durabletask", editable = "packages/durabletask" },
-    { name = "azure-functions", specifier = ">=1.24.0,<2" },
-    { name = "azure-functions-durable", specifier = ">=1.5.0,<2" },
+    { name = "azure-functions", specifier = ">=1.0.3,<2" },
+    { name = "azure-functions-durable", specifier = ">=1.0.0,<2" },
 ]
 
 [package.metadata.requires-dev]
@@ -283,8 +291,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "boto3", specifier = ">=1.35.0,<2.0.0" },
-    { name = "botocore", specifier = ">=1.35.0,<2.0.0" },
+    { name = "boto3", specifier = ">=1.0.0,<2.0.0" },
+    { name = "botocore", specifier = ">=1.0.0,<2.0.0" },
 ]
 
 [[package]]
@@ -299,7 +307,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "openai-chatkit", specifier = ">=1.4.0,<2.0.0" },
+    { name = "openai-chatkit", specifier = ">=1.0.0,<2.0.0" },
 ]
 
 [[package]]
@@ -314,7 +322,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "claude-agent-sdk", specifier = ">=0.1.25,<0.1.26" },
+    { name = "claude-agent-sdk", specifier = ">=0.1.0,<0.1.26" },
 ]
 
 [[package]]
@@ -329,7 +337,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "microsoft-agents-copilotstudio-client", specifier = ">=0.3.1,<0.3.2" },
+    { name = "microsoft-agents-copilotstudio-client", specifier = ">=0.0.0,<0.3.2" },
 ]
 
 [[package]]
@@ -400,15 +408,15 @@ requires-dist = [
     { name = "agent-framework-redis", marker = "extra == 'all'", editable = "packages/redis" },
     { name = "azure-ai-projects", specifier = ">=2.0.0,<3.0" },
     { name = "azure-identity", specifier = ">=1,<2" },
-    { name = "mcp", extras = ["ws"], specifier = ">=1.24.0,<2" },
-    { name = "openai", specifier = ">=1.99.0,<3" },
-    { name = "opentelemetry-api", specifier = ">=1.39.0,<2" },
-    { name = "opentelemetry-sdk", specifier = ">=1.39.0,<2" },
-    { name = "opentelemetry-semantic-conventions-ai", specifier = ">=0.4.13,<0.4.14" },
-    { name = "packaging", specifier = ">=24.1,<26.0" },
+    { name = "mcp", extras = ["ws"], specifier = ">=1.0.0,<2" },
+    { name = "openai", specifier = ">=1.0.0,<3" },
+    { name = "opentelemetry-api", specifier = ">=1.0.0,<2" },
+    { name = "opentelemetry-sdk", specifier = ">=1.0.0,<2" },
+    { name = "opentelemetry-semantic-conventions-ai", specifier = ">=0.4.0,<0.4.14" },
+    { name = "packaging", specifier = ">=24.0,<26.0" },
     { name = "pydantic", specifier = ">=2,<3" },
     { name = "python-dotenv", specifier = ">=1,<2" },
-    { name = "typing-extensions", specifier = ">=4.15.0,<5" },
+    { name = "typing-extensions", specifier = ">=4.0.0,<5" },
 ]
 provides-extras = ["all"]
 
@@ -496,9 +504,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "durabletask", specifier = ">=1.3.0,<2" },
-    { name = "durabletask-azuremanaged", specifier = ">=1.3.0,<2" },
-    { name = "python-dateutil", specifier = ">=2.8.0,<3" },
+    { name = "durabletask", specifier = ">=0.1.0,<2" },
+    { name = "durabletask-azuremanaged", specifier = ">=0.1.1,<2" },
+    { name = "python-dateutil", specifier = ">=1.4,<3" },
 ]
 
 [package.metadata.requires-dev]
@@ -516,7 +524,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "foundry-local-sdk", specifier = ">=0.5.1,<0.5.2" },
+    { name = "foundry-local-sdk", specifier = ">=0.3.0,<0.5.2" },
 ]
 
 [[package]]
@@ -639,7 +647,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "ollama", specifier = ">=0.5.3,<0.5.4" },
+    { name = "ollama", specifier = ">=0.0.0,<0.5.4" },
 ]
 
 [[package]]
@@ -666,7 +674,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "azure-core", specifier = ">=1.30.0,<2" },
+    { name = "azure-core", specifier = ">=1.0.0,<2" },
     { name = "httpx", specifier = ">=0.27.0,<0.29" },
 ]
 
@@ -684,9 +692,9 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "numpy", specifier = ">=2.2.6,<3" },
-    { name = "redis", specifier = ">=6.4.0,<7.2.1" },
-    { name = "redisvl", specifier = ">=0.8.2,<0.8.3" },
+    { name = "numpy", specifier = ">=2.1.0,<3" },
+    { name = "redis", specifier = ">=6.0.0,<7.2.1" },
+    { name = "redisvl", specifier = ">=0.8.0,<0.8.3" },
 ]
 
 [[package]]
@@ -1728,7 +1736,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "(python_full_version < '3.13' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform == 'linux') or (python_full_version < '3.13' and sys_platform == 'win32')" },
+    { name = "typing-extensions", marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [

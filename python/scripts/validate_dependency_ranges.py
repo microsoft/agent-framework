@@ -335,7 +335,12 @@ def _build_internal_graph(workspace_root: Path, package_map: dict[str, Path]) ->
         pyproject_file = package_path / "pyproject.toml"
         with pyproject_file.open("rb") as f:
             data = tomli.load(f)
-        dependencies = data.get("project", {}).get("dependencies", []) or []
+        project = data.get("project", {}) or {}
+        dependencies: list[str] = list(project.get("dependencies", []) or [])
+        for values in (project.get("optional-dependencies", {}) or {}).values():
+            dependencies.extend([value for value in (values or []) if isinstance(value, str)])
+        for values in (data.get("dependency-groups", {}) or {}).values():
+            dependencies.extend([value for value in (values or []) if isinstance(value, str)])
         internal = set()
         for dependency in dependencies:
             parsed = _parse_requirement(dependency)
@@ -512,6 +517,7 @@ def _run_tasks(
 ) -> tuple[bool, str | None]:
     env = dict(os.environ)
     env["UV_PRERELEASE"] = "allow"
+    env.pop("VIRTUAL_ENV", None)
     for task_name in tasks:
         command = [
             "uv",
@@ -519,6 +525,7 @@ def _run_tasks(
             "--directory",
             str(project_dir),
             "run",
+            "--active",
             "--isolated",
             "--resolution",
             resolution,
