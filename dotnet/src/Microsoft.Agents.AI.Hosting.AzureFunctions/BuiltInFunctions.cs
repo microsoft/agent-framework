@@ -152,19 +152,34 @@ internal static class BuiltInFunctions
                 $"Workflow run '{runId}' is in terminal state '{metadata.RuntimeStatus}'.");
         }
 
-        // Verify the workflow is waiting for the specified event
-        if (DurableWorkflowLiveStatus.TryParse(metadata.SerializedCustomStatus, out DurableWorkflowLiveStatus liveStatus)
-            && !liveStatus.PendingEvents.Exists(p => string.Equals(p.EventName, request.EventName, StringComparison.Ordinal)))
+        // Verify the workflow is waiting for the specified event.
+        // If status can't be parsed (e.g., not yet set during early execution), allow the event through —
+        // Durable Task safely queues it until the orchestration reaches WaitForExternalEvent.
+        bool eventValidated = false;
+        if (DurableWorkflowLiveStatus.TryParse(metadata.SerializedCustomStatus, out DurableWorkflowLiveStatus liveStatus))
         {
-            return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest,
-                $"Workflow is not waiting for event '{request.EventName}'.");
+            if (!liveStatus.PendingEvents.Exists(p => string.Equals(p.EventName, request.EventName, StringComparison.Ordinal)))
+            {
+                return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest,
+                    $"Workflow is not waiting for event '{request.EventName}'.");
+            }
+
+            eventValidated = true;
         }
 
         // Raise the external event to unblock the orchestration's WaitForExternalEvent call
         await client.RaiseEventAsync(runId, request.EventName, request.Response.GetRawText());
 
-        HttpResponseData response = req.CreateResponse(HttpStatusCode.OK);
-        await response.WriteAsJsonAsync(new { message = "Response sent to workflow.", runId, eventName = request.EventName });
+        HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
+        await response.WriteAsJsonAsync(new
+        {
+            message = eventValidated
+                ? "Response sent to workflow."
+                : "Response sent to workflow. Event could not be validated against pending requests.",
+            runId,
+            eventName = request.EventName,
+            validated = eventValidated,
+        });
         return response;
     }
 
