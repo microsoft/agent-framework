@@ -287,6 +287,8 @@
     <Project Path="samples/05-end-to-end/HostedAgents/AgentsInWorkflows/AgentsInWorkflows.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithHostedMCP/AgentWithHostedMCP.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
+    <Project Path="samples/05-end-to-end/HostedAgents/FoundryMultiAgent/FoundryMultiAgent.csproj" />
+    <Project Path="samples/05-end-to-end/HostedAgents/FoundrySingleAgent/FoundrySingleAgent.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
