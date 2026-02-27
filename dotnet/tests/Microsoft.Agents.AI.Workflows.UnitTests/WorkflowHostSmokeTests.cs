@@ -153,7 +153,6 @@ public class WorkflowHostSmokeTests
     /// <summary>
     /// Tests that when a workflow emits a RequestInfoEvent with FunctionCallContent data,
     /// the AgentResponseUpdate preserves the original FunctionCallContent type.
-    /// Regression test for GitHub issue #3029.
     /// </summary>
     [Fact]
     public async Task Test_AsAgent_FunctionCallContentPreservedInRequestInfoAsync()
@@ -189,7 +188,6 @@ public class WorkflowHostSmokeTests
     /// <summary>
     /// Tests that when a workflow emits a RequestInfoEvent with UserInputRequestContent data,
     /// the AgentResponseUpdate preserves the original UserInputRequestContent type.
-    /// Regression test for GitHub issue #3029.
     /// </summary>
     [Fact]
     public async Task Test_AsAgent_UserInputRequestContentPreservedInRequestInfoAsync()
