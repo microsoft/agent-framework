@@ -5,7 +5,7 @@ using Microsoft.Agents.AI.DurableTask;
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 
 /// <summary>
-/// Extends <see cref="DurableOptions"/> with Azure Functions–specific configuration.
+/// Provides Azure Functions–specific configuration for durable workflows.
 /// </summary>
 internal sealed class FunctionsDurableOptions : DurableOptions
 {
