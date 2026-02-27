@@ -43,6 +43,8 @@ from .._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
+    ToolTypes,
+    normalize_tools,
 )
 from .._types import (
     Annotation,
@@ -425,21 +427,24 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
     # region Prep methods
 
-    def _prepare_tools_for_openai(self, tools: Sequence[Any] | None) -> list[Any]:
+    def _prepare_tools_for_openai(
+        self, tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None
+    ) -> list[Any]:
         """Prepare tools for the OpenAI Responses API.
 
         Converts FunctionTool to Responses API format. All other tools pass through unchanged.
 
         Args:
-            tools: Sequence of tools to prepare.
+            tools: A single tool or sequence of tools to prepare.
 
         Returns:
             List of tool parameters ready for the OpenAI API.
         """
-        if not tools:
+        tools_list = normalize_tools(tools)
+        if not tools_list:
             return []
         response_tools: list[Any] = []
-        for tool in tools:
+        for tool in tools_list:
             if isinstance(tool, FunctionTool):
                 params = tool.parameters()
                 params["additionalProperties"] = False

@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypedDict, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
+    FileCitationDeltaAnnotation,
+    FilePathDeltaAnnotation,
     ImageURLContentBlockParam,
     ImageURLParam,
     MessageContentPartParam,
@@ -39,12 +41,14 @@ from .._tools import (
     normalize_tools,
 )
 from .._types import (
+    Annotation,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     Message,
     ResponseStream,
+    TextSpanRegion,
     UsageDetails,
 )
 from ..observability import ChatTelemetryLayer
@@ -554,9 +558,53 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
                     for delta_block in delta.content or []:
                         if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
+                            text_content = Content.from_text(delta_block.text.value)
+                            if delta_block.text.annotations:
+                                text_content.annotations = []
+                                for annotation in delta_block.text.annotations:
+                                    if isinstance(annotation, FileCitationDeltaAnnotation):
+                                        ann: Annotation = Annotation(
+                                            type="citation",
+                                            additional_properties={
+                                                "text": annotation.text,
+                                                "index": annotation.index,
+                                            },
+                                            raw_representation=annotation,
+                                        )
+                                        if annotation.file_citation and annotation.file_citation.file_id:
+                                            ann["file_id"] = annotation.file_citation.file_id
+                                        if annotation.start_index is not None and annotation.end_index is not None:
+                                            ann["annotated_regions"] = [
+                                                TextSpanRegion(
+                                                    type="text_span",
+                                                    start_index=annotation.start_index,
+                                                    end_index=annotation.end_index,
+                                                )
+                                            ]
+                                        text_content.annotations.append(ann)
+                                    elif isinstance(annotation, FilePathDeltaAnnotation):
+                                        ann = Annotation(
+                                            type="citation",
+                                            additional_properties={
+                                                "text": annotation.text,
+                                                "index": annotation.index,
+                                            },
+                                            raw_representation=annotation,
+                                        )
+                                        if annotation.file_path and annotation.file_path.file_id:
+                                            ann["file_id"] = annotation.file_path.file_id
+                                        if annotation.start_index is not None and annotation.end_index is not None:
+                                            ann["annotated_regions"] = [
+                                                TextSpanRegion(
+                                                    type="text_span",
+                                                    start_index=annotation.start_index,
+                                                    end_index=annotation.end_index,
+                                                )
+                                            ]
+                                        text_content.annotations.append(ann)
                             yield ChatResponseUpdate(
                                 role=role,  # type: ignore[arg-type]
-                                contents=[Content.from_text(delta_block.text.value)],
+                                contents=[text_content],
                                 conversation_id=thread_id,
                                 message_id=response_id,
                                 raw_representation=response.data,
