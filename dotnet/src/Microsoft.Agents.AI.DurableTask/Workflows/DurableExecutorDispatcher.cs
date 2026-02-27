@@ -113,22 +113,16 @@ internal static class DurableExecutorDispatcher
 
         logger.LogWaitingForExternalEvent(eventName);
 
-        // Publish pending request so external clients can discover what input is needed (skip during replay)
-        if (!context.IsReplaying)
-        {
-            liveStatus.PendingEvents.Add(new PendingRequestPortStatus(EventName: eventName, Input: input));
-            context.SetCustomStatus(liveStatus);
-        }
+        // Publish pending request so external clients can discover what input is needed
+        liveStatus.PendingEvents.Add(new PendingRequestPortStatus(EventName: eventName, Input: input));
+        context.SetCustomStatus(liveStatus);
 
         // Wait until the external actor raises the event
         string response = await context.WaitForExternalEvent<string>(eventName).ConfigureAwait(true);
 
-        // Remove this pending request after receiving the response (skip during replay)
-        if (!context.IsReplaying)
-        {
-            liveStatus.PendingEvents.RemoveAll(p => p.EventName == eventName);
-            context.SetCustomStatus(liveStatus.Events.Count > 0 || liveStatus.PendingEvents.Count > 0 ? liveStatus : null);
-        }
+        // Remove this pending request after receiving the response
+        liveStatus.PendingEvents.RemoveAll(p => p.EventName == eventName);
+        context.SetCustomStatus(liveStatus.Events.Count > 0 || liveStatus.PendingEvents.Count > 0 ? liveStatus : null);
 
         logger.LogReceivedExternalEvent(eventName);
 
