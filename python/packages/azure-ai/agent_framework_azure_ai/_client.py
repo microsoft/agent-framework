@@ -597,18 +597,22 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """Parse an Azure AI Responses API response, handling Azure-specific output item types."""
         result = super()._parse_response_from_openai(response, options)
 
-        for item in response.output:
-            if item.type == "oauth_consent_request":
-                consent_link = item.consent_link
-                if consent_link:
-                    result.messages[0].contents.append(
-                        Content.from_oauth_consent_request(
-                            consent_link=consent_link,
-                            raw_representation=item,
+        if result.messages:
+            for item in response.output:
+                if item.type == "oauth_consent_request":
+                    consent_link = item.consent_link
+                    if consent_link and not consent_link.startswith("https://"):
+                        logger.warning("Received oauth_consent_request with non-HTTPS consent_link: %s", item)
+                        consent_link = ""
+                    if consent_link:
+                        result.messages[0].contents.append(
+                            Content.from_oauth_consent_request(
+                                consent_link=consent_link,
+                                raw_representation=item,
+                            )
                         )
-                    )
-                elif not consent_link:
-                    logger.warning("Received oauth_consent_request output without consent_link: %s", item)
+                    else:
+                        logger.warning("Received oauth_consent_request output without consent_link: %s", item)
 
         return result
 
@@ -624,6 +628,9 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         if event.type == "response.output_item.added" and event.item.type == "oauth_consent_request":
             event_item = event.item
             consent_link = event_item.consent_link
+            if consent_link and not consent_link.startswith("https://"):
+                logger.warning("Received oauth_consent_request with non-HTTPS consent_link: %s", event_item)
+                consent_link = ""
             contents: list[Content] = []
             if consent_link:
                 contents.append(

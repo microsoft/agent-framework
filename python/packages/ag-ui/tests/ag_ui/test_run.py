@@ -890,7 +890,7 @@ def test_emit_oauth_consent_request():
 
 def test_emit_oauth_consent_request_no_link():
     """Test that oauth_consent_request without a consent_link emits no events."""
-    content = Content("oauth_consent_request", user_input_request=True)
+    content = Content("oauth_consent_request")
     flow = FlowState()
     events = _emit_content(content, flow)
 
