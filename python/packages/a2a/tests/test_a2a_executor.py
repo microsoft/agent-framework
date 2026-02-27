@@ -400,7 +400,7 @@ class TestA2AExecutorExecute:
             # Assert
             executor._agent.run.assert_called_once()
             call_args = executor._agent.run.call_args
-            
+
             # The input should be the new user message
             user_message = call_args[0][0]
             assert isinstance(user_message, Message)
@@ -639,7 +639,7 @@ class TestA2AExecutorIntegration:
         response_message.contents = [Content.from_text(text="Hello user")]
         response_message.role = "assistant"
         response_message.additional_properties = None
-        
+
         executor._agent.run = AsyncMock(return_value=response)
         executor._agent.create_session = MagicMock()
         executor.handle_events = AsyncMock()
