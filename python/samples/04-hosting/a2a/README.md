@@ -25,7 +25,7 @@ Make sure to set the following environment variables before running the example:
 For quick testing and demonstration, you can use the pre-built .NET A2A servers from this repository:
 
 **Quick Testing Reference**: Use the .NET A2A Client Server sample at:
-`..\agent-framework\dotnet\samples\A2AClientServer`
+`..\agent-framework\dotnet\samples\05-end-to-end\A2AClientServer`
 
 ### Run Python A2A Sample
 ```powershell

@@ -14,6 +14,10 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Sequential Workflow with Tool Approval Requests

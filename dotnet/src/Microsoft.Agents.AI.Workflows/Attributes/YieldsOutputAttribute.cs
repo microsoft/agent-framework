@@ -29,7 +29,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// }
 /// </code>
 /// </example>
-[AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = true)]
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, AllowMultiple = true, Inherited = true)]
 public sealed class YieldsOutputAttribute : Attribute
 {
     /// <summary>

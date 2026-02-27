@@ -9,6 +9,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Responses;
 using Shared.Foundry;
+using Shared.IntegrationTests;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 
@@ -36,7 +37,7 @@ internal sealed class FunctionToolAgentProvider(IConfiguration configuration) : 
     private PromptAgentDefinition DefineMenuAgent(AIFunction[] functions)
     {
         PromptAgentDefinition agentDefinition =
-            new(this.GetSetting(Settings.FoundryModelMini))
+            new(this.GetSetting(TestSettings.AzureAIModelDeploymentName))
             {
                 Instructions =
                     """

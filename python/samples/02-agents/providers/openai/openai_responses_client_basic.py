@@ -16,7 +16,11 @@ from agent_framework import (
     tool,
 )
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 OpenAI Responses Client Basic Example

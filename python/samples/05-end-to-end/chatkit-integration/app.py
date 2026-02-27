@@ -51,6 +51,7 @@ from chatkit.types import (
     WidgetItem,
 )
 from chatkit.widgets import WidgetRoot
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -63,6 +64,9 @@ from weather_widget import (
     render_weather_widget,
     weather_widget_copy_text,
 )
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ============================================================================
 # Configuration Constants

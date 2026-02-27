@@ -8,8 +8,18 @@ import logging
 import re
 import sys
 from asyncio import iscoroutine
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import (
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from copy import deepcopy
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
 from pydantic import BaseModel
@@ -83,12 +93,12 @@ def detect_media_type_from_base64(
             This will look at the actual data to determine the media_type and not at the URI prefix.
             Will also not compare those two values.
 
-    Raises:
-        ValueError: If not exactly 1 of data_bytes, data_str, or data_uri is provided, or if base64 decoding fails.
-
     Returns:
         The detected media type (e.g., 'image/png', 'audio/wav', 'application/pdf')
         or None if the format is not recognized.
+
+    Raises:
+        ValueError: If not exactly 1 of data_bytes, data_str, or data_uri is provided, or if base64 decoding fails.
 
     Examples:
         .. code-block:: python
@@ -272,7 +282,8 @@ def _serialize_value(value: Any, exclude_none: bool) -> Any:
 
 # region Constants and types
 _T = TypeVar("_T")
-EmbeddingT = TypeVar("EmbeddingT")
+EmbeddingT = TypeVar("EmbeddingT", default="list[float]")
+EmbeddingInputT = TypeVar("EmbeddingInputT", default="str")
 ChatResponseT = TypeVar("ChatResponseT", bound="ChatResponse")
 ToolModeT = TypeVar("ToolModeT", bound="ToolMode")
 AgentResponseT = TypeVar("AgentResponseT", bound="AgentResponse")
@@ -366,6 +377,12 @@ class UsageDetails(TypedDict, total=False):
 
     This is a non-closed dictionary, so any specific provider fields can be added as needed.
     Whenever they can be mapped to standard fields, they will be.
+
+    Keys:
+        input_token_count: The number of input tokens used.
+        output_token_count: The number of output tokens generated.
+        total_token_count: The total number of tokens (input + output).
+
     """
 
     input_token_count: int | None
@@ -531,6 +548,7 @@ class Content:
     def from_text_reasoning(
         cls: type[ContentT],
         *,
+        id: str | None = None,
         text: str | None = None,
         protected_data: str | None = None,
         annotations: Sequence[Annotation] | None = None,
@@ -540,6 +558,7 @@ class Content:
         """Create text reasoning content."""
         return cls(
             "text_reasoning",
+            id=id,
             text=text,
             protected_data=protected_data,
             annotations=annotations,
@@ -651,6 +670,9 @@ class Content:
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from an underlying implementation.
 
+        Returns:
+            A Content instance with type="data" for data URIs or type="uri" for external URIs.
+
         Raises:
             ContentError: If the URI is not valid.
 
@@ -674,9 +696,6 @@ class Content:
                         raw_base64_string
                     }"
                 )
-
-        Returns:
-            A Content instance with type="data" for data URIs or type="uri" for external URIs.
         """
         return cls(
             **_validate_uri(uri, media_type),
@@ -2254,6 +2273,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: type[ResponseModelBoundT],
+        value: Any | None = None,
     ) -> AgentResponse[ResponseModelBoundT]: ...
 
     @overload
@@ -2263,6 +2283,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: None = None,
+        value: Any | None = None,
     ) -> AgentResponse[Any]: ...
 
     @classmethod
@@ -2271,6 +2292,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: type[BaseModel] | None = None,
+        value: Any | None = None,
     ) -> AgentResponseT:
         """Joins multiple updates into a single AgentResponse.
 
@@ -2279,8 +2301,9 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data.
+            value: Optional pre-parsed structured output value to set directly on the response.
         """
-        msg = cls(messages=[], response_format=output_format_type)
+        msg = cls(messages=[], response_format=output_format_type, value=value)
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -2871,12 +2894,7 @@ class _ChatOptionsBase(TypedDict, total=False):
     presence_penalty: float
 
     # Tool configuration (forward reference to avoid circular import)
-    tools: (
-        ToolTypes
-        | Callable[..., Any]
-        | Sequence[ToolTypes | Callable[..., Any]]
-        | None
-    )
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None
     tool_choice: ToolMode | Literal["auto", "required", "none"]
     allow_multiple_tool_calls: bool
 
@@ -3161,3 +3179,129 @@ def merge_chat_options(
             result[key] = value
 
     return result
+
+
+# region Embedding Types
+
+
+class EmbeddingGenerationOptions(TypedDict, total=False):
+    """Common request settings for embedding generation.
+
+    All fields are optional (total=False) to allow partial specification.
+    Provider-specific TypedDicts extend this with additional options.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import EmbeddingGenerationOptions
+
+            options: EmbeddingGenerationOptions = {
+                "model_id": "text-embedding-3-small",
+                "dimensions": 1536,
+            }
+    """
+
+    model_id: str
+    dimensions: int
+
+
+class Embedding(Generic[EmbeddingT]):
+    """A single embedding vector with metadata.
+
+    Generic over the embedding vector type, e.g. ``Embedding[list[float]]``,
+    ``Embedding[list[int]]``, or ``Embedding[bytes]``.
+
+    Args:
+        vector: The embedding vector data.
+        model_id: The model used to generate this embedding.
+        dimensions: Explicit dimension count (computed from vector length if omitted).
+        created_at: Timestamp of when the embedding was generated.
+        additional_properties: Additional metadata.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Embedding
+
+            embedding = Embedding(
+                vector=[0.1, 0.2, 0.3],
+                model_id="text-embedding-3-small",
+            )
+            assert embedding.dimensions == 3
+    """
+
+    def __init__(
+        self,
+        vector: EmbeddingT,
+        *,
+        model_id: str | None = None,
+        dimensions: int | None = None,
+        created_at: datetime | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ) -> None:
+        self.vector = vector
+        self._dimensions = dimensions
+        self.model_id = model_id
+        self.created_at = created_at
+        self.additional_properties = additional_properties or {}
+
+    @property
+    def dimensions(self) -> int | None:
+        """Return the number of dimensions in the embedding vector.
+
+        Uses the explicitly provided value if set, otherwise computes from vector length.
+        """
+        if self._dimensions is not None:
+            return self._dimensions
+        if isinstance(self.vector, (list, tuple, bytes)):
+            return len(self.vector)
+        return None
+
+
+EmbeddingOptionsT = TypeVar(
+    "EmbeddingOptionsT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="EmbeddingGenerationOptions",
+)
+
+
+class GeneratedEmbeddings(list[Embedding[EmbeddingT]], Generic[EmbeddingT, EmbeddingOptionsT]):
+    """A list of generated embeddings with usage metadata.
+
+    Extends list for direct iteration and indexing.
+    Generic over both the embedding vector type and the options type used for generation.
+
+    Args:
+        embeddings: Sequence of Embedding objects.
+        options: The options used to generate these embeddings.
+        usage: Token usage information (e.g. prompt_tokens, total_tokens).
+        additional_properties: Additional metadata.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Embedding, GeneratedEmbeddings
+
+            embeddings = GeneratedEmbeddings(
+                [Embedding(vector=[0.1, 0.2]), Embedding(vector=[0.3, 0.4])],
+                usage={"prompt_tokens": 10, "total_tokens": 10},
+            )
+            assert len(embeddings) == 2
+            assert embeddings.usage["prompt_tokens"] == 10
+    """
+
+    def __init__(
+        self,
+        embeddings: Iterable[Embedding[EmbeddingT]] | None = None,
+        *,
+        options: EmbeddingOptionsT | None = None,
+        usage: UsageDetails | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(embeddings or [])
+        self.options = options
+        self.usage = usage
+        self.additional_properties = additional_properties or {}
+
+
+# endregion

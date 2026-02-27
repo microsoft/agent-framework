@@ -34,10 +34,15 @@ from agent_framework.declarative import (
     WorkflowFactory,
 )
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from ticketing_plugin import TicketingPlugin
 
 logging.basicConfig(level=logging.ERROR)
+
+# Load environment variables from .env file
+load_dotenv()
+
 
 # ANSI color codes for output formatting
 CYAN = "\033[36m"
@@ -118,8 +123,6 @@ Assure the user that their issue will be resolved and provide them with a ticket
 
 
 # Pydantic models for structured outputs
-
-
 class SelfServiceResponse(BaseModel):
     """Response from self-service agent evaluation."""
 
@@ -167,6 +170,8 @@ async def main() -> None:
     # Create Azure OpenAI client
     client = AzureOpenAIResponsesClient(
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        # This sample has been tested only on `gpt-5.1` and may not work as intended on other models
+        # This sample is known to fail on `gpt-5-mini` reasoning input (GH issue #4059)
         deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )

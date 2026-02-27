@@ -1,5 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+# ruff: noqa: E305
+# fmt: off
+from typing import Any
+
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 """Host your agent with Azure Functions.
 
 This sample shows the Python hosting pattern used in docs:
@@ -14,11 +25,6 @@ Environment variables:
   AZURE_OPENAI_ENDPOINT
   AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
 """
-
-from typing import Any
-
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
-from azure.identity import AzureCliCredential
 
 
 # <create_agent>

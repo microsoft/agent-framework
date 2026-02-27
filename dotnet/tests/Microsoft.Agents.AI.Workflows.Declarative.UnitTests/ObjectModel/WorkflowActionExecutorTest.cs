@@ -51,7 +51,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
             prevExecutor = executor;
         }
 
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build(), this.State);
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflowBuilder.Build(), this.State);
         WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
 
         if (isDiscrete)
@@ -125,6 +125,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     internal sealed class TestWorkflowExecutor() : Executor<WorkflowFormulaState>("test_workflow")
     {
+        [SendsMessage(typeof(ActionExecutorResult))]
         public override async ValueTask HandleAsync(WorkflowFormulaState message, IWorkflowContext context, CancellationToken cancellationToken) =>
             await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
     }

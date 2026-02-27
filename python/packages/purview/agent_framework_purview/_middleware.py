@@ -4,8 +4,7 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from agent_framework import AgentContext, AgentMiddleware, ChatContext, ChatMiddleware, MiddlewareTermination
-from azure.core.credentials import TokenCredential
-from azure.core.credentials_async import AsyncTokenCredential
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
 
 from ._cache import CacheProvider
 from ._client import PurviewClient
@@ -20,7 +19,7 @@ logger = logging.getLogger("agent_framework.purview")
 class PurviewPolicyMiddleware(AgentMiddleware):
     """Agent middleware that enforces Purview policies on prompt and response.
 
-    Accepts either a synchronous TokenCredential or an AsyncTokenCredential.
+    Accepts a TokenCredential, AsyncTokenCredential, or callable token provider.
 
     Usage:
 
@@ -28,14 +27,14 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
         from agent_framework import Agent
 
-        credential = ...  # TokenCredential or AsyncTokenCredential
+        credential = ...  # TokenCredential, AsyncTokenCredential, or callable
         settings = PurviewSettings(app_name="My App")
         agent = Agent(client=client, instructions="...", middleware=[PurviewPolicyMiddleware(credential, settings)])
     """
 
     def __init__(
         self,
-        credential: TokenCredential | AsyncTokenCredential,
+        credential: AzureCredentialTypes | AzureTokenProvider,
         settings: PurviewSettings,
         cache_provider: CacheProvider | None = None,
     ) -> None:
@@ -107,7 +106,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
             if context.result and not context.stream:
                 should_block_response, _ = await self._processor.process_messages(
                     context.result.messages,  # type: ignore[union-attr]
-                    Activity.UPLOAD_TEXT,
+                    Activity.DOWNLOAD_TEXT,
                     session_id=session_id,
                     user_id=resolved_user_id,
                 )
@@ -153,14 +152,14 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
         from agent_framework.microsoft import PurviewChatPolicyMiddleware, PurviewSettings
         from agent_framework import ChatClient
 
-        credential = ...  # TokenCredential or AsyncTokenCredential
+        credential = ...  # TokenCredential, AsyncTokenCredential, or callable
         settings = PurviewSettings(app_name="My App")
         client = ChatClient(..., middleware=[PurviewChatPolicyMiddleware(credential, settings)])
     """
 
     def __init__(
         self,
-        credential: TokenCredential | AsyncTokenCredential,
+        credential: AzureCredentialTypes | AzureTokenProvider,
         settings: PurviewSettings,
         cache_provider: CacheProvider | None = None,
     ) -> None:
@@ -211,7 +210,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                 messages = getattr(result_obj, "messages", None)
                 if messages:
                     should_block_response, _ = await self._processor.process_messages(
-                        messages, Activity.UPLOAD_TEXT, session_id=session_id_response, user_id=resolved_user_id
+                        messages, Activity.DOWNLOAD_TEXT, session_id=session_id_response, user_id=resolved_user_id
                     )
                     if should_block_response:
                         from agent_framework import ChatResponse, Message

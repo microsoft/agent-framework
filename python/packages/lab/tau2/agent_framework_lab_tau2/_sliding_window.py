@@ -18,7 +18,7 @@ class SlidingWindowHistoryProvider(InMemoryHistoryProvider):
 
     def __init__(
         self,
-        source_id: str = "memory",
+        source_id: str = InMemoryHistoryProvider.DEFAULT_SOURCE_ID,
         *,
         max_tokens: int = 3800,
         system_message: str | None = None,

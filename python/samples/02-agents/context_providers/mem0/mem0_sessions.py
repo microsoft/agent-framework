@@ -7,12 +7,19 @@ from agent_framework import tool
 from agent_framework.azure import AzureAIAgentClient
 from agent_framework.mem0 import Mem0ContextProvider
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_user_preferences(user_id: str) -> str:
     """Mock function to get user preferences."""
+
     preferences = {
         "user123": "Prefers concise responses and technical details",
         "user456": "Likes detailed explanations with examples",

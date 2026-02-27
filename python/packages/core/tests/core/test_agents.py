@@ -25,7 +25,7 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
-from agent_framework._agents import _merge_options, _sanitize_agent_name
+from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool
 
 
@@ -97,6 +97,58 @@ async def test_chat_client_agent_run_streaming(client: SupportsChatGetResponse) 
     assert result.text == "test streaming response another update"
 
 
+async def test_chat_client_agent_streaming_response_format_from_default_options(
+    client: SupportsChatGetResponse,
+) -> None:
+    """AgentResponse.value must be parsed when response_format is set in default_options and streaming."""
+    from pydantic import BaseModel
+
+    class Greeting(BaseModel):
+        greeting: str
+
+    json_text = '{"greeting": "Hello"}'
+    client.streaming_responses.append(  # type: ignore[attr-defined]
+        [ChatResponseUpdate(contents=[Content.from_text(json_text)], role="assistant", finish_reason="stop")]
+    )
+
+    agent = Agent(client=client, default_options={"response_format": Greeting})
+    stream = agent.run("Hello", stream=True)
+    async for _ in stream:
+        pass
+    result = await stream.get_final_response()
+
+    assert result.text == json_text
+    assert result.value is not None
+    assert isinstance(result.value, Greeting)
+    assert result.value.greeting == "Hello"
+
+
+async def test_chat_client_agent_streaming_response_format_from_run_options(
+    client: SupportsChatGetResponse,
+) -> None:
+    """AgentResponse.value must be parsed when response_format is passed via run() options kwarg."""
+    from pydantic import BaseModel
+
+    class Greeting(BaseModel):
+        greeting: str
+
+    json_text = '{"greeting": "Hi"}'
+    client.streaming_responses.append(  # type: ignore[attr-defined]
+        [ChatResponseUpdate(contents=[Content.from_text(json_text)], role="assistant", finish_reason="stop")]
+    )
+
+    agent = Agent(client=client)
+    stream = agent.run("Hello", stream=True, options={"response_format": Greeting})
+    async for _ in stream:
+        pass
+    result = await stream.get_final_response()
+
+    assert result.text == json_text
+    assert result.value is not None
+    assert isinstance(result.value, Greeting)
+    assert result.value.greeting == "Hi"
+
+
 async def test_chat_client_agent_create_session(client: SupportsChatGetResponse) -> None:
     agent = Agent(client=client)
     session = agent.create_session()
@@ -107,10 +159,10 @@ async def test_chat_client_agent_create_session(client: SupportsChatGetResponse)
 async def test_chat_client_agent_prepare_session_and_messages(client: SupportsChatGetResponse) -> None:
     from agent_framework._sessions import InMemoryHistoryProvider
 
-    agent = Agent(client=client, context_providers=[InMemoryHistoryProvider("memory")])
+    agent = Agent(client=client, context_providers=[InMemoryHistoryProvider()])
     message = Message(role="user", text="Hello")
     session = AgentSession()
-    session.state["memory"] = {"messages": [message]}
+    session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID] = {"messages": [message]}
 
     session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
         session=session,
@@ -266,7 +318,48 @@ async def test_chat_client_agent_update_session_id_streaming_does_not_use_respon
     assert session.service_session_id is None
 
 
+async def test_chat_client_agent_streaming_session_id_set_without_get_final_response(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Test that session.service_session_id is set during streaming iteration.
+
+    This verifies the eager propagation of conversation_id via transform hook,
+    which is needed for multi-turn flows (e.g. hosted MCP approval) where the
+    user iterates the stream and then makes a follow-up call without calling
+    get_final_response().
+    """
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_text("part 1")],
+                role="assistant",
+                response_id="resp_123",
+                conversation_id="resp_123",
+            ),
+            ChatResponseUpdate(
+                contents=[Content.from_text(" part 2")],
+                role="assistant",
+                response_id="resp_123",
+                conversation_id="resp_123",
+                finish_reason="stop",
+            ),
+        ]
+    ]
+
+    agent = Agent(client=chat_client_base)
+    session = agent.create_session()
+    assert session.service_session_id is None
+
+    # Only iterate — do NOT call get_final_response()
+    async for _ in agent.run("Hello", session=session, stream=True):
+        pass
+
+    assert session.service_session_id == "resp_123"
+
+
 async def test_chat_client_agent_update_session_messages(client: SupportsChatGetResponse) -> None:
+    from agent_framework._sessions import InMemoryHistoryProvider
+
     agent = Agent(client=client)
     session = agent.create_session()
 
@@ -275,7 +368,7 @@ async def test_chat_client_agent_update_session_messages(client: SupportsChatGet
 
     assert session.service_session_id is None
 
-    chat_messages: list[Message] = session.state.get("memory", {}).get("messages", [])
+    chat_messages: list[Message] = session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {}).get("messages", [])
 
     assert chat_messages is not None
     assert len(chat_messages) == 2
@@ -837,6 +930,152 @@ def test_merge_options_tools_combined():
     tool_names = [t.name for t in result["tools"]]
     assert "tool1" in tool_names
     assert "tool2" in tool_names
+
+
+def test_merge_options_dict_tools_combined():
+    """Test _merge_options combines dict-defined tool lists without duplicates."""
+    base = {
+        "tools": [
+            {"type": "function", "function": {"name": "tool_a"}},
+        ]
+    }
+    override = {
+        "tools": [
+            {"type": "function", "function": {"name": "tool_b"}},
+        ]
+    }
+
+    result = _merge_options(base, override)
+
+    assert len(result["tools"]) == 2
+    names = [_get_tool_name(t) for t in result["tools"]]
+    assert "tool_a" in names
+    assert "tool_b" in names
+
+
+def test_merge_options_dict_tools_deduplicates():
+    """Test _merge_options deduplicates dict-defined tools by function name."""
+    base = {
+        "tools": [
+            {"type": "function", "function": {"name": "tool_a"}},
+        ]
+    }
+    override = {
+        "tools": [
+            {"type": "function", "function": {"name": "tool_a"}},
+            {"type": "function", "function": {"name": "tool_b"}},
+        ]
+    }
+
+    result = _merge_options(base, override)
+
+    assert len(result["tools"]) == 2
+    names = [_get_tool_name(t) for t in result["tools"]]
+    assert names.count("tool_a") == 1
+    assert "tool_b" in names
+
+
+def test_merge_options_mixed_tools_combined():
+    """Test _merge_options combines object and dict-defined tools."""
+
+    class MockTool:
+        def __init__(self, name):
+            self.name = name
+
+    base = {"tools": [MockTool("tool_a")]}
+    override = {
+        "tools": [
+            {"type": "function", "function": {"name": "tool_b"}},
+        ]
+    }
+
+    result = _merge_options(base, override)
+
+    assert len(result["tools"]) == 2
+    names = [_get_tool_name(t) for t in result["tools"]]
+    assert "tool_a" in names
+    assert "tool_b" in names
+
+
+def test_merge_options_mixed_tools_deduplicates():
+    """Test _merge_options deduplicates when a dict tool and object tool share the same name."""
+
+    class MockTool:
+        def __init__(self, name):
+            self.name = name
+
+    base = {"tools": [MockTool("tool_a")]}
+    override = {
+        "tools": [
+            {"type": "function", "function": {"name": "tool_a"}},
+        ]
+    }
+
+    result = _merge_options(base, override)
+
+    assert len(result["tools"]) == 1
+    assert _get_tool_name(result["tools"][0]) == "tool_a"
+
+
+def test_merge_options_nameless_tools_not_deduplicated():
+    """Test that tools with no extractable name (None) are not falsely deduplicated."""
+    base = {
+        "tools": [
+            {"type": "function"},  # no 'function.name' -> _get_tool_name returns None
+        ]
+    }
+    override = {
+        "tools": [
+            {"type": "function"},  # also returns None
+        ]
+    }
+
+    result = _merge_options(base, override)
+
+    # Both nameless tools should be kept (None is excluded from dedup set)
+    assert len(result["tools"]) == 2
+
+
+def test_get_tool_name_dict_no_function_key():
+    """_get_tool_name returns None for a dict without a 'function' key."""
+    assert _get_tool_name({"type": "function"}) is None
+
+
+def test_get_tool_name_dict_function_not_dict():
+    """_get_tool_name returns None when 'function' value is not a dict."""
+    assert _get_tool_name({"function": "not_a_dict"}) is None
+
+
+def test_get_tool_name_dict_function_no_name():
+    """_get_tool_name returns None when 'function' dict has no 'name' key."""
+    assert _get_tool_name({"function": {"description": "does stuff"}}) is None
+
+
+def test_get_tool_name_object_no_name_attr():
+    """_get_tool_name returns None for an object without a 'name' attribute."""
+    assert _get_tool_name(object()) is None
+
+
+def test_get_tool_name_non_dict_non_object():
+    """_get_tool_name returns None for non-dict inputs like int or string."""
+    assert _get_tool_name(42) is None
+    assert _get_tool_name("tool_name") is None
+
+
+def test_get_tool_name_valid_dict():
+    """_get_tool_name extracts name from a well-formed dict tool."""
+    tool_dict = {"type": "function", "function": {"name": "my_tool"}}
+    assert _get_tool_name(tool_dict) == "my_tool"
+
+
+def test_get_tool_name_valid_object():
+    """_get_tool_name extracts name from an object with a name attribute."""
+
+    class MockTool:
+        def __init__(self, name):
+            self.name = name
+
+    assert _get_tool_name(MockTool("my_tool")) == "my_tool"
 
 
 def test_merge_options_logit_bias_merged():

@@ -21,14 +21,10 @@ from agent_framework import (
 )
 from agent_framework._settings import SecretString
 from agent_framework.azure import AzureOpenAIAssistantsClient
-from agent_framework.exceptions import ServiceInitializationError
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
-    reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
+    reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests.",
 )
 
 
@@ -120,7 +116,7 @@ def test_azure_assistants_client_init_auto_create_client(
 
 def test_azure_assistants_client_init_validation_fail() -> None:
     """Test AzureOpenAIAssistantsClient initialization with validation failure."""
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         # Force failure by providing invalid deployment name type - this should cause validation to fail
         AzureOpenAIAssistantsClient(deployment_name=123, api_key="valid-key")  # type: ignore
 
@@ -128,10 +124,8 @@ def test_azure_assistants_client_init_validation_fail() -> None:
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
 def test_azure_assistants_client_init_missing_deployment_name(azure_openai_unit_test_env: dict[str, str]) -> None:
     """Test AzureOpenAIAssistantsClient initialization with missing deployment name."""
-    with pytest.raises(ServiceInitializationError):
-        AzureOpenAIAssistantsClient(
-            api_key=azure_openai_unit_test_env.get("AZURE_OPENAI_API_KEY", "test-key"), env_file_path="nonexistent.env"
-        )
+    with pytest.raises(ValueError):
+        AzureOpenAIAssistantsClient(api_key=azure_openai_unit_test_env.get("AZURE_OPENAI_API_KEY", "test-key"))
 
 
 def test_azure_assistants_client_init_with_default_headers(azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -263,6 +257,7 @@ def get_weather(
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_get_response() -> None:
     """Test Azure Assistants Client response."""
@@ -288,6 +283,7 @@ async def test_azure_assistants_client_get_response() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_get_response_tools() -> None:
     """Test Azure Assistants Client response with tools."""
@@ -309,6 +305,7 @@ async def test_azure_assistants_client_get_response_tools() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_streaming() -> None:
     """Test Azure Assistants Client streaming response."""
@@ -340,6 +337,7 @@ async def test_azure_assistants_client_streaming() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_streaming_tools() -> None:
     """Test Azure Assistants Client streaming response with tools."""
@@ -367,6 +365,7 @@ async def test_azure_assistants_client_streaming_tools() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_with_existing_assistant() -> None:
     """Test Azure Assistants Client with existing assistant ID."""
@@ -395,6 +394,7 @@ async def test_azure_assistants_client_with_existing_assistant() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_basic_run():
     """Test Agent basic run functionality with AzureOpenAIAssistantsClient."""
@@ -412,6 +412,7 @@ async def test_azure_assistants_agent_basic_run():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_basic_run_streaming():
     """Test Agent basic streaming functionality with AzureOpenAIAssistantsClient."""
@@ -432,6 +433,7 @@ async def test_azure_assistants_agent_basic_run_streaming():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_session_persistence():
     """Test Agent session persistence across runs with AzureOpenAIAssistantsClient."""
@@ -461,6 +463,7 @@ async def test_azure_assistants_agent_session_persistence():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_existing_session_id():
     """Test Agent with existing session ID to continue conversations across agent instances."""
@@ -506,6 +509,7 @@ async def test_azure_assistants_agent_existing_session_id():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_agent_code_interpreter():
     """Test Agent with code interpreter through AzureOpenAIAssistantsClient."""
@@ -526,6 +530,7 @@ async def test_azure_assistants_agent_code_interpreter():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_assistants_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Assistants Client."""
@@ -553,12 +558,16 @@ async def test_azure_assistants_client_agent_level_tool_persistence():
 
 
 def test_azure_assistants_client_entra_id_authentication() -> None:
-    """Test Entra ID authentication path with credential."""
+    """Test credential authentication path with sync credential."""
     mock_credential = MagicMock()
+    mock_provider = MagicMock(return_value="token-string")
 
     with (
         patch("agent_framework.azure._assistants_client.load_settings") as mock_load_settings,
-        patch("agent_framework.azure._assistants_client.get_entra_auth_token") as mock_get_token,
+        patch(
+            "agent_framework.azure._assistants_client.resolve_credential_to_token_provider",
+            return_value=mock_provider,
+        ) as mock_resolve,
         patch("agent_framework.azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
         patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
     ):
@@ -566,28 +575,26 @@ def test_azure_assistants_client_entra_id_authentication() -> None:
             "chat_deployment_name": "test-deployment",
             "responses_deployment_name": None,
             "api_key": None,
-            "token_endpoint": "https://login.microsoftonline.com/test",
+            "token_endpoint": "https://cognitiveservices.azure.com/.default",
             "api_version": "2024-05-01-preview",
             "endpoint": "https://test-endpoint.openai.azure.com",
             "base_url": None,
         }
-        mock_get_token.return_value = "entra-token-12345"
 
         client = AzureOpenAIAssistantsClient(
             deployment_name="test-deployment",
-            api_key="placeholder-key",
             endpoint="https://test-endpoint.openai.azure.com",
             credential=mock_credential,
-            token_endpoint="https://login.microsoftonline.com/test",
+            token_endpoint="https://cognitiveservices.azure.com/.default",
         )
 
-        # Verify Entra ID token was requested
-        mock_get_token.assert_called_once_with(mock_credential, "https://login.microsoftonline.com/test")
+        # Verify credential was resolved to a token provider
+        mock_resolve.assert_called_once_with(mock_credential, "https://cognitiveservices.azure.com/.default")
 
-        # Verify client was created with the token
+        # Verify client was created with the token provider
         mock_azure_client.assert_called_once()
         call_args = mock_azure_client.call_args[1]
-        assert call_args["azure_ad_token"] == "entra-token-12345"
+        assert call_args["azure_ad_token_provider"] is mock_provider
 
         assert client is not None
         assert isinstance(client, AzureOpenAIAssistantsClient)
@@ -607,7 +614,7 @@ def test_azure_assistants_client_no_authentication_error() -> None:
         }
 
         # Test missing authentication raises error
-        with pytest.raises(ServiceInitializationError, match="API key, ad_token, or ad_token_provider is required"):
+        with pytest.raises(ValueError, match="api_key, credential, or a client"):
             AzureOpenAIAssistantsClient(
                 deployment_name="test-deployment",
                 endpoint="https://test-endpoint.openai.azure.com",
@@ -615,10 +622,16 @@ def test_azure_assistants_client_no_authentication_error() -> None:
             )
 
 
-def test_azure_assistants_client_ad_token_authentication() -> None:
-    """Test ad_token authentication client parameter path."""
+def test_azure_assistants_client_callable_credential() -> None:
+    """Test callable token provider as credential."""
+    mock_provider = MagicMock(return_value="my-token")
+
     with (
         patch("agent_framework.azure._assistants_client.load_settings") as mock_load_settings,
+        patch(
+            "agent_framework.azure._assistants_client.resolve_credential_to_token_provider",
+            return_value=mock_provider,
+        ),
         patch("agent_framework.azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
         patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
     ):
@@ -626,7 +639,7 @@ def test_azure_assistants_client_ad_token_authentication() -> None:
             "chat_deployment_name": "test-deployment",
             "responses_deployment_name": None,
             "api_key": None,
-            "token_endpoint": None,
+            "token_endpoint": "https://cognitiveservices.azure.com/.default",
             "api_version": "2024-05-01-preview",
             "endpoint": "https://test-endpoint.openai.azure.com",
             "base_url": None,
@@ -635,49 +648,14 @@ def test_azure_assistants_client_ad_token_authentication() -> None:
         client = AzureOpenAIAssistantsClient(
             deployment_name="test-deployment",
             endpoint="https://test-endpoint.openai.azure.com",
-            ad_token="test-ad-token-12345",
+            credential=mock_provider,
+            token_endpoint="https://cognitiveservices.azure.com/.default",
         )
 
-        # ad_token path
+        # Verify client was created with the token provider
         mock_azure_client.assert_called_once()
         call_args = mock_azure_client.call_args[1]
-        assert call_args["azure_ad_token"] == "test-ad-token-12345"
-
-        assert client is not None
-        assert isinstance(client, AzureOpenAIAssistantsClient)
-
-
-def test_azure_assistants_client_ad_token_provider_authentication() -> None:
-    """Test ad_token_provider authentication client parameter path."""
-    from openai.lib.azure import AsyncAzureADTokenProvider
-
-    mock_token_provider = MagicMock(spec=AsyncAzureADTokenProvider)
-
-    with (
-        patch("agent_framework.azure._assistants_client.load_settings") as mock_load_settings,
-        patch("agent_framework.azure._assistants_client.AsyncAzureOpenAI") as mock_azure_client,
-        patch("agent_framework.openai.OpenAIAssistantsClient.__init__", return_value=None),
-    ):
-        mock_load_settings.return_value = {
-            "chat_deployment_name": "test-deployment",
-            "responses_deployment_name": None,
-            "api_key": None,
-            "token_endpoint": None,
-            "api_version": "2024-05-01-preview",
-            "endpoint": "https://test-endpoint.openai.azure.com",
-            "base_url": None,
-        }
-
-        client = AzureOpenAIAssistantsClient(
-            deployment_name="test-deployment",
-            endpoint="https://test-endpoint.openai.azure.com",
-            ad_token_provider=mock_token_provider,
-        )
-
-        # ad_token_provider path
-        mock_azure_client.assert_called_once()
-        call_args = mock_azure_client.call_args[1]
-        assert call_args["azure_ad_token_provider"] is mock_token_provider
+        assert call_args["azure_ad_token_provider"] is mock_provider
 
         assert client is not None
         assert isinstance(client, AzureOpenAIAssistantsClient)

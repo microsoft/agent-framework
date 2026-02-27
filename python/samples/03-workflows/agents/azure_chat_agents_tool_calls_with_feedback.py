@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 from typing import Annotated
 
@@ -12,7 +13,6 @@ from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponse,
-    AgentResponseUpdate,
     Executor,
     Message,
     WorkflowBuilder,
@@ -24,8 +24,12 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
 from typing_extensions import Never
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Tool-enabled agents with human feedback
@@ -149,7 +153,7 @@ class Coordinator(Executor):
             # Human approved the draft as-is; forward it unchanged.
             await ctx.send_message(
                 AgentExecutorRequest(
-                    messages=original_request.conversation + [Message("user", text="The draft is approved as-is.")],
+                    messages=[*original_request.conversation, *[Message("user", text="The draft is approved as-is.")]],
                     should_respond=True,
                 ),
                 target_id=self.final_editor_id,
@@ -157,16 +161,15 @@ class Coordinator(Executor):
             return
 
         # Human provided feedback; prompt the writer to revise.
-        conversation: list[Message] = list(original_request.conversation)
         instruction = (
             "A human reviewer shared the following guidance:\n"
             f"{note or 'No specific guidance provided.'}\n\n"
             "Rewrite the draft from the previous assistant message into a polished final version. "
             "Keep the response under 120 words and reflect any requested tone adjustments."
         )
-        conversation.append(Message("user", text=instruction))
         await ctx.send_message(
-            AgentExecutorRequest(messages=conversation, should_respond=True), target_id=self.writer_id
+            AgentExecutorRequest(messages=[Message("user", text=instruction)], should_respond=True),
+            target_id=self.writer_id,
         )
 
 
@@ -174,6 +177,8 @@ def create_writer_agent() -> Agent:
     """Creates a writer agent with tools."""
     return AzureOpenAIResponsesClient(
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        # This sample has been tested only on `gpt-5.1` and may not work as intended on other models
+        # This sample is known to fail on `gpt-5-mini` reasoning input (GH issue #4059)
         deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     ).as_agent(
@@ -246,6 +251,31 @@ def display_agent_run_update(event: WorkflowEvent, last_executor: str | None) ->
     print(update, end="", flush=True)
 
 
+async def consume_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str, str] | None:
+    """Consume a workflow event stream, printing outputs and returning any pending human responses."""
+    requests: list[WorkflowEvent] = []
+    async for event in stream:
+        if event.type == "request_info" and isinstance(event.data, DraftFeedbackRequest):
+            # Stash the request so we can prompt the human after the stream completes.
+            requests.append(event)
+
+    if requests:
+        pending_responses: dict[str, str] = {}
+        for request in requests:
+            print("\n----- Writer draft -----")
+            print(request.data.draft_text.strip())
+            print("\nProvide guidance for the editor (or 'approve' to accept the draft).")
+            answer = input("Human feedback: ").strip()  # noqa: ASYNC250
+            if answer.lower() == "exit":
+                print("Exiting...")
+                exit(0)
+            pending_responses[request.request_id] = answer
+
+        return pending_responses
+
+    return None
+
+
 async def main() -> None:
     """Run the workflow and bridge human feedback between two agents."""
 
@@ -267,66 +297,23 @@ async def main() -> None:
         .build()
     )
 
-    # Switch to turn on agent run update display.
-    # By default this is off to reduce clutter during human input.
-    display_agent_run_update_switch = False
-
     print(
         "Interactive mode. When prompted, provide a short feedback note for the editor.",
         flush=True,
     )
 
-    pending_responses: dict[str, str] | None = None
-    completed = False
-    initial_run = True
+    # Initiate the first run of the workflow.
+    # Runs are not isolated; state is preserved across multiple calls to run.
+    stream = workflow.run(
+        "Create a short launch blurb for the LumenX desk lamp. Emphasize adjustability and warm lighting.",
+        stream=True,
+    )
+    pending_responses = await consume_stream(stream)
 
-    while not completed:
-        last_executor: str | None = None
-        if initial_run:
-            stream = workflow.run(
-                "Create a short launch blurb for the LumenX desk lamp. Emphasize adjustability and warm lighting.",
-                stream=True,
-            )
-            initial_run = False
-        elif pending_responses is not None:
-            stream = workflow.run(stream=True, responses=pending_responses)
-            pending_responses = None
-        else:
-            break
-
-        requests: list[tuple[str, DraftFeedbackRequest]] = []
-
-        async for event in stream:
-            if (
-                event.type == "output"
-                and isinstance(event.data, AgentResponseUpdate)
-                and display_agent_run_update_switch
-            ):
-                display_agent_run_update(event, last_executor)
-            if event.type == "request_info" and isinstance(event.data, DraftFeedbackRequest):
-                # Stash the request so we can prompt the human after the stream completes.
-                requests.append((event.request_id, event.data))
-                last_executor = None
-            elif event.type == "output" and not isinstance(event.data, AgentResponseUpdate):
-                # Only mark as completed for final outputs, not streaming updates
-                last_executor = None
-                response = event.data
-                final_text = getattr(response, "text", str(response))
-                print(final_text, flush=True, end="")
-                completed = True
-
-        if requests and not completed:
-            responses: dict[str, str] = {}
-            for request_id, request in requests:
-                print("\n----- Writer draft -----")
-                print(request.draft_text.strip())
-                print("\nProvide guidance for the editor (or 'approve' to accept the draft).")
-                answer = input("Human feedback: ").strip()  # noqa: ASYNC250
-                if answer.lower() == "exit":
-                    print("Exiting...")
-                    return
-                responses[request_id] = answer
-            pending_responses = responses
+    # Run until there are no more requests
+    while pending_responses is not None:
+        stream = workflow.run(stream=True, responses=pending_responses)
+        pending_responses = await consume_stream(stream)
 
     print("Workflow complete.")
 

@@ -359,30 +359,50 @@ class TestAgentSession:
 
 class TestInMemoryHistoryProvider:
     async def test_empty_state_returns_no_messages(self) -> None:
-        provider = InMemoryHistoryProvider("memory")
+        provider = InMemoryHistoryProvider()
         session = AgentSession()
         ctx = SessionContext(session_id="s1", input_messages=[])
-        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
-        assert ctx.context_messages.get("memory", []) == []
+        await provider.before_run(  # type: ignore[arg-type]
+            agent=None,
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
+        )
+        assert ctx.context_messages.get(provider.source_id, []) == []
 
     async def test_stores_and_loads_messages(self) -> None:
         from agent_framework import AgentResponse
 
-        provider = InMemoryHistoryProvider("memory")
+        provider = InMemoryHistoryProvider()
         session = AgentSession()
 
         # First run: send input, get response
         input_msg = Message(role="user", contents=["hello"])
         resp_msg = Message(role="assistant", contents=["hi there"])
         ctx1 = SessionContext(session_id="s1", input_messages=[input_msg])
-        await provider.before_run(agent=None, session=session, context=ctx1, state=session.state)  # type: ignore[arg-type]
+        await provider.before_run(  # type: ignore[arg-type]
+            agent=None,
+            session=session,
+            context=ctx1,
+            state=session.state.setdefault(provider.source_id, {}),
+        )
         ctx1._response = AgentResponse(messages=[resp_msg])
-        await provider.after_run(agent=None, session=session, context=ctx1, state=session.state)  # type: ignore[arg-type]
+        await provider.after_run(  # type: ignore[arg-type]
+            agent=None,
+            session=session,
+            context=ctx1,
+            state=session.state.setdefault(provider.source_id, {}),
+        )
 
         # Second run: should load previous messages
         ctx2 = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["again"])])
-        await provider.before_run(agent=None, session=session, context=ctx2, state=session.state)  # type: ignore[arg-type]
-        loaded = ctx2.context_messages.get("memory", [])
+        await provider.before_run(  # type: ignore[arg-type]
+            agent=None,
+            session=session,
+            context=ctx2,
+            state=session.state.setdefault(provider.source_id, {}),
+        )
+        loaded = ctx2.context_messages.get(provider.source_id, [])
         assert len(loaded) == 2
         assert loaded[0].text == "hello"
         assert loaded[1].text == "hi there"
@@ -390,17 +410,27 @@ class TestInMemoryHistoryProvider:
     async def test_state_is_serializable(self) -> None:
         from agent_framework import AgentResponse
 
-        provider = InMemoryHistoryProvider("memory")
+        provider = InMemoryHistoryProvider()
         session = AgentSession()
 
         input_msg = Message(role="user", contents=["test"])
         ctx = SessionContext(session_id="s1", input_messages=[input_msg])
-        await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+        await provider.before_run(  # type: ignore[arg-type]
+            agent=None,
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
+        )
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["reply"])])
-        await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+        await provider.after_run(  # type: ignore[arg-type]
+            agent=None,
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
+        )
 
         # State contains Message objects (not dicts)
-        assert isinstance(session.state["memory"]["messages"][0], Message)
+        assert isinstance(session.state[provider.source_id]["messages"][0], Message)
 
         # to_dict() serializes them via SerializationProtocol
         session_dict = session.to_dict()
@@ -409,9 +439,9 @@ class TestInMemoryHistoryProvider:
 
         # Round-trip through session serialization restores Message objects
         restored = AgentSession.from_dict(json.loads(json_str))
-        assert isinstance(restored.state["memory"]["messages"][0], Message)
-        assert restored.state["memory"]["messages"][0].text == "test"
-        assert restored.state["memory"]["messages"][1].text == "reply"
+        assert isinstance(restored.state[provider.source_id]["messages"][0], Message)
+        assert restored.state[provider.source_id]["messages"][0].text == "test"
+        assert restored.state[provider.source_id]["messages"][1].text == "reply"
 
     async def test_source_id_attribution(self) -> None:
         provider = InMemoryHistoryProvider("custom-source")

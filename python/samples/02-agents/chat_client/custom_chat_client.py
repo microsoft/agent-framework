@@ -13,6 +13,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionInvocationLayer,
+    InMemoryHistoryProvider,
     Message,
     ResponseStream,
 )
@@ -195,7 +196,7 @@ async def main() -> None:
         print(f"Agent: {result.messages[0].text}\n")
 
     # Check conversation history
-    memory_state = session.state.get("memory", {})
+    memory_state = session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {})
     session_messages = memory_state.get("messages", [])
     if session_messages:
         print(f"Session contains {len(session_messages)} messages")

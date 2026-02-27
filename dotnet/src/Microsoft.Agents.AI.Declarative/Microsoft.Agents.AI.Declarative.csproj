@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <VersionSuffix>preview</VersionSuffix>
+    <IsReleaseCandidate>true</IsReleaseCandidate>
     <NoWarn>$(NoWarn);MEAI001</NoWarn>
     <IsPackable>false</IsPackable>
   </PropertyGroup>

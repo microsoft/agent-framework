@@ -5,8 +5,12 @@ import asyncio
 from agent_framework import ChatResponse
 from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
 from openai.types.responses.response import Response as OpenAIResponse
 from openai.types.responses.response_code_interpreter_tool_call import ResponseCodeInterpreterToolCall
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Azure AI Agent Code Interpreter Example

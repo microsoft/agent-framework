@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypedDict, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
+    FileCitationDeltaAnnotation,
+    FilePathDeltaAnnotation,
     ImageURLContentBlockParam,
     ImageURLParam,
     MessageContentPartParam,
@@ -39,15 +41,16 @@ from .._tools import (
     normalize_tools,
 )
 from .._types import (
+    Annotation,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     Message,
     ResponseStream,
+    TextSpanRegion,
     UsageDetails,
 )
-from ..exceptions import ServiceInitializationError
 from ..observability import ChatTelemetryLayer
 from ._shared import OpenAIConfigMixin, OpenAISettings
 
@@ -350,11 +353,11 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         )
 
         if not async_client and not openai_settings["api_key"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
         if not openai_settings["chat_model_id"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
@@ -452,7 +455,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         # If no assistant is provided, create a temporary assistant
         if self.assistant_id is None:
             if not self.model_id:
-                raise ServiceInitializationError("Parameter 'model_id' is required for assistant creation.")
+                raise ValueError("Parameter 'model_id' is required for assistant creation.")
 
             client = await self._ensure_client()
             created_assistant = await client.beta.assistants.create(
@@ -555,9 +558,53 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
                     for delta_block in delta.content or []:
                         if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
+                            text_content = Content.from_text(delta_block.text.value)
+                            if delta_block.text.annotations:
+                                text_content.annotations = []
+                                for annotation in delta_block.text.annotations:
+                                    if isinstance(annotation, FileCitationDeltaAnnotation):
+                                        ann: Annotation = Annotation(
+                                            type="citation",
+                                            additional_properties={
+                                                "text": annotation.text,
+                                                "index": annotation.index,
+                                            },
+                                            raw_representation=annotation,
+                                        )
+                                        if annotation.file_citation and annotation.file_citation.file_id:
+                                            ann["file_id"] = annotation.file_citation.file_id
+                                        if annotation.start_index is not None and annotation.end_index is not None:
+                                            ann["annotated_regions"] = [
+                                                TextSpanRegion(
+                                                    type="text_span",
+                                                    start_index=annotation.start_index,
+                                                    end_index=annotation.end_index,
+                                                )
+                                            ]
+                                        text_content.annotations.append(ann)
+                                    elif isinstance(annotation, FilePathDeltaAnnotation):
+                                        ann = Annotation(
+                                            type="citation",
+                                            additional_properties={
+                                                "text": annotation.text,
+                                                "index": annotation.index,
+                                            },
+                                            raw_representation=annotation,
+                                        )
+                                        if annotation.file_path and annotation.file_path.file_id:
+                                            ann["file_id"] = annotation.file_path.file_id
+                                        if annotation.start_index is not None and annotation.end_index is not None:
+                                            ann["annotated_regions"] = [
+                                                TextSpanRegion(
+                                                    type="text_span",
+                                                    start_index=annotation.start_index,
+                                                    end_index=annotation.end_index,
+                                                )
+                                            ]
+                                        text_content.annotations.append(ann)
                             yield ChatResponseUpdate(
                                 role=role,  # type: ignore[arg-type]
-                                contents=[Content.from_text(delta_block.text.value)],
+                                contents=[text_content],
                                 conversation_id=thread_id,
                                 message_id=response_id,
                                 raw_representation=response.data,
@@ -670,6 +717,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         tool_choice = options.get("tool_choice")
         tools = options.get("tools")
         response_format = options.get("response_format")
+        tool_resources = options.get("tool_resources")
 
         if max_tokens is not None:
             run_options["max_completion_tokens"] = max_tokens
@@ -682,6 +730,9 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
         if allow_multiple_tool_calls is not None:
             run_options["parallel_tool_calls"] = allow_multiple_tool_calls
+
+        if tool_resources is not None:
+            run_options["tool_resources"] = tool_resources
 
         tool_mode = validate_tool_mode(tool_choice)
         tool_definitions: list[MutableMapping[str, Any]] = []

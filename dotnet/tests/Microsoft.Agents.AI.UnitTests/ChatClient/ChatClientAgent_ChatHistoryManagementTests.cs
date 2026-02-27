@@ -291,6 +291,124 @@ public class ChatClientAgent_ChatHistoryManagementTests
         Assert.Equal("Only ConversationId or ChatHistoryProvider may be used, but not both. The service returned a conversation id indicating server-side chat history management, but the agent has a ChatHistoryProvider configured.", exception.Message);
     }
 
+    /// <summary>
+    /// Verify that RunAsync clears the ChatHistoryProvider when ThrowOnChatHistoryProviderConflict is false
+    /// and ClearOnChatHistoryProviderConflict is true.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ClearsChatHistoryProvider_WhenThrowDisabledAndClearEnabledAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new() { Instructions = "test instructions" },
+            ChatHistoryProvider = new InMemoryChatHistoryProvider(),
+            ThrowOnChatHistoryProviderConflict = false,
+            ClearOnChatHistoryProviderConflict = true,
+        });
+
+        // Act
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "test")], session);
+
+        // Assert
+        Assert.Null(agent.ChatHistoryProvider);
+        Assert.Equal("ConvId", session!.ConversationId);
+    }
+
+    /// <summary>
+    /// Verify that RunAsync does not throw and does not clear the ChatHistoryProvider when both
+    /// ThrowOnChatHistoryProviderConflict and ClearOnChatHistoryProviderConflict are false.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_KeepsChatHistoryProvider_WhenThrowAndClearDisabledAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
+        var chatHistoryProvider = new InMemoryChatHistoryProvider();
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new() { Instructions = "test instructions" },
+            ChatHistoryProvider = chatHistoryProvider,
+            ThrowOnChatHistoryProviderConflict = false,
+            ClearOnChatHistoryProviderConflict = false,
+            WarnOnChatHistoryProviderConflict = false,
+        });
+
+        // Act
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "test")], session);
+
+        // Assert
+        Assert.Same(chatHistoryProvider, agent.ChatHistoryProvider);
+        Assert.Equal("ConvId", session!.ConversationId);
+    }
+
+    /// <summary>
+    /// Verify that RunAsync still throws when ThrowOnChatHistoryProviderConflict is true
+    /// even if ClearOnChatHistoryProviderConflict is also true (throw takes precedence).
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_Throws_WhenThrowEnabledRegardlessOfClearSettingAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new() { Instructions = "test instructions" },
+            ChatHistoryProvider = new InMemoryChatHistoryProvider(),
+            ThrowOnChatHistoryProviderConflict = true,
+            ClearOnChatHistoryProviderConflict = true,
+        });
+
+        // Act & Assert
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], session));
+    }
+
+    /// <summary>
+    /// Verify that RunAsync does not throw when no ChatHistoryProvider is configured on options,
+    /// even if the service returns a conversation id (default InMemoryChatHistoryProvider is used but not from options).
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DoesNotThrow_WhenNoChatHistoryProviderInOptionsAndConversationIdReturnedAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ConversationId = "ConvId" });
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new() { Instructions = "test instructions" },
+        });
+
+        // Act
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "test")], session);
+
+        // Assert - no exception, session gets the conversation id
+        Assert.Equal("ConvId", session!.ConversationId);
+    }
+
     #endregion
 
     #region ChatHistoryProvider Override Tests

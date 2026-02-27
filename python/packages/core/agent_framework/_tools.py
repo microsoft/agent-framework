@@ -14,6 +14,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
+from contextlib import suppress
 from functools import partial, wraps
 from time import perf_counter, time_ns
 from typing import (
@@ -251,8 +252,23 @@ class FunctionTool(SerializationMixin):
             description: A description of the function.
             approval_mode: Whether or not approval is required to run this tool.
                 Default is that approval is NOT required (``"never_require"``).
-            max_invocations: The maximum number of times this function can be invoked.
-                If None, there is no limit. Should be at least 1.
+            max_invocations: The maximum number of times this function can be invoked
+                across the **lifetime of this tool instance**. If None (default),
+                there is no limit. Should be at least 1. If the tool is called multiple
+                times in one iteration, those will execute, after that it will stop working. For example,
+                if max_invocations is 3 and the tool is called 5 times in a single iteration,
+                these will complete, but any subsequent calls to the tool (in the same or future iterations)
+                will raise a ToolException.
+
+                .. note::
+                    This counter lives on the tool instance and is never automatically
+                    reset. For module-level or singleton tools in long-running
+                    applications, the counter accumulates across all requests. Use
+                    :attr:`invocation_count` to inspect or reset the counter manually,
+                    or consider using
+                    ``FunctionInvocationConfiguration["max_function_calls"]``
+                    for per-request limits instead.
+
             max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
                 If None, there is no limit. Should be at least 1.
             additional_properties: Additional properties to set on the function.
@@ -288,15 +304,18 @@ class FunctionTool(SerializationMixin):
         self.func = func
         self._instance = None  # Store the instance for bound methods
 
+        # Initialize schema cache (will be lazily populated)
+        self._input_schema_cached: dict[str, Any] | None = None
+
         # Track if schema was supplied as JSON dict (for optimization)
         if isinstance(input_model, Mapping):
             self._schema_supplied = True
-            self._input_schema: dict[str, Any] = dict(input_model)
+            self._input_schema_cached = dict(input_model)
             self.input_model: type[BaseModel] | None = None
         else:
             self._schema_supplied = False
             self.input_model = self._resolve_input_model(input_model)
-            self._input_schema = self.input_model.model_json_schema()
+            # Defer schema generation to avoid issues with forward references
         self._cached_parameters: dict[str, Any] | None = None
         self.approval_mode = approval_mode or "never_require"
         if max_invocations is not None and max_invocations < 1:
@@ -545,6 +564,19 @@ class FunctionTool(SerializationMixin):
                 span.set_attribute(OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION, duration)
                 self._invocation_duration_histogram.record(duration, attributes=attributes)
                 logger.info("Function duration: %fs", duration)
+
+    @property
+    def _input_schema(self) -> dict[str, Any]:
+        """Get the input schema, generating it lazily if needed."""
+        if self._input_schema_cached is None:
+            if self.input_model is not None:
+                # Try to rebuild the model in case it has forward references
+                with suppress(Exception):
+                    self.input_model.model_rebuild(force=True, raise_errors=False)
+                self._input_schema_cached = self.input_model.model_json_schema()
+            else:
+                self._input_schema_cached = {}
+        return self._input_schema_cached
 
     def parameters(self) -> dict[str, Any]:
         """Create the JSON schema of the parameters.
@@ -1113,8 +1145,10 @@ def tool(
             function's signature. Defaults to ``None`` (infer from signature).
         approval_mode: Whether or not approval is required to run this tool.
             Default is that approval is NOT required (``"never_require"``).
-        max_invocations: The maximum number of times this function can be invoked.
-            If None, there is no limit, should be at least 1.
+        max_invocations: The maximum number of times this function can be invoked
+            across the **lifetime of this tool instance**. If None (default), there is
+            no limit. Should be at least 1. For per-request limits, use
+            ``FunctionInvocationConfiguration["max_function_calls"]`` instead.
         max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
             If None, there is no limit, should be at least 1.
         additional_properties: Additional properties to set on the function.
@@ -1230,43 +1264,54 @@ def tool(
 class FunctionInvocationConfiguration(TypedDict, total=False):
     """Configuration for function invocation in chat clients.
 
+    The configuration controls the tool execution loop that runs when the model
+    requests function calls. Key settings:
+
+    - ``enabled``: Master switch for the function invocation loop.
+    - ``max_iterations``: Limits the number of **LLM roundtrips** (iterations).
+      Each iteration may execute one or more function calls in parallel, so
+      this does *not* directly limit the total number of function executions.
+    - ``max_function_calls``: Limits the **total number of individual function
+      invocations** across all iterations within a single request. This is the
+      primary knob for controlling cost and preventing runaway tool usage. When
+      the limit is reached, the loop stops invoking tools and forces the model
+      to produce a text response. Default is ``None`` (unlimited).
+
+      This is a **best-effort** limit: it is checked *after* each batch of
+      parallel tool calls completes, not before. If the model requests 20
+      parallel calls in a single iteration and the limit is 10, all 20 will
+      execute before the loop stops.
+    - ``max_consecutive_errors_per_request``: How many consecutive errors
+      before abandoning the tool loop for this request.
+    - ``terminate_on_unknown_calls``: Whether to raise an error when the model
+      requests a function that is not in the tool map.
+    - ``additional_tools``: Extra tools available during execution but not
+      advertised to the model in the tool list.
+    - ``include_detailed_errors``: Whether to include exception details in the
+      function result returned to the model.
+
+    Note:
+        ``max_iterations`` and ``max_function_calls`` serve complementary purposes.
+        ``max_iterations`` caps the number of model round-trips regardless of how
+        many tools are called per trip. ``max_function_calls`` caps the cumulative
+        number of individual tool executions regardless of how they are distributed
+        across iterations.
+
     Example:
         .. code-block:: python
+
             from agent_framework.openai import OpenAIChatClient
 
-            # Create an OpenAI chat client
             client = OpenAIChatClient(api_key="your_api_key")
 
-            # Disable function invocation
-            client.function_invocation_configuration["enabled"] = False
-
-            # Set maximum iterations to 10
-            client.function_invocation_configuration["max_iterations"] = 10
-
-            # Enable termination on unknown function calls
-            client.function_invocation_configuration["terminate_on_unknown_calls"] = True
-
-            # Add additional tools for function execution
-            client.function_invocation_configuration["additional_tools"] = [my_custom_tool]
-
-            # Enable detailed error information in function results
-            client.function_invocation_configuration["include_detailed_errors"] = True
-
-            # You can also create a new configuration dict if needed
-            new_config: FunctionInvocationConfiguration = {
-                "enabled": True,
-                "max_iterations": 20,
-                "terminate_on_unknown_calls": False,
-                "additional_tools": [another_tool],
-                "include_detailed_errors": False,
-            }
-
-            # and then assign it to the client
-            client.function_invocation_configuration = new_config
+            # Limit to 5 LLM roundtrips and 20 total function executions
+            client.function_invocation_configuration["max_iterations"] = 5
+            client.function_invocation_configuration["max_function_calls"] = 20
     """
 
     enabled: bool
     max_iterations: int
+    max_function_calls: int | None
     max_consecutive_errors_per_request: int
     terminate_on_unknown_calls: bool
     additional_tools: Sequence[FunctionTool]
@@ -1279,6 +1324,7 @@ def normalize_function_invocation_configuration(
     normalized: FunctionInvocationConfiguration = {
         "enabled": True,
         "max_iterations": DEFAULT_MAX_ITERATIONS,
+        "max_function_calls": None,
         "max_consecutive_errors_per_request": DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST,
         "terminate_on_unknown_calls": False,
         "additional_tools": [],
@@ -1288,6 +1334,8 @@ def normalize_function_invocation_configuration(
         normalized.update(config)
     if normalized["max_iterations"] < 1:
         raise ValueError("max_iterations must be at least 1.")
+    if normalized["max_function_calls"] is not None and normalized["max_function_calls"] < 1:
+        raise ValueError("max_function_calls must be at least 1 or None.")
     if normalized["max_consecutive_errors_per_request"] < 0:
         raise ValueError("max_consecutive_errors_per_request must be 0 or more.")
     if normalized["additional_tools"] is None:
@@ -1659,17 +1707,34 @@ def _extract_tools(
     return None
 
 
+def _is_hosted_tool_approval(content: Any) -> bool:
+    """Check if a function_approval_request/response is for a hosted tool (e.g. MCP).
+
+    Hosted tool approvals have a server_label in function_call.additional_properties
+    and should be passed through to the API untouched rather than processed locally.
+    """
+    fc = getattr(content, "function_call", None)
+    if fc is None:
+        return False
+    ap = getattr(fc, "additional_properties", None)
+    return bool(ap and ap.get("server_label"))
+
+
 def _collect_approval_responses(
     messages: list[Message],
 ) -> dict[str, Content]:
-    """Collect approval responses (both approved and rejected) from messages."""
+    """Collect approval responses (both approved and rejected) from messages.
+
+    Hosted tool approvals (e.g. MCP) are excluded because they must be
+    forwarded to the API as-is rather than processed locally.
+    """
     from ._types import Message
 
     fcc_todo: dict[str, Content] = {}
     for msg in messages:
         for content in msg.contents if isinstance(msg, Message) else []:
-            # Collect BOTH approved and rejected responses
-            if content.type == "function_approval_response":
+            # Collect BOTH approved and rejected responses, but skip hosted tool approvals
+            if content.type == "function_approval_response" and not _is_hosted_tool_approval(content):
                 fcc_todo[content.id] = content  # type: ignore[attr-defined, index]
     return fcc_todo
 
@@ -1698,6 +1763,9 @@ def _replace_approval_contents_with_results(
 
         for content_idx, content in enumerate(msg.contents):
             if content.type == "function_approval_request":
+                # Skip hosted tool approvals — they must pass through to the API unchanged
+                if _is_hosted_tool_approval(content):
+                    continue
                 # Don't add the function call if it already exists (would create duplicate)
                 if content.function_call.call_id in existing_call_ids:  # type: ignore[attr-defined, union-attr, operator]
                     # Just mark for removal - the function call already exists
@@ -1706,6 +1774,9 @@ def _replace_approval_contents_with_results(
                     # Put back the function call content only if it doesn't exist
                     msg.contents[content_idx] = content.function_call  # type: ignore[attr-defined, assignment]
             elif content.type == "function_approval_response":
+                # Skip hosted tool approvals — they must pass through to the API unchanged
+                if _is_hosted_tool_approval(content):
+                    continue
                 if content.approved and content.id in fcc_todo:  # type: ignore[attr-defined]
                     # Replace with the corresponding result
                     if result_idx < len(approved_function_results):
@@ -1738,10 +1809,26 @@ def _get_result_hooks_from_stream(stream: Any) -> list[Callable[[Any], Any]]:
 
 
 def _extract_function_calls(response: ChatResponse) -> list[Content]:
-    function_results = {it.call_id for it in response.messages[0].contents if it.type == "function_result"}
-    return [
-        it for it in response.messages[0].contents if it.type == "function_call" and it.call_id not in function_results
-    ]
+    function_results = {
+        item.call_id
+        for message in response.messages
+        for item in message.contents
+        if item.type == "function_result" and item.call_id
+    }
+    seen_call_ids: set[str] = set()
+    function_calls: list[Content] = []
+    for message in response.messages:
+        for item in message.contents:
+            if item.type != "function_call":
+                continue
+            if item.call_id and item.call_id in function_results:
+                continue
+            if item.call_id and item.call_id in seen_call_ids:
+                continue
+            if item.call_id:
+                seen_call_ids.add(item.call_id)
+            function_calls.append(item)
+    return function_calls
 
 
 def _prepend_fcc_messages(response: ChatResponse, fcc_messages: list[Message]) -> None:
@@ -1760,6 +1847,7 @@ class FunctionRequestResult(TypedDict, total=False):
         result_message: The message containing function call results, if any.
         update_role: The role to update for the next message, if any.
         function_call_results: The list of function call results, if any.
+        function_call_count: The number of function calls executed in this processing step.
     """
 
     action: Literal["return", "continue", "stop"]
@@ -1767,6 +1855,7 @@ class FunctionRequestResult(TypedDict, total=False):
     result_message: Message | None
     update_role: Literal["assistant", "tool"] | None
     function_call_results: list[Content] | None
+    function_call_count: int
 
 
 def _handle_function_call_results(
@@ -1799,27 +1888,22 @@ def _handle_function_call_results(
 
     if had_errors:
         errors_in_a_row += 1
-        if errors_in_a_row >= max_errors:
+        reached_error_limit = errors_in_a_row >= max_errors
+        if reached_error_limit:
             logger.warning(
                 "Maximum consecutive function call errors reached (%d). "
                 "Stopping further function calls for this request.",
                 max_errors,
             )
-            return {
-                "action": "stop",
-                "errors_in_a_row": errors_in_a_row,
-                "result_message": None,
-                "update_role": None,
-                "function_call_results": None,
-            }
     else:
         errors_in_a_row = 0
+        reached_error_limit = False
 
     result_message = Message(role="tool", contents=function_call_results)
     response.messages.append(result_message)
     fcc_messages.extend(response.messages)
     return {
-        "action": "continue",
+        "action": "stop" if reached_error_limit else "continue",
         "errors_in_a_row": errors_in_a_row,
         "result_message": result_message,
         "update_role": "tool",
@@ -1862,6 +1946,7 @@ async def _process_function_requests(
                             max_errors,
                         )
             _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
+            executed_count = sum(1 for r in approved_function_results if r.type == "function_result")
             # Continue to call chat client with updated messages (containing function results)
             # so it can generate the final response
             return {
@@ -1870,6 +1955,7 @@ async def _process_function_requests(
                 "result_message": None,
                 "update_role": None,
                 "function_call_results": None,
+                "function_call_count": executed_count,
             }
 
     if response is None or fcc_messages is None:
@@ -1879,6 +1965,7 @@ async def _process_function_requests(
             "result_message": None,
             "update_role": None,
             "function_call_results": None,
+            "function_call_count": 0,
         }
 
     tools = _extract_tools(tool_options)
@@ -1891,6 +1978,7 @@ async def _process_function_requests(
             "result_message": None,
             "update_role": None,
             "function_call_results": None,
+            "function_call_count": 0,
         }
 
     function_call_results, should_terminate, had_errors = await execute_function_calls(
@@ -1907,6 +1995,7 @@ async def _process_function_requests(
         max_errors=max_errors,
     )
     result["function_call_results"] = list(function_call_results)
+    result["function_call_count"] = sum(1 for r in function_call_results if r.type == "function_result")
     # If middleware requested termination, change action to return
     if should_terminate:
         result["action"] = "return"
@@ -2002,6 +2091,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             middleware_pipeline=function_middleware_pipeline,
         )
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "session"}
+
         # Make options mutable so we can update conversation_id during function invocation loop
         mutable_options: dict[str, Any] = dict(options) if options else {}
         # Remove additional_function_arguments from options passed to underlying chat client
@@ -2019,6 +2109,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 nonlocal mutable_options
                 nonlocal filtered_kwargs
                 errors_in_a_row: int = 0
+                total_function_calls: int = 0
+                max_function_calls: int | None = self.function_invocation_configuration.get("max_function_calls")
                 prepped_messages = list(messages)
                 fcc_messages: list[Message] = []
                 response: ChatResponse | None = None
@@ -2042,6 +2134,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         response = ChatResponse(messages=prepped_messages)
                         break
                     errors_in_a_row = approval_result["errors_in_a_row"]
+                    total_function_calls += approval_result.get("function_call_count", 0)
 
                     response = await super_get_response(
                         messages=prepped_messages,
@@ -2066,8 +2159,20 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     )
                     if result["action"] == "return":
                         return response
+                    total_function_calls += result.get("function_call_count", 0)
                     if result["action"] == "stop":
-                        break
+                        # Error threshold reached: force a final non-tool turn so
+                        # function_call_output items are submitted before exit.
+                        mutable_options["tool_choice"] = "none"
+                    elif max_function_calls is not None and total_function_calls >= max_function_calls:
+                        # Best-effort limit: checked after each batch of parallel calls completes,
+                        # so the current batch always runs to completion even if it overshoots.
+                        logger.info(
+                            "Maximum function calls reached (%d/%d). Stopping further function calls for this request.",
+                            total_function_calls,
+                            max_function_calls,
+                        )
+                        mutable_options["tool_choice"] = "none"
                     errors_in_a_row = result["errors_in_a_row"]
 
                     # When tool_choice is 'required', reset tool_choice after one iteration to avoid infinite loops
@@ -2087,9 +2192,15 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         prepped_messages.extend(response.messages)
                     continue
 
-                if response is not None:
-                    return response
-
+                # Loop exhausted all iterations (or function invocation disabled).
+                # Make a final model call with tool_choice="none" so the model
+                # produces a plain text answer instead of leaving orphaned
+                # function_call items without matching results.
+                if response is not None and self.function_invocation_configuration["enabled"]:
+                    logger.info(
+                        "Maximum iterations reached (%d). Requesting final response without tools.",
+                        self.function_invocation_configuration["max_iterations"],
+                    )
                 mutable_options["tool_choice"] = "none"
                 response = await super_get_response(
                     messages=prepped_messages,
@@ -2113,6 +2224,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             nonlocal mutable_options
             nonlocal stream_result_hooks
             errors_in_a_row: int = 0
+            total_function_calls: int = 0
+            max_function_calls: int | None = self.function_invocation_configuration.get("max_function_calls")
             prepped_messages = list(messages)
             fcc_messages: list[Message] = []
             response: ChatResponse | None = None
@@ -2133,7 +2246,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     execute_function_calls=execute_function_calls,
                 )
                 errors_in_a_row = approval_result["errors_in_a_row"]
+                total_function_calls += approval_result.get("function_call_count", 0)
                 if approval_result["action"] == "stop":
+                    mutable_options["tool_choice"] = "none"
                     return
 
                 inner_stream = await _ensure_response_stream(
@@ -2177,13 +2292,27 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     execute_function_calls=execute_function_calls,
                 )
                 errors_in_a_row = result["errors_in_a_row"]
+                total_function_calls += result.get("function_call_count", 0)
                 if role := result["update_role"]:
                     yield ChatResponseUpdate(
                         contents=result["function_call_results"] or [],
                         role=role,
                     )
-                if result["action"] != "continue":
+                if result["action"] == "stop":
+                    # Error threshold reached: submit collected function_call_output
+                    # items once more with tools disabled.
+                    mutable_options["tool_choice"] = "none"
+                elif result["action"] != "continue":
                     return
+                elif max_function_calls is not None and total_function_calls >= max_function_calls:
+                    # Best-effort limit: checked after each batch of parallel calls completes,
+                    # so the current batch always runs to completion even if it overshoots.
+                    logger.info(
+                        "Maximum function calls reached (%d/%d). Stopping further function calls for this request.",
+                        total_function_calls,
+                        max_function_calls,
+                    )
+                    mutable_options["tool_choice"] = "none"
 
                 # When tool_choice is 'required', reset the tool_choice after one iteration to avoid infinite loops
                 if mutable_options.get("tool_choice") == "required" or (
@@ -2202,9 +2331,15 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     prepped_messages.extend(response.messages)
                 continue
 
-            if response is not None:
-                return
-
+            # Loop exhausted all iterations (or function invocation disabled).
+            # Make a final model call with tool_choice="none" so the model
+            # produces a plain text answer instead of leaving orphaned
+            # function_call items without matching results.
+            if response is not None and self.function_invocation_configuration["enabled"]:
+                logger.info(
+                    "Maximum iterations reached (%d). Requesting final response without tools.",
+                    self.function_invocation_configuration["max_iterations"],
+                )
             mutable_options["tool_choice"] = "none"
             inner_stream = await _ensure_response_stream(
                 super_get_response(
