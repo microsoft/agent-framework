@@ -1,4 +1,2 @@
 azure-ai-agentserver-agentframework==1.0.0b14
-debugpy
-# Agent development CLI tool (preview)
-agent-dev-cli
+agent-framework

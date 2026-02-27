@@ -100,7 +100,7 @@ async def main() -> None:
             print("Starting workflow agent HTTP server...")
             from azure.ai.agentserver.agentframework import from_agent_framework
 
-        await from_agent_framework(agent).run_async()
+            await from_agent_framework(agent).run_async()
 
 
 if __name__ == "__main__":

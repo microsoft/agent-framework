@@ -7,7 +7,7 @@ COPY . .
 
 RUN dotnet restore
 RUN dotnet build -c Release --no-restore
-RUN dotnet publish -c Release --no-build -o /app
+RUN dotnet publish -c Release --no-build -o /app -f net10.0
 
 # Run the application
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS final
@@ -17,4 +17,4 @@ WORKDIR /app
 COPY --from=build /app .
 
 EXPOSE 8088
-ENTRYPOINT ["dotnet", "dotnetsingle.dll"]
+ENTRYPOINT ["dotnet", "FoundrySingleAgent.dll"]

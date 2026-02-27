@@ -58,9 +58,7 @@ Before running this sample, ensure you have:
 
 ### Environment Variables
 
-**Foundry VS Code Extension Users:**
-
-If you created your hosted agent project using the Microsoft Foundry VS Code extension, a `appsettings.Development.json` file is already created in the project root with the necessary environment variables. Double-check that the values are correct.
+Set the following environment variables:
 
 **PowerShell:**
 
