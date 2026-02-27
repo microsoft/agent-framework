@@ -92,8 +92,7 @@ class DeploymentManager:
                         break
 
                     # Get event from queue with short timeout
-                    event = await asyncio.wait_for(event_queue.get(), timeout=0.1)
-                    yield event
+                    yield await asyncio.wait_for(event_queue.get(), timeout=0.1)
                 except asyncio.TimeoutError:
                     # No event in queue, continue waiting
                     continue
