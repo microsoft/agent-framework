@@ -1258,6 +1258,147 @@ def tool(
     return decorator(func) if func else decorator
 
 
+class ShellTool(FunctionTool):
+    """A tool for executing shell commands locally on behalf of a model.
+
+    ShellTool extends FunctionTool to mark a function as a shell command
+    executor.
+
+    Provider-specific configuration can be passed via ``additional_properties``.
+    The user-supplied function handles actual command execution;
+    the function invocation layer runs it like any other FunctionTool.
+
+    Examples:
+        .. code-block:: python
+
+            import subprocess
+            from agent_framework import ShellTool
+
+
+            def run_bash(command: str) -> str:
+                result = subprocess.run(command, shell=True, capture_output=True, text=True)
+                return result.stdout + result.stderr
+
+
+            shell = ShellTool(func=run_bash)
+
+            # With provider-specific config
+            shell = ShellTool(func=run_bash, additional_properties={"type": "bash_20241022"})
+    """
+
+    def __init__(
+        self,
+        *,
+        func: Callable[..., Any],
+        name: str | None = None,
+        description: str | None = None,
+        approval_mode: Literal["always_require", "never_require"] | None = None,
+        input_model: type[BaseModel] | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the ShellTool.
+
+        Keyword Args:
+            func: The function that executes shell commands.
+            name: The tool name. Defaults to the function's ``__name__``.
+            description: Tool description. Defaults to the function's docstring.
+            approval_mode: Whether approval is required.
+            input_model: Optional Pydantic model or JSON schema for input parameters.
+            **kwargs: Additional keyword arguments passed to FunctionTool.
+        """
+        tool_name = name or getattr(func, "__name__", "shell")
+        tool_desc = description or (func.__doc__ or "")
+        super().__init__(
+            name=tool_name,
+            description=tool_desc,
+            func=func,
+            approval_mode=approval_mode,
+            input_model=input_model,
+            **kwargs,
+        )
+
+
+@overload
+def shell_tool(
+    func: Callable[..., Any],
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    approval_mode: Literal["always_require", "never_require"] | None = None,
+    additional_properties: dict[str, Any] | None = None,
+) -> ShellTool: ...
+
+
+@overload
+def shell_tool(
+    func: None = None,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    approval_mode: Literal["always_require", "never_require"] | None = None,
+    additional_properties: dict[str, Any] | None = None,
+) -> Callable[[Callable[..., Any]], ShellTool]: ...
+
+
+def shell_tool(
+    func: Callable[..., Any] | None = None,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    approval_mode: Literal["always_require", "never_require"] | None = None,
+    additional_properties: dict[str, Any] | None = None,
+) -> ShellTool | Callable[[Callable[..., Any]], ShellTool]:
+    """Decorate a function to turn it into a ShellTool.
+
+    Works the same way as :func:`tool` but creates a :class:`ShellTool`
+    instead of a :class:`FunctionTool`, so providers can detect it and
+    map it to the correct shell API declaration.
+
+    Args:
+        func: The function to decorate.
+
+    Keyword Args:
+        name: The tool name. Defaults to the function's ``__name__``.
+        description: Tool description. Defaults to the function's docstring.
+        approval_mode: Whether approval is required to run this tool.
+        additional_properties: Provider-specific configuration passed
+            through to the tool (e.g. ``{"type": "bash_20241022"}``).
+
+    Example:
+
+        .. code-block:: python
+
+            from agent_framework import shell_tool
+
+
+            @shell_tool
+            def run_bash(command: str) -> str:
+                '''Execute a bash command.'''
+                ...
+
+
+            # With options
+            @shell_tool(name="my_shell", additional_properties={"type": "bash_20241022"})
+            def run_bash(command: str) -> str: ...
+
+    """
+
+    def decorator(func: Callable[..., Any]) -> ShellTool:
+        @wraps(func)
+        def wrapper(f: Callable[..., Any]) -> ShellTool:
+            return ShellTool(
+                func=f,
+                name=name,
+                description=description,
+                approval_mode=approval_mode,
+                additional_properties=additional_properties or {},
+            )
+
+        return wrapper(func)
+
+    return decorator(func) if func else decorator
+
+
 # region Function Invoking Chat Client
 
 

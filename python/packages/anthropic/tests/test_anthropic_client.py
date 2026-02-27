@@ -410,6 +410,42 @@ def test_prepare_tools_for_anthropic_code_interpreter(mock_anthropic_client: Mag
     assert result["tools"][0]["name"] == "code_execution"
 
 
+def _dummy_bash(command: str) -> str:
+    return f"executed: {command}"
+
+
+def test_prepare_tools_for_anthropic_shell_tool(mock_anthropic_client: MagicMock) -> None:
+    """Test converting ShellTool to Anthropic bash format."""
+    from agent_framework import ShellTool
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    chat_options = ChatOptions(tools=[ShellTool(func=_dummy_bash)])
+
+    result = client._prepare_tools_for_anthropic(chat_options)
+
+    assert result is not None
+    assert "tools" in result
+    assert len(result["tools"]) == 1
+    assert result["tools"][0]["type"] == "bash_20250124"
+    assert result["tools"][0]["name"] == "bash"
+
+
+def test_prepare_tools_for_anthropic_shell_tool_custom_type(mock_anthropic_client: MagicMock) -> None:
+    """Test shell tool with custom type via additional_properties."""
+    from agent_framework import ShellTool
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    shell = ShellTool(func=_dummy_bash, additional_properties={"type": "bash_20241022"})
+    chat_options = ChatOptions(tools=[shell])
+
+    result = client._prepare_tools_for_anthropic(chat_options)
+
+    assert result is not None
+    assert "tools" in result
+    assert result["tools"][0]["type"] == "bash_20241022"
+    assert result["tools"][0]["name"] == "bash"
+
+
 def test_prepare_tools_for_anthropic_mcp_tool(mock_anthropic_client: MagicMock) -> None:
     """Test converting MCP dict tool to Anthropic format."""
     client = create_test_anthropic_client(mock_anthropic_client)
@@ -1733,7 +1769,7 @@ def test_parse_code_execution_result_with_files(mock_anthropic_client: MagicMock
 
 
 def test_parse_bash_execution_result_with_stdout(mock_anthropic_client: MagicMock) -> None:
-    """Test parsing bash execution result with stdout."""
+    """Test parsing bash execution result with stdout produces shell_tool_result."""
     client = create_test_anthropic_client(mock_anthropic_client)
     client._last_call_id_name = ("call_bash2", "bash_code_execution")
 
@@ -1741,6 +1777,7 @@ def test_parse_bash_execution_result_with_stdout(mock_anthropic_client: MagicMoc
     mock_content = MagicMock()
     mock_content.stdout = "Output text"
     mock_content.stderr = None
+    mock_content.return_code = 0
     mock_content.content = []
 
     mock_block = MagicMock()
@@ -1751,11 +1788,18 @@ def test_parse_bash_execution_result_with_stdout(mock_anthropic_client: MagicMoc
     result = client._parse_contents_from_anthropic([mock_block])
 
     assert len(result) == 1
-    assert result[0].type == "function_result"
+    assert result[0].type == "shell_tool_result"
+    assert result[0].call_id == "call_bash2"
+    assert result[0].outputs is not None
+    assert len(result[0].outputs) == 1
+    assert result[0].outputs[0].type == "shell_command_output"
+    assert result[0].outputs[0].stdout == "Output text"
+    assert result[0].outputs[0].exit_code == 0
+    assert result[0].outputs[0].timed_out is False
 
 
 def test_parse_bash_execution_result_with_stderr(mock_anthropic_client: MagicMock) -> None:
-    """Test parsing bash execution result with stderr."""
+    """Test parsing bash execution result with stderr produces shell_tool_result."""
     client = create_test_anthropic_client(mock_anthropic_client)
     client._last_call_id_name = ("call_bash3", "bash_code_execution")
 
@@ -1763,6 +1807,7 @@ def test_parse_bash_execution_result_with_stderr(mock_anthropic_client: MagicMoc
     mock_content = MagicMock()
     mock_content.stdout = None
     mock_content.stderr = "Error output"
+    mock_content.return_code = 1
     mock_content.content = []
 
     mock_block = MagicMock()
@@ -1773,7 +1818,39 @@ def test_parse_bash_execution_result_with_stderr(mock_anthropic_client: MagicMoc
     result = client._parse_contents_from_anthropic([mock_block])
 
     assert len(result) == 1
-    assert result[0].type == "function_result"
+    assert result[0].type == "shell_tool_result"
+    assert result[0].call_id == "call_bash3"
+    assert result[0].outputs is not None
+    assert result[0].outputs[0].type == "shell_command_output"
+    assert result[0].outputs[0].stderr == "Error output"
+    assert result[0].outputs[0].exit_code == 1
+
+
+def test_parse_bash_execution_result_with_error(mock_anthropic_client: MagicMock) -> None:
+    """Test parsing bash execution error produces shell_tool_result with error info."""
+    from anthropic.types.beta.beta_bash_code_execution_tool_result_error import (
+        BetaBashCodeExecutionToolResultError,
+    )
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    client._last_call_id_name = ("call_bash_err", "bash_code_execution")
+
+    mock_error = MagicMock(spec=BetaBashCodeExecutionToolResultError)
+    mock_error.error_code = "execution_time_exceeded"
+
+    mock_block = MagicMock()
+    mock_block.type = "bash_code_execution_tool_result"
+    mock_block.tool_use_id = "call_bash_err"
+    mock_block.content = mock_error
+
+    result = client._parse_contents_from_anthropic([mock_block])
+
+    assert len(result) == 1
+    assert result[0].type == "shell_tool_result"
+    assert result[0].outputs is not None
+    assert result[0].outputs[0].type == "shell_command_output"
+    assert result[0].outputs[0].stderr == "execution_time_exceeded"
+    assert result[0].outputs[0].timed_out is True
 
 
 # Text Editor Result Tests

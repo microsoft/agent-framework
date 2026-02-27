@@ -23,6 +23,7 @@ from agent_framework import (
     FunctionTool,
     Message,
     ResponseStream,
+    ShellTool,
     TextSpanRegion,
     UsageDetails,
 )
@@ -716,7 +717,16 @@ class AnthropicClient(
             tool_list: list[Any] = []
             mcp_server_list: list[Any] = []
             for tool in tools:
-                if isinstance(tool, FunctionTool):
+                if isinstance(tool, ShellTool):
+                    api_type = (tool.additional_properties or {}).get("type", "bash_20250124")
+                    # Anthropic requires name="bash" — align tool.name so
+                    # the function invocation layer can match tool_use calls.
+                    tool.name = "bash"
+                    tool_list.append({
+                        "type": api_type,
+                        "name": "bash",
+                    })
+                elif isinstance(tool, FunctionTool):
                     tool_list.append({
                         "type": "custom",
                         "name": tool.name,
@@ -1006,33 +1016,29 @@ class AnthropicClient(
                         )
                     )
                 case "bash_code_execution_tool_result":
-                    bash_outputs: list[Content] = []
+                    shell_outputs: list[Content] = []
                     if content_block.content:
                         if isinstance(
                             content_block.content,
                             BetaBashCodeExecutionToolResultError,
                         ):
-                            bash_outputs.append(
-                                Content.from_error(
-                                    message=content_block.content.error_code,
+                            shell_outputs.append(
+                                Content.from_shell_command_output(
+                                    stderr=content_block.content.error_code,
+                                    timed_out=content_block.content.error_code == "execution_time_exceeded",
                                     raw_representation=content_block.content,
                                 )
                             )
                         else:
-                            if content_block.content.stdout:
-                                bash_outputs.append(
-                                    Content.from_text(
-                                        text=content_block.content.stdout,
-                                        raw_representation=content_block.content,
-                                    )
+                            shell_outputs.append(
+                                Content.from_shell_command_output(
+                                    stdout=content_block.content.stdout or None,
+                                    stderr=content_block.content.stderr or None,
+                                    exit_code=int(content_block.content.return_code),
+                                    timed_out=False,
+                                    raw_representation=content_block.content,
                                 )
-                            if content_block.content.stderr:
-                                bash_outputs.append(
-                                    Content.from_error(
-                                        message=content_block.content.stderr,
-                                        raw_representation=content_block.content,
-                                    )
-                                )
+                            )
                             for bash_file_content in content_block.content.content:
                                 contents.append(
                                     Content.from_hosted_file(
@@ -1041,9 +1047,9 @@ class AnthropicClient(
                                     )
                                 )
                     contents.append(
-                        Content.from_function_result(
+                        Content.from_shell_tool_result(
                             call_id=content_block.tool_use_id,
-                            result=bash_outputs,
+                            outputs=shell_outputs,
                             raw_representation=content_block,
                         )
                     )

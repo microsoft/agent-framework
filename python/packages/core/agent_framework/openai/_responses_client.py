@@ -17,6 +17,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NoReturn, TypedDict, cast
 
 from openai import AsyncOpenAI, BadRequestError
+from openai.types.responses import FunctionShellTool
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
 from openai.types.responses.parsed_response import (
@@ -621,6 +622,48 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             tool["output_compression"] = output_compression
 
         return tool
+
+    @staticmethod
+    def get_hosted_shell_tool(
+        *,
+        environment: Literal["auto"] | dict[str, Any] | None = "auto",
+    ) -> Any:
+        """Create a hosted shell tool for the Responses API.
+
+        Returns a shell tool that executes commands in OpenAI's managed
+        container environment.
+
+        For **local** shell execution (commands run on your machine), create
+        a :class:`ShellTool` directly instead::
+
+            from agent_framework import ShellTool
+
+            tool = ShellTool(func=my_bash_func)
+
+        Keyword Args:
+            environment: Container environment configuration.
+                Use ``"auto"`` (default) for automatic container management,
+                or provide a dict with custom container settings.
+
+        Returns:
+            A ``FunctionShellTool`` for hosted execution.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIResponsesClient
+
+                # Hosted shell (OpenAI container)
+                tool = OpenAIResponsesClient.get_hosted_shell_tool()
+
+                # With custom environment
+                tool = OpenAIResponsesClient.get_hosted_shell_tool(
+                    environment={"type": "container_auto", "file_ids": ["file-abc"]}
+                )
+        """
+        env_config: dict[str, Any] = environment if isinstance(environment, dict) else {"type": "container_auto"}
+
+        return FunctionShellTool(type="shell", environment=env_config)
 
     @staticmethod
     def get_mcp_tool(
@@ -1332,6 +1375,54 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                             raw_representation=item,
                         )
                     )
+                case "shell_call":  # ResponseFunctionShellToolCall
+                    shell_call_id = item.call_id if hasattr(item, "call_id") else ""
+                    shell_commands: list[str] = []
+                    shell_timeout_ms: int | None = None
+                    shell_max_output: int | None = None
+                    if action := getattr(item, "action", None):
+                        shell_commands = list(getattr(action, "commands", []) or [])
+                        shell_timeout_ms = getattr(action, "timeout_ms", None)
+                        shell_max_output = getattr(action, "max_output_length", None)
+                    contents.append(
+                        Content.from_shell_tool_call(
+                            call_id=shell_call_id,
+                            commands=shell_commands,
+                            timeout_ms=shell_timeout_ms,
+                            max_output_length=shell_max_output,
+                            status=getattr(item, "status", None),
+                            raw_representation=item,
+                        )
+                    )
+                case "shell_call_output":  # ResponseFunctionShellToolCallOutput
+                    shell_output_call_id = item.call_id if hasattr(item, "call_id") else ""
+                    shell_outputs: list[Content] = []
+                    for shell_out in getattr(item, "output", []) or []:
+                        s_exit_code: int | None = None
+                        s_timed_out: bool | None = None
+                        if outcome := getattr(shell_out, "outcome", None):
+                            if getattr(outcome, "type", None) == "exit":
+                                s_exit_code = getattr(outcome, "exit_code", None)
+                                s_timed_out = False
+                            elif getattr(outcome, "type", None) == "timeout":
+                                s_timed_out = True
+                        shell_outputs.append(
+                            Content.from_shell_command_output(
+                                stdout=getattr(shell_out, "stdout", None),
+                                stderr=getattr(shell_out, "stderr", None),
+                                exit_code=s_exit_code,
+                                timed_out=s_timed_out,
+                                raw_representation=shell_out,
+                            )
+                        )
+                    contents.append(
+                        Content.from_shell_tool_result(
+                            call_id=shell_output_call_id,
+                            outputs=shell_outputs,
+                            max_output_length=getattr(item, "max_output_length", None),
+                            raw_representation=item,
+                        )
+                    )
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
         response_message = Message(role="assistant", contents=contents)
@@ -1643,6 +1734,54 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                             Content.from_code_interpreter_tool_result(
                                 call_id=call_id,
                                 outputs=outputs,
+                                raw_representation=event_item,
+                            )
+                        )
+                    case "shell_call":  # ResponseFunctionShellToolCall
+                        s_call_id = getattr(event_item, "call_id", None) or ""
+                        s_commands: list[str] = []
+                        s_timeout_ms: int | None = None
+                        s_max_output: int | None = None
+                        if s_action := getattr(event_item, "action", None):
+                            s_commands = list(getattr(s_action, "commands", []) or [])
+                            s_timeout_ms = getattr(s_action, "timeout_ms", None)
+                            s_max_output = getattr(s_action, "max_output_length", None)
+                        contents.append(
+                            Content.from_shell_tool_call(
+                                call_id=s_call_id,
+                                commands=s_commands,
+                                timeout_ms=s_timeout_ms,
+                                max_output_length=s_max_output,
+                                status=getattr(event_item, "status", None),
+                                raw_representation=event_item,
+                            )
+                        )
+                    case "shell_call_output":  # ResponseFunctionShellToolCallOutput
+                        s_out_call_id = getattr(event_item, "call_id", None) or ""
+                        s_outputs: list[Content] = []
+                        for s_out in getattr(event_item, "output", []) or []:
+                            s_exit_code: int | None = None
+                            s_timed_out: bool | None = None
+                            if s_outcome := getattr(s_out, "outcome", None):
+                                if getattr(s_outcome, "type", None) == "exit":
+                                    s_exit_code = getattr(s_outcome, "exit_code", None)
+                                    s_timed_out = False
+                                elif getattr(s_outcome, "type", None) == "timeout":
+                                    s_timed_out = True
+                            s_outputs.append(
+                                Content.from_shell_command_output(
+                                    stdout=getattr(s_out, "stdout", None),
+                                    stderr=getattr(s_out, "stderr", None),
+                                    exit_code=s_exit_code,
+                                    timed_out=s_timed_out,
+                                    raw_representation=s_out,
+                                )
+                            )
+                        contents.append(
+                            Content.from_shell_tool_result(
+                                call_id=s_out_call_id,
+                                outputs=s_outputs,
+                                max_output_length=getattr(event_item, "max_output_length", None),
                                 raw_representation=event_item,
                             )
                         )

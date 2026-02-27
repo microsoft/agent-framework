@@ -564,6 +564,146 @@ def test_response_content_creation_with_code_interpreter() -> None:
     assert any(out.type == "uri" for out in result_content.outputs)
 
 
+def test_get_hosted_shell_tool_basic() -> None:
+    """Test get_hosted_shell_tool returns correct tool type with default auto environment."""
+    tool = OpenAIResponsesClient.get_hosted_shell_tool()
+    assert tool.type == "shell"
+    assert tool.environment.type == "container_auto"
+
+
+def test_get_hosted_shell_tool_with_custom_environment() -> None:
+    """Test get_hosted_shell_tool with custom environment configuration."""
+    env = {"type": "container_auto", "file_ids": ["file-abc123"]}
+    tool = OpenAIResponsesClient.get_hosted_shell_tool(environment=env)
+    assert tool.type == "shell"
+    assert tool.environment.file_ids == ["file-abc123"]
+
+
+def test_response_content_creation_with_shell_call() -> None:
+    """Test _parse_response_from_openai with shell_call output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.commands = ["ls -la", "pwd"]
+    mock_action.timeout_ms = 60000
+    mock_action.max_output_length = 4096
+
+    mock_shell_call = MagicMock()
+    mock_shell_call.type = "shell_call"
+    mock_shell_call.call_id = "shell-call-1"
+    mock_shell_call.action = mock_action
+    mock_shell_call.status = "completed"
+
+    mock_response.output = [mock_shell_call]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 1
+    call_content = response.messages[0].contents[0]
+    assert call_content.type == "shell_tool_call"
+    assert call_content.call_id == "shell-call-1"
+    assert call_content.commands == ["ls -la", "pwd"]
+    assert call_content.timeout_ms == 60000
+    assert call_content.max_output_length == 4096
+    assert call_content.status == "completed"
+
+
+def test_response_content_creation_with_shell_call_output() -> None:
+    """Test _parse_response_from_openai with shell_call_output output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_outcome = MagicMock()
+    mock_outcome.type = "exit"
+    mock_outcome.exit_code = 0
+
+    mock_output_entry = MagicMock()
+    mock_output_entry.stdout = "hello world\n"
+    mock_output_entry.stderr = ""
+    mock_output_entry.outcome = mock_outcome
+
+    mock_shell_output = MagicMock()
+    mock_shell_output.type = "shell_call_output"
+    mock_shell_output.call_id = "shell-call-1"
+    mock_shell_output.output = [mock_output_entry]
+    mock_shell_output.max_output_length = 4096
+
+    mock_response.output = [mock_shell_output]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 1
+    result_content = response.messages[0].contents[0]
+    assert result_content.type == "shell_tool_result"
+    assert result_content.call_id == "shell-call-1"
+    assert result_content.outputs is not None
+    assert len(result_content.outputs) == 1
+    assert result_content.outputs[0].type == "shell_command_output"
+    assert result_content.outputs[0].stdout == "hello world\n"
+    assert result_content.outputs[0].exit_code == 0
+    assert result_content.outputs[0].timed_out is False
+    assert result_content.max_output_length == 4096
+
+
+def test_response_content_creation_with_shell_call_timeout() -> None:
+    """Test _parse_response_from_openai with shell_call_output that timed out."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_outcome = MagicMock()
+    mock_outcome.type = "timeout"
+
+    mock_output_entry = MagicMock()
+    mock_output_entry.stdout = "partial output"
+    mock_output_entry.stderr = None
+    mock_output_entry.outcome = mock_outcome
+
+    mock_shell_output = MagicMock()
+    mock_shell_output.type = "shell_call_output"
+    mock_shell_output.call_id = "shell-call-t"
+    mock_shell_output.output = [mock_output_entry]
+    mock_shell_output.max_output_length = None
+
+    mock_response.output = [mock_shell_output]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    result_content = response.messages[0].contents[0]
+    assert result_content.type == "shell_tool_result"
+    assert result_content.outputs is not None
+    assert result_content.outputs[0].type == "shell_command_output"
+    assert result_content.outputs[0].timed_out is True
+    assert result_content.outputs[0].exit_code is None
+
+
 def test_response_content_creation_with_function_call() -> None:
     """Test _parse_response_from_openai with function call content."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")

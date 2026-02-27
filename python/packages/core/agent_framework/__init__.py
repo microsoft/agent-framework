@@ -71,8 +71,10 @@ from ._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
+    ShellTool,
     ToolTypes,
     normalize_function_invocation_configuration,
+    shell_tool,
     tool,
 )
 from ._types import (
@@ -269,6 +271,7 @@ __all__ = [
     "RunnerContext",
     "SecretString",
     "SessionContext",
+    "ShellTool",
     "SingleEdgeGroup",
     "SubWorkflowRequestMessage",
     "SubWorkflowResponseMessage",
@@ -329,6 +332,7 @@ __all__ = [
     "register_state_type",
     "resolve_agent_id",
     "response_handler",
+    "shell_tool",
     "tool",
     "validate_chat_options",
     "validate_tool_mode",
