@@ -1,13 +1,14 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // Seattle Hotel Agent - A simple agent with a tool to find hotels in Seattle.
 // Uses Microsoft Agent Framework with Azure AI Foundry.
 // Ready for deployment to Foundry Hosted Agent service.
 
+using System.ClientModel.Primitives;
 using System.ComponentModel;
 using System.Globalization;
 using System.Text;
-using System.ClientModel.Primitives;
+
 using Azure.AI.AgentServer.AgentFramework.Extensions;
 using Azure.AI.OpenAI;
 using Azure.AI.Projects;
@@ -43,12 +44,12 @@ string GetAvailableHotels(
         // Parse dates
         if (!DateTime.TryParseExact(checkInDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var checkIn))
         {
-            return $"Error parsing check-in date. Please use YYYY-MM-DD format.";
+            return "Error parsing check-in date. Please use YYYY-MM-DD format.";
         }
 
         if (!DateTime.TryParseExact(checkOutDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var checkOut))
         {
-            return $"Error parsing check-out date. Please use YYYY-MM-DD format.";
+            return "Error parsing check-out date. Please use YYYY-MM-DD format.";
         }
 
         // Validate dates
@@ -92,7 +93,7 @@ string GetAvailableHotels(
 
 // Create chat client using AIProjectClient to get the OpenAI connection from the project
 var credential = new DefaultAzureCredential();
-AIProjectClient projectClient = new AIProjectClient(new Uri(endpoint), credential);
+AIProjectClient projectClient = new(new Uri(endpoint), credential);
 
 // Get the OpenAI connection from the project
 ClientConnection connection = projectClient.GetConnection(typeof(AzureOpenAIClient).FullName!);
@@ -135,4 +136,4 @@ Console.WriteLine("Seattle Hotel Agent Server running on http://localhost:8088")
 await agent.RunAIAgentAsync(telemetrySourceName: "Agents");
 
 // Hotel record for simulated data
-record Hotel(string Name, int PricePerNight, double Rating, string Location);
+internal sealed record Hotel(string Name, int PricePerNight, double Rating, string Location);
