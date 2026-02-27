@@ -4,7 +4,7 @@ name: foundry-single-agent
 displayName: "Foundry Single Agent with Local Tools"
 description: >
   A travel assistant agent that helps users find hotels in Seattle.
-  Demonstrates local Python tool execution - a key advantage of code-based 
+  Demonstrates local Python tool execution - a key advantage of code-based
   hosted agents over prompt agents.
 metadata:
   authors:
