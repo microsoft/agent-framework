@@ -34,12 +34,14 @@ if __name__ == '__main__':
         description='A simple agent that provides food-related information.',
         url='http://localhost:9999/',
         version='1.0.0',
+        defaultInputModes=['text'],
+        defaultOutputModes=['text'],
         capabilities=AgentCapabilities(streaming=True),
         skills=[skill],
     )
     # --8<-- [end:AgentCard]
 
-    agent = OpenAIResponsesClient().create_agent(
+    agent = OpenAIResponsesClient().as_agent(
         name="Food Agent",
         instructions="A simple agent that provides food-related information.",
     )
