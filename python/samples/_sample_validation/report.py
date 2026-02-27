@@ -21,6 +21,14 @@ def generate_report(results: list[RunResult]) -> Report:
     Returns:
         Report object with aggregated statistics
     """
+    # Sort results: failures, timeouts, errors first, then successes
+    status_priority = {
+        RunStatus.FAILURE: 0,
+        RunStatus.TIMEOUT: 1,
+        RunStatus.ERROR: 2,
+        RunStatus.SUCCESS: 3,
+    }
+    sorted_results = sorted(results, key=lambda r: status_priority[r.status])
 
     return Report(
         timestamp=datetime.now(),
@@ -29,7 +37,7 @@ def generate_report(results: list[RunResult]) -> Report:
         failure_count=sum(1 for r in results if r.status == RunStatus.FAILURE),
         timeout_count=sum(1 for r in results if r.status == RunStatus.TIMEOUT),
         error_count=sum(1 for r in results if r.status == RunStatus.ERROR),
-        results=results,
+        results=sorted_results,
     )
 
 
@@ -84,8 +92,12 @@ def print_summary(report: Report) -> None:
     print(f"  [PASS] Success: {report.success_count}")
     print(f"  [FAIL] Failure: {report.failure_count}")
     print(f"  [TIMEOUT] Timeout: {report.timeout_count}")
-    print(f"  [ERROR] Error: {report.error_count}")
+    print(f"  [ERR] Errors: {report.error_count}")
     print("=" * 80)
+
+    # Print JSON output for GitHub Actions visibility
+    print("\nJSON Report:")
+    print(json.dumps(report.to_dict(), indent=2))
 
 
 class GenerateReportExecutor(Executor):
