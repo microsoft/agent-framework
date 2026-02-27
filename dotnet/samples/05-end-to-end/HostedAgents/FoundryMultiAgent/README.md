@@ -20,12 +20,12 @@ The agent is hosted using the [Azure AI AgentServer SDK](https://www.nuget.org/p
 
 ### Multi-Agent Workflow
 
-In [Program.cs](Program.cs), the sample creates two agents using `PersistentAgentsClient`:
+In [Program.cs](Program.cs), the sample creates two agents using `AIProjectClient.CreateAIAgentAsync()` from the [Microsoft.Agents.AI.AzureAI](https://www.nuget.org/packages/Microsoft.Agents.AI.AzureAI/) package:
 
 - **Writer** - An agent that creates and edits content based on feedback
 - **Reviewer** - An agent that provides actionable feedback on the content
 
-The `WorkflowBuilder` connects these agents in a sequential flow:
+The `WorkflowBuilder` from the [Microsoft.Agents.AI.Workflows](https://www.nuget.org/packages/Microsoft.Agents.AI.Workflows/) package connects these agents in a sequential flow:
 
 1. The Writer receives the initial request and generates content
 2. The Reviewer evaluates the content and provides feedback
@@ -51,6 +51,7 @@ Before running this sample, ensure you have:
 2. **Azure CLI**
    - Installed and authenticated
    - Run `az login` and verify with `az account show`
+   - Your identity needs the **Azure AI Developer** role on the Foundry resource (for `agents/write` data action required by `CreateAIAgentAsync`)
 
 3. **.NET 10.0 SDK or later**
    - Verify your version: `dotnet --version`

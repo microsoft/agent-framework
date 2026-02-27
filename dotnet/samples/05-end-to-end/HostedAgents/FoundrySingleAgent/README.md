@@ -20,7 +20,7 @@ The agent is hosted using the [Azure AI AgentServer SDK](https://learn.microsoft
 
 ### Local Tools Integration
 
-In [Program.cs](Program.cs), the agent uses a local C# method (`GetAvailableHotels`) that simulates a hotel availability API. This demonstrates how code-based agents can execute custom server-side logic that prompt agents cannot access.
+In [Program.cs](Program.cs), the agent uses `AIProjectClient.CreateAIAgentAsync()` from the [Microsoft.Agents.AI.AzureAI](https://www.nuget.org/packages/Microsoft.Agents.AI.AzureAI/) package to create a Foundry agent with a local C# method (`GetAvailableHotels`) that simulates a hotel availability API. This demonstrates how code-based agents can execute custom server-side logic that prompt agents cannot access.
 
 The tool accepts:
 
@@ -47,6 +47,7 @@ Before running this sample, ensure you have:
 2. **Azure CLI**
    - Installed and authenticated
    - Run `az login` and verify with `az account show`
+   - Your identity needs the **Azure AI Developer** role on the Foundry resource (for `agents/write` data action required by `CreateAIAgentAsync`)
 
 3. **.NET 10.0 SDK or later**
    - Verify your version: `dotnet --version`
