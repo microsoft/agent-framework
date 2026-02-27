@@ -9,13 +9,12 @@ import os
 from datetime import datetime
 from typing import Annotated
 
-from dotenv import load_dotenv
-
-load_dotenv(override=True)
-
 from agent_framework.azure import AzureAIAgentClient
 from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity.aio import DefaultAzureCredential
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 # Configure these for your Foundry project
 # Read the explicit variables present in the .env file
@@ -135,7 +134,7 @@ When a user asks about hotels in Seattle:
 4. Present the results in a friendly, informative way
 5. Offer to help with additional questions about the hotels or Seattle
 
-Be conversational and helpful. If users ask about things outside of Seattle hotels, 
+Be conversational and helpful. If users ask about things outside of Seattle hotels,
 politely let them know you specialize in Seattle hotel recommendations.""",
             tools=[get_available_hotels],
         )
