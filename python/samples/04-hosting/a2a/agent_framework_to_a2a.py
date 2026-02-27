@@ -1,7 +1,6 @@
 import uvicorn
 
 from dotenv import load_dotenv
-load_dotenv()
 
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -14,6 +13,8 @@ from a2a.types import (
 
 from agent_framework.a2a import A2AExecutor
 from agent_framework.openai import OpenAIResponsesClient
+
+load_dotenv()
 
 if __name__ == '__main__':
     # --8<-- [start:AgentSkill]

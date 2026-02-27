@@ -574,7 +574,7 @@ class TestA2AExecutorHandleEvents:
         mock_updater.update_status.assert_called_once()
         mock_updater.new_agent_message.assert_called_once()
         call_args = mock_updater.new_agent_message.call_args
-        assert call_args.kwargs["metadata"] is None
+        assert call_args.kwargs["metadata"] is {}
 
     async def test_parts_list_passed_to_new_agent_message(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
         """Test that parts list is correctly passed to new_agent_message."""
