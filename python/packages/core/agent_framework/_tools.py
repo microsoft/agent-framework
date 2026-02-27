@@ -1306,7 +1306,7 @@ class ShellTool(FunctionTool):
             input_model: Optional Pydantic model or JSON schema for input parameters.
             **kwargs: Additional keyword arguments passed to FunctionTool.
         """
-        tool_name = name or getattr(func, "__name__", "shell")
+        tool_name: str = name or getattr(func, "__name__", "shell")
         tool_desc = description or (func.__doc__ or "")
         super().__init__(
             name=tool_name,
