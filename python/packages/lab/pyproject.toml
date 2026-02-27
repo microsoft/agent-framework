@@ -43,7 +43,7 @@ lightning = [
 # TAU2 benchmark module dependencies
 tau2 = [
   "pydantic>=2,<4",
-  "tiktoken>=0.11.0,<0.11.1",
+  "tiktoken>=0.12.0,<0.12.1",
   "loguru>=0.7.3,<0.7.4",
   "numpy>=2.2.6,<3",
 ]
