@@ -360,7 +360,7 @@ class AgentExecutor(Executor):
         Returns:
             The complete AgentResponse, or None if waiting for user input.
         """
-        run_kwargs, options = self._prepare_agent_run_args(ctx.get_state(WORKFLOW_RUN_KWARGS_KEY) or {})
+        run_kwargs, options = self._prepare_agent_run_args(ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {}))
 
         updates: list[AgentResponseUpdate] = []
         streamed_user_input_requests: list[Content] = []
@@ -415,6 +415,10 @@ class AgentExecutor(Executor):
 
         return response
 
+    # Parameters that are explicitly passed to agent.run() by AgentExecutor
+    # and must not appear in **run_kwargs to avoid TypeError from duplicate values.
+    _RESERVED_RUN_PARAMS: frozenset[str] = frozenset({"session", "stream", "messages"})
+
     @staticmethod
     def _prepare_agent_run_args(raw_run_kwargs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """Prepare kwargs and options for agent.run(), avoiding duplicate option passing.
@@ -423,8 +427,23 @@ class AgentExecutor(Executor):
         `options.additional_function_arguments`. If workflow kwargs include an
         `options` key, merge it into the final options object and remove it from
         kwargs before spreading `**run_kwargs`.
+
+        Reserved parameters (session, stream, messages) that are explicitly
+        managed by AgentExecutor are stripped from run_kwargs to prevent
+        ``TypeError: got multiple values for keyword argument`` collisions.
         """
         run_kwargs = dict(raw_run_kwargs)
+
+        # Strip reserved params that AgentExecutor passes explicitly to agent.run().
+        for key in AgentExecutor._RESERVED_RUN_PARAMS:
+            if key in run_kwargs:
+                logger.warning(
+                    "Workflow kwarg '%s' is reserved by AgentExecutor and will be ignored. "
+                    "Remove it from workflow.run() kwargs to silence this warning.",
+                    key,
+                )
+                run_kwargs.pop(key)
+
         options_from_workflow = run_kwargs.pop("options", None)
         workflow_additional_args = run_kwargs.pop("additional_function_arguments", None)
 

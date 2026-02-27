@@ -148,6 +148,8 @@ ignore = [
 "**/tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
 "samples/**" = ["D", "INP", "ERA001", "RUF", "S", "T201", "CPY"]
 "*.ipynb" = ["CPY", "E501"]
+# RUF070: Assignment before yield is intentional - context manager must exit before yielding
+"**/agent_framework/_workflows/_workflow.py" = ["RUF070"]
 
 [tool.ruff.format]
 docstring-code-format = true
