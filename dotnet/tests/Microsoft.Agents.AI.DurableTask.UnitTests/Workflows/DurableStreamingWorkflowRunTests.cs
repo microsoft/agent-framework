@@ -37,7 +37,27 @@ public sealed class DurableStreamingWorkflowRunTests
     private static string SerializeCustomStatus(List<string> events)
     {
         DurableWorkflowLiveStatus status = new() { Events = events };
-        return JsonSerializer.Serialize(status, DurableWorkflowJsonContext.Default.DurableWorkflowLiveStatus);
+        return JsonSerializer.Serialize(status, DurableSerialization.Options);
+    }
+
+    private static string SerializeCustomStatusWithPendingEvents(
+        List<string> events,
+        List<PendingRequestPortStatus> pendingEvents)
+    {
+        DurableWorkflowLiveStatus status = new() { Events = events, PendingEvents = pendingEvents };
+        return JsonSerializer.Serialize(status, DurableSerialization.Options);
+    }
+
+    private static Workflow CreateTestWorkflowWithRequestPort(string requestPortId)
+    {
+        FunctionExecutor<string> start = new("start", (_, _, _) => default);
+        RequestPort<string, string> requestPort = RequestPort.Create<string, string>(requestPortId);
+        FunctionExecutor<string> end = new("end", (_, _, _) => default);
+        return new WorkflowBuilder(start)
+            .WithName(WorkflowTestName)
+            .AddEdge(start, requestPort)
+            .AddEdge(requestPort, end)
+            .Build();
     }
 
     private static string SerializeWorkflowResult(string? result, List<string> events)
@@ -484,6 +504,127 @@ public sealed class DurableStreamingWorkflowRunTests
 
         // Assert — no exception thrown, stream ends cleanly
         Assert.Empty(events);
+    }
+
+    [Fact]
+    public async Task WatchStreamAsync_PendingRequestPort_YieldsWaitingForInputEventAsync()
+    {
+        // Arrange
+        string customStatus = SerializeCustomStatusWithPendingEvents(
+            [],
+            [new PendingRequestPortStatus("ApprovalPort", """{"amount":100}""")]);
+        string serializedOutput = SerializeWorkflowResult("approved", []);
+
+        int callCount = 0;
+        Mock<DurableTaskClient> mockClient = new("test");
+        mockClient.Setup(c => c.GetInstanceAsync(InstanceId, true, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return callCount == 1
+                    ? CreateMetadata(OrchestrationRuntimeStatus.Running, serializedCustomStatus: customStatus)
+                    : CreateMetadata(OrchestrationRuntimeStatus.Completed, serializedOutput: serializedOutput);
+            });
+
+        Workflow workflow = CreateTestWorkflowWithRequestPort("ApprovalPort");
+        DurableStreamingWorkflowRun run = new(mockClient.Object, InstanceId, workflow);
+
+        // Act
+        List<WorkflowEvent> events = [];
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Equal(2, events.Count);
+        DurableWorkflowWaitingForInputEvent waitingEvent = Assert.IsType<DurableWorkflowWaitingForInputEvent>(events[0]);
+        Assert.Equal("ApprovalPort", waitingEvent.RequestPort.Id);
+        Assert.Contains("amount", waitingEvent.Input);
+        DurableWorkflowCompletedEvent completedEvent = Assert.IsType<DurableWorkflowCompletedEvent>(events[1]);
+        Assert.Equal("approved", completedEvent.Result);
+    }
+
+    [Fact]
+    public async Task WatchStreamAsync_PendingRequestPort_DoesNotDuplicateOnSubsequentPollsAsync()
+    {
+        // Arrange — same pending event across 2 polls, then completion
+        string customStatus = SerializeCustomStatusWithPendingEvents(
+            [],
+            [new PendingRequestPortStatus("ApprovalPort", """{"amount":100}""")]);
+        string serializedOutput = SerializeWorkflowResult("done", []);
+
+        int callCount = 0;
+        Mock<DurableTaskClient> mockClient = new("test");
+        mockClient.Setup(c => c.GetInstanceAsync(InstanceId, true, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return callCount switch
+                {
+                    <= 2 => CreateMetadata(OrchestrationRuntimeStatus.Running, serializedCustomStatus: customStatus),
+                    _ => CreateMetadata(OrchestrationRuntimeStatus.Completed, serializedOutput: serializedOutput),
+                };
+            });
+
+        Workflow workflow = CreateTestWorkflowWithRequestPort("ApprovalPort");
+        DurableStreamingWorkflowRun run = new(mockClient.Object, InstanceId, workflow);
+
+        // Act
+        List<WorkflowEvent> events = [];
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            events.Add(evt);
+        }
+
+        // Assert — WaitingForInputEvent yielded only once despite 2 polls
+        Assert.Equal(2, events.Count);
+        Assert.IsType<DurableWorkflowWaitingForInputEvent>(events[0]);
+        Assert.IsType<DurableWorkflowCompletedEvent>(events[1]);
+    }
+
+    #endregion
+
+    #region SendResponseAsync
+
+    [Fact]
+    public async Task SendResponseAsync_SerializesAndRaisesEventAsync()
+    {
+        // Arrange
+        Mock<DurableTaskClient> mockClient = new("test");
+        mockClient.Setup(c => c.RaiseEventAsync(
+                InstanceId,
+                "ApprovalPort",
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        RequestPort approvalPort = RequestPort.Create<string, string>("ApprovalPort");
+        DurableWorkflowWaitingForInputEvent requestEvent = new("""{"amount":100}""", approvalPort);
+        Workflow workflow = CreateTestWorkflowWithRequestPort("ApprovalPort");
+        DurableStreamingWorkflowRun run = new(mockClient.Object, InstanceId, workflow);
+
+        // Act
+        await run.SendResponseAsync(requestEvent, new { approved = true, comments = "Looks good" });
+
+        // Assert
+        mockClient.Verify(c => c.RaiseEventAsync(
+            InstanceId,
+            "ApprovalPort",
+            It.Is<string>(s => s.Contains("approved") && s.Contains("true")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SendResponseAsync_NullRequestEvent_ThrowsAsync()
+    {
+        // Arrange
+        Mock<DurableTaskClient> mockClient = new("test");
+        DurableStreamingWorkflowRun run = new(mockClient.Object, InstanceId, CreateTestWorkflow());
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            run.SendResponseAsync<string>(null!, "response").AsTask());
     }
 
     #endregion

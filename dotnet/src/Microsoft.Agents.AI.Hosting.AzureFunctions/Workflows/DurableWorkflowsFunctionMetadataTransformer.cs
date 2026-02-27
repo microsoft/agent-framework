@@ -116,8 +116,8 @@ internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMet
             // ReflectExecutors() returns all executors across the graph; no need to manually traverse edges.
             foreach (KeyValuePair<string, ExecutorBinding> entry in workflow.Value.ReflectExecutors())
             {
-                // Sub-workflow bindings are handled as separate orchestrations, not activities.
-                if (entry.Value is SubworkflowBinding)
+                // Sub-workflow and RequestPort bindings use specialized dispatch, not activities.
+                if (entry.Value is SubworkflowBinding or RequestPortBinding)
                 {
                     continue;
                 }
