@@ -944,6 +944,21 @@ async def test_azure_ai_chat_client_get_code_interpreter_tool_content_unsupporte
         AzureAIAgentClient.get_code_interpreter_tool(file_ids=[content])
 
 
+async def test_azure_ai_chat_client_get_code_interpreter_tool_content_missing_file_id() -> None:
+    """Test get_code_interpreter_tool raises ValueError when Content.file_id is None."""
+    from agent_framework import Content
+
+    content = Content(type="hosted_file")
+    with pytest.raises(ValueError, match="missing a file_id"):
+        AzureAIAgentClient.get_code_interpreter_tool(file_ids=[content])
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_empty_string_file_id() -> None:
+    """Test get_code_interpreter_tool raises ValueError for empty string file_ids."""
+    with pytest.raises(ValueError, match="must not contain empty strings"):
+        AzureAIAgentClient.get_code_interpreter_tool(file_ids=[""])
+
+
 async def test_azure_ai_chat_client_create_agent_stream_submit_tool_approvals(
     mock_agents_client: MagicMock,
 ) -> None:
@@ -2208,70 +2223,6 @@ def test_azure_ai_chat_client_prepare_messages_with_raw_content_block(
     assert len(additional_messages) == 1
     assert len(additional_messages[0].content) == 1
     assert additional_messages[0].content[0] == raw_block
-
-
-def test_azure_ai_chat_client_prepare_messages_with_hosted_file_attachment(
-    mock_agents_client: MagicMock,
-) -> None:
-    """Test _prepare_messages converts hosted_file content to MessageAttachment."""
-    client = create_test_azure_ai_chat_client(mock_agents_client)
-
-    file_content = Content.from_hosted_file(file_id="file-abc123")
-    messages = [Message(role="user", contents=["Analyze this CSV.", file_content])]
-
-    additional_messages, instructions, required_action_results = client._prepare_messages(messages)  # type: ignore
-
-    assert additional_messages is not None
-    assert len(additional_messages) == 1
-    msg = additional_messages[0]
-    # Text content should be present
-    assert len(msg.content) == 1
-    assert msg.content[0].text == "Analyze this CSV."  # type: ignore[union-attr]
-    # Attachment should be created from hosted_file
-    assert msg.attachments is not None
-    assert len(msg.attachments) == 1
-    assert msg.attachments[0]["file_id"] == "file-abc123"
-    assert msg.attachments[0]["tools"] == [{"type": "code_interpreter"}]
-
-
-def test_azure_ai_chat_client_prepare_messages_with_multiple_hosted_files(
-    mock_agents_client: MagicMock,
-) -> None:
-    """Test _prepare_messages handles multiple hosted_file contents as separate attachments."""
-    client = create_test_azure_ai_chat_client(mock_agents_client)
-
-    file1 = Content.from_hosted_file(file_id="file-001")
-    file2 = Content.from_hosted_file(file_id="file-002")
-    messages = [Message(role="user", contents=["Analyze both files.", file1, file2])]
-
-    additional_messages, _, _ = client._prepare_messages(messages)  # type: ignore
-
-    assert additional_messages is not None
-    msg = additional_messages[0]
-    assert msg.attachments is not None
-    assert len(msg.attachments) == 2
-    assert msg.attachments[0]["file_id"] == "file-001"
-    assert msg.attachments[1]["file_id"] == "file-002"
-
-
-def test_azure_ai_chat_client_prepare_messages_hosted_file_only(
-    mock_agents_client: MagicMock,
-) -> None:
-    """Test _prepare_messages creates a message when only hosted_file content is present (no text)."""
-    client = create_test_azure_ai_chat_client(mock_agents_client)
-
-    file_content = Content.from_hosted_file(file_id="file-only")
-    messages = [Message(role="user", contents=[file_content])]
-
-    additional_messages, _, _ = client._prepare_messages(messages)  # type: ignore
-
-    assert additional_messages is not None
-    assert len(additional_messages) == 1
-    msg = additional_messages[0]
-    assert msg.content == []
-    assert msg.attachments is not None
-    assert len(msg.attachments) == 1
-    assert msg.attachments[0]["file_id"] == "file-only"
 
 
 async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_mcp_tool(

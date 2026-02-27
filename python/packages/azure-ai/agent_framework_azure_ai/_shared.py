@@ -132,6 +132,8 @@ def resolve_file_ids(file_ids: Sequence[str | Content] | None) -> list[str] | No
     resolved: list[str] = []
     for item in file_ids:
         if isinstance(item, str):
+            if not item:
+                raise ValueError("file_ids must not contain empty strings.")
             resolved.append(item)
         elif isinstance(item, Content):
             if item.type != "hosted_file":

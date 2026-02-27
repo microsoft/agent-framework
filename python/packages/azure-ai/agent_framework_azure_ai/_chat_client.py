@@ -60,7 +60,6 @@ from azure.ai.agents.models import (
     FunctionToolDefinition,
     ListSortOrder,
     McpTool,
-    MessageAttachment,
     MessageDeltaChunk,
     MessageDeltaTextContent,
     MessageDeltaTextFileCitationAnnotation,
@@ -1316,19 +1315,11 @@ class AzureAIAgentClient(
                 continue
 
             message_contents: list[MessageInputContentBlock] = []
-            attachments: list[MessageAttachment] = []
 
             for content in chat_message.contents:
                 match content.type:
                     case "text":
                         message_contents.append(MessageInputTextBlock(text=content.text))  # type: ignore[arg-type]
-                    case "hosted_file":
-                        attachments.append(
-                            MessageAttachment(
-                                file_id=content.file_id,
-                                tools=CodeInterpreterTool().definitions,
-                            )
-                        )
                     case "data" | "uri":
                         if content.has_top_level_media_type("image"):
                             message_contents.append(
@@ -1343,14 +1334,13 @@ class AzureAIAgentClient(
                         if isinstance(content.raw_representation, MessageInputContentBlock):
                             message_contents.append(content.raw_representation)
 
-            if message_contents or attachments:
+            if message_contents:
                 if additional_messages is None:
                     additional_messages = []
                 additional_messages.append(
                     ThreadMessageOptions(
                         role=MessageRole.AGENT if chat_message.role == "assistant" else MessageRole.USER,
                         content=message_contents,
-                        attachments=attachments if attachments else None,
                     )
                 )
 
