@@ -184,22 +184,20 @@ class _ClaudeAgentRunImpl:
         self,
         messages: AgentRunInputs | None = None,
         *,
-        stream: Literal[True],
+        stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        options: Any = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]: ...
+    ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
-    async def run(
+    def run(
         self,
         messages: AgentRunInputs | None = None,
         *,
-        stream: Literal[False] = ...,
+        stream: Literal[True],
         session: AgentSession | None = None,
-        options: Any = None,
         **kwargs: Any,
-    ) -> AgentResponse[Any]: ...
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
         self,
@@ -207,9 +205,8 @@ class _ClaudeAgentRunImpl:
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        options: Any = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate] | Awaitable[AgentResponse[Any]]:
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages.
 
         Args:
@@ -220,13 +217,14 @@ class _ClaudeAgentRunImpl:
                 returns an awaitable AgentResponse.
             session: The conversation session. If session has service_session_id set,
                 the agent will resume that session.
-            options: Runtime options (model, permission_mode can be changed per-request).
-            kwargs: Additional keyword arguments.
+            kwargs: Additional keyword arguments including 'options' for runtime options
+                (model, permission_mode can be changed per-request).
 
         Returns:
             When stream=True: An ResponseStream for streaming updates.
             When stream=False: An Awaitable[AgentResponse] with the complete response.
         """
+        options = kwargs.pop("options", None)
         response = ResponseStream(
             self._get_stream(messages, session=session, options=options, **kwargs),  # type: ignore[attr-defined]
             finalizer=self._finalize_response,  # type: ignore[attr-defined]
