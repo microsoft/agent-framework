@@ -25,6 +25,10 @@ internal sealed class WorkflowSession : AgentSession
 
     private InMemoryCheckpointManager? _inMemoryCheckpointManager;
 
+    // Key prefix used in StateBag to track pending external requests by their content ID
+    // This enables converting incoming response content back to ExternalResponse when resuming.
+    private const string PendingRequestKeyPrefix = "workflow.pendingRequest:";
+
     internal static bool VerifyCheckpointingConfiguration(IWorkflowExecutionEnvironment executionEnvironment, [NotNullWhen(true)] out InProcessExecutionEnvironment? inProcEnv)
     {
         inProcEnv = null;
@@ -154,7 +158,8 @@ internal sealed class WorkflowSession : AgentSession
                                                cancellationToken)
                             .ConfigureAwait(false);
 
-            await run.TrySendMessageAsync(messages).ConfigureAwait(false);
+            // Process messages: convert response content to ExternalResponse, send regular messages as-is
+            await this.SendMessagesWithResponseConversionAsync(run, messages, cancellationToken).ConfigureAwait(false);
             return run;
         }
 
@@ -165,6 +170,116 @@ internal sealed class WorkflowSession : AgentSession
                                          cancellationToken)
                             .ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Sends messages to the run, converting FunctionResultContent and UserInputResponseContent
+    /// to ExternalResponse when there's a matching pending request.
+    /// </summary>
+    private async ValueTask SendMessagesWithResponseConversionAsync(StreamingRun run, List<ChatMessage> messages, CancellationToken cancellationToken)
+    {
+        List<ChatMessage> regularMessages = [];
+
+        foreach (ChatMessage message in messages)
+        {
+            List<AIContent> regularContents = [];
+
+            foreach (AIContent content in message.Contents)
+            {
+                if (this.TryCreateExternalResponse(content) is ExternalResponse response)
+                {
+                    await run.SendResponseAsync(response).ConfigureAwait(false);
+
+                    if (GetResponseContentId(content) is string contentId)
+                    {
+                        this.RemovePendingRequest(contentId);
+                    }
+                }
+                else
+                {
+                    regularContents.Add(content);
+                }
+            }
+
+            if (regularContents.Count > 0)
+            {
+                regularMessages.Add(new ChatMessage(message.Role, regularContents)
+                {
+                    AuthorName = message.AuthorName,
+                    MessageId = message.MessageId,
+                    CreatedAt = message.CreatedAt
+                });
+            }
+        }
+
+        // Send any remaining regular messages
+        if (regularMessages.Count > 0)
+        {
+            await run.TrySendMessageAsync(regularMessages).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Attempts to create an ExternalResponse from response content (FunctionResultContent or UserInputResponseContent)
+    /// by matching it to a pending request.
+    /// </summary>
+    private ExternalResponse? TryCreateExternalResponse(AIContent content)
+    {
+        string? contentId = GetResponseContentId(content);
+        if (contentId == null)
+        {
+            return null;
+        }
+
+        ExternalRequest? pendingRequest = this.TryGetPendingRequest(contentId);
+        if (pendingRequest == null)
+        {
+            return null;
+        }
+
+        // Create the response data based on content type
+        object? responseData = content switch
+        {
+            FunctionResultContent functionResultContent => functionResultContent,
+            UserInputResponseContent userInputResponseContent => userInputResponseContent,
+            _ => null
+        };
+
+        if (responseData == null)
+        {
+            return null;
+        }
+
+        // Create ExternalResponse using the pending request's port info
+        return new ExternalResponse(pendingRequest.PortInfo, pendingRequest.RequestId, new PortableValue(responseData));
+    }
+
+    /// <summary>
+    /// Gets the content ID from response content types.
+    /// </summary>
+    private static string? GetResponseContentId(AIContent content) => content switch
+    {
+        FunctionResultContent functionResultContent => functionResultContent.CallId,
+        UserInputResponseContent userInputResponseContent => userInputResponseContent.Id,
+        _ => null
+    };
+
+    /// <summary>
+    /// Tries to get a pending request from the state bag by content ID.
+    /// </summary>
+    private ExternalRequest? TryGetPendingRequest(string contentId) =>
+        this.StateBag.GetValue<ExternalRequest>(PendingRequestKeyPrefix + contentId);
+
+    /// <summary>
+    /// Adds a pending request to the state bag.
+    /// </summary>
+    private void AddPendingRequest(string contentId, ExternalRequest request) =>
+        this.StateBag.SetValue(PendingRequestKeyPrefix + contentId, request);
+
+    /// <summary>
+    /// Removes a pending request from the state bag.
+    /// </summary>
+    private void RemovePendingRequest(string contentId) =>
+        this.StateBag.TryRemoveValue(PendingRequestKeyPrefix + contentId);
 
     internal async
     IAsyncEnumerable<AgentResponseUpdate> InvokeStageAsync(
@@ -192,8 +307,20 @@ internal sealed class WorkflowSession : AgentSession
                         break;
 
                     case RequestInfoEvent requestInfo:
-                        FunctionCallContent fcContent = requestInfo.Request.ToFunctionCall();
-                        AgentResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, fcContent);
+                        (AIContent requestContent, string? contentId) = requestInfo.Request switch
+                        {
+                            ExternalRequest externalRequest when externalRequest.TryGetDataAs(out FunctionCallContent? fcc) => (fcc, fcc.CallId),
+                            ExternalRequest externalRequest when externalRequest.TryGetDataAs(out UserInputRequestContent? uic) => (uic, uic.Id),
+                            ExternalRequest externalRequest => ((AIContent)externalRequest.ToFunctionCall(), externalRequest.RequestId)
+                        };
+
+                        // Track the pending request so we can convert incoming responses back to ExternalResponse
+                        if (contentId != null)
+                        {
+                            this.AddPendingRequest(contentId, requestInfo.Request);
+                        }
+
+                        AgentResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, requestContent);
                         yield return update;
                         break;
 
