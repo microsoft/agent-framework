@@ -23,9 +23,9 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.0.0rc4",
-    "durabletask>=1.3.0",
-    "durabletask-azuremanaged>=1.3.0",
-    "python-dateutil>=2.8.0",
+    "durabletask>=1.3.0,<2",
+    "durabletask-azuremanaged>=1.3.0,<2",
+    "python-dateutil>=2.8.0,<3",
 ]
 
 [dependency-groups]
@@ -99,7 +99,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_durabletask"
-test = "pytest -m \"not integration\" --cov=agent_framework_durabletask --cov-report=term-missing:skip-covered tests"
+test = 'pytest -m "not integration" --cov=agent_framework_durabletask --cov-report=term-missing:skip-covered tests'
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]

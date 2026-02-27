@@ -82,6 +82,18 @@ def mock_search_client_empty() -> AsyncMock:
     return client
 
 
+@pytest.fixture(autouse=True)
+def clear_azure_search_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate tests from ambient AZURE_SEARCH_* environment variables."""
+    for key in (
+        "AZURE_SEARCH_ENDPOINT",
+        "AZURE_SEARCH_INDEX_NAME",
+        "AZURE_SEARCH_KNOWLEDGE_BASE_NAME",
+        "AZURE_SEARCH_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
 def _make_provider(**overrides) -> AzureAISearchContextProvider:
     """Create a semantic-mode provider with mocked internals (skips auto-discovery)."""
     defaults = {

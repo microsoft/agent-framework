@@ -28,30 +28,29 @@ dependencies = [
 [project.optional-dependencies]
 # GAIA benchmark module dependencies
 gaia = [
-  "pydantic>=2.0.0",
-  "opentelemetry-api>=1.39.0",
-  "tqdm>=4.60.0",
-  "huggingface-hub>=0.20.0",
-  "orjson>=3.8.0",
-  "pyarrow>=10.0.0",  # For reading parquet files
+  "pydantic>=2,<4",
+  "tqdm>=4.60.0,<5",
+  "huggingface-hub>=0.20.0,<0.20.1",
+  "orjson>=3.8.0,<4",
+  "pyarrow",  # For reading parquet files
 ]
 
 # Lightning RL training module dependencies
 lightning = [
-  "agentlightning>=0.2.0,<0.3.0",
+  "agentlightning>=0.2.0,<0.2.1",
 ]
 
 # TAU2 benchmark module dependencies
 tau2 = [
-  "pydantic>=2.0.0",
-  "tiktoken>=0.11.0",
-  "loguru>=0.7.3",
-  "numpy",
+  "pydantic>=2,<4",
+  "tiktoken>=0.11.0,<0.11.1",
+  "loguru>=0.7.3,<0.7.4",
+  "numpy>=2.2.6,<3",
 ]
 
 # Dependencies for math-related training
 math = [
-  "sympy>=1.13.0",
+  "sympy>=1.13.0,<2",
 ]
 
 [dependency-groups]
@@ -59,6 +58,7 @@ dev = [
     "uv",
     "ruff>=0.11.8",
     "pytest>=8.4.1",
+    "pytest-cov>=6.2.1,<7",
     "mypy>=1.16.1",
     "pyright>=1.1.402",
     #tasks
@@ -152,10 +152,10 @@ mypy-gaia = "mypy --config-file $POE_ROOT/pyproject.toml gaia/agent_framework_la
 mypy-lightning = "mypy --config-file $POE_ROOT/pyproject.toml lightning/agent_framework_lab_lightning"
 mypy-tau2 = "mypy --config-file $POE_ROOT/pyproject.toml tau2/agent_framework_lab_tau2"
 mypy = ["mypy-gaia", "mypy-lightning", "mypy-tau2"]
-test = "pytest -m \"not integration\" --cov-report=term-missing:skip-covered --junitxml=test-results.xml"
-test-gaia = "pytest -m \"not integration\" gaia/tests --cov=agent_framework_lab_gaia --cov-report=term-missing:skip-covered"
-test-lightning = "pytest -m \"not integration\" lightning/tests --cov=agent_framework_lab_lightning --cov-report=term-missing:skip-covered"
-test-tau2 = "pytest -m \"not integration\" tau2/tests --cov=agent_framework_lab_tau2 --cov-report=term-missing:skip-covered"
+test = 'pytest -m "not integration" --cov-report=term-missing:skip-covered --junitxml=test-results.xml'
+test-gaia = "pytest gaia/tests --cov=agent_framework_lab_gaia --cov-report=term-missing:skip-covered"
+test-lightning = "pytest lightning/tests --cov=agent_framework_lab_lightning --cov-report=term-missing:skip-covered"
+test-tau2 = "pytest tau2/tests --cov=agent_framework_lab_tau2 --cov-report=term-missing:skip-covered"
 build = "echo 'Skipping build'"
 publish = "echo 'Skipping publish'"
 

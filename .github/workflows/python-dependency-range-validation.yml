@@ -1,0 +1,208 @@
+name: Python - Dependency Range Validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+env:
+  UV_CACHE_DIR: /tmp/.uv-cache
+
+jobs:
+  dependency-range-validation:
+    name: Dependency Range Validation
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.13"
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+        env:
+          UV_CACHE_DIR: /tmp/.uv-cache
+
+      - name: Run dependency range validation
+        id: validate_ranges
+        continue-on-error: true
+        run: uv run poe validate-dependency-ranges
+        working-directory: ./python
+
+      - name: Upload dependency range report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-range-results
+          path: python/scripts/dependency-range-results.json
+          if-no-files-found: warn
+
+      - name: Create issues for failed dependency candidates
+        if: always()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require("fs")
+            const reportPath = "python/scripts/dependency-range-results.json"
+
+            if (!fs.existsSync(reportPath)) {
+              core.warning(`No dependency range report found at ${reportPath}`)
+              return
+            }
+
+            const report = JSON.parse(fs.readFileSync(reportPath, "utf8"))
+            const dependencyFailures = []
+
+            for (const packageResult of report.packages ?? []) {
+              for (const dependency of packageResult.dependencies ?? []) {
+                const candidateVersions = new Set(dependency.candidate_versions ?? [])
+                const failedAttempts = (dependency.attempts ?? []).filter(
+                  (attempt) => attempt.status === "failed" && candidateVersions.has(attempt.trial_upper)
+                )
+                if (!failedAttempts.length) {
+                  continue
+                }
+
+                const failuresByVersion = new Map()
+                for (const attempt of failedAttempts) {
+                  const version = attempt.trial_upper || "unknown"
+                  if (!failuresByVersion.has(version)) {
+                    failuresByVersion.set(version, attempt.error || "No error output captured.")
+                  }
+                }
+
+                dependencyFailures.push({
+                  packageName: packageResult.package_name,
+                  projectPath: packageResult.project_path,
+                  dependencyName: dependency.name,
+                  originalRequirements: dependency.original_requirements ?? [],
+                  finalRequirements: dependency.final_requirements ?? [],
+                  failedVersions: [...failuresByVersion.entries()].map(([version, error]) => ({ version, error })),
+                })
+              }
+            }
+
+            if (!dependencyFailures.length) {
+              core.info("No failing dependency candidates found.")
+              return
+            }
+
+            const owner = context.repo.owner
+            const repo = context.repo.repo
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: "open",
+              per_page: 100,
+            })
+            const openIssueTitles = new Set(
+              openIssues.filter((issue) => !issue.pull_request).map((issue) => issue.title)
+            )
+
+            const formatError = (message) => String(message || "No error output captured.").replace(/```/g, "'''")
+
+            for (const failure of dependencyFailures) {
+              const title = `Dependency validation failed: ${failure.dependencyName} (${failure.packageName})`
+              if (openIssueTitles.has(title)) {
+                core.info(`Issue already exists: ${title}`)
+                continue
+              }
+
+              const visibleFailures = failure.failedVersions.slice(0, 5)
+              const omittedCount = failure.failedVersions.length - visibleFailures.length
+              const failureDetails = visibleFailures
+                .map(
+                  (entry) =>
+                    `- \`${entry.version}\`\n\n\`\`\`\n${formatError(entry.error).slice(0, 3500)}\n\`\`\``
+                )
+                .join("\n\n")
+
+              const body = [
+                "Automated dependency range validation found candidate versions that failed checks.",
+                "",
+                `- Package: \`${failure.packageName}\``,
+                `- Project path: \`${failure.projectPath}\``,
+                `- Dependency: \`${failure.dependencyName}\``,
+                `- Original requirements: ${
+                  failure.originalRequirements.length
+                    ? failure.originalRequirements.map((value) => `\`${value}\``).join(", ")
+                    : "_none_"
+                }`,
+                `- Final requirements after run: ${
+                  failure.finalRequirements.length
+                    ? failure.finalRequirements.map((value) => `\`${value}\``).join(", ")
+                    : "_none_"
+                }`,
+                "",
+                "### Failed versions and errors",
+                failureDetails,
+                omittedCount > 0 ? `\n_Additional failed versions omitted: ${omittedCount}_` : "",
+                "",
+                `Workflow run: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
+              ].join("\n")
+
+              await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+              })
+              openIssueTitles.add(title)
+              core.info(`Created issue: ${title}`)
+            }
+
+      - name: Refresh lockfile
+        if: steps.validate_ranges.outcome == 'success'
+        run: uv lock
+        working-directory: ./python
+
+      - name: Commit and push dependency updates
+        id: commit_updates
+        if: steps.validate_ranges.outcome == 'success'
+        run: |
+          BRANCH="automation/python-dependency-range-updates"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${BRANCH}"
+
+          git add python/packages/*/pyproject.toml python/uv.lock
+          if git diff --cached --quiet; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "No dependency updates to commit."
+            exit 0
+          fi
+
+          git commit -m "chore(python): update dependency ranges"
+          git push --force-with-lease --set-upstream origin "${BRANCH}"
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update pull request with GitHub CLI
+        if: steps.validate_ranges.outcome == 'success' && steps.commit_updates.outputs.has_changes == 'true'
+        run: |
+          BRANCH="automation/python-dependency-range-updates"
+          PR_TITLE="Python: chore: update dependency ranges"
+          PR_BODY_FILE="$(mktemp)"
+
+          cat > "${PR_BODY_FILE}" <<'EOF'
+          This PR was generated by the dependency range validation workflow.
+
+          - Ran `uv run poe validate-dependency-ranges`
+          - Updated package dependency bounds
+          - Refreshed `python/uv.lock`
+          EOF
+
+          PR_NUMBER="$(gh pr list --head "${BRANCH}" --base main --state open --json number --jq '.[0].number')"
+          if [ -n "${PR_NUMBER}" ]; then
+            gh pr edit "${PR_NUMBER}" --title "${PR_TITLE}" --body-file "${PR_BODY_FILE}"
+          else
+            gh pr create --base main --head "${BRANCH}" --title "${PR_TITLE}" --body-file "${PR_BODY_FILE}"
+          fi

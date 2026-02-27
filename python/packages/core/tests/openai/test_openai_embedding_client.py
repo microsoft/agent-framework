@@ -10,7 +10,6 @@ from openai.types import CreateEmbeddingResponse
 from openai.types import Embedding as OpenAIEmbedding
 from openai.types.create_embedding_response import Usage
 
-from agent_framework.azure import AzureOpenAIEmbeddingClient
 from agent_framework.openai import (
     OpenAIEmbeddingClient,
     OpenAIEmbeddingOptions,
@@ -264,14 +263,9 @@ skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     reason="No real OPENAI_API_KEY provided; skipping integration tests.",
 )
 
-skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
-    not os.getenv("AZURE_OPENAI_ENDPOINT")
-    or (not os.getenv("AZURE_OPENAI_API_KEY") and not os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")),
-    reason="No Azure OpenAI credentials provided; skipping integration tests.",
-)
-
 
 @skip_if_openai_integration_tests_disabled
+@pytest.mark.integration
 @pytest.mark.flaky
 @pytest.mark.integration
 async def test_integration_openai_get_embeddings() -> None:
@@ -290,6 +284,7 @@ async def test_integration_openai_get_embeddings() -> None:
 
 
 @skip_if_openai_integration_tests_disabled
+@pytest.mark.integration
 @pytest.mark.flaky
 @pytest.mark.integration
 async def test_integration_openai_get_embeddings_multiple() -> None:
@@ -304,6 +299,7 @@ async def test_integration_openai_get_embeddings_multiple() -> None:
 
 
 @skip_if_openai_integration_tests_disabled
+@pytest.mark.integration
 @pytest.mark.flaky
 @pytest.mark.integration
 async def test_integration_openai_get_embeddings_with_dimensions() -> None:

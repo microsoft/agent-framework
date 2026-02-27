@@ -223,6 +223,7 @@ pyright = "python scripts/run_tasks_in_packages_if_exists.py pyright"
 mypy = "python scripts/run_tasks_in_packages_if_exists.py mypy"
 samples-syntax = "pyright -p pyrightconfig.samples.json --warnings"
 typing = "python scripts/run_tasks_in_packages_if_exists.py mypy pyright"
+validate-dependency-ranges = "python scripts/validate_dependency_ranges.py"
 # cleaning
 clean-dist-packages = "python scripts/run_tasks_in_packages_if_exists.py clean-dist"
 clean-dist-meta = "rm -rf dist"

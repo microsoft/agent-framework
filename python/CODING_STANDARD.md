@@ -165,10 +165,14 @@ user_msg = Message("user", ["Hello, world!"])
 asst_msg = Message("assistant", ["Hello, world!"])
 
 # ❌ Not preferred - unnecessary inheritance
-from agent_framework import UserMessage, AssistantMessage
+class UserMessage(Message):
+    pass
 
-user_msg = UserMessage(content="Hello, world!")
-asst_msg = AssistantMessage(content="Hello, world!")
+class AssistantMessage(Message):
+    pass
+
+user_msg = UserMessage("user", ["Hello, world!"])
+asst_msg = AssistantMessage("assistant", ["Hello, world!"])
 ```
 
 ### Import Structure
@@ -387,6 +391,18 @@ All non-core packages declare a lower bound on `agent-framework-core` (e.g., `"a
 
 - **Core version changes**: When `agent-framework-core` is updated with breaking or significant changes and its version is bumped, update the `agent-framework-core>=...` lower bound in every other package's `pyproject.toml` to match the new core version.
 - **Non-core version changes**: Non-core packages (connectors, extensions) can have their own versions incremented independently while keeping the existing core lower bound pinned. Only raise the core lower bound if the non-core package actually depends on new core APIs.
+
+### External Dependency Version Bounds
+
+The guiding principle for external dependencies is to make the range of allowed versions as broad as possible, even it that means we have to do some conditional imports, and other tricks to allow small changes in versions.
+So we use bounded ranges for external package dependencies in `pyproject.toml`:
+
+- For stable dependencies (`>=1.0.0`), use `>=<known_good>,<next_major>` (for example: `openai>=1.99.0,<2`).
+- For prerelease (`dev`/`a`/`b`/`rc`) dependencies, use a known-good lower bound with a hard upper boundary in the same prerelease line (for example: `azure-ai-projects>=2.0.0b3,<2.0.0b4`).
+- For `<1.0.0` dependencies, use patch-bounded caps (`>=<known_good>,<next_patch>`), not minor-bounded caps (for example: `a2a-sdk>=0.3.5,<0.3.6`).
+- Prefer keeping support for multiple major versions when practical. If APIs differ between supported majors, version-conditional imports/branches are acceptable to preserve compatibility.
+- Validate dependency bounds project by project using the dependency-range validation script (`uv run poe validate-dependency-ranges`), and include both typing and tests for the final gate.
+
 
 ### Installation Options
 

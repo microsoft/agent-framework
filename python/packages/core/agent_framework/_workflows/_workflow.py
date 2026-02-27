@@ -57,7 +57,11 @@ class WorkflowRunResult(list[WorkflowEvent]):
     - status_timeline(): Access the complete status event history
     """
 
-    def __init__(self, events: list[WorkflowEvent[Any]], status_events: list[WorkflowEvent[Any]] | None = None) -> None:
+    def __init__(
+        self,
+        events: list[WorkflowEvent[Any]],
+        status_events: list[WorkflowEvent[Any]] | None = None,
+    ) -> None:
         super().__init__(events)
         self._status_events: list[WorkflowEvent[Any]] = status_events or []
 
@@ -215,7 +219,9 @@ class Workflow(DictConvertible):
 
         # Output events (WorkflowEvent with type='output') from these executors are treated as workflow outputs.
         # If None or empty, all executor outputs are considered workflow outputs.
-        self._output_executors = list(output_executors) if output_executors else list(self.executors.keys())
+        self._output_executors = (
+            list(output_executors) if output_executors else list(self.executors.keys())
+        )
 
         # Store non-serializable runtime objects as private attributes
         self._runner_context = runner_context
@@ -236,7 +242,9 @@ class Workflow(DictConvertible):
     def _ensure_not_running(self) -> None:
         """Ensure the workflow is not already running."""
         if self._is_running:
-            raise RuntimeError("Workflow is already running. Concurrent executions are not allowed.")
+            raise RuntimeError(
+                "Workflow is already running. Concurrent executions are not allowed."
+            )
         self._is_running = True
 
     def _reset_running_flag(self) -> None:
@@ -251,7 +259,10 @@ class Workflow(DictConvertible):
             "start_executor_id": self.start_executor_id,
             "max_iterations": self.max_iterations,
             "edge_groups": [group.to_dict() for group in self.edge_groups],
-            "executors": {executor_id: executor.to_dict() for executor_id, executor in self.executors.items()},
+            "executors": {
+                executor_id: executor.to_dict()
+                for executor_id, executor in self.executors.items()
+            },
             "output_executors": self._output_executors,
         }
 
@@ -270,7 +281,9 @@ class Workflow(DictConvertible):
                     from ._workflow_executor import WorkflowExecutor
 
                     if isinstance(original_executor, WorkflowExecutor):
-                        executor_payload["workflow"] = original_executor.workflow.to_dict()
+                        executor_payload["workflow"] = (
+                            original_executor.workflow.to_dict()
+                        )
 
         return data
 
@@ -333,11 +346,9 @@ class Workflow(DictConvertible):
                 span.add_event(OtelAttr.WORKFLOW_STARTED)
                 # Emit explicit start/status events to the stream
                 with _framework_event_origin():
-                    started = WorkflowEvent.started()
-                yield started
+                    yield WorkflowEvent.started()
                 with _framework_event_origin():
-                    in_progress = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
-                yield in_progress
+                    yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
 
                 # Reset context for a new run if supported
                 if reset_context:
@@ -372,12 +383,16 @@ class Workflow(DictConvertible):
                     if event.type == "request_info" and not emitted_in_progress_pending:
                         emitted_in_progress_pending = True
                         with _framework_event_origin():
-                            pending_status = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
-                        yield pending_status
+                            yield WorkflowEvent.status(
+                                WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
+                            )
+
                 # Workflow runs until idle - emit final status based on whether requests are pending
                 if saw_request:
                     with _framework_event_origin():
-                        terminal_status = WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
+                        terminal_status = WorkflowEvent.status(
+                            WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+                        )
                     yield terminal_status
                 else:
                     with _framework_event_origin():
@@ -393,11 +408,9 @@ class Workflow(DictConvertible):
                 # Surface structured failure details before propagating exception
                 details = WorkflowErrorDetails.from_exception(exc)
                 with _framework_event_origin():
-                    failed_event = WorkflowEvent.failed(details)
-                yield failed_event
+                    yield WorkflowEvent.failed(details)
                 with _framework_event_origin():
-                    failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
-                yield failed_status
+                    yield WorkflowEvent.status(WorkflowRunState.FAILED)
                 span.add_event(
                     name=OtelAttr.WORKFLOW_ERROR,
                     attributes={
@@ -438,7 +451,9 @@ class Workflow(DictConvertible):
                     "or build workflow with WorkflowBuilder(checkpoint_storage=checkpoint_storage)."
                 )
 
-            await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
+            await self._runner.restore_from_checkpoint(
+                checkpoint_id, checkpoint_storage
+            )
 
         # Handle initial message
         elif message is not None:
@@ -487,7 +502,9 @@ class Workflow(DictConvertible):
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
         **kwargs: Any,
-    ) -> ResponseStream[WorkflowEvent, WorkflowRunResult] | Awaitable[WorkflowRunResult]:
+    ) -> (
+        ResponseStream[WorkflowEvent, WorkflowRunResult] | Awaitable[WorkflowRunResult]
+    ):
         """Run the workflow, optionally streaming events.
 
         Unified interface supporting initial runs, checkpoint restoration, and
@@ -531,7 +548,9 @@ class Workflow(DictConvertible):
                 streaming=stream,
                 **kwargs,
             ),
-            finalizer=functools.partial(self._finalize_events, include_status_events=include_status_events),
+            finalizer=functools.partial(
+                self._finalize_events, include_status_events=include_status_events
+            ),
             cleanup_hooks=[
                 functools.partial(self._run_cleanup, checkpoint_storage),
             ],
@@ -635,10 +654,14 @@ class Workflow(DictConvertible):
         - responses + checkpoint_id is allowed (restore then send)
         """
         if message is not None and responses is not None:
-            raise ValueError("Cannot provide both 'message' and 'responses'. Use one or the other.")
+            raise ValueError(
+                "Cannot provide both 'message' and 'responses'. Use one or the other."
+            )
 
         if message is not None and checkpoint_id is not None:
-            raise ValueError("Cannot provide both 'message' and 'checkpoint_id'. Use one or the other.")
+            raise ValueError(
+                "Cannot provide both 'message' and 'checkpoint_id'. Use one or the other."
+            )
 
         if message is None and responses is None and checkpoint_id is None:
             raise ValueError(
@@ -662,15 +685,23 @@ class Workflow(DictConvertible):
             if checkpoint_id is not None:
                 # Combined: restore checkpoint then send responses
                 initial_executor_fn = functools.partial(
-                    self._restore_and_send_responses, checkpoint_id, checkpoint_storage, responses
+                    self._restore_and_send_responses,
+                    checkpoint_id,
+                    checkpoint_storage,
+                    responses,
                 )
             else:
                 # Send responses only (requires pending requests in workflow state)
-                initial_executor_fn = functools.partial(self._send_responses_internal, responses)
+                initial_executor_fn = functools.partial(
+                    self._send_responses_internal, responses
+                )
             return initial_executor_fn, False
         # Regular run or checkpoint restoration
         initial_executor_fn = functools.partial(
-            self._execute_with_message_or_checkpoint, message, checkpoint_id, checkpoint_storage
+            self._execute_with_message_or_checkpoint,
+            message,
+            checkpoint_id,
+            checkpoint_storage,
         )
         reset_context = message is not None and checkpoint_id is None
         return initial_executor_fn, reset_context
@@ -709,7 +740,9 @@ class Workflow(DictConvertible):
         coerced_responses: dict[str, Any] = {}
         for request_id, response in responses.items():
             if request_id not in pending_requests:
-                raise ValueError(f"Response provided for unknown request ID: {request_id}")
+                raise ValueError(
+                    f"Response provided for unknown request ID: {request_id}"
+                )
             pending_request = pending_requests[request_id]
             # Try to coerce raw values (e.g., dicts from JSON) to the expected type
             response = try_coerce_to_type(response, pending_request.response_type)
@@ -720,10 +753,12 @@ class Workflow(DictConvertible):
                 )
             coerced_responses[request_id] = response
 
-        await asyncio.gather(*[
-            self._runner_context.send_request_info_response(request_id, response)
-            for request_id, response in coerced_responses.items()
-        ])
+        await asyncio.gather(
+            *[
+                self._runner_context.send_request_info_response(request_id, response)
+                for request_id, response in coerced_responses.items()
+            ]
+        )
 
     def _get_executor_by_id(self, executor_id: str) -> Executor:
         """Get an executor by its ID.
@@ -768,7 +803,9 @@ class Workflow(DictConvertible):
 
         executors_signature = {}
         for executor_id, executor in self.executors.items():
-            executor_sig: Any = f"{executor.__class__.__module__}.{executor.__class__.__name__}"
+            executor_sig: Any = (
+                f"{executor.__class__.__module__}.{executor.__class__.__name__}"
+            )
 
             if isinstance(executor, WorkflowExecutor):
                 executor_sig = {
@@ -798,7 +835,9 @@ class Workflow(DictConvertible):
             }
 
             if isinstance(group, FanOutEdgeGroup):
-                group_info["selection_func"] = getattr(group, "selection_func_name", None)
+                group_info["selection_func"] = getattr(
+                    group, "selection_func_name", None
+                )
 
             edge_groups_signature.append(group_info)
 

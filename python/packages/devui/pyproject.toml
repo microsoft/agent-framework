@@ -24,14 +24,14 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.0.0rc4",
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0",
-    "python-dotenv>=1.0.0",
+    "fastapi>=0.104.0,<0.133.1",
+    "uvicorn[standard]>=0.24.0,<0.24.1",
+    "python-dotenv>=1.0.0,<2",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0.0", "watchdog>=3.0.0", "agent-framework-orchestrations"]
-all = ["pytest>=7.0.0", "watchdog>=3.0.0"]
+dev = ["pytest>=7.0.0,<9", "pytest-cov>=6.2.1,<7", "watchdog>=3.0.0,<7", "agent-framework-orchestrations"]
+all = ["pytest>=7.0.0,<9", "pytest-cov>=6.2.1,<7", "watchdog>=3.0.0,<7"]
 
 [project.scripts]
 devui = "agent_framework_devui:main"
@@ -94,7 +94,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_devui"
-test = "pytest -m \"not integration\" --cov=agent_framework_devui --cov-report=term-missing:skip-covered tests"
+test = 'pytest -m "not integration" --cov=agent_framework_devui --cov-report=term-missing:skip-covered tests'
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]

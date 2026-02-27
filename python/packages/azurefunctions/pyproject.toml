@@ -24,8 +24,8 @@ classifiers = [
 dependencies = [
     "agent-framework-core>=1.0.0rc4",
     "agent-framework-durabletask",
-    "azure-functions",
-    "azure-functions-durable",
+    "azure-functions>=1.24.0,<2",
+    "azure-functions-durable>=1.5.0,<2",
 ]
 
 [dependency-groups]
@@ -93,7 +93,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azurefunctions"
-test = "pytest -m \"not integration\" --cov=agent_framework_azurefunctions --cov-report=term-missing:skip-covered tests"
+test = 'pytest -m "not integration" --cov=agent_framework_azurefunctions --cov-report=term-missing:skip-covered tests'
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]

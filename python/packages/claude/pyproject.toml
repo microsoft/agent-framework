@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.0.0rc4",
-    "claude-agent-sdk>=0.1.25",
+    "claude-agent-sdk>=0.1.25,<0.1.26",
 ]
 
 [tool.uv]
@@ -88,7 +88,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_claude"
-test = "pytest -m \"not integration\" --cov=agent_framework_claude --cov-report=term-missing:skip-covered tests"
+test = 'pytest -m "not integration" --cov=agent_framework_claude --cov-report=term-missing:skip-covered tests'
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
