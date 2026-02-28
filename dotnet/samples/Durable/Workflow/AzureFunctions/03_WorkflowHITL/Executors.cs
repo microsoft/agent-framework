@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Workflows;
 
@@ -23,7 +23,25 @@ internal sealed class CreateApprovalRequest() : Executor<string, ApprovalRequest
     }
 }
 
-/// <summary>Processes the expense reimbursement based on the approval decision.</summary>
+/// <summary>Prepares the approval request for finance review after manager approval.</summary>
+internal sealed class PrepareFinanceReview() : Executor<ApprovalResponse, ApprovalRequest>("PrepareFinanceReview")
+{
+    public override ValueTask<ApprovalRequest> HandleAsync(
+        ApprovalResponse message,
+        IWorkflowContext context,
+        CancellationToken cancellationToken = default)
+    {
+        if (!message.Approved)
+        {
+            throw new InvalidOperationException("Cannot proceed to finance review — manager denied the expense.");
+        }
+
+        // In a real scenario, this would retrieve the original expense details
+        return new ValueTask<ApprovalRequest>(new ApprovalRequest("EXP-2025-001", 1500.00m, "Jerry"));
+    }
+}
+
+/// <summary>Processes the expense reimbursement based on the final approval response.</summary>
 internal sealed class ExpenseReimburse() : Executor<ApprovalResponse, string>("Reimburse")
 {
     public override async ValueTask<string> HandleAsync(
@@ -33,7 +51,7 @@ internal sealed class ExpenseReimburse() : Executor<ApprovalResponse, string>("R
     {
         if (!message.Approved)
         {
-            return $"Expense reimbursement denied. Comments: {message.Comments}";
+            return $"Expense reimbursement denied by finance. Comments: {message.Comments}";
         }
 
         // Simulate payment processing

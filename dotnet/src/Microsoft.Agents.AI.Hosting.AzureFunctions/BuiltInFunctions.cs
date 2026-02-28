@@ -1,6 +1,5 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -88,12 +87,12 @@ internal static class BuiltInFunctions
             return await CreateErrorResponseAsync(req, context, HttpStatusCode.NotFound, $"Workflow run '{runId}' not found.");
         }
 
-        // Parse pending HITL requests from the durable workflow status
-        List<PendingRequestPortStatus>? pendingRequests = null;
+        // Parse HITL inputs the workflow is waiting for from the durable workflow status
+        List<PendingRequestPortStatus>? waitingForInput = null;
         if (DurableWorkflowLiveStatus.TryParse(metadata.SerializedCustomStatus, out DurableWorkflowLiveStatus liveStatus)
             && liveStatus.PendingEvents.Count > 0)
         {
-            pendingRequests = liveStatus.PendingEvents;
+            waitingForInput = liveStatus.PendingEvents;
         }
 
         HttpResponseData response = req.CreateResponse(HttpStatusCode.OK);
@@ -101,7 +100,7 @@ internal static class BuiltInFunctions
         {
             runId,
             status = metadata.RuntimeStatus.ToString(),
-            pendingRequests = pendingRequests?.Select(p => new { eventName = p.EventName })
+            waitingForInput = waitingForInput?.Select(p => new { eventName = p.EventName, input = JsonDocument.Parse(p.Input).RootElement })
         });
         return response;
     }
