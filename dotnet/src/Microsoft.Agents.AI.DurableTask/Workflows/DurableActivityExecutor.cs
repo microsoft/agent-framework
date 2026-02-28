@@ -111,7 +111,7 @@ internal static class DurableActivityExecutor
         }
     }
 
-    private static object DeserializeInput(string input, Type targetType)
+    internal static object DeserializeInput(string input, Type targetType)
     {
         if (targetType == typeof(string))
         {
@@ -142,7 +142,7 @@ internal static class DurableActivityExecutor
             ?? throw new InvalidOperationException($"Failed to deserialize input to type '{targetType.Name}'.");
     }
 
-    private static Type ResolveInputType(string? inputTypeName, ISet<Type> supportedTypes)
+    internal static Type ResolveInputType(string? inputTypeName, ISet<Type> supportedTypes)
     {
         if (string.IsNullOrEmpty(inputTypeName))
         {
