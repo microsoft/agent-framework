@@ -1346,6 +1346,11 @@ class TestWorkflowAgentUserInputFiltering:
         for update in updates:
             assert update.role == "assistant", f"Expected role='assistant', got role='{update.role}'"
 
+        # Verify author_name is propagated correctly
+        assert updates[0].author_name == "Principal"
+        assert updates[1].author_name == "Maths Teacher"
+        assert updates[2].author_name == "Principal"
+
         # Verify the content is correct
         texts = [u.text for u in updates]
         assert "Hello! How can I help?" in texts

@@ -462,9 +462,10 @@ class WorkflowAgent(BaseAgent):
                     )
 
                 if isinstance(data, AgentResponse):
-                    # Filter to only assistant messages to avoid re-emitting user input
-                    # that may be included in the AgentResponse's conversation history
-                    # (e.g., from GroupChat orchestrators that include the full conversation).
+                    # Filter to only assistant messages — system, tool, and user messages
+                    # are intentionally excluded. System prompts and tool results are
+                    # internal workflow artifacts; user messages would be re-emitted
+                    # (e.g., from GroupChat orchestrators that include full conversation history).
                     assistant_messages = [msg for msg in data.messages if msg.role == "assistant"]
                     messages.extend(assistant_messages)
                     raw_representations.append(data.raw_representation)
@@ -568,9 +569,10 @@ class WorkflowAgent(BaseAgent):
                 return [data]
             if isinstance(data, AgentResponse):
                 # Convert each assistant message in AgentResponse to an AgentResponseUpdate.
-                # Filter out non-assistant messages to avoid re-emitting user input
-                # that may be included in the AgentResponse's conversation history
-                # (e.g., from GroupChat orchestrators that include the full conversation).
+                # Filter out non-assistant messages — system, tool, and user messages
+                # are intentionally excluded. System prompts and tool results are
+                # internal workflow artifacts; user messages would be re-emitted
+                # (e.g., from GroupChat orchestrators that include full conversation history).
                 updates: list[AgentResponseUpdate] = []
                 for msg in data.messages:
                     if msg.role != "assistant":
