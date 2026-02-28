@@ -165,7 +165,42 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
             Assert.Contains("Response sent to workflow", respondResponseText);
             this._outputHelper.WriteLine($"Respond response: {respondResponseText}");
 
-            // Step 4: Wait for the workflow to complete
+            // Step 4: Wait for the workflow to pause at the parallel BudgetApproval and ComplianceApproval RequestPorts
+            await this.WaitForConditionAsync(
+                condition: () =>
+                {
+                    lock (logs)
+                    {
+                        bool exists = logs.Any(log => log.Message.Contains("Workflow waiting for external input at RequestPort 'BudgetApproval'"));
+                        return Task.FromResult(exists);
+                    }
+                },
+                message: "Workflow paused at BudgetApproval RequestPort",
+                timeout: s_orchestrationTimeout);
+
+            // Step 5a: Send budget approval response
+            this._outputHelper.WriteLine("Sending BudgetApproval response...");
+
+            using HttpContent budgetContent = new StringContent(
+                """{"eventName": "BudgetApproval", "response": {"Approved": true, "Comments": "Budget approved by test."}}""",
+                Encoding.UTF8, "application/json");
+            using HttpResponseMessage budgetResponse = await s_sharedHttpClient.PostAsync(respondUri, budgetContent);
+
+            Assert.True(budgetResponse.IsSuccessStatusCode, $"BudgetApproval request failed with status: {budgetResponse.StatusCode}");
+            this._outputHelper.WriteLine($"BudgetApproval response: {await budgetResponse.Content.ReadAsStringAsync()}");
+
+            // Step 5b: Send compliance approval response
+            this._outputHelper.WriteLine("Sending ComplianceApproval response...");
+
+            using HttpContent complianceContent = new StringContent(
+                """{"eventName": "ComplianceApproval", "response": {"Approved": true, "Comments": "Compliance approved by test."}}""",
+                Encoding.UTF8, "application/json");
+            using HttpResponseMessage complianceResponse = await s_sharedHttpClient.PostAsync(respondUri, complianceContent);
+
+            Assert.True(complianceResponse.IsSuccessStatusCode, $"ComplianceApproval request failed with status: {complianceResponse.StatusCode}");
+            this._outputHelper.WriteLine($"ComplianceApproval response: {await complianceResponse.Content.ReadAsStringAsync()}");
+
+            // Step 6: Wait for the workflow to complete
             await this.WaitForConditionAsync(
                 condition: () =>
                 {
@@ -183,6 +218,10 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
             {
                 Assert.True(logs.Any(log => log.Message.Contains("Received external event for RequestPort 'ManagerApproval'")),
                     "ManagerApproval external event receipt not found in logs.");
+                Assert.True(logs.Any(log => log.Message.Contains("Received external event for RequestPort 'BudgetApproval'")),
+                    "BudgetApproval external event receipt not found in logs.");
+                Assert.True(logs.Any(log => log.Message.Contains("Received external event for RequestPort 'ComplianceApproval'")),
+                    "ComplianceApproval external event receipt not found in logs.");
             }
         });
     }

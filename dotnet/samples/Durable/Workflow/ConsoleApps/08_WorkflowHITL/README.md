@@ -1,11 +1,11 @@
 # Workflow Human-in-the-Loop (HITL) Sample
 
-This sample demonstrates a **Human-in-the-Loop** pattern in durable workflows using `RequestPort`. The workflow pauses execution at two sequential approval points — manager and finance — and resumes when each response is provided.
+This sample demonstrates a **Human-in-the-Loop** pattern in durable workflows using `RequestPort`. The workflow pauses execution at a manager approval point, then fans out to two parallel finance approval points — budget and compliance — before resuming.
 
 ## Key Concepts Demonstrated
 
 - Using `RequestPort` to define external input points in a workflow
-- Multiple sequential HITL pause points in a single workflow
+- Sequential and parallel HITL pause points in a single workflow using fan-out/fan-in
 - Streaming workflow events with `IStreamingWorkflowRun`
 - Handling `DurableWorkflowWaitingForInputEvent` to detect HITL pauses
 - Using `SendResponseAsync` to provide responses and resume the workflow
@@ -13,8 +13,18 @@ This sample demonstrates a **Human-in-the-Loop** pattern in durable workflows us
 
 ## Workflow
 
+This sample implements the following workflow:
+
 ```
-CreateApprovalRequest -> ManagerApproval (RequestPort) -> PrepareFinanceReview -> FinanceApproval (RequestPort) -> ExpenseReimburse
+┌──────────────────────┐   ┌────────────────┐   ┌─────────────────────┐    ┌────────────────────┐
+│ CreateApprovalRequest│──►│ManagerApproval │──►│PrepareFinanceReview │──┬►│  BudgetApproval    │──┐
+└──────────────────────┘   │ (RequestPort)  │   └─────────────────────┘  │ │  (RequestPort)     │  │
+                           └────────────────┘                            │ └────────────────────┘  │  ┌─────────────────┐
+                                                                         │                         ├─►│ExpenseReimburse │
+                                                                         │ ┌────────────────────┐  │  └─────────────────┘
+                                                                         └►│ComplianceApproval  │──┘
+                                                                           │  (RequestPort)     │
+                                                                           └────────────────────┘
 ```
 
 | Step | Description |
@@ -22,8 +32,9 @@ CreateApprovalRequest -> ManagerApproval (RequestPort) -> PrepareFinanceReview -
 | CreateApprovalRequest | Retrieves expense details and creates an approval request |
 | ManagerApproval (RequestPort) | **PAUSES** the workflow and waits for manager approval |
 | PrepareFinanceReview | Prepares the request for finance review after manager approval |
-| FinanceApproval (RequestPort) | **PAUSES** the workflow and waits for finance approval |
-| ExpenseReimburse | Processes the reimbursement based on the final approval |
+| BudgetApproval (RequestPort) | **PAUSES** the workflow and waits for budget approval (parallel) |
+| ComplianceApproval (RequestPort) | **PAUSES** the workflow and waits for compliance approval (parallel) |
+| ExpenseReimburse | Processes the reimbursement after all approvals pass |
 
 ## How It Works
 
@@ -71,7 +82,12 @@ Workflow paused at RequestPort: ManagerApproval
   Approval for: Jerry, Amount: $1,500.00
   Response sent: Approved=True
 
-Workflow paused at RequestPort: FinanceApproval
+Workflow paused at RequestPort: BudgetApproval
+  Input: {"expenseId":"EXP-2025-001","amount":1500.00,"employeeName":"Jerry"}
+  Approval for: Jerry, Amount: $1,500.00
+  Response sent: Approved=True
+
+Workflow paused at RequestPort: ComplianceApproval
   Input: {"expenseId":"EXP-2025-001","amount":1500.00,"employeeName":"Jerry"}
   Approval for: Jerry, Amount: $1,500.00
   Response sent: Approved=True
@@ -86,5 +102,5 @@ After running the sample, you can navigate to the Durable Task Scheduler (DTS) d
 If you are using the DTS emulator, the dashboard is available at `http://localhost:8082`.
 
 1. Open the dashboard and look for the orchestration instance matching the instance ID logged in the console output (e.g., `abc123...`).
-2. Click into the instance to see the execution timeline, which shows each executor activity and the two `WaitForExternalEvent` pauses where the workflow waited for human input.
-3. Expand individual activity steps to inspect inputs and outputs — for example, the `ManagerApproval` and `FinanceApproval` external events will show the approval request sent and the response received.
+2. Click into the instance to see the execution timeline, which shows each executor activity and the `WaitForExternalEvent` pauses where the workflow waited for human input — including the two parallel finance approvals.
+3. Expand individual activity steps to inspect inputs and outputs — for example, the `ManagerApproval`, `BudgetApproval`, and `ComplianceApproval` external events will show the approval request sent and the response received.

@@ -1,10 +1,19 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates a Human-in-the-Loop (HITL) workflow hosted in Azure Functions.
-// Workflow: CreateApprovalRequest -> ManagerApproval (HITL) -> PrepareFinanceReview -> FinanceApproval (HITL) -> ExpenseReimburse
 //
-// The workflow pauses at two sequential RequestPorts and waits for external approval responses via HTTP.
-// This simulates an expense that requires both manager and finance approval.
+// ┌──────────────────────┐   ┌────────────────┐   ┌─────────────────────┐    ┌────────────────────┐
+// │ CreateApprovalRequest│──►│ManagerApproval │──►│PrepareFinanceReview │──┬►│  BudgetApproval    │──┐
+// └──────────────────────┘   │ (RequestPort)  │   └─────────────────────┘  │ │  (RequestPort)     │  │
+//                            └────────────────┘                            │ └────────────────────┘  │  ┌─────────────────┐
+//                                                                          │                         ├─►│ExpenseReimburse │
+//                                                                          │ ┌────────────────────┐  │  └─────────────────┘
+//                                                                          └►│ComplianceApproval  │──┘
+//                                                                            │  (RequestPort)     │
+//                                                                            └────────────────────┘
+//
+// The workflow pauses at three RequestPorts — one for the manager, then two in parallel for finance.
+// After manager approval, BudgetApproval and ComplianceApproval run concurrently via fan-out/fan-in.
 // The framework auto-generates three HTTP endpoints for each workflow:
 //   POST /api/workflows/{name}/run          - Start the workflow
 //   GET  /api/workflows/{name}/status/{id}  - Check status and pending approvals
@@ -16,21 +25,22 @@ using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.Hosting;
 using WorkflowHITLFunctions;
 
-// Define executors and RequestPorts for the two HITL pause points
+// Define executors and RequestPorts for the three HITL pause points
 CreateApprovalRequest createRequest = new();
 RequestPort<ApprovalRequest, ApprovalResponse> managerApproval = RequestPort.Create<ApprovalRequest, ApprovalResponse>("ManagerApproval");
 PrepareFinanceReview prepareFinanceReview = new();
-RequestPort<ApprovalRequest, ApprovalResponse> financeApproval = RequestPort.Create<ApprovalRequest, ApprovalResponse>("FinanceApproval");
+RequestPort<ApprovalRequest, ApprovalResponse> budgetApproval = RequestPort.Create<ApprovalRequest, ApprovalResponse>("BudgetApproval");
+RequestPort<ApprovalRequest, ApprovalResponse> complianceApproval = RequestPort.Create<ApprovalRequest, ApprovalResponse>("ComplianceApproval");
 ExpenseReimburse reimburse = new();
 
-// Build the workflow: CreateApprovalRequest -> ManagerApproval -> PrepareFinanceReview -> FinanceApproval -> ExpenseReimburse
+// Build the workflow: CreateApprovalRequest -> ManagerApproval -> PrepareFinanceReview -> [BudgetApproval AND ComplianceApproval] -> ExpenseReimburse
 Workflow expenseApproval = new WorkflowBuilder(createRequest)
     .WithName("ExpenseReimbursement")
-    .WithDescription("Expense reimbursement with manager and finance approval")
+    .WithDescription("Expense reimbursement with manager and parallel finance approvals")
     .AddEdge(createRequest, managerApproval)
     .AddEdge(managerApproval, prepareFinanceReview)
-    .AddEdge(prepareFinanceReview, financeApproval)
-    .AddEdge(financeApproval, reimburse)
+    .AddFanOutEdge(prepareFinanceReview, [budgetApproval, complianceApproval])
+    .AddFanInEdge([budgetApproval, complianceApproval], reimburse)
     .Build();
 
 using IHost app = FunctionsApplication

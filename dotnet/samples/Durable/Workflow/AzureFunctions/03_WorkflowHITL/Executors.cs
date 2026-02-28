@@ -41,17 +41,19 @@ internal sealed class PrepareFinanceReview() : Executor<ApprovalResponse, Approv
     }
 }
 
-/// <summary>Processes the expense reimbursement based on the final approval response.</summary>
-internal sealed class ExpenseReimburse() : Executor<ApprovalResponse, string>("Reimburse")
+/// <summary>Processes the expense reimbursement based on the parallel approval responses.</summary>
+internal sealed class ExpenseReimburse() : Executor<ApprovalResponse[], string>("Reimburse")
 {
     public override async ValueTask<string> HandleAsync(
-        ApprovalResponse message,
+        ApprovalResponse[] message,
         IWorkflowContext context,
         CancellationToken cancellationToken = default)
     {
-        if (!message.Approved)
+        // Check that all parallel approvals passed
+        ApprovalResponse? denied = Array.Find(message, r => !r.Approved);
+        if (denied is not null)
         {
-            return $"Expense reimbursement denied by finance. Comments: {message.Comments}";
+            return $"Expense reimbursement denied. Comments: {denied.Comments}";
         }
 
         // Simulate payment processing

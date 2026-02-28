@@ -1,17 +1,30 @@
 # Human-in-the-Loop (HITL) Workflow — Azure Functions
 
-This sample demonstrates a durable workflow with Human-in-the-Loop support hosted in Azure Functions. The workflow pauses at two sequential `RequestPort` nodes and waits for external approval responses sent via HTTP endpoints. This simulates an expense that requires both manager and finance approval.
+This sample demonstrates a durable workflow with Human-in-the-Loop support hosted in Azure Functions. The workflow pauses at three `RequestPort` nodes — one sequential manager approval, then two parallel finance approvals (budget and compliance) via fan-out/fan-in. Approval responses are sent via HTTP endpoints.
 
 ## Key Concepts Demonstrated
 
-- Using multiple `RequestPort` nodes for sequential human-in-the-loop interactions in a durable workflow
+- Using multiple `RequestPort` nodes for sequential and parallel human-in-the-loop interactions in a durable workflow
+- Fan-out/fan-in pattern for parallel approval steps
 - Auto-generated HTTP endpoints for running workflows, checking status, and sending HITL responses
 - Pausing orchestrations via `WaitForExternalEvent` and resuming via `RaiseEventAsync`
 - Viewing inputs the workflow is waiting for via the status endpoint
 
 ## Workflow
 
-`CreateApprovalRequest` → `ManagerApproval` (HITL pause) → `PrepareFinanceReview` → `FinanceApproval` (HITL pause) → `ExpenseReimburse`
+This sample implements the following workflow:
+
+```
+┌──────────────────────┐   ┌────────────────┐   ┌─────────────────────┐    ┌────────────────────┐
+│ CreateApprovalRequest│──►│ManagerApproval │──►│PrepareFinanceReview │──┬►│  BudgetApproval    │──┐
+└──────────────────────┘   │ (RequestPort)  │   └─────────────────────┘  │ │  (RequestPort)     │  │
+                           └────────────────┘                            │ └────────────────────┘  │  ┌─────────────────┐
+                                                                         │                         ├─►│ExpenseReimburse │
+                                                                         │ ┌────────────────────┐  │  └─────────────────┘
+                                                                         └►│ComplianceApproval  │──┘
+                                                                           │  (RequestPort)     │
+                                                                           └────────────────────┘
+```
 
 ## HTTP Endpoints
 
@@ -105,7 +118,7 @@ curl -X POST http://localhost:7071/api/workflows/ExpenseReimbursement/respond/{r
 
 ### Step 4: Check Workflow Status Again
 
-The workflow now pauses at the `FinanceApproval` RequestPort:
+The workflow now pauses at both the `BudgetApproval` and `ComplianceApproval` RequestPorts in parallel:
 
 ```bash
 curl http://localhost:7071/api/workflows/ExpenseReimbursement/status/{runId}
@@ -116,31 +129,49 @@ curl http://localhost:7071/api/workflows/ExpenseReimbursement/status/{runId}
   "runId": "{runId}",
   "status": "Running",
   "waitingForInput": [
-    { "eventName": "FinanceApproval", "input": { "ExpenseId": "EXP-2025-001", "Amount": 1500.00, "EmployeeName": "Jerry" } }
+    { "eventName": "BudgetApproval", "input": { "ExpenseId": "EXP-2025-001", "Amount": 1500.00, "EmployeeName": "Jerry" } },
+    { "eventName": "ComplianceApproval", "input": { "ExpenseId": "EXP-2025-001", "Amount": 1500.00, "EmployeeName": "Jerry" } }
   ]
 }
 ```
 
-### Step 5: Send Finance Approval Response
+### Step 5a: Send Budget Approval Response
 
 ```bash
 curl -X POST http://localhost:7071/api/workflows/ExpenseReimbursement/respond/{runId} \
     -H "Content-Type: application/json" \
-    -d '{"eventName": "FinanceApproval", "response": {"Approved": true, "Comments": "Finance approved."}}'
+    -d '{"eventName": "BudgetApproval", "response": {"Approved": true, "Comments": "Budget approved."}}'
 ```
 
 ```json
 {
   "message": "Response sent to workflow.",
   "runId": "{runId}",
-  "eventName": "FinanceApproval",
+  "eventName": "BudgetApproval",
+  "validated": true
+}
+```
+
+### Step 5b: Send Compliance Approval Response
+
+```bash
+curl -X POST http://localhost:7071/api/workflows/ExpenseReimbursement/respond/{runId} \
+    -H "Content-Type: application/json" \
+    -d '{"eventName": "ComplianceApproval", "response": {"Approved": true, "Comments": "Compliance approved."}}'
+```
+
+```json
+{
+  "message": "Response sent to workflow.",
+  "runId": "{runId}",
+  "eventName": "ComplianceApproval",
   "validated": true
 }
 ```
 
 ### Step 6: Check Final Status
 
-After both approvals, the workflow completes and the expense is reimbursed:
+After all approvals, the workflow completes and the expense is reimbursed:
 
 ```bash
 curl http://localhost:7071/api/workflows/ExpenseReimbursement/status/{runId}
@@ -161,5 +192,5 @@ After running a workflow, you can navigate to the Durable Task Scheduler (DTS) d
 If you are using the DTS emulator, the dashboard is available at `http://localhost:8082`.
 
 1. Open the dashboard and look for the orchestration instance matching the `runId` returned in Step 1 (e.g., `abc123def456` or your custom ID like `expense-001`).
-2. Click into the instance to see the execution timeline, which shows each executor activity and the two `WaitForExternalEvent` pauses where the workflow waited for human input.
-3. Expand individual activity steps to inspect inputs and outputs — for example, the `ManagerApproval` and `FinanceApproval` external events will show the approval request sent and the response received.
+2. Click into the instance to see the execution timeline, which shows each executor activity and the `WaitForExternalEvent` pauses where the workflow waited for human input — including the two parallel finance approvals.
+3. Expand individual activity steps to inspect inputs and outputs — for example, the `ManagerApproval`, `BudgetApproval`, and `ComplianceApproval` external events will show the approval request sent and the response received.

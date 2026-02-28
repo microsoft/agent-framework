@@ -463,8 +463,10 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
             bool foundManagerApprovalPause = false;
             bool foundManagerApprovalInput = false;
             bool foundManagerResponseSent = false;
-            bool foundFinanceApprovalPause = false;
-            bool foundFinanceResponseSent = false;
+            bool foundBudgetApprovalPause = false;
+            bool foundBudgetResponseSent = false;
+            bool foundComplianceApprovalPause = false;
+            bool foundComplianceResponseSent = false;
             bool foundWorkflowCompleted = false;
 
             string? line;
@@ -473,9 +475,11 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
                 foundStarted |= line.Contains("Starting expense reimbursement workflow", StringComparison.Ordinal);
                 foundManagerApprovalPause |= line.Contains("Workflow paused at RequestPort: ManagerApproval", StringComparison.Ordinal);
                 foundManagerApprovalInput |= line.Contains("Approval for: Jerry", StringComparison.Ordinal);
-                foundManagerResponseSent |= line.Contains("Response sent: Approved=True", StringComparison.Ordinal) && foundManagerApprovalPause && !foundFinanceApprovalPause;
-                foundFinanceApprovalPause |= line.Contains("Workflow paused at RequestPort: FinanceApproval", StringComparison.Ordinal);
-                foundFinanceResponseSent |= line.Contains("Response sent: Approved=True", StringComparison.Ordinal) && foundFinanceApprovalPause;
+                foundManagerResponseSent |= line.Contains("Response sent: Approved=True", StringComparison.Ordinal) && foundManagerApprovalPause && !foundBudgetApprovalPause && !foundComplianceApprovalPause;
+                foundBudgetApprovalPause |= line.Contains("Workflow paused at RequestPort: BudgetApproval", StringComparison.Ordinal);
+                foundBudgetResponseSent |= line.Contains("Response sent: Approved=True", StringComparison.Ordinal) && foundBudgetApprovalPause;
+                foundComplianceApprovalPause |= line.Contains("Workflow paused at RequestPort: ComplianceApproval", StringComparison.Ordinal);
+                foundComplianceResponseSent |= line.Contains("Response sent: Approved=True", StringComparison.Ordinal) && foundComplianceApprovalPause;
 
                 if (line.Contains("Workflow completed: Expense reimbursed at", StringComparison.Ordinal))
                 {
@@ -490,8 +494,10 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
             Assert.True(foundManagerApprovalPause, "Manager approval pause not found.");
             Assert.True(foundManagerApprovalInput, "Manager approval input (Jerry) not found.");
             Assert.True(foundManagerResponseSent, "Manager approval response not sent.");
-            Assert.True(foundFinanceApprovalPause, "Finance approval pause not found.");
-            Assert.True(foundFinanceResponseSent, "Finance approval response not sent.");
+            Assert.True(foundBudgetApprovalPause, "Budget approval pause not found.");
+            Assert.True(foundBudgetResponseSent, "Budget approval response not sent.");
+            Assert.True(foundComplianceApprovalPause, "Compliance approval pause not found.");
+            Assert.True(foundComplianceResponseSent, "Compliance approval response not sent.");
             Assert.True(foundWorkflowCompleted, "Workflow did not complete successfully.");
 
             return Task.CompletedTask;

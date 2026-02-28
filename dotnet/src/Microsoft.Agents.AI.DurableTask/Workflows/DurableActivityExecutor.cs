@@ -118,6 +118,26 @@ internal static class DurableActivityExecutor
             return input;
         }
 
+        // Fan-in aggregation serializes results as a JSON array of strings (e.g., ["{...}", "{...}"]).
+        // When the target type is a non-string array, deserialize each element individually.
+        if (targetType.IsArray && targetType != typeof(string[]))
+        {
+            Type elementType = targetType.GetElementType()!;
+            string[]? stringArray = JsonSerializer.Deserialize<string[]>(input, DurableSerialization.Options);
+            if (stringArray is not null)
+            {
+                Array result = Array.CreateInstance(elementType, stringArray.Length);
+                for (int i = 0; i < stringArray.Length; i++)
+                {
+                    object element = JsonSerializer.Deserialize(stringArray[i], elementType, DurableSerialization.Options)
+                        ?? throw new InvalidOperationException($"Failed to deserialize element {i} to type '{elementType.Name}'.");
+                    result.SetValue(element, i);
+                }
+
+                return result;
+            }
+        }
+
         return JsonSerializer.Deserialize(input, targetType, DurableSerialization.Options)
             ?? throw new InvalidOperationException($"Failed to deserialize input to type '{targetType.Name}'.");
     }
@@ -141,10 +161,13 @@ internal static class DurableActivityExecutor
 
         Type? loadedType = Type.GetType(inputTypeName);
 
-        // Fall back if type is string but executor doesn't support string
-        if (loadedType == typeof(string) && !supportedTypes.Contains(typeof(string)))
+        // Fall back if type is string or string[] but executor doesn't support it
+        if (loadedType is not null && !supportedTypes.Contains(loadedType))
         {
-            return supportedTypes.FirstOrDefault() ?? typeof(string);
+            if (loadedType == typeof(string) || loadedType == typeof(string[]))
+            {
+                return supportedTypes.FirstOrDefault() ?? typeof(string);
+            }
         }
 
         return loadedType ?? supportedTypes.FirstOrDefault() ?? typeof(string);
