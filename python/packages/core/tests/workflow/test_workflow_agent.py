@@ -1440,3 +1440,77 @@ class TestWorkflowAgentUserInputFiltering:
 
         # No assistant messages means no updates
         assert len(updates) == 0
+
+    async def test_streaming_agent_response_filters_system_and_tool_roles(self):
+        """Test that system and tool role messages are also filtered out.
+
+        The allowlist filter (role == "assistant") intentionally drops all non-assistant
+        roles, including "system" and "tool". This test documents that behavior explicitly
+        to prevent future regressions if someone expects those messages to pass through.
+        """
+
+        @executor
+        async def mixed_role_executor(
+            messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]
+        ) -> None:
+            response = AgentResponse(
+                messages=[
+                    Message(role="system", text="You are a helpful assistant."),
+                    Message(role="user", text="hi"),
+                    Message(role="assistant", text="Hello!", author_name="Bot"),
+                    Message(role="tool", text="tool result data"),
+                    Message(role="assistant", text="Based on the tool result...", author_name="Bot"),
+                ],
+            )
+            await ctx.yield_output(response)
+
+        workflow = WorkflowBuilder(start_executor=mixed_role_executor).build()
+        agent = workflow.as_agent("mixed-role-agent")
+
+        # Streaming path
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("hi", stream=True):
+            updates.append(update)
+
+        # Only assistant messages should survive (2 out of 5)
+        assert len(updates) == 2, f"Expected 2 assistant updates, got {len(updates)}"
+        for update in updates:
+            assert update.role == "assistant"
+        texts = [u.text for u in updates]
+        assert texts == ["Hello!", "Based on the tool result..."]
+
+        # Non-streaming path
+        workflow2 = WorkflowBuilder(start_executor=mixed_role_executor).build()
+        agent2 = workflow2.as_agent("mixed-role-agent-2")
+        result = await agent2.run("hi")
+
+        assert len(result.messages) == 2, f"Expected 2 messages, got {len(result.messages)}"
+        result_texts = [msg.text for msg in result.messages]
+        assert result_texts == ["Hello!", "Based on the tool result..."]
+
+    async def test_non_streaming_agent_response_empty_after_filtering(self):
+        """Test that non-streaming AgentResponse with only non-assistant messages produces empty result.
+
+        Counterpart to test_streaming_agent_response_empty_after_filtering for the
+        non-streaming code path.
+        """
+
+        @executor
+        async def user_only_executor(
+            messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]
+        ) -> None:
+            response = AgentResponse(
+                messages=[
+                    Message(role="user", text="user msg 1"),
+                    Message(role="user", text="user msg 2"),
+                ],
+            )
+            await ctx.yield_output(response)
+
+        workflow = WorkflowBuilder(start_executor=user_only_executor).build()
+        agent = workflow.as_agent("user-only-agent")
+
+        result = await agent.run("test")
+
+        # No assistant messages means empty messages list
+        assert len(result.messages) == 0, f"Expected 0 messages, got {len(result.messages)}"
