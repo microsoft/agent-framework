@@ -78,3 +78,13 @@ Workflow paused at RequestPort: FinanceApproval
 
 Workflow completed: Expense reimbursed at 2025-01-23T17:30:00.0000000Z
 ```
+
+### Viewing Workflows in the DTS Dashboard
+
+After running the sample, you can navigate to the Durable Task Scheduler (DTS) dashboard to visualize the completed orchestration and inspect its execution history.
+
+If you are using the DTS emulator, the dashboard is available at `http://localhost:8082`.
+
+1. Open the dashboard and look for the orchestration instance matching the instance ID logged in the console output (e.g., `abc123...`).
+2. Click into the instance to see the execution timeline, which shows each executor activity and the two `WaitForExternalEvent` pauses where the workflow waited for human input.
+3. Expand individual activity steps to inspect inputs and outputs — for example, the `ManagerApproval` and `FinanceApproval` external events will show the approval request sent and the response received.
