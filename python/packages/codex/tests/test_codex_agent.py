@@ -507,6 +507,36 @@ class TestCodexAgentSessionManagement:
             # Only called once
             assert mock_client_class.call_count == 1
 
+    async def test_ensure_session_recreates_when_resumed_then_fresh(self) -> None:
+        """Test _ensure_session creates a new client when switching from a resumed session to a fresh one (None).
+
+        Regression test: previously, _ensure_session only recreated the client when
+        (session_id and session_id != self._current_session_id), so a transition from
+        a named session back to None would silently reuse the old client.
+        """
+        with patch("agent_framework_codex._agent.CodexSDKClient") as mock_client_class:
+            mock_client1 = MagicMock()
+            mock_client1.connect = AsyncMock()
+            mock_client1.disconnect = AsyncMock()
+
+            mock_client2 = MagicMock()
+            mock_client2.connect = AsyncMock()
+
+            mock_client_class.side_effect = [mock_client1, mock_client2]
+
+            agent = CodexAgent()
+
+            # Start with a resumed session
+            await agent._ensure_session("resumed-session-id")  # type: ignore[reportPrivateUsage]
+            assert agent._current_session_id == "resumed-session-id"  # type: ignore[reportPrivateUsage]
+            assert mock_client_class.call_count == 1
+
+            # Switch to a fresh session (None) — must create a new client
+            await agent._ensure_session(None)  # type: ignore[reportPrivateUsage]
+            assert agent._current_session_id is None  # type: ignore[reportPrivateUsage]
+            assert mock_client_class.call_count == 2
+            mock_client1.disconnect.assert_called_once()
+
 
 # region Test CodexAgent Tool Conversion
 
