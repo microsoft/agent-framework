@@ -76,7 +76,7 @@ else:
 if TYPE_CHECKING:
     from .._middleware import MiddlewareTypes
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("agent_framework.openai")
 
 
 # region OpenAI Assistants Options TypedDict
@@ -670,10 +670,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                                         ]
                                     text_content.annotations.append(ann)
                                 else:
-                                    logger.debug(
-                                        "Unhandled annotation type in thread.message.completed: %s",
-                                        type(annotation).__name__,
-                                    )
+                                    logger.debug("Unparsed annotation type: %s", annotation.type)
                         completed_contents.append(text_content)
                     if completed_contents:
                         yield ChatResponseUpdate(
