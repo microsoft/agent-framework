@@ -11,7 +11,7 @@ Redis context provider. It covers three scenarios:
 
 2) Agent-scoped memory with custom vectorizer
    - Use a custom vectorizer with the provider for hybrid vector search.
-     Memories are scoped by user_id and agent_id.
+     Memories are scoped by application_id, user_id, and agent_id.
 
 3) Multiple agents with isolated memory
    - Use different agent_id values to keep memories separated for different
@@ -55,7 +55,7 @@ def create_chat_client() -> AzureOpenAIResponsesClient:
     )
 
 
-async def example_global_thread_scope() -> None:
+async def example_global_memory_scope() -> None:
     """Example 1: Global memory scope (memories shared across all operations)."""
     print("1. Global Memory Scope Example:")
     print("-" * 40)
@@ -98,11 +98,11 @@ async def example_global_thread_scope() -> None:
     await provider.redis_index.delete()
 
 
-async def example_per_operation_thread_scope() -> None:
+async def example_agent_scoped_memory() -> None:
     """Example 2: Agent-scoped memory with custom vectorizer.
 
     Demonstrates using a custom OpenAI vectorizer for hybrid vector search.
-    Memories are scoped by user_id and agent_id.
+    Memories are scoped by application_id, user_id, and agent_id.
     """
     print("2. Agent-Scoped Memory with Vectorizer Example:")
     print("-" * 40)
@@ -244,8 +244,8 @@ async def example_multiple_agents() -> None:
 
 async def main() -> None:
     print("=== Redis Memory Scoping Examples ===\n")
-    await example_global_thread_scope()
-    await example_per_operation_thread_scope()
+    await example_global_memory_scope()
+    await example_agent_scoped_memory()
     await example_multiple_agents()
 
 
