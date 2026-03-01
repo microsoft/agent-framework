@@ -6,7 +6,7 @@ Integration with OpenAI Codex as a managed agent (Codex SDK).
 
 - **`CodexAgent`** - Agent using Codex's native agent capabilities
 - **`CodexAgentOptions`** - Options for Codex agent configuration
-- **`CodexAgentSettings`** - Pydantic settings for configuration
+- **`CodexAgentSettings`** - TypedDict-based settings populated via the framework's `load_settings()` helper
 
 ## Usage
 
