@@ -4,7 +4,7 @@ description = "Foundry Local integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260219"
+version = "1.0.0b260225"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc1",
+    "agent-framework-core>=1.0.0rc2",
     "foundry-local-sdk>=0.5.1,<1",
 ]
 
@@ -37,6 +37,7 @@ environments = [
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
+
 [tool.pytest.ini_options]
 testpaths = 'tests'
 addopts = "-ra -q -r fEX"
@@ -44,6 +45,9 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
 timeout = 120
+markers = [
+    "integration: marks tests as integration tests that require external services",
+]
 
 [tool.ruff]
 extend = "../../pyproject.toml"
@@ -78,6 +82,7 @@ exclude_dirs = ["tests"]
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
+
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_foundry_local"
 test = "pytest --cov=agent_framework_foundry_local --cov-report=term-missing:skip-covered tests"

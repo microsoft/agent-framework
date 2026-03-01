@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal as _Decimal
@@ -162,15 +163,19 @@ class DeclarativeWorkflowState:
         Args:
             inputs: Initial workflow inputs (become Workflow.Inputs.*)
         """
+        conversation_id = str(uuid.uuid4())
         state_data: DeclarativeStateData = {
             "Inputs": dict(inputs) if inputs else {},
             "Outputs": {},
             "Local": {},
             "System": {
-                "ConversationId": "default",
+                "ConversationId": conversation_id,
                 "LastMessage": {"Text": "", "Id": ""},
                 "LastMessageText": "",
                 "LastMessageId": "",
+                "conversations": {
+                    conversation_id: {"id": conversation_id, "messages": []},
+                },
             },
             "Agent": {},
             "Conversation": {"messages": [], "history": []},
@@ -854,12 +859,18 @@ class DeclarativeActionExecutor(Executor):
             # Structured inputs - use directly
             state.initialize(trigger)  # type: ignore
         elif isinstance(trigger, str):
-            # String input - wrap in dict
+            # String input - wrap in dict and populate System.LastMessage.Text
+            # so YAML expressions like =System.LastMessage.Text see the user input
             state.initialize({"input": trigger})
+            state.set("System.LastMessage", {"Text": trigger, "Id": ""})
+            state.set("System.LastMessageText", trigger)
         elif not isinstance(
             trigger, (ActionTrigger, ActionComplete, ConditionResult, LoopIterationResult, LoopControl)
         ):
             # Any other type - convert to string like .NET's DefaultTransform
-            state.initialize({"input": str(trigger)})
+            input_str = str(trigger)
+            state.initialize({"input": input_str})
+            state.set("System.LastMessage", {"Text": input_str, "Id": ""})
+            state.set("System.LastMessageText", input_str)
 
         return state

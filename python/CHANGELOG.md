@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0rc2] - 2026-02-25
+
+### Added
+
+- **agent-framework-core**: Support Agent Skills ([#4210](https://github.com/microsoft/agent-framework/pull/4210))
+- **agent-framework-core**: Add embedding abstractions and OpenAI implementation (Phase 1) ([#4153](https://github.com/microsoft/agent-framework/pull/4153))
+- **agent-framework-core**: Add Foundry Memory Context Provider ([#3943](https://github.com/microsoft/agent-framework/pull/3943))
+- **agent-framework-core**: Add `max_function_calls` to `FunctionInvocationConfiguration` ([#4175](https://github.com/microsoft/agent-framework/pull/4175))
+- **agent-framework-core**: Add `CreateConversationExecutor`, fix input routing, remove unused handler layer ([#4159](https://github.com/microsoft/agent-framework/pull/4159))
+- **agent-framework-azure-ai-search**: Azure AI Search provider improvements - EmbeddingGenerator, async context manager, KB message handling ([#4212](https://github.com/microsoft/agent-framework/pull/4212))
+- **agent-framework-azure-ai-search**: Enhance Azure AI Search Citations with Document URLs in Foundry V2 ([#4028](https://github.com/microsoft/agent-framework/pull/4028))
+- **agent-framework-ag-ui**: Add Workflow Support, Harden Streaming Semantics, and add Dynamic Handoff Demo ([#3911](https://github.com/microsoft/agent-framework/pull/3911))
+
+### Changed
+
+- **agent-framework-declarative**: [BREAKING] Add `InvokeFunctionTool` action for declarative workflows ([#3716](https://github.com/microsoft/agent-framework/pull/3716))
+
+### Fixed
+
+- **agent-framework-core**: Fix thread corruption when `max_iterations` is reached ([#4234](https://github.com/microsoft/agent-framework/pull/4234))
+- **agent-framework-core**: Fix workflow runner concurrent processing ([#4143](https://github.com/microsoft/agent-framework/pull/4143))
+- **agent-framework-core**: Fix doubled `tool_call` arguments in `MESSAGES_SNAPSHOT` when streaming ([#4200](https://github.com/microsoft/agent-framework/pull/4200))
+- **agent-framework-core**: Fix OpenAI chat client compatibility with third-party endpoints and OTel 0.4.14 ([#4161](https://github.com/microsoft/agent-framework/pull/4161))
+- **agent-framework-claude**: Fix `structured_output` propagation in `ClaudeAgent` ([#4137](https://github.com/microsoft/agent-framework/pull/4137))
+
 ## [1.0.0rc1] - 2026-02-19
 
 Release candidate for **agent-framework-core** and **agent-framework-azure-ai** packages.
@@ -675,7 +700,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc1...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc2...HEAD
+[1.0.0rc2]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc1...python-1.0.0rc2
 [1.0.0rc1]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260212...python-1.0.0rc1
 [1.0.0b260212]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260210...python-1.0.0b260212
 [1.0.0b260210]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260130...python-1.0.0b260210

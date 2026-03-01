@@ -13,6 +13,7 @@ action definitions and creates a proper workflow graph with:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from agent_framework import (
@@ -38,6 +39,10 @@ from ._executors_control_flow import (
     SwitchEvaluatorExecutor,
 )
 from ._executors_external_input import EXTERNAL_INPUT_EXECUTORS
+from ._executors_tools import TOOL_ACTION_EXECUTORS, InvokeFunctionToolExecutor
+
+logger = logging.getLogger(__name__)
+
 
 # Combined mapping of all action kinds to executor classes
 ALL_ACTION_EXECUTORS = {
@@ -45,11 +50,22 @@ ALL_ACTION_EXECUTORS = {
     **CONTROL_FLOW_EXECUTORS,
     **AGENT_ACTION_EXECUTORS,
     **EXTERNAL_INPUT_EXECUTORS,
+    **TOOL_ACTION_EXECUTORS,
 }
 
 # Action kinds that terminate control flow (no fall-through to successor)
 # These actions transfer control elsewhere and should not have sequential edges to the next action
-TERMINATOR_ACTIONS = frozenset({"Goto", "GotoAction", "BreakLoop", "ContinueLoop", "EndWorkflow", "EndDialog"})
+TERMINATOR_ACTIONS = frozenset({
+    "Goto",
+    "GotoAction",
+    "BreakLoop",
+    "ContinueLoop",
+    "EndWorkflow",
+    "EndDialog",
+    "EndConversation",
+    "CancelDialog",
+    "CancelAllDialogs",
+})
 
 # Required fields for specific action kinds (schema validation)
 # Each action needs at least one of the listed fields (checked with alternates)
@@ -68,6 +84,7 @@ ACTION_REQUIRED_FIELDS: dict[str, list[str]] = {
     "RequestHumanInput": ["variable"],
     "WaitForHumanInput": ["variable"],
     "EmitEvent": ["event"],
+    "InvokeFunctionTool": ["functionName"],
 }
 
 # Alternate field names that satisfy required field requirements
@@ -108,8 +125,10 @@ class DeclarativeWorkflowBuilder:
         yaml_definition: dict[str, Any],
         workflow_id: str | None = None,
         agents: dict[str, Any] | None = None,
+        tools: dict[str, Any] | None = None,
         checkpoint_storage: Any | None = None,
         validate: bool = True,
+        max_iterations: int | None = None,
     ):
         """Initialize the builder.
 
@@ -117,18 +136,27 @@ class DeclarativeWorkflowBuilder:
             yaml_definition: The parsed YAML workflow definition
             workflow_id: Optional ID for the workflow (defaults to name from YAML)
             agents: Registry of agent instances by name (for InvokeAzureAgent actions)
+            tools: Registry of tool/function instances by name (for InvokeFunctionTool actions)
             checkpoint_storage: Optional checkpoint storage for pause/resume support
             validate: Whether to validate the workflow definition before building (default: True)
+            max_iterations: Maximum runner supersteps. Falls back to the YAML ``maxTurns``
+                field, then to the core default (100).
         """
         self._yaml_def = yaml_definition
         self._workflow_id = workflow_id or yaml_definition.get("name", "declarative_workflow")
         self._executors: dict[str, Any] = {}  # id -> executor
         self._action_index = 0  # Counter for generating unique IDs
         self._agents = agents or {}  # Agent registry for agent executors
+        self._tools = tools or {}  # Tool registry for tool executors
         self._checkpoint_storage = checkpoint_storage
         self._pending_gotos: list[tuple[Any, str]] = []  # (goto_executor, target_id)
         self._validate = validate
         self._seen_explicit_ids: set[str] = set()  # Track explicit IDs for duplicate detection
+        # Resolve max_iterations: explicit arg > YAML maxTurns > core default
+        resolved = max_iterations if max_iterations is not None else yaml_definition.get("maxTurns")
+        if resolved is not None and (not isinstance(resolved, int) or resolved <= 0):
+            raise ValueError(f"Invalid max_iterations/maxTurns value: {resolved!r}. Expected a positive integer.")
+        self._max_iterations: int | None = resolved
 
     def build(self) -> Workflow:
         """Build the workflow graph.
@@ -153,11 +181,14 @@ class DeclarativeWorkflowBuilder:
         # _create_executors_for_actions runs (which itself needs the builder to add edges).
         entry_node = JoinExecutor({"kind": "Entry"}, id="_workflow_entry")
         self._executors[entry_node.id] = entry_node
-        builder = WorkflowBuilder(
-            start_executor=entry_node,
-            name=self._workflow_id,
-            checkpoint_storage=self._checkpoint_storage,
-        )
+        builder_kwargs: dict[str, Any] = {
+            "start_executor": entry_node,
+            "name": self._workflow_id,
+            "checkpoint_storage": self._checkpoint_storage,
+        }
+        if self._max_iterations is not None:
+            builder_kwargs["max_iterations"] = self._max_iterations
+        builder = WorkflowBuilder(**builder_kwargs)
 
         # Create all executors and wire sequential edges
         first_executor = self._create_executors_for_actions(actions, builder)
@@ -402,8 +433,13 @@ class DeclarativeWorkflowBuilder:
         executor_class = ALL_ACTION_EXECUTORS.get(kind)
 
         if executor_class is None:
-            # Unknown action type - skip with warning
-            # In production, might want to log this
+            # Unknown action type - log warning and skip
+            logger.warning(
+                "Unknown action kind '%s' encountered at index %d - action will be skipped. Available action kinds: %s",
+                kind,
+                self._action_index,
+                list(ALL_ACTION_EXECUTORS.keys()),
+            )
             return None
 
         # Create the executor with ID
@@ -416,10 +452,12 @@ class DeclarativeWorkflowBuilder:
             action_id = f"{parent_id}_{kind}_{self._action_index}" if parent_id else f"{kind}_{self._action_index}"
         self._action_index += 1
 
-        # Pass agents to agent-related executors
+        # Pass agents/tools to specialized executors
         executor: Any
         if kind in ("InvokeAzureAgent",):
             executor = InvokeAzureAgentExecutor(action_def, id=action_id, agents=self._agents)
+        elif kind == "InvokeFunctionTool":
+            executor = InvokeFunctionToolExecutor(action_def, id=action_id, tools=self._tools)
         else:
             executor = executor_class(action_def, id=action_id)
         self._executors[action_id] = executor
@@ -943,6 +981,11 @@ class DeclarativeWorkflowBuilder:
         chain = getattr(branch_entry, "_chain_executors", [branch_entry])
 
         last_executor = chain[-1]
+
+        # Skip terminators — they handle their own control flow
+        action_def = getattr(last_executor, "_action_def", {})
+        if isinstance(action_def, dict) and action_def.get("kind", "") in TERMINATOR_ACTIONS:
+            return None
 
         # Check if last executor is a structure with branch_exits
         # In that case, we return the structure so its exits can be collected

@@ -17,8 +17,8 @@ namespace Microsoft.Agents.AI.CosmosNoSql.UnitTests;
 /// - Default Mode: Cleans up all test data after each test run (deletes database)
 /// - Preserve Mode: Keeps containers and data for inspection in Cosmos DB Emulator Data Explorer
 ///
-/// To enable Preserve Mode, set environment variable: COSMOS_PRESERVE_CONTAINERS=true
-/// Example: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test
+/// To enable Preserve Mode, set environment variable: COSMOSDB_PRESERVE_CONTAINERS=true
+/// Example: $env:COSMOSDB_PRESERVE_CONTAINERS="true"; dotnet test
 ///
 /// In Preserve Mode, you can view the data in Cosmos DB Emulator Data Explorer at:
 /// https://localhost:8081/_explorer/index.html
@@ -61,8 +61,8 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         // Check environment variable to determine if we should preserve containers
-        // Set COSMOS_PRESERVE_CONTAINERS=true to keep containers and data for inspection
-        this._preserveContainer = string.Equals(Environment.GetEnvironmentVariable("COSMOS_PRESERVE_CONTAINERS"), "true", StringComparison.OrdinalIgnoreCase);
+        // Set COSMOSDB_PRESERVE_CONTAINERS=true to keep containers and data for inspection
+        this._preserveContainer = string.Equals(Environment.GetEnvironmentVariable("COSMOSDB_PRESERVE_CONTAINERS"), bool.TrueString, StringComparison.OrdinalIgnoreCase);
 
         this._connectionString = $"AccountEndpoint={s_emulatorEndpoint};AccountKey={s_emulatorKey}";
 
@@ -120,9 +120,9 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
 
     private void SkipIfEmulatorNotAvailable()
     {
-        // In CI: Skip if COSMOS_EMULATOR_AVAILABLE is not set to "true"
+        // In CI: Skip if COSMOSDB_EMULATOR_AVAILABLE is not set to "true"
         // Locally: Skip if emulator connection check failed
-        var ciEmulatorAvailable = string.Equals(Environment.GetEnvironmentVariable("COSMOS_EMULATOR_AVAILABLE"), "true", StringComparison.OrdinalIgnoreCase);
+        var ciEmulatorAvailable = string.Equals(Environment.GetEnvironmentVariable("COSMOSDB_EMULATOR_AVAILABLE"), bool.TrueString, StringComparison.OrdinalIgnoreCase);
 
         Xunit.Skip.If(!ciEmulatorAvailable && !this._emulatorAvailable, "Cosmos DB Emulator is not available");
     }

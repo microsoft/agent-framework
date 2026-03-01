@@ -23,6 +23,10 @@ public class ChatClientAgentOptionsTests
         Assert.Null(options.ChatOptions);
         Assert.Null(options.ChatHistoryProvider);
         Assert.Null(options.AIContextProviders);
+        Assert.False(options.UseProvidedChatClientAsIs);
+        Assert.True(options.ClearOnChatHistoryProviderConflict);
+        Assert.True(options.WarnOnChatHistoryProviderConflict);
+        Assert.True(options.ThrowOnChatHistoryProviderConflict);
     }
 
     [Fact]
@@ -125,7 +129,11 @@ public class ChatClientAgentOptionsTests
             ChatOptions = new() { Tools = tools },
             Id = "test-id",
             ChatHistoryProvider = mockChatHistoryProvider,
-            AIContextProviders = [mockAIContextProvider]
+            AIContextProviders = [mockAIContextProvider],
+            UseProvidedChatClientAsIs = true,
+            ClearOnChatHistoryProviderConflict = false,
+            WarnOnChatHistoryProviderConflict = false,
+            ThrowOnChatHistoryProviderConflict = false,
         };
 
         // Act
@@ -138,6 +146,10 @@ public class ChatClientAgentOptionsTests
         Assert.Equal(original.Description, clone.Description);
         Assert.Same(original.ChatHistoryProvider, clone.ChatHistoryProvider);
         Assert.Equal(original.AIContextProviders, clone.AIContextProviders);
+        Assert.Equal(original.UseProvidedChatClientAsIs, clone.UseProvidedChatClientAsIs);
+        Assert.Equal(original.ClearOnChatHistoryProviderConflict, clone.ClearOnChatHistoryProviderConflict);
+        Assert.Equal(original.WarnOnChatHistoryProviderConflict, clone.WarnOnChatHistoryProviderConflict);
+        Assert.Equal(original.ThrowOnChatHistoryProviderConflict, clone.ThrowOnChatHistoryProviderConflict);
 
         // ChatOptions should be cloned, not the same reference
         Assert.NotSame(original.ChatOptions, clone.ChatOptions);

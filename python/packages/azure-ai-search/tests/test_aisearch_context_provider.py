@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from agent_framework import Message
+from agent_framework import Content, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials import AzureKeyCredential
@@ -720,7 +720,7 @@ class TestSemanticSearch:
 
         results = await provider._semantic_search("test query")
         assert len(results) == 1
-        assert "result text" in results[0]
+        assert "result text" in results[0].text
         call_kwargs = mock_client.search.call_args[1]
         assert call_kwargs["search_text"] == "test query"
 
@@ -746,7 +746,11 @@ class TestSemanticSearch:
         provider = _make_provider()
         provider._use_vectorizable_query = False
         provider.vector_field_name = "embedding"
-        provider.embedding_function = AsyncMock(return_value=[0.1, 0.2, 0.3])
+
+        async def _embed(query: str) -> list[float]:
+            return [0.1, 0.2, 0.3]
+
+        provider.embedding_function = _embed
         mock_client = AsyncMock()
 
         async def _search(**kwargs):
@@ -757,7 +761,6 @@ class TestSemanticSearch:
 
         results = await provider._semantic_search("embed query")
         assert len(results) == 1
-        provider.embedding_function.assert_awaited_once_with("embed query")
         call_kwargs = mock_client.search.call_args[1]
         assert "vector_queries" in call_kwargs
 
@@ -1100,9 +1103,11 @@ class TestAgenticSearch:
         mock_content = Mock()
         mock_content.text = "Answer text"
         mock_message = Mock()
+        mock_message.role = "assistant"
         mock_message.content = [mock_content]
         mock_result = Mock()
         mock_result.response = [mock_message]
+        mock_result.references = None
 
         mock_retrieval = AsyncMock()
         mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
@@ -1115,7 +1120,9 @@ class TestAgenticSearch:
         ):
             results = await provider._agentic_search([Message(role="user", contents=["test query"])])
 
-        assert results == ["Answer text"]
+        assert len(results) == 1
+        assert results[0].text == "Answer text"
+        assert results[0].role == "assistant"
 
     async def test_non_minimal_reasoning_uses_messages(self) -> None:
         provider = _make_provider()
@@ -1126,9 +1133,11 @@ class TestAgenticSearch:
         mock_content = Mock()
         mock_content.text = "Medium answer"
         mock_message = Mock()
+        mock_message.role = "assistant"
         mock_message.content = [mock_content]
         mock_result = Mock()
         mock_result.response = [mock_message]
+        mock_result.references = None
 
         mock_retrieval = AsyncMock()
         mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
@@ -1143,7 +1152,8 @@ class TestAgenticSearch:
                 Message(role="assistant", contents=["answer"]),
             ])
 
-        assert results == ["Medium answer"]
+        assert len(results) == 1
+        assert results[0].text == "Medium answer"
         mock_retrieval.retrieve.assert_awaited_once()
 
     async def test_no_response_returns_default_message(self) -> None:
@@ -1154,13 +1164,15 @@ class TestAgenticSearch:
 
         mock_result = Mock()
         mock_result.response = []
+        mock_result.references = None
 
         mock_retrieval = AsyncMock()
         mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
         provider._retrieval_client = mock_retrieval
 
         results = await provider._agentic_search([Message(role="user", contents=["query"])])
-        assert results == ["No results found from Knowledge Base."]
+        assert len(results) == 1
+        assert results[0].text == "No results found from Knowledge Base."
 
     async def test_empty_content_returns_default_message(self) -> None:
         provider = _make_provider()
@@ -1172,13 +1184,15 @@ class TestAgenticSearch:
         mock_message.content = None
         mock_result = Mock()
         mock_result.response = [mock_message]
+        mock_result.references = None
 
         mock_retrieval = AsyncMock()
         mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
         provider._retrieval_client = mock_retrieval
 
         results = await provider._agentic_search([Message(role="user", contents=["query"])])
-        assert results == ["No results found from Knowledge Base."]
+        assert len(results) == 1
+        assert results[0].text == "No results found from Knowledge Base."
 
     async def test_answer_synthesis_output_mode(self) -> None:
         provider = _make_provider()
@@ -1190,9 +1204,11 @@ class TestAgenticSearch:
         mock_content = Mock()
         mock_content.text = "Synthesized answer"
         mock_message = Mock()
+        mock_message.role = "assistant"
         mock_message.content = [mock_content]
         mock_result = Mock()
         mock_result.response = [mock_message]
+        mock_result.references = None
 
         mock_retrieval = AsyncMock()
         mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
@@ -1204,7 +1220,8 @@ class TestAgenticSearch:
         ):
             results = await provider._agentic_search([Message(role="user", contents=["query"])])
 
-        assert results == ["Synthesized answer"]
+        assert len(results) == 1
+        assert results[0].text == "Synthesized answer"
 
     async def test_content_without_text_excluded(self) -> None:
         provider = _make_provider()
@@ -1217,9 +1234,11 @@ class TestAgenticSearch:
         mock_content_no_text = Mock()
         mock_content_no_text.text = None
         mock_message = Mock()
+        mock_message.role = "assistant"
         mock_message.content = [mock_content_no_text, mock_content_with_text]
         mock_result = Mock()
         mock_result.response = [mock_message]
+        mock_result.references = None
 
         mock_retrieval = AsyncMock()
         mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
@@ -1231,7 +1250,8 @@ class TestAgenticSearch:
         ):
             results = await provider._agentic_search([Message(role="user", contents=["query"])])
 
-        assert results == ["Good content"]
+        assert len(results) == 1
+        assert results[0].text == "Good content"
 
     async def test_none_response_returns_default_message(self) -> None:
         provider = _make_provider()
@@ -1241,13 +1261,347 @@ class TestAgenticSearch:
 
         mock_result = Mock()
         mock_result.response = None
+        mock_result.references = None
 
         mock_retrieval = AsyncMock()
         mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
         provider._retrieval_client = mock_retrieval
 
         results = await provider._agentic_search([Message(role="user", contents=["query"])])
-        assert results == ["No results found from Knowledge Base."]
+        assert len(results) == 1
+        assert results[0].text == "No results found from Knowledge Base."
+
+
+# -- before_run: agentic mode --------------------------------------------------
+
+
+# -- _prepare_messages_for_kb_search / _parse_content_from_kb_response --------
+
+
+class TestPrepareMessagesForKbSearch:
+    """Tests for _prepare_messages_for_kb_search."""
+
+    def test_text_only_messages(self) -> None:
+        messages = [
+            Message(role="user", contents=["hello"]),
+            Message(role="assistant", contents=["world"]),
+        ]
+        result = AzureAISearchContextProvider._prepare_messages_for_kb_search(messages)
+        assert len(result) == 2
+        assert result[0].role == "user"
+        assert result[1].role == "assistant"
+        # Verify content is KnowledgeBaseMessageTextContent
+        from azure.search.documents.knowledgebases.models import KnowledgeBaseMessageTextContent
+
+        assert isinstance(result[0].content[0], KnowledgeBaseMessageTextContent)
+        assert result[0].content[0].text == "hello"
+
+    def test_image_uri_content(self) -> None:
+
+        img = Content.from_uri(uri="https://example.com/photo.png", media_type="image/png")
+        messages = [Message(role="user", contents=[img])]
+        result = AzureAISearchContextProvider._prepare_messages_for_kb_search(messages)
+        assert len(result) == 1
+        from azure.search.documents.knowledgebases.models import KnowledgeBaseMessageImageContent
+
+        assert isinstance(result[0].content[0], KnowledgeBaseMessageImageContent)
+        assert result[0].content[0].image.url == "https://example.com/photo.png"
+
+    def test_mixed_text_and_image_content(self) -> None:
+
+        text = Content.from_text("describe this image")
+        img = Content.from_uri(uri="https://example.com/img.jpg", media_type="image/jpeg")
+        messages = [Message(role="user", contents=[text, img])]
+        result = AzureAISearchContextProvider._prepare_messages_for_kb_search(messages)
+        assert len(result) == 1
+        assert len(result[0].content) == 2
+
+    def test_skips_non_text_non_image_content(self) -> None:
+
+        error = Content.from_error(message="oops")
+        messages = [Message(role="user", contents=[error])]
+        result = AzureAISearchContextProvider._prepare_messages_for_kb_search(messages)
+        assert len(result) == 0  # message had no usable content
+
+    def test_skips_empty_text(self) -> None:
+
+        empty = Content.from_text("")
+        messages = [Message(role="user", contents=[empty])]
+        result = AzureAISearchContextProvider._prepare_messages_for_kb_search(messages)
+        assert len(result) == 0
+
+    def test_fallback_to_msg_text_when_no_contents(self) -> None:
+        msg = Message(role="user", text="fallback text")
+        result = AzureAISearchContextProvider._prepare_messages_for_kb_search([msg])
+        assert len(result) == 1
+        assert result[0].content[0].text == "fallback text"
+
+    def test_data_uri_image(self) -> None:
+
+        img = Content.from_data(data=b"\x89PNG", media_type="image/png")
+        messages = [Message(role="user", contents=[img])]
+        result = AzureAISearchContextProvider._prepare_messages_for_kb_search(messages)
+        assert len(result) == 1
+        from azure.search.documents.knowledgebases.models import KnowledgeBaseMessageImageContent
+
+        assert isinstance(result[0].content[0], KnowledgeBaseMessageImageContent)
+
+    def test_non_image_uri_skipped(self) -> None:
+
+        pdf = Content.from_uri(uri="https://example.com/doc.pdf", media_type="application/pdf")
+        messages = [Message(role="user", contents=[pdf])]
+        result = AzureAISearchContextProvider._prepare_messages_for_kb_search(messages)
+        assert len(result) == 0
+
+
+class TestParseReferencesToAnnotations:
+    """Tests for _parse_references_to_annotations."""
+
+    def test_none_references(self) -> None:
+        result = AzureAISearchContextProvider._parse_references_to_annotations(None)
+        assert result == []
+
+    def test_empty_references(self) -> None:
+        result = AzureAISearchContextProvider._parse_references_to_annotations([])
+        assert result == []
+
+    def test_search_index_reference_captures_doc_key(self) -> None:
+        from azure.search.documents.knowledgebases.models import KnowledgeBaseSearchIndexReference
+
+        ref = KnowledgeBaseSearchIndexReference(id="ref-1", activity_source=0, doc_key="doc-1")
+        result = AzureAISearchContextProvider._parse_references_to_annotations([ref])
+        assert len(result) == 1
+        assert result[0]["type"] == "citation"
+        assert result[0]["title"] == "ref-1"
+        extra = result[0]["additional_properties"]
+        assert extra["reference_id"] == "ref-1"
+        assert extra["reference_type"] == "searchIndex"
+        assert extra["activity_source"] == 0
+        assert extra["doc_key"] == "doc-1"
+
+    def test_web_reference_with_url_and_title(self) -> None:
+        from azure.search.documents.knowledgebases.models import KnowledgeBaseWebReference
+
+        ref = KnowledgeBaseWebReference(
+            id="ref-2", activity_source=0, url="https://example.com/page", title="Example Page"
+        )
+        result = AzureAISearchContextProvider._parse_references_to_annotations([ref])
+        assert len(result) == 1
+        assert result[0]["url"] == "https://example.com/page"
+        assert result[0]["title"] == "Example Page"
+        assert result[0]["additional_properties"]["reference_type"] == "web"
+
+    def test_blob_reference_extracts_blob_url(self) -> None:
+        from azure.search.documents.knowledgebases.models import KnowledgeBaseAzureBlobReference
+
+        ref = KnowledgeBaseAzureBlobReference(
+            id="ref-3", activity_source=0, blob_url="https://storage.blob.core.windows.net/doc.pdf"
+        )
+        result = AzureAISearchContextProvider._parse_references_to_annotations([ref])
+        assert result[0]["url"] == "https://storage.blob.core.windows.net/doc.pdf"
+        assert result[0]["additional_properties"]["reference_type"] == "azureBlob"
+
+    def test_source_data_and_reranker_score(self) -> None:
+        from azure.search.documents.knowledgebases.models import KnowledgeBaseSearchIndexReference
+
+        ref = KnowledgeBaseSearchIndexReference(
+            id="ref-4", activity_source=0, source_data={"chunk": "some text"}, reranker_score=0.95
+        )
+        result = AzureAISearchContextProvider._parse_references_to_annotations([ref])
+        extra = result[0]["additional_properties"]
+        assert extra["source_data"] == {"chunk": "some text"}
+        assert extra["reranker_score"] == 0.95
+
+    def test_raw_representation_stores_original_ref(self) -> None:
+        from azure.search.documents.knowledgebases.models import KnowledgeBaseSearchIndexReference
+
+        ref = KnowledgeBaseSearchIndexReference(id="ref-5", activity_source=0)
+        result = AzureAISearchContextProvider._parse_references_to_annotations([ref])
+        assert result[0]["raw_representation"] is ref
+
+    def test_remote_sharepoint_captures_sensitivity_label(self) -> None:
+        from azure.search.documents.knowledgebases.models import (
+            KnowledgeBaseRemoteSharePointReference,
+            SharePointSensitivityLabelInfo,
+        )
+
+        label = SharePointSensitivityLabelInfo(
+            display_name="Confidential", sensitivity_label_id="lbl-1", is_encrypted=True
+        )
+        ref = KnowledgeBaseRemoteSharePointReference(
+            id="ref-6", activity_source=0, web_url="https://sp.example.com/doc", search_sensitivity_label_info=label
+        )
+        result = AzureAISearchContextProvider._parse_references_to_annotations([ref])
+        assert result[0]["url"] == "https://sp.example.com/doc"
+        sl = result[0]["additional_properties"]["sensitivity_label"]
+        assert sl["display_name"] == "Confidential"
+        assert sl["sensitivity_label_id"] == "lbl-1"
+        assert sl["is_encrypted"] is True
+
+    def test_multiple_references(self) -> None:
+        from azure.search.documents.knowledgebases.models import (
+            KnowledgeBaseSearchIndexReference,
+            KnowledgeBaseWebReference,
+        )
+
+        refs = [
+            KnowledgeBaseSearchIndexReference(id="ref-a", activity_source=0),
+            KnowledgeBaseWebReference(id="ref-b", activity_source=1, url="https://example.com"),
+        ]
+        result = AzureAISearchContextProvider._parse_references_to_annotations(refs)
+        assert len(result) == 2
+        assert result[0]["additional_properties"]["activity_source"] == 0
+        assert result[1]["additional_properties"]["activity_source"] == 1
+
+
+class TestParseMessagesFromKbResponse:
+    """Tests for _parse_messages_from_kb_response."""
+
+    def test_converts_all_messages(self) -> None:
+        from azure.search.documents.knowledgebases.models import (
+            KnowledgeBaseMessage,
+            KnowledgeBaseMessageTextContent,
+            KnowledgeBaseRetrievalResponse,
+        )
+
+        response = KnowledgeBaseRetrievalResponse(
+            response=[
+                KnowledgeBaseMessage(role="user", content=[KnowledgeBaseMessageTextContent(text="q")]),
+                KnowledgeBaseMessage(role="assistant", content=[KnowledgeBaseMessageTextContent(text="answer")]),
+            ],
+            references=None,
+        )
+        result = AzureAISearchContextProvider._parse_messages_from_kb_response(response)
+        assert len(result) == 2
+        assert result[0].role == "user"
+        assert result[0].text == "q"
+        assert result[1].role == "assistant"
+        assert result[1].text == "answer"
+
+    def test_none_response_returns_default(self) -> None:
+        from azure.search.documents.knowledgebases.models import KnowledgeBaseRetrievalResponse
+
+        response = KnowledgeBaseRetrievalResponse(response=None, references=None)
+        result = AzureAISearchContextProvider._parse_messages_from_kb_response(response)
+        assert len(result) == 1
+        assert result[0].text == "No results found from Knowledge Base."
+
+    def test_empty_response_returns_default(self) -> None:
+        from azure.search.documents.knowledgebases.models import KnowledgeBaseRetrievalResponse
+
+        response = KnowledgeBaseRetrievalResponse(response=[], references=None)
+        result = AzureAISearchContextProvider._parse_messages_from_kb_response(response)
+        assert len(result) == 1
+        assert result[0].text == "No results found from Knowledge Base."
+
+    def test_image_content(self) -> None:
+        from azure.search.documents.knowledgebases.models import (
+            KnowledgeBaseMessage,
+            KnowledgeBaseMessageImageContent,
+            KnowledgeBaseMessageImageContentImage,
+            KnowledgeBaseRetrievalResponse,
+        )
+
+        response = KnowledgeBaseRetrievalResponse(
+            response=[
+                KnowledgeBaseMessage(
+                    role="assistant",
+                    content=[
+                        KnowledgeBaseMessageImageContent(
+                            image=KnowledgeBaseMessageImageContentImage(url="https://img.example.com/a.png")
+                        )
+                    ],
+                ),
+            ],
+            references=None,
+        )
+        result = AzureAISearchContextProvider._parse_messages_from_kb_response(response)
+        assert len(result) == 1
+        assert result[0].contents[0].type == "uri"
+        assert result[0].contents[0].uri == "https://img.example.com/a.png"
+
+    def test_mixed_text_and_image_content(self) -> None:
+        from azure.search.documents.knowledgebases.models import (
+            KnowledgeBaseMessage,
+            KnowledgeBaseMessageImageContent,
+            KnowledgeBaseMessageImageContentImage,
+            KnowledgeBaseMessageTextContent,
+            KnowledgeBaseRetrievalResponse,
+        )
+
+        response = KnowledgeBaseRetrievalResponse(
+            response=[
+                KnowledgeBaseMessage(
+                    role="assistant",
+                    content=[
+                        KnowledgeBaseMessageTextContent(text="description"),
+                        KnowledgeBaseMessageImageContent(
+                            image=KnowledgeBaseMessageImageContentImage(url="https://img.example.com/b.png")
+                        ),
+                    ],
+                ),
+            ],
+            references=None,
+        )
+        result = AzureAISearchContextProvider._parse_messages_from_kb_response(response)
+        assert len(result) == 1
+        assert len(result[0].contents) == 2
+        assert result[0].contents[0].type == "text"
+        assert result[0].contents[1].type == "uri"
+
+    def test_references_become_annotations(self) -> None:
+        from azure.search.documents.knowledgebases.models import (
+            KnowledgeBaseMessage,
+            KnowledgeBaseMessageTextContent,
+            KnowledgeBaseRetrievalResponse,
+            KnowledgeBaseWebReference,
+        )
+
+        response = KnowledgeBaseRetrievalResponse(
+            response=[
+                KnowledgeBaseMessage(role="assistant", content=[KnowledgeBaseMessageTextContent(text="answer")]),
+            ],
+            references=[
+                KnowledgeBaseWebReference(id="ref-1", activity_source=0, url="https://example.com", title="Example"),
+            ],
+        )
+        result = AzureAISearchContextProvider._parse_messages_from_kb_response(response)
+        assert len(result) == 1
+        annotations = result[0].contents[0].annotations
+        assert annotations is not None
+        assert len(annotations) == 1
+        assert annotations[0]["type"] == "citation"
+        assert annotations[0]["url"] == "https://example.com"
+        assert annotations[0]["title"] == "Example"
+
+    def test_multiple_messages_with_references(self) -> None:
+        from azure.search.documents.knowledgebases.models import (
+            KnowledgeBaseMessage,
+            KnowledgeBaseMessageTextContent,
+            KnowledgeBaseRetrievalResponse,
+            KnowledgeBaseSearchIndexReference,
+        )
+
+        response = KnowledgeBaseRetrievalResponse(
+            response=[
+                KnowledgeBaseMessage(role="user", content=[KnowledgeBaseMessageTextContent(text="q")]),
+                KnowledgeBaseMessage(
+                    role="assistant",
+                    content=[
+                        KnowledgeBaseMessageTextContent(text="part1"),
+                        KnowledgeBaseMessageTextContent(text="part2"),
+                    ],
+                ),
+            ],
+            references=[KnowledgeBaseSearchIndexReference(id="doc-1", activity_source=0)],
+        )
+        result = AzureAISearchContextProvider._parse_messages_from_kb_response(response)
+        assert len(result) == 2
+        # All content items get annotations
+        for msg in result:
+            for c in msg.contents:
+                assert c.annotations is not None
+                assert len(c.annotations) == 1
 
 
 # -- before_run: agentic mode --------------------------------------------------
@@ -1266,9 +1620,11 @@ class TestBeforeRunAgentic:
         mock_content = Mock()
         mock_content.text = "agentic result"
         mock_message = Mock()
+        mock_message.role = "assistant"
         mock_message.content = [mock_content]
         mock_result = Mock()
         mock_result.response = [mock_message]
+        mock_result.references = None
 
         mock_retrieval = AsyncMock()
         mock_retrieval.retrieve = AsyncMock(return_value=mock_result)

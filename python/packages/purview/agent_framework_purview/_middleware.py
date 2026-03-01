@@ -106,7 +106,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
             if context.result and not context.stream:
                 should_block_response, _ = await self._processor.process_messages(
                     context.result.messages,  # type: ignore[union-attr]
-                    Activity.UPLOAD_TEXT,
+                    Activity.DOWNLOAD_TEXT,
                     session_id=session_id,
                     user_id=resolved_user_id,
                 )
@@ -210,7 +210,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                 messages = getattr(result_obj, "messages", None)
                 if messages:
                     should_block_response, _ = await self._processor.process_messages(
-                        messages, Activity.UPLOAD_TEXT, session_id=session_id_response, user_id=resolved_user_id
+                        messages, Activity.DOWNLOAD_TEXT, session_id=session_id_response, user_id=resolved_user_id
                     )
                     if should_block_response:
                         from agent_framework import ChatResponse, Message

@@ -50,11 +50,8 @@ from pydantic import BaseModel, Field
 from agent_framework_azure_ai import AzureAIAgentClient, AzureAISettings
 
 skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/"),
-    reason="No real AZURE_AI_PROJECT_ENDPOINT provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/"),
+    reason="No real AZURE_AI_PROJECT_ENDPOINT provided; skipping integration tests.",
 )
 
 
@@ -1379,6 +1376,7 @@ def get_weather(
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_get_response() -> None:
     """Test Azure AI Chat Client response."""
@@ -1404,6 +1402,7 @@ async def test_azure_ai_chat_client_get_response() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_get_response_tools() -> None:
     """Test Azure AI Chat Client response with tools."""
@@ -1425,6 +1424,7 @@ async def test_azure_ai_chat_client_get_response_tools() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_streaming() -> None:
     """Test Azure AI Chat Client streaming response."""
@@ -1456,6 +1456,7 @@ async def test_azure_ai_chat_client_streaming() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_streaming_tools() -> None:
     """Test Azure AI Chat Client streaming response with tools."""
@@ -1483,6 +1484,7 @@ async def test_azure_ai_chat_client_streaming_tools() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_basic_run() -> None:
     """Test Agent basic run functionality with AzureAIAgentClient."""
@@ -1500,6 +1502,7 @@ async def test_azure_ai_chat_client_agent_basic_run() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
     """Test Agent basic streaming functionality with AzureAIAgentClient."""
@@ -1520,6 +1523,7 @@ async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
     """Test Agent session persistence across runs with AzureAIAgentClient."""
@@ -1546,6 +1550,7 @@ async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
     """Test Agent existing thread ID functionality with AzureAIAgentClient."""
@@ -1584,6 +1589,7 @@ async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_code_interpreter():
     """Test Agent with code interpreter through AzureAIAgentClient."""
@@ -1604,6 +1610,7 @@ async def test_azure_ai_chat_client_agent_code_interpreter():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_file_search():
     """Test Agent with file search through AzureAIAgentClient."""
@@ -1651,6 +1658,7 @@ async def test_azure_ai_chat_client_agent_file_search():
             await client.close()
 
 
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
     """Integration test for MCP tool with Azure AI Agent using Microsoft Learn MCP."""
@@ -1686,6 +1694,7 @@ async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with AzureAIAgentClient."""
@@ -1711,6 +1720,7 @@ async def test_azure_ai_chat_client_agent_level_tool_persistence():
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "25"])
 
 
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_chat_options_run_level() -> None:
     """Test ChatOptions parameter coverage at run level."""
@@ -1735,6 +1745,7 @@ async def test_azure_ai_chat_client_agent_chat_options_run_level() -> None:
         assert len(response.text) > 0
 
 
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_chat_options_agent_level() -> None:
     """Test ChatOptions parameter coverage agent level."""

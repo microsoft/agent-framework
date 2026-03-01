@@ -111,9 +111,9 @@
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.78.0" />
     <!-- Workflows -->
-    <PackageVersion Include="Microsoft.Agents.ObjectModel" Version="2026.2.3.1" />
-    <PackageVersion Include="Microsoft.Agents.ObjectModel.Json" Version="2026.2.3.1" />
-    <PackageVersion Include="Microsoft.Agents.ObjectModel.PowerFx" Version="2026.2.3.1" />
+    <PackageVersion Include="Microsoft.Agents.ObjectModel" Version="2026.2.4.1" />
+    <PackageVersion Include="Microsoft.Agents.ObjectModel.Json" Version="2026.2.4.1" />
+    <PackageVersion Include="Microsoft.Agents.ObjectModel.PowerFx" Version="2026.2.4.1" />
     <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.8.1" />
     <!-- Durable Task -->
     <PackageVersion Include="Microsoft.DurableTask.Client" Version="1.18.0" />

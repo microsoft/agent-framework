@@ -2,11 +2,11 @@
   <PropertyGroup>
     <!-- Central version prefix - applies to all nuget packages. -->
     <VersionPrefix>1.0.0</VersionPrefix>
-    <RCNumber>1</RCNumber>
+    <RCNumber>2</RCNumber>
     <PackageVersion Condition="'$(IsReleaseCandidate)' == 'true'">$(VersionPrefix)-rc$(RCNumber)</PackageVersion>
-    <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).260219.1</PackageVersion>
-    <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' == ''">$(VersionPrefix)-preview.260219.1</PackageVersion>
-    <GitTag>1.0.0-rc1</GitTag>
+    <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).260225.1</PackageVersion>
+    <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' == ''">$(VersionPrefix)-preview.260225.1</PackageVersion>
+    <GitTag>1.0.0-rc2</GitTag>
 
     <Configurations>Debug;Release;Publish</Configurations>
     <IsPackable>true</IsPackable>

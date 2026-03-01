@@ -12,10 +12,9 @@ internal static class Application
     /// </summary>
     public static class Settings
     {
-        public const string FoundryEndpoint = "FOUNDRY_PROJECT_ENDPOINT";
-        public const string FoundryModelMini = "FOUNDRY_MODEL_DEPLOYMENT_NAME";
-        public const string FoundryModelFull = "FOUNDRY_MEDIA_DEPLOYMENT_NAME";
-        public const string FoundryGroundingTool = "FOUNDRY_CONNECTION_GROUNDING_TOOL";
+        public const string FoundryEndpoint = "AZURE_AI_PROJECT_ENDPOINT";
+        public const string FoundryModel = "AZURE_AI_MODEL_DEPLOYMENT_NAME";
+        public const string FoundryGroundingTool = "AZURE_AI_BING_CONNECTION_ID";
     }
 
     public static string GetInput(string[] args)

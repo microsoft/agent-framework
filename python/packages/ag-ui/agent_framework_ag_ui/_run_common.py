@@ -195,6 +195,23 @@ def _emit_tool_call(
         delta = (
             content.arguments if isinstance(content.arguments, str) else json.dumps(make_json_safe(content.arguments))
         )
+
+        if tool_call_id in flow.tool_calls_by_id:
+            accumulated = flow.tool_calls_by_id[tool_call_id]["function"]["arguments"]
+            # Guard against full-argument replay: if the accumulated arguments
+            # already equal the incoming delta, this is a non-delta replay of
+            # the complete arguments string (some providers send the full
+            # arguments again after streaming deltas). Skip the event emission
+            # and accumulation to prevent doubling in MESSAGES_SNAPSHOT.
+            # This mirrors the early-return behaviour of _emit_text().
+            # (Fixes #4194)
+            if accumulated and delta == accumulated:
+                logger.debug(
+                    "Skipping duplicate full-arguments replay for tool_call_id=%s",
+                    tool_call_id,
+                )
+                return events
+
         events.append(ToolCallArgsEvent(tool_call_id=tool_call_id, delta=delta))
 
         if tool_call_id in flow.tool_calls_by_id:

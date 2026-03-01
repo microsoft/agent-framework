@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from typing import Any
 
 from agent_framework import Message
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -26,14 +27,20 @@ Demonstrates:
 - Workflow completion when idle with no pending work
 
 Prerequisites:
-- Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Familiarity with Workflow events (WorkflowEvent)
 """
 
 
 async def main() -> None:
-    # 1) Create three domain agents using AzureOpenAIChatClient
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    # 1) Create three domain agents using AzureOpenAIResponsesClient
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
 
     researcher = client.as_agent(
         instructions=(

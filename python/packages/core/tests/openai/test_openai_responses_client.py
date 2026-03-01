@@ -40,11 +40,8 @@ from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
-    reason="No real OPENAI_API_KEY provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
+    reason="No real OPENAI_API_KEY provided; skipping integration tests.",
 )
 
 
@@ -1194,6 +1191,52 @@ def test_prepare_tools_for_openai_with_mcp() -> None:
     assert set(mcp["allowed_tools"]) == {"tool_a", "tool_b"}
     # approval mapping created from approval_mode dict
     assert "require_approval" in mcp
+
+
+def test_prepare_tools_for_openai_single_function_tool() -> None:
+    """Test that a single FunctionTool (not wrapped in a list) is handled correctly."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    @tool
+    def hello(name: str) -> str:
+        """Say hello."""
+        return name
+
+    resp_tools = client._prepare_tools_for_openai(hello)
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 1
+    tool_def = resp_tools[0]
+    assert tool_def["type"] == "function"
+    assert tool_def["name"] == "hello"
+    assert tool_def["strict"] is False
+    assert "parameters" in tool_def
+    params = tool_def["parameters"]
+    assert isinstance(params, dict)
+    assert params.get("type") == "object"
+    assert "properties" in params
+    assert "name" in params["properties"]
+    assert params["properties"]["name"]["type"] == "string"
+
+
+def test_prepare_tools_for_openai_single_dict_tool() -> None:
+    """Test that a single dict tool (not wrapped in a list) is handled correctly."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    web_tool = OpenAIResponsesClient.get_web_search_tool(search_context_size="low")
+    resp_tools = client._prepare_tools_for_openai(web_tool)
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 1
+    assert "type" in resp_tools[0]
+    assert resp_tools[0]["search_context_size"] == "low"
+
+
+def test_prepare_tools_for_openai_none() -> None:
+    """Test that passing None returns an empty list."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    resp_tools = client._prepare_tools_for_openai(None)
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 0
 
 
 def test_parse_response_from_openai_with_mcp_approval_request() -> None:
@@ -2362,6 +2405,7 @@ def test_with_callable_api_key() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 @pytest.mark.parametrize(
     "option_name,option_value,needs_validation",
@@ -2500,6 +2544,7 @@ async def test_integration_options(
 
 @pytest.mark.timeout(300)
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_integration_web_search() -> None:
     client = OpenAIResponsesClient(model_id="gpt-5")
@@ -2553,6 +2598,7 @@ async def test_integration_web_search() -> None:
     "race condition. See https://github.com/microsoft/agent-framework/issues/1669"
 )
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_integration_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
@@ -2586,6 +2632,7 @@ async def test_integration_file_search() -> None:
     "potential race condition. See https://github.com/microsoft/agent-framework/issues/1669"
 )
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_integration_streaming_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
