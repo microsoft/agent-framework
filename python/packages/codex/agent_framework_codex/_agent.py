@@ -377,12 +377,16 @@ class CodexAgent(BaseAgent, Generic[OptionsT]):
         """Ensure the client is connected for the specified session.
 
         If the requested session differs from the current one, recreates the client.
+        Treats None as a distinct session identity so that switching from a resumed
+        session back to a fresh session correctly creates a new client.
 
         Args:
             session_id: The session ID to use, or None for a new session.
         """
         needs_new_client = (
-            not self._started or self._client is None or (session_id and session_id != self._current_session_id)
+            not self._started
+            or self._client is None
+            or session_id != self._current_session_id
         )
 
         if needs_new_client:
