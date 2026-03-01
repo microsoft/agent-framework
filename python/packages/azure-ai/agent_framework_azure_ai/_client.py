@@ -602,7 +602,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 if item.type == "oauth_consent_request":
                     consent_link = item.consent_link
                     if consent_link and not consent_link.startswith("https://"):
-                        logger.warning("Received oauth_consent_request with non-HTTPS consent_link: %s", item)
+                        logger.warning("Skipping oauth_consent_request with non-HTTPS consent_link: %s", item)
                         consent_link = ""
                     if consent_link:
                         result.messages[0].contents.append(
@@ -629,7 +629,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             event_item = event.item
             consent_link = event_item.consent_link
             if consent_link and not consent_link.startswith("https://"):
-                logger.warning("Received oauth_consent_request with non-HTTPS consent_link: %s", event_item)
+                logger.warning("Skipping oauth_consent_request with non-HTTPS consent_link: %s", event_item)
                 consent_link = ""
             contents: list[Content] = []
             if consent_link:

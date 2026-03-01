@@ -374,10 +374,11 @@ def _emit_usage(content: Content) -> list[BaseEvent]:
 
 def _emit_oauth_consent(content: Content) -> list[BaseEvent]:
     """Emit an OAuth consent request as a custom event so frontends can render a consent link."""
-    consent_link = content.consent_link or ""
-    if not consent_link:
-        return []
-    return [CustomEvent(name="oauth_consent_request", value={"consent_link": consent_link})]
+    return (
+        [CustomEvent(name="oauth_consent_request", value={"consent_link": content.consent_link})]
+        if content.consent_link
+        else []
+    )
 
 
 def _emit_content(
