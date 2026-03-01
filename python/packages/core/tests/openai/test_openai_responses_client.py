@@ -2881,4 +2881,125 @@ async def test_prepare_options_excludes_continuation_token() -> None:
     assert run_options["background"] is True
 
 
+# region Store=False ID Stripping Tests (Issue #4357)
+
+
+async def test_prepare_options_strips_reasoning_and_function_call_ids_when_store_false() -> None:
+    """Test that _prepare_options strips server-assigned IDs from reasoning and function_call
+    items when store=False.
+
+    When store is disabled, server-assigned IDs (rs_*, fc_*) reference non-existent
+    server-persisted objects, causing 'Item not found' API errors during handoff workflows.
+    See: https://github.com/microsoft/agent-framework/issues/4357
+    """
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Simulate a handoff conversation with reasoning + function_call from a previous turn
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="search for hotels")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_abc123",
+                    text="I need to search for hotels",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_function_call(
+                    call_id="call_1",
+                    name="search_hotels",
+                    arguments='{"city": "Paris"}',
+                    additional_properties={"fc_id": "fc_def456"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_1",
+                    result="Found 3 hotels in Paris",
+                ),
+            ],
+        ),
+        Message(role="assistant", contents=[Content.from_text(text="I found hotels for you")]),
+        Message(role="user", contents=[Content.from_text(text="Book the first one")]),
+    ]
+
+    chat_options = ChatOptions(store=False)
+    run_options = await client._prepare_options(messages, chat_options)  # type: ignore
+
+    assert run_options["store"] is False
+
+    # Find reasoning and function_call items in the prepared input
+    reasoning_items = [item for item in run_options["input"] if isinstance(item, dict) and item.get("type") == "reasoning"]
+    fc_items = [item for item in run_options["input"] if isinstance(item, dict) and item.get("type") == "function_call"]
+
+    # Verify that IDs have been stripped
+    for item in reasoning_items:
+        assert "id" not in item, f"Reasoning item should not have 'id' when store=False, got: {item}"
+
+    for item in fc_items:
+        assert "id" not in item, f"Function call item should not have 'id' when store=False, got: {item}"
+
+
+async def test_prepare_options_preserves_reasoning_and_function_call_ids_when_store_true() -> None:
+    """Test that _prepare_options preserves server-assigned IDs from reasoning and function_call
+    items when store=True.
+
+    When store is enabled, server-assigned IDs are needed for the API to reference
+    previously persisted items.
+    """
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="search for hotels")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_abc123",
+                    text="I need to search for hotels",
+                    additional_properties={"status": "completed"},
+                ),
+                Content.from_function_call(
+                    call_id="call_1",
+                    name="search_hotels",
+                    arguments='{"city": "Paris"}',
+                    additional_properties={"fc_id": "fc_def456"},
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_1",
+                    result="Found 3 hotels in Paris",
+                ),
+            ],
+        ),
+        Message(role="assistant", contents=[Content.from_text(text="I found hotels for you")]),
+        Message(role="user", contents=[Content.from_text(text="Book the first one")]),
+    ]
+
+    chat_options = ChatOptions(store=True)
+    run_options = await client._prepare_options(messages, chat_options)  # type: ignore
+
+    assert run_options["store"] is True
+
+    # Find reasoning and function_call items in the prepared input
+    reasoning_items = [item for item in run_options["input"] if isinstance(item, dict) and item.get("type") == "reasoning"]
+    fc_items = [item for item in run_options["input"] if isinstance(item, dict) and item.get("type") == "function_call"]
+
+    # Verify that IDs are preserved when store=True
+    for item in reasoning_items:
+        assert "id" in item, f"Reasoning item should have 'id' when store=True, got: {item}"
+        assert item["id"] == "rs_abc123"
+
+    for item in fc_items:
+        assert "id" in item, f"Function call item should have 'id' when store=True, got: {item}"
+        assert item["id"] == "fc_def456"
+
+
 # endregion

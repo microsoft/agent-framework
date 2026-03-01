@@ -847,6 +847,17 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         if response_format:
             run_options["text_format"] = response_format
 
+        # When store=False, strip server-assigned IDs from reasoning and function_call
+        # items. These IDs (rs_*, fc_*) reference server-persisted objects that don't exist
+        # when store is disabled, causing "Item not found" API errors during handoff workflows.
+        if run_options.get("store") is False:
+            for item in run_options.get("input", []):
+                if isinstance(item, dict):
+                    if item.get("type") == "reasoning" and "id" in item:
+                        del item["id"]
+                    elif item.get("type") == "function_call" and "id" in item:
+                        del item["id"]
+
         return run_options
 
     def _check_model_presence(self, options: dict[str, Any]) -> None:
