@@ -88,9 +88,50 @@ export function RunWorkflowButton({
         isChatMessage: false,
       };
 
+    // Null type means no input required
+    if (inputSchema.type === "null") {
+      return {
+        needsInput: false,
+        hasDefaults: false,
+        fieldCount: 0,
+        canRunDirectly: true,
+        isChatMessage: false,
+      };
+    }
+
     if (inputSchema.type === "string") {
       return {
         needsInput: !inputSchema.default,
+        hasDefaults: !!inputSchema.default,
+        fieldCount: 1,
+        canRunDirectly: !!inputSchema.default,
+        isChatMessage: false,
+      };
+    }
+
+    if (inputSchema.type === "integer" || inputSchema.type === "number") {
+      return {
+        needsInput: inputSchema.default === undefined,
+        hasDefaults: inputSchema.default !== undefined,
+        fieldCount: 1,
+        canRunDirectly: inputSchema.default !== undefined,
+        isChatMessage: false,
+      };
+    }
+
+    if (inputSchema.type === "boolean") {
+      return {
+        needsInput: true,
+        hasDefaults: true,
+        fieldCount: 1,
+        canRunDirectly: false,
+        isChatMessage: false,
+      };
+    }
+
+    if (inputSchema.type === "array") {
+      return {
+        needsInput: true,
         hasDefaults: !!inputSchema.default,
         fieldCount: 1,
         canRunDirectly: !!inputSchema.default,
@@ -126,28 +167,42 @@ export function RunWorkflowButton({
     };
   }, [inputSchema]);
 
+  const buildDefaultData = (): Record<string, unknown> => {
+    const defaultData: Record<string, unknown> = {};
+
+    if (inputSchema?.type === "null") {
+      // No input needed
+    } else if (inputSchema?.type === "string" && inputSchema.default) {
+      defaultData.input = inputSchema.default;
+    } else if (inputSchema?.type === "boolean") {
+      defaultData.input = inputSchema.default ?? false;
+    } else if (
+      (inputSchema?.type === "integer" || inputSchema?.type === "number") &&
+      inputSchema.default !== undefined
+    ) {
+      defaultData.input = inputSchema.default;
+    } else if (inputSchema?.type === "array" && inputSchema.default) {
+      defaultData.input = inputSchema.default;
+    } else if (inputSchema?.type === "object" && inputSchema.properties) {
+      Object.entries(inputSchema.properties).forEach(
+        ([key, schema]: [string, JSONSchemaProperty]) => {
+          if (schema.default !== undefined) {
+            defaultData[key] = schema.default;
+          } else if (schema.enum && schema.enum.length > 0) {
+            defaultData[key] = schema.enum[0];
+          }
+        }
+      );
+    }
+
+    return defaultData;
+  };
+
   const handleDirectRun = () => {
     if (workflowState === "running" && onCancel) {
       onCancel();
     } else if (inputAnalysis.canRunDirectly) {
-      // Build default data
-      const defaultData: Record<string, unknown> = {};
-
-      if (inputSchema?.type === "string" && inputSchema.default) {
-        defaultData.input = inputSchema.default;
-      } else if (inputSchema?.type === "object" && inputSchema.properties) {
-        Object.entries(inputSchema.properties).forEach(
-          ([key, schema]: [string, JSONSchemaProperty]) => {
-            if (schema.default !== undefined) {
-              defaultData[key] = schema.default;
-            } else if (schema.enum && schema.enum.length > 0) {
-              defaultData[key] = schema.enum[0];
-            }
-          }
-        );
-      }
-
-      onRun(defaultData);
+      onRun(buildDefaultData());
     } else {
       setShowModal(true);
     }
@@ -155,24 +210,7 @@ export function RunWorkflowButton({
 
   const handleRunFromCheckpoint = (checkpointId: string) => {
     if (inputAnalysis.canRunDirectly) {
-      // Build default data
-      const defaultData: Record<string, unknown> = {};
-
-      if (inputSchema?.type === "string" && inputSchema.default) {
-        defaultData.input = inputSchema.default;
-      } else if (inputSchema?.type === "object" && inputSchema.properties) {
-        Object.entries(inputSchema.properties).forEach(
-          ([key, schema]: [string, JSONSchemaProperty]) => {
-            if (schema.default !== undefined) {
-              defaultData[key] = schema.default;
-            } else if (schema.enum && schema.enum.length > 0) {
-              defaultData[key] = schema.enum[0];
-            }
-          }
-        );
-      }
-
-      onRun(defaultData, checkpointId);
+      onRun(buildDefaultData(), checkpointId);
     } else {
       // TODO: Pass checkpoint ID to modal for custom inputs
       setShowModal(true);
@@ -204,7 +242,7 @@ export function RunWorkflowButton({
       <Loader2 className="w-4 h-4 animate-spin" />
     ) : workflowState === "error" ? (
       <RotateCcw className="w-4 h-4" />
-    ) : inputAnalysis.needsInput && !inputAnalysis.canRunDirectly ? (
+    ) : !inputAnalysis.canRunDirectly ? (
       <Settings className="w-4 h-4" />
     ) : (
       <Play className="w-4 h-4" />
@@ -381,8 +419,18 @@ export function RunWorkflowButton({
                   <Badge variant="secondary">
                     {inputAnalysis.isChatMessage
                       ? "Chat Message"
+                      : inputSchema.type === "null"
+                      ? "No Input"
                       : inputSchema.type === "string"
                       ? "Simple Text"
+                      : inputSchema.type === "integer"
+                      ? "Integer"
+                      : inputSchema.type === "number"
+                      ? "Number"
+                      : inputSchema.type === "boolean"
+                      ? "Boolean"
+                      : inputSchema.type === "array"
+                      ? "Array"
                       : "Structured Data"}
                   </Badge>
                 </div>
@@ -409,7 +457,21 @@ export function RunWorkflowButton({
               ) : (
                 <WorkflowInputForm
                   inputSchema={inputSchema}
-                  inputTypeName="Input"
+                  inputTypeName={
+                    inputAnalysis.fieldCount === 0
+                      ? "No Input"
+                      : inputSchema.type === "string"
+                      ? "String"
+                      : inputSchema.type === "integer"
+                      ? "Integer"
+                      : inputSchema.type === "number"
+                      ? "Number"
+                      : inputSchema.type === "boolean"
+                      ? "Boolean"
+                      : inputSchema.type === "array"
+                      ? "Array"
+                      : "Object"
+                  }
                   onSubmit={(values) => {
                     onRun(values as Record<string, unknown>);
                     setShowModal(false);

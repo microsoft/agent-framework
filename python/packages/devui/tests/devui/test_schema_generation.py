@@ -11,7 +11,12 @@ import pytest
 # Add parent package to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agent_framework_devui._utils import extract_response_type_from_executor, generate_input_schema
+from agent_framework_devui._utils import (
+    _parse_dict_input,
+    extract_response_type_from_executor,
+    generate_input_schema,
+    parse_input_for_type,
+)
 
 
 @dataclass
@@ -50,6 +55,86 @@ def test_builtin_types_schema_generation():
     int_schema = generate_input_schema(int)
     assert int_schema is not None
     assert isinstance(int_schema, dict)
+
+
+def test_none_type_schema_generation():
+    """Test schema generation for None type (workflows with no inputs)."""
+    none_schema = generate_input_schema(type(None))
+    assert none_schema is not None
+    assert isinstance(none_schema, dict)
+    assert none_schema == {"type": "null"}
+
+
+def test_optional_type_schema_generation():
+    """Test schema generation for Union/Optional types."""
+    # Test str | None (Optional[str])
+    optional_str_schema = generate_input_schema(str | None)
+    assert optional_str_schema is not None
+    assert isinstance(optional_str_schema, dict)
+    assert optional_str_schema.get("type") == "string"
+    assert optional_str_schema.get("default") is None
+
+    # Test int | None (Optional[int])
+    optional_int_schema = generate_input_schema(int | None)
+    assert optional_int_schema is not None
+    assert isinstance(optional_int_schema, dict)
+    assert optional_int_schema.get("type") == "integer"
+    assert optional_int_schema.get("default") is None
+
+
+def test_list_type_schema_generation():
+    """Test schema generation for generic list types."""
+    # Test list[str]
+    list_str_schema = generate_input_schema(list[str])
+    assert list_str_schema is not None
+    assert isinstance(list_str_schema, dict)
+    assert list_str_schema.get("type") == "array"
+    assert list_str_schema.get("items") == {"type": "string"}
+
+    # Test list[int]
+    list_int_schema = generate_input_schema(list[int])
+    assert list_int_schema is not None
+    assert isinstance(list_int_schema, dict)
+    assert list_int_schema.get("type") == "array"
+    assert list_int_schema.get("items") == {"type": "integer"}
+
+
+def test_bare_list_schema_generation():
+    """Test schema generation for bare list (no type argument)."""
+    bare_list_schema = generate_input_schema(list)
+    assert bare_list_schema is not None
+    assert isinstance(bare_list_schema, dict)
+    assert bare_list_schema.get("type") == "array"
+    assert "items" not in bare_list_schema
+
+
+def test_optional_list_schema_generation():
+    """Test schema generation for list[str] | None (exercises both Union and generic list paths)."""
+    optional_list_schema = generate_input_schema(list[str] | None)
+    assert optional_list_schema is not None
+    assert isinstance(optional_list_schema, dict)
+    assert optional_list_schema.get("type") == "array"
+    assert optional_list_schema.get("items") == {"type": "string"}
+    assert optional_list_schema.get("default") is None
+
+
+def test_parse_input_for_none_type():
+    """Test parse_input_for_type returns None when target_type is type(None)."""
+    assert parse_input_for_type("anything", type(None)) is None
+    assert parse_input_for_type(42, type(None)) is None
+    assert parse_input_for_type({"key": "val"}, type(None)) is None
+    assert parse_input_for_type(None, type(None)) is None
+
+
+def test_parse_dict_input_union_with_none_value():
+    """Test _parse_dict_input with Union types handles None values."""
+    # Explicit None value in input dict
+    result = _parse_dict_input({"input": None}, str | None)
+    assert result is None
+
+    # Empty dict for optional type treated as None
+    result = _parse_dict_input({}, str | None)
+    assert result is None
 
 
 def test_dataclass_schema_generation():

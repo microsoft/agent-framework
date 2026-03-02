@@ -2,6 +2,7 @@
 
 """Utility functions for DevUI."""
 
+import collections.abc as abc
 import inspect
 import json
 import logging
@@ -395,11 +396,14 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
     """Generate JSON schema for workflow input type.
 
     Supports multiple input types in priority order:
-    1. Built-in types (str, dict, int, etc.)
-    2. Pydantic models (via model_json_schema)
-    3. SerializationMixin classes (via __init__ introspection)
-    4. Dataclasses (via fields introspection)
-    5. Fallback to string
+    0. None type (type(None)) → {"type": "null"}
+    1. Union types (X | None) → extracts non-None type with default: None
+    2. Built-in types (str, dict, int, float, bool)
+    3. Generic types (list, List, Sequence)
+    4. Pydantic models (via model_json_schema)
+    5. SerializationMixin classes (via __init__ introspection)
+    6. Dataclasses (via fields introspection)
+    7. Fallback to string
 
     Args:
         input_type: Input type to generate schema for
@@ -407,7 +411,23 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
     Returns:
         JSON schema dict
     """
-    # 1. Built-in types
+    # Handle None type (no input required)
+    if input_type is type(None):
+        return {"type": "null"}
+
+    # Check for Union types (e.g., str | None, list[str] | None) before other generic types
+    origin = get_origin(input_type)
+    if origin is Union or isinstance(input_type, UnionType):
+        args = get_args(input_type)
+        # Check if it's a Union with None (Optional type)
+        if type(None) in args:
+            non_none_types = [arg for arg in args if arg is not type(None)]
+            if non_none_types:
+                base_schema = generate_input_schema(non_none_types[0])
+                base_schema["default"] = None
+                return base_schema
+
+    # 2. Built-in types
     if input_type is str:
         return {"type": "string"}
     if input_type is dict:
@@ -418,20 +438,31 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
         return {"type": "number"}
     if input_type is bool:
         return {"type": "boolean"}
+    if input_type is list:
+        return {"type": "array"}
 
-    # 2. Pydantic models (legacy support)
+    # 3. Generic types (list, List, Sequence, etc.)
+    if origin is not None:
+        if origin is list or origin is abc.Sequence:
+            args = get_args(input_type)
+            if args:
+                items_schema = _type_to_schema(args[0], "item")
+                return {"type": "array", "items": items_schema}
+            return {"type": "array"}
+
+    # 4. Pydantic models (legacy support)
     if hasattr(input_type, "model_json_schema"):
         return input_type.model_json_schema()  # type: ignore
 
-    # 3. SerializationMixin classes (Message, etc.)
+    # 5. SerializationMixin classes (Message, etc.)
     if is_serialization_mixin(input_type):
         return generate_schema_from_serialization_mixin(input_type)
 
-    # 4. Dataclasses
+    # 6. Dataclasses
     if is_dataclass(input_type):
         return generate_schema_from_dataclass(input_type)
 
-    # 5. Fallback to string
+    # 7. Fallback to string
     type_name = getattr(input_type, "__name__", str(input_type))
     return {"type": "string", "description": f"Input type: {type_name}"}
 
@@ -457,9 +488,18 @@ def parse_input_for_type(input_data: Any, target_type: type) -> Any:
     Returns:
         Parsed input matching target_type, or original input if parsing fails
     """
+    # Handle None type specially (when parameter is annotated as just `None`)
+    if target_type is type(None):
+        return None
+
     # If already correct type, return as-is
-    if isinstance(input_data, target_type):
-        return input_data
+    # Note: We skip isinstance check if target_type could cause TypeError
+    try:
+        if isinstance(input_data, target_type):
+            return input_data
+    except TypeError:
+        # isinstance can raise TypeError for some special types
+        pass
 
     # Handle string input
     if isinstance(input_data, str):
@@ -584,6 +624,25 @@ def _parse_dict_input(input_dict: dict[str, Any], target_type: type) -> Any:
     Returns:
         Parsed input or original dict
     """
+    # Handle Union types (e.g., str | None, int | None) - extract non-None type
+    origin = get_origin(target_type)
+    if origin is Union or isinstance(target_type, UnionType):
+        args = get_args(target_type)
+        non_none_types = [arg for arg in args if arg is not type(None)]
+        if len(non_none_types) == 1:
+            base_type = non_none_types[0]
+
+            # Handle None value explicitly
+            if "input" in input_dict and input_dict["input"] is None:
+                return None
+
+            # Handle empty dict for optional types - treat as None
+            if not input_dict:
+                return None
+
+            # Recursively parse with the base type
+            return _parse_dict_input(input_dict, base_type)
+
     # Handle primitive types - extract from common field names
     if target_type in (str, int, float, bool):
         try:
