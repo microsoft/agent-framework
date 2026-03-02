@@ -905,7 +905,9 @@ async def test_agent_streaming_vs_non_streaming() -> None:
 
     # Filter for agent events
     agent_response: list[AgentResponse[Any]] = [
-        cast(AgentResponse[Any], e.data) for e in stream_events if e.type == "output" and isinstance(e.data, AgentResponse)  # pyright: ignore[reportUnknownMemberType]
+        cast(AgentResponse[Any], e.data)  # pyright: ignore[reportUnknownMemberType]
+        for e in stream_events
+        if e.type == "output" and isinstance(e.data, AgentResponse)
     ]
     agent_response_updates = [
         e.data for e in stream_events if e.type == "output" and isinstance(e.data, AgentResponseUpdate)
