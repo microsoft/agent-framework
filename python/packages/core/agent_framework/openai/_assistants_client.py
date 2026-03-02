@@ -18,17 +18,19 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypedDict, cast
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
     FileCitationAnnotation,
-    FilePathAnnotation,
     FileCitationDeltaAnnotation,
+    FilePathAnnotation,
     FilePathDeltaAnnotation,
     ImageURLContentBlockParam,
     ImageURLParam,
-    Message as ThreadMessage,
     MessageContentPartParam,
     MessageDeltaEvent,
     Run,
     TextContentBlockParam,
     TextDeltaBlock,
+)
+from openai.types.beta.threads import (
+    Message as ThreadMessage,
 )
 from openai.types.beta.threads.run_create_params import AdditionalMessage
 from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
@@ -634,7 +636,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                                     }
                                     if annotation.file_citation and annotation.file_citation.quote:
                                         props["quote"] = annotation.file_citation.quote
-                                    ann: Annotation = Annotation(
+                                    ann = Annotation(
                                         type="citation",
                                         additional_properties=props,
                                         raw_representation=annotation,

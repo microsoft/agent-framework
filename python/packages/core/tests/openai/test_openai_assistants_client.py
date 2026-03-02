@@ -7,19 +7,6 @@ from typing import Annotated, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from openai.types.beta.threads import (
-    FileCitationAnnotation,
-    FilePathAnnotation,
-    Message as ThreadMessage,
-    MessageDeltaEvent,
-    Run,
-    TextDeltaBlock,
-)
-from openai.types.beta.threads.file_citation_delta_annotation import FileCitationDeltaAnnotation
-from openai.types.beta.threads.file_path_delta_annotation import FilePathDeltaAnnotation
-from openai.types.beta.threads.runs import RunStep
-from pydantic import Field
-
 from agent_framework import (
     Agent,
     AgentResponse,
@@ -33,6 +20,20 @@ from agent_framework import (
     tool,
 )
 from agent_framework.openai import OpenAIAssistantsClient
+from openai.types.beta.threads import (
+    FileCitationAnnotation,
+    FilePathAnnotation,
+    MessageDeltaEvent,
+    Run,
+    TextDeltaBlock,
+)
+from openai.types.beta.threads import (
+    Message as ThreadMessage,
+)
+from openai.types.beta.threads.file_citation_delta_annotation import FileCitationDeltaAnnotation
+from openai.types.beta.threads.file_path_delta_annotation import FilePathDeltaAnnotation
+from openai.types.beta.threads.runs import RunStep
+from pydantic import Field
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
@@ -1690,8 +1691,7 @@ class TestMessageCompletedAnnotations:
     def client(self):
         """Create a client instance for testing."""
         with patch.object(OpenAIAssistantsClient, "__init__", lambda self, **kw: None):
-            c = object.__new__(OpenAIAssistantsClient)
-            return c
+            return object.__new__(OpenAIAssistantsClient)
 
     @pytest.mark.asyncio
     async def test_message_completed_with_file_citation(self, client):
