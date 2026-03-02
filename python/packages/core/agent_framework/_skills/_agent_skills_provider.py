@@ -339,7 +339,10 @@ class AgentSkillsProvider(BaseContextProvider):
                 return str(result)
             except Exception as exc:
                 logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
-                return f"Error ({type(exc).__name__}): Failed to read resource '{resource_name}' from skill '{skill_name}'."
+                return (
+                    f"Error ({type(exc).__name__}): Failed to read resource"
+                    f" '{resource_name}' from skill '{skill_name}'."
+                )
 
         return f"Error: Resource '{resource.name}' has no content or function."
 
