@@ -1,14 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from collections.abc import Sequence
+
+from .._types import Message
+
 """Helpers for managing chat conversation history.
 
 These utilities operate on standard `list[Message]` collections and simple
 dictionary snapshots so orchestrators can share logic without new mixins.
 """
-
-from collections.abc import Sequence
-
-from .._types import Message
 
 
 def latest_user_message(conversation: Sequence[Message]) -> Message:

@@ -12,6 +12,7 @@ This module provides state management for declarative workflows, handling:
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Mapping
 from typing import Any, cast
 
@@ -107,11 +108,15 @@ class WorkflowState:
         self._inputs: dict[str, Any] = dict(inputs) if inputs else {}
         self._local: dict[str, Any] = {}
         self._outputs: dict[str, Any] = {}
+        conversation_id = str(uuid.uuid4())
         self._system: dict[str, Any] = {
-            "ConversationId": "default",
+            "ConversationId": conversation_id,
             "LastMessage": {"Text": "", "Id": ""},
             "LastMessageText": "",
             "LastMessageId": "",
+            "conversations": {
+                conversation_id: {"id": conversation_id, "messages": []},
+            },
         }
         self._agent: dict[str, Any] = {}
         self._conversation: dict[str, Any] = {

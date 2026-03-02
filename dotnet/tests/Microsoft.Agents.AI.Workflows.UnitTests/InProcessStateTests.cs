@@ -131,11 +131,11 @@ public partial class InProcessStateTests
                 .AddEdge(writer, validator, MaxTurns(4))
                 .AddEdge(validator, writer, MaxTurns(4)).Build();
 
-        Checkpointed<Run> checkpointed = await InProcessExecution.RunAsync<TurnToken>(workflow, new(), CheckpointManager.Default);
+        Run checkpointed = await InProcessExecution.RunAsync<TurnToken>(workflow, new(), CheckpointManager.Default);
 
         checkpointed.Checkpoints.Should().HaveCount(4);
 
-        RunStatus status = await checkpointed.Run.GetStatusAsync();
+        RunStatus status = await checkpointed.GetStatusAsync();
         status.Should().Be(RunStatus.Idle);
 
         writer.Completed.Should().BeTrue();

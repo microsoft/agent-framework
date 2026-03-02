@@ -47,7 +47,7 @@ public class RepresentationTests
     {
         ExecutorInfo info = binding.ToExecutorInfo();
 
-        info.IsMatch(await binding.CreateInstanceAsync(runId: string.Empty)).Should().BeTrue();
+        info.IsMatch(await binding.CreateInstanceAsync(sessionId: string.Empty)).Should().BeTrue();
     }
 
     [Fact]

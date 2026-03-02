@@ -219,7 +219,7 @@ When using the [Durable Task Scheduler](https://learn.microsoft.com/azure/azure-
 
 ## Samples
 
-- **.NET** – [Console app samples](../../../dotnet/samples/Durable/Agents/ConsoleApps/) and [Azure Functions samples](../../../dotnet/samples/Durable/Agents/AzureFunctions/) covering single-agent, chaining, concurrency, conditionals, human-in-the-loop, long-running tools, MCP tool exposure, and reliable streaming.
+- **.NET** – [Console app samples](../../../dotnet/samples/04-hosting/DurableAgents/ConsoleApps/) and [Azure Functions samples](../../../dotnet/samples/04-hosting/DurableAgents/AzureFunctions/) covering single-agent, chaining, concurrency, conditionals, human-in-the-loop, long-running tools, MCP tool exposure, and reliable streaming.
 - **Python** – [Durable Task samples](../../../python/samples/04-hosting/durabletask/) covering single-agent, multi-agent, streaming, chaining, concurrency, conditionals, and human-in-the-loop.
 
 ## Packages

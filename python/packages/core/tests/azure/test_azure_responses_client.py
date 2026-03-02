@@ -21,14 +21,10 @@ from agent_framework import (
     tool,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
-from agent_framework.exceptions import ServiceInitializationError
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
-    reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
+    reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests.",
 )
 
 logger = logging.getLogger(__name__)
@@ -81,7 +77,7 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
 
 def test_init_validation_fail() -> None:
     # Test successful initialization
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         AzureOpenAIResponsesClient(api_key="34523", deployment_name={"test": "dict"})  # type: ignore
 
 
@@ -92,6 +88,29 @@ def test_init_model_id_constructor(azure_openai_unit_test_env: dict[str, str]) -
 
     assert azure_responses_client.model_id == model_id
     assert isinstance(azure_responses_client, SupportsChatGetResponse)
+
+
+def test_init_model_id_kwarg(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test that model_id kwarg correctly sets the deployment name (issue #4299)."""
+    azure_responses_client = AzureOpenAIResponsesClient(model_id="gpt-4o")
+
+    assert azure_responses_client.model_id == "gpt-4o"
+    assert isinstance(azure_responses_client, SupportsChatGetResponse)
+
+
+def test_init_model_id_kwarg_does_not_override_deployment_name(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test that deployment_name takes precedence over model_id kwarg (issue #4299)."""
+    azure_responses_client = AzureOpenAIResponsesClient(deployment_name="my-deployment", model_id="gpt-4o")
+
+    assert azure_responses_client.model_id == "my-deployment"
+    assert isinstance(azure_responses_client, SupportsChatGetResponse)
+
+
+def test_init_model_id_kwarg_none(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test that model_id=None does not override the env-var deployment name."""
+    azure_responses_client = AzureOpenAIResponsesClient(model_id=None)
+
+    assert azure_responses_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
 
 
 def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -113,7 +132,7 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]], indirect=True)
 def test_init_with_empty_model_id(azure_openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         AzureOpenAIResponsesClient()
 
 
@@ -212,7 +231,7 @@ def test_create_client_from_project_with_endpoint() -> None:
 
 def test_create_client_from_project_missing_endpoint() -> None:
     """Test _create_client_from_project raises error when endpoint is missing."""
-    with pytest.raises(ServiceInitializationError, match="project endpoint is required"):
+    with pytest.raises(ValueError, match="project endpoint is required"):
         AzureOpenAIResponsesClient._create_client_from_project(
             project_client=None,
             project_endpoint=None,
@@ -222,7 +241,7 @@ def test_create_client_from_project_missing_endpoint() -> None:
 
 def test_create_client_from_project_missing_credential() -> None:
     """Test _create_client_from_project raises error when credential is missing."""
-    with pytest.raises(ServiceInitializationError, match="credential is required"):
+    with pytest.raises(ValueError, match="credential is required"):
         AzureOpenAIResponsesClient._create_client_from_project(
             project_client=None,
             project_endpoint="https://test-project.services.ai.azure.com",
@@ -255,6 +274,7 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 @pytest.mark.parametrize(
     "option_name,option_value,needs_validation",
@@ -393,6 +413,7 @@ async def test_integration_options(
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_integration_web_search() -> None:
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
@@ -441,6 +462,7 @@ async def test_integration_web_search() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_file_search() -> None:
     """Test Azure responses client with file search tool."""
@@ -470,6 +492,7 @@ async def test_integration_client_file_search() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_file_search_streaming() -> None:
     """Test Azure responses client with file search tool and streaming."""
@@ -501,6 +524,7 @@ async def test_integration_client_file_search_streaming() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_agent_hosted_mcp_tool() -> None:
     """Integration test for MCP tool with Azure Response Agent using Microsoft Learn MCP."""
@@ -525,6 +549,7 @@ async def test_integration_client_agent_hosted_mcp_tool() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_agent_hosted_code_interpreter_tool():
     """Test Azure Responses Client agent with code interpreter tool."""
@@ -544,6 +569,7 @@ async def test_integration_client_agent_hosted_code_interpreter_tool():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_integration_client_agent_existing_session():
     """Test Azure Responses Client agent with existing session to continue conversations across agent instances."""

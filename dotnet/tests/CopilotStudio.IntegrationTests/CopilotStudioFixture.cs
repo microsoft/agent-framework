@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -13,6 +13,7 @@ using Microsoft.Agents.CopilotStudio.Client;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Shared.IntegrationTests;
 
 namespace CopilotStudio.IntegrationTests;
 
@@ -31,10 +32,11 @@ public class CopilotStudioFixture : IAgentFixture
     {
         const string CopilotStudioHttpClientName = nameof(CopilotStudioAgent);
 
-        var config = TestConfiguration.LoadSection<CopilotStudioAgentConfiguration>();
-        var settings = new CopilotStudioConnectionSettings(config.TenantId, config.AppClientId)
+        var settings = new CopilotStudioConnectionSettings(
+            TestConfiguration.GetRequiredValue(TestSettings.CopilotStudioTenantId),
+            TestConfiguration.GetRequiredValue(TestSettings.CopilotStudioAgentAppId))
         {
-            DirectConnectUrl = config.DirectConnectUrl,
+            DirectConnectUrl = TestConfiguration.GetRequiredValue(TestSettings.CopilotStudioDirectConnectUrl),
         };
 
         ServiceCollection services = new();

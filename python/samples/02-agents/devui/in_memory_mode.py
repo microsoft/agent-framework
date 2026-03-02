@@ -10,7 +10,14 @@ import logging
 import os
 from typing import Annotated
 
-from agent_framework import Agent, Executor, WorkflowBuilder, WorkflowContext, handler, tool
+from agent_framework import (
+    Agent,
+    Executor,
+    WorkflowBuilder,
+    WorkflowContext,
+    handler,
+    tool,
+)
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.devui import serve
 from dotenv import load_dotenv
@@ -30,7 +37,9 @@ def get_weather(
     """Get the weather for a given location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
     temperature = 53
-    return f"The weather in {location} is {conditions[0]} with a high of {temperature}°C."
+    return (
+        f"The weather in {location} is {conditions[0]} with a high of {temperature}°C."
+    )
 
 
 @tool(approval_mode="never_require")
@@ -59,7 +68,9 @@ class AddExclamation(Executor):
     """Add exclamation mark to text."""
 
     @handler
-    async def add_exclamation(self, text: str, ctx: WorkflowContext[Never, str]) -> None:
+    async def add_exclamation(
+        self, text: str, ctx: WorkflowContext[Never, str]
+    ) -> None:
         """Add exclamation and yield as workflow output."""
         result = f"{text}!"
         await ctx.yield_output(result)
@@ -74,9 +85,9 @@ def main():
     # Create Azure OpenAI chat client
     client = AzureOpenAIChatClient(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
-        azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
+        deployment_name=os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+        endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
         api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
-        model_id=os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", "gpt-4o"),
     )
 
     # Create agents

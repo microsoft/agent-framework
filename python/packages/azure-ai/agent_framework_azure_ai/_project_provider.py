@@ -18,7 +18,7 @@ from agent_framework import (
 from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     AgentReference,
@@ -29,7 +29,6 @@ from azure.ai.projects.models import (
 from azure.ai.projects.models import (
     FunctionTool as AzureFunctionTool,
 )
-from azure.core.credentials_async import AsyncTokenCredential
 
 from ._client import AzureAIClient, AzureAIProjectAgentOptions
 from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_tools, to_azure_ai_tools
@@ -103,7 +102,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         *,
         project_endpoint: str | None = None,
         model: str | None = None,
-        credential: AsyncTokenCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -116,13 +115,14 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
                 Ignored when a project_client is passed.
             model: The default model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
-            credential: Azure async credential to use for authentication.
+            credential: Azure credential for authentication. Accepts a TokenCredential,
+                AsyncTokenCredential, or a callable token provider.
                 Required when project_client is not provided.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
 
         Raises:
-            ServiceInitializationError: If required parameters are missing or invalid.
+            ValueError: If required parameters are missing or invalid.
         """
         self._settings = load_settings(
             AzureAISettings,
@@ -139,17 +139,17 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         if project_client is None:
             resolved_endpoint = self._settings.get("project_endpoint")
             if not resolved_endpoint:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
                     "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
                 )
 
             if not credential:
-                raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
+                raise ValueError("Azure credential is required when project_client is not provided.")
 
             project_client = AIProjectClient(
                 endpoint=resolved_endpoint,
-                credential=credential,
+                credential=credential,  # type: ignore[arg-type]
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             self._should_close_client = True
@@ -185,12 +185,12 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             Agent: A Agent instance configured with the created agent.
 
         Raises:
-            ServiceInitializationError: If required parameters are missing.
+            ValueError: If required parameters are missing.
         """
         # Resolve model from parameter or environment variable
         resolved_model = model or self._settings.get("model_deployment_name")
         if not resolved_model:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Model deployment name is required. Provide 'model' parameter "
                 "or set 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
             )

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import httpx
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
 from agent_framework.observability import get_tracer
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -39,18 +40,19 @@ logger = logging.getLogger("agent_framework.purview")
 class PurviewClient:
     """Async client for calling Graph Purview endpoints.
 
-    Supports both synchronous TokenCredential and asynchronous AsyncTokenCredential implementations.
-    A sync credential will be invoked in a thread to avoid blocking the event loop.
+    Supports synchronous TokenCredential, asynchronous AsyncTokenCredential,
+    or callable token providers. A sync credential will be invoked in a thread
+    to avoid blocking the event loop.
     """
 
     def __init__(
         self,
-        credential: TokenCredential | AsyncTokenCredential,
+        credential: AzureCredentialTypes | AzureTokenProvider,
         settings: PurviewSettings,
         *,
         timeout: float | None = 10.0,
     ):
-        self._credential: TokenCredential | AsyncTokenCredential = credential
+        self._credential: AzureCredentialTypes | AzureTokenProvider = credential
         self._settings = settings
         self._graph_uri = (settings.get("graph_base_uri") or "https://graph.microsoft.com/v1.0/").rstrip("/")
         self._timeout = timeout
@@ -60,10 +62,14 @@ class PurviewClient:
         await self._client.aclose()
 
     async def _get_token(self, *, tenant_id: str | None = None) -> str:
-        """Acquire an access token using either async or sync credential."""
-        scopes = get_purview_scopes(self._settings)
+        """Acquire an access token using either async or sync credential, or callable token provider."""
         cred = self._credential
-        token = cred.get_token(*scopes, tenant_id=tenant_id)
+        # Callable token provider — returns a token string directly
+        if callable(cred) and not isinstance(cred, (TokenCredential, AsyncTokenCredential)):
+            result = cred()
+            return await result if inspect.isawaitable(result) else result  # type: ignore[return-value]
+        scopes = get_purview_scopes(self._settings)
+        token = cred.get_token(*scopes, tenant_id=tenant_id)  # type: ignore[union-attr]
         token = await token if inspect.isawaitable(token) else token
         return token.token
 

@@ -22,27 +22,27 @@ namespace Microsoft.Agents.AI.Workflows.InProc;
 /// scenarios where workflow execution does not require executor distribution. </para></remarks>
 internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 {
-    public static InProcessRunner CreateTopLevelRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? runId = null, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null)
+    public static InProcessRunner CreateTopLevelRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? sessionId = null, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null)
     {
         return new InProcessRunner(workflow,
                                    checkpointManager,
-                                   runId,
+                                   sessionId,
                                    enableConcurrentRuns: enableConcurrentRuns,
                                    knownValidInputTypes: knownValidInputTypes);
     }
 
-    public static InProcessRunner CreateSubworkflowRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? runId = null, object? existingOwnerSignoff = null, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null)
+    public static InProcessRunner CreateSubworkflowRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? sessionId = null, object? existingOwnerSignoff = null, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null)
     {
         return new InProcessRunner(workflow,
                                    checkpointManager,
-                                   runId,
+                                   sessionId,
                                    existingOwnerSignoff: existingOwnerSignoff,
                                    enableConcurrentRuns: enableConcurrentRuns,
                                    knownValidInputTypes: knownValidInputTypes,
                                    subworkflow: true);
     }
 
-    private InProcessRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? runId = null, object? existingOwnerSignoff = null, bool subworkflow = false, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null)
+    private InProcessRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? sessionId = null, object? existingOwnerSignoff = null, bool subworkflow = false, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null)
     {
         if (enableConcurrentRuns && !workflow.AllowConcurrent)
         {
@@ -50,11 +50,11 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
                 $"not supporting concurrent: {string.Join(", ", workflow.NonConcurrentExecutorIds)}");
         }
 
-        this.RunId = runId ?? Guid.NewGuid().ToString("N");
+        this.SessionId = sessionId ?? Guid.NewGuid().ToString("N");
         this.StartExecutorId = workflow.StartExecutorId;
 
         this.Workflow = Throw.IfNull(workflow);
-        this.RunContext = new InProcessRunnerContext(workflow, this.RunId, withCheckpointing: checkpointManager != null, this.OutgoingEvents, this.StepTracer, existingOwnerSignoff, subworkflow, enableConcurrentRuns);
+        this.RunContext = new InProcessRunnerContext(workflow, this.SessionId, checkpointingEnabled: checkpointManager != null, this.OutgoingEvents, this.StepTracer, existingOwnerSignoff, subworkflow, enableConcurrentRuns);
         this.CheckpointManager = checkpointManager;
 
         this._knownValidInputTypes = knownValidInputTypes != null
@@ -65,8 +65,8 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         this.EdgeMap = new EdgeMap(this.RunContext, this.Workflow.Edges, this.Workflow.Ports.Values, this.Workflow.StartExecutorId, this.StepTracer);
     }
 
-    /// <inheritdoc cref="ISuperStepRunner.RunId"/>
-    public string RunId { get; }
+    /// <inheritdoc cref="ISuperStepRunner.SessionId"/>
+    public string SessionId { get; }
 
     /// <inheritdoc cref="ISuperStepRunner.StartExecutorId"/>
     public string StartExecutorId { get; }
@@ -160,6 +160,8 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
     bool ISuperStepRunner.HasUnservicedRequests => this.RunContext.HasUnservicedRequests;
     bool ISuperStepRunner.HasUnprocessedMessages => this.RunContext.NextStepHasActions;
+
+    public bool IsCheckpointingEnabled => this.RunContext.IsCheckpointingEnabled;
 
     public IReadOnlyList<CheckpointInfo> Checkpoints => this._checkpoints;
 
@@ -301,7 +303,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         Dictionary<ScopeKey, PortableValue> stateData = await this.RunContext.StateManager.ExportStateAsync().ConfigureAwait(false);
 
         Checkpoint checkpoint = new(this.StepTracer.StepNumber, this._workflowInfoCache, runnerData, stateData, edgeData, this._lastCheckpointInfo);
-        this._lastCheckpointInfo = await this.CheckpointManager.CommitCheckpointAsync(this.RunId, checkpoint).ConfigureAwait(false);
+        this._lastCheckpointInfo = await this.CheckpointManager.CommitCheckpointAsync(this.SessionId, checkpoint).ConfigureAwait(false);
         this.StepTracer.TraceCheckpointCreated(this._lastCheckpointInfo);
         this._checkpoints.Add(this._lastCheckpointInfo);
     }
@@ -315,7 +317,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
             throw new InvalidOperationException("This run was not configured with a CheckpointManager, so it cannot restore checkpoints.");
         }
 
-        Checkpoint checkpoint = await this.CheckpointManager.LookupCheckpointAsync(this.RunId, checkpointInfo)
+        Checkpoint checkpoint = await this.CheckpointManager.LookupCheckpointAsync(this.SessionId, checkpointInfo)
                                                             .ConfigureAwait(false);
 
         // Validate the checkpoint is compatible with this workflow
@@ -325,6 +327,8 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
             throw new InvalidDataException("The specified checkpoint is not compatible with the workflow associated with this runner.");
         }
 
+        ValueTask restoreCheckpointIndexTask = UpdateCheckpointIndexAsync();
+
         await this.RunContext.StateManager.ImportStateAsync(checkpoint).ConfigureAwait(false);
         await this.RunContext.ImportStateAsync(checkpoint).ConfigureAwait(false);
 
@@ -332,10 +336,18 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         ValueTask republishRequestsTask = this.RunContext.RepublishUnservicedRequestsAsync(cancellationToken);
 
         await this.EdgeMap.ImportStateAsync(checkpoint).ConfigureAwait(false);
-        await Task.WhenAll(executorNotifyTask, republishRequestsTask.AsTask()).ConfigureAwait(false);
+        await Task.WhenAll(executorNotifyTask,
+                           republishRequestsTask.AsTask(),
+                           restoreCheckpointIndexTask.AsTask()).ConfigureAwait(false);
 
         this._lastCheckpointInfo = checkpointInfo;
         this.StepTracer.Reload(this.StepTracer.StepNumber);
+
+        async ValueTask UpdateCheckpointIndexAsync()
+        {
+            this._checkpoints.Clear();
+            this._checkpoints.AddRange(await this.CheckpointManager!.RetrieveIndexAsync(this.SessionId).ConfigureAwait(false));
+        }
     }
 
     private bool CheckWorkflowMatch(Checkpoint checkpoint) =>

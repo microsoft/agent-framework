@@ -199,7 +199,7 @@ async def main() -> None:
 
     async for event in workflow.run(task, stream=True):
         if event.type == "output":
-            print(f"{event.data}", end="", flush=True)
+            print(f"\n{event.data}", flush=True)
 
     print("\n" + "=" * 60)
     print("Research Complete")

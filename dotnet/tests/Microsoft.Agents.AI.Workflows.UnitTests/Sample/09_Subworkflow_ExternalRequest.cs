@@ -69,10 +69,10 @@ internal static class Step9EntryPoint
 
         var requestPort = RequestPort.Create<TRequest, TResponse>(id);
 
-        return builder.ForwardMessage<ExternalRequest>(source, targets: [filter], condition: message => message.DataIs<TRequest>())
-                      .ForwardMessage<ExternalRequest>(filter, targets: [requestPort], condition: message => message.DataIs<TRequest>())
-                      .ForwardMessage<ExternalResponse>(requestPort, targets: [filter], condition: message => message.DataIs<TResponse>())
-                      .ForwardMessage<ExternalResponse>(filter, targets: [source], condition: message => message.DataIs<TResponse>());
+        return builder.ForwardMessage<ExternalRequest>(source, targets: [filter], condition: message => message.IsDataOfType<TRequest>())
+                      .ForwardMessage<ExternalRequest>(filter, targets: [requestPort], condition: message => message.IsDataOfType<TRequest>())
+                      .ForwardMessage<ExternalResponse>(requestPort, targets: [filter], condition: message => message.IsDataOfType<TResponse>())
+                      .ForwardMessage<ExternalResponse>(filter, targets: [source], condition: message => message.IsDataOfType<TResponse>());
     }
 
     public static WorkflowBuilder AddExternalRequest<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorBinding source, string? id = null)
@@ -207,11 +207,11 @@ internal static class Step9EntryPoint
             }
             else if (evt is RequestInfoEvent requestInfoEvent)
             {
-                if (requestInfoEvent.Request.DataIs<ResourceRequest>())
+                if (requestInfoEvent.Request.IsDataOfType<ResourceRequest>())
                 {
                     resourceRequests.Add(requestInfoEvent.Request);
                 }
-                else if (requestInfoEvent.Request.DataIs<PolicyCheckRequest>())
+                else if (requestInfoEvent.Request.IsDataOfType<PolicyCheckRequest>())
                 {
                     policyRequests.Add(requestInfoEvent.Request);
                 }
@@ -237,14 +237,14 @@ internal static class Step9EntryPoint
 
         foreach (ExternalRequest request in resourceRequests)
         {
-            ResourceRequest resourceRequest = request.DataAs<ResourceRequest>()!;
+            ResourceRequest resourceRequest = request.Data.As<ResourceRequest>()!;
             resourceRequest.Id.Should().BeOneOf(ResourceMissIds);
             responses.Add(request.CreateResponse(Part2FinishedResponses[resourceRequest.Id].ResourceResponse!));
         }
 
         foreach (ExternalRequest request in policyRequests)
         {
-            PolicyCheckRequest policyRequest = request.DataAs<PolicyCheckRequest>()!;
+            PolicyCheckRequest policyRequest = request.Data.As<PolicyCheckRequest>()!;
             policyRequest.Id.Should().BeOneOf(PolicyMissIds);
             responses.Add(request.CreateResponse(Part2FinishedResponses[policyRequest.Id].PolicyResponse!));
         }
@@ -372,7 +372,7 @@ internal sealed class ResourceCache()
 
     private async ValueTask UnwrapAndHandleRequestAsync(ExternalRequest request, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        if (request.DataIs(out ResourceRequest? resourceRequest))
+        if (request.TryGetDataAs(out ResourceRequest? resourceRequest))
         {
             ResourceResponse? response = await this.TryHandleResourceRequestAsync(resourceRequest, context, cancellationToken)
                                                    .ConfigureAwait(false);
@@ -421,7 +421,7 @@ internal sealed class ResourceCache()
 
     private ValueTask CollectResultAsync(ExternalResponse response, IWorkflowContext context)
     {
-        if (response.DataIs<ResourceResponse>())
+        if (response.IsDataOfType<ResourceResponse>())
         {
             // Normally we'd update the cache according to whatever logic we want here.
             return context.SendMessageAsync(response);
@@ -459,7 +459,7 @@ internal sealed class QuotaPolicyEngine()
 
     private async ValueTask UnwrapAndHandleRequestAsync(ExternalRequest request, IWorkflowContext context)
     {
-        if (request.DataIs(out PolicyCheckRequest? policyRquest))
+        if (request.TryGetDataAs(out PolicyCheckRequest? policyRquest))
         {
             PolicyResponse? response = await this.TryHandlePolicyCheckRequestAsync(policyRquest, context)
                                                  .ConfigureAwait(false);
@@ -507,7 +507,7 @@ internal sealed class QuotaPolicyEngine()
     }
     private ValueTask CollectAndForwardAsync(ExternalResponse response, IWorkflowContext context)
     {
-        if (response.DataIs<PolicyResponse>())
+        if (response.IsDataOfType<PolicyResponse>())
         {
             return context.SendMessageAsync(response);
         }
@@ -569,7 +569,7 @@ internal sealed class Coordinator() : Executor(nameof(Coordinator), declareCross
 
     internal async ValueTask RunWorkflowHandleEventsAsync<TInput>(Workflow workflow, TInput input) where TInput : notnull
     {
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
+        StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input);
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             switch (evt)

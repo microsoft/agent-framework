@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from agent_framework import SupportsChatGetResponse
 from agent_framework._settings import load_settings
-from agent_framework.exceptions import ServiceInitializationError, SettingNotFoundError
+from agent_framework.exceptions import SettingNotFoundError
 
 from agent_framework_foundry_local import FoundryLocalClient
 from agent_framework_foundry_local._foundry_local_client import FoundryLocalSettings
@@ -103,7 +103,7 @@ def test_foundry_local_client_init_model_not_found(mock_foundry_local_manager: M
             "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
             return_value=mock_foundry_local_manager,
         ),
-        pytest.raises(ServiceInitializationError, match="not found in Foundry Local"),
+        pytest.raises(ValueError, match="not found in Foundry Local"),
     ):
         FoundryLocalClient(model_id="unknown-model")
 
@@ -171,7 +171,7 @@ def test_foundry_local_client_init_model_not_found_with_device(mock_foundry_loca
             "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
             return_value=mock_foundry_local_manager,
         ),
-        pytest.raises(ServiceInitializationError, match="unknown-model:GPU.*not found"),
+        pytest.raises(ValueError, match="unknown-model:GPU.*not found"),
     ):
         FoundryLocalClient(model_id="unknown-model", device=DeviceType.GPU)
 

@@ -14,7 +14,6 @@ from agent_framework import (
     tool,
 )
 from agent_framework._settings import load_settings
-from agent_framework.exceptions import ServiceInitializationError
 from anthropic.types.beta import (
     BetaMessage,
     BetaTextBlock,
@@ -30,11 +29,8 @@ from agent_framework_anthropic._chat_client import AnthropicSettings
 VALID_PNG_BASE64 = b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
 skip_if_anthropic_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("ANTHROPIC_API_KEY", "") in ("", "test-api-key-12345"),
-    reason="No real ANTHROPIC_API_KEY provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("ANTHROPIC_API_KEY", "") in ("", "test-api-key-12345"),
+    reason="No real ANTHROPIC_API_KEY provided; skipping integration tests.",
 )
 
 
@@ -128,7 +124,7 @@ def test_anthropic_client_init_missing_api_key() -> None:
     with patch("agent_framework_anthropic._chat_client.load_settings") as mock_load:
         mock_load.return_value = {"api_key": None, "chat_model_id": "claude-3-5-sonnet-20241022"}
 
-        with pytest.raises(ServiceInitializationError, match="Anthropic API key is required"):
+        with pytest.raises(ValueError, match="Anthropic API key is required"):
             AnthropicClient()
 
 
@@ -916,6 +912,7 @@ def get_weather(
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_basic_chat() -> None:
     """Integration test for basic chat completion."""
@@ -933,6 +930,7 @@ async def test_anthropic_client_integration_basic_chat() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_streaming_chat() -> None:
     """Integration test for streaming chat completion."""
@@ -949,6 +947,7 @@ async def test_anthropic_client_integration_streaming_chat() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_function_calling() -> None:
     """Integration test for function calling."""
@@ -969,6 +968,7 @@ async def test_anthropic_client_integration_function_calling() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_hosted_tools() -> None:
     """Integration test for hosted tools."""
@@ -994,6 +994,7 @@ async def test_anthropic_client_integration_hosted_tools() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_with_system_message() -> None:
     """Integration test with system message."""
@@ -1011,6 +1012,7 @@ async def test_anthropic_client_integration_with_system_message() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_temperature_control() -> None:
     """Integration test with temperature control."""
@@ -1028,6 +1030,7 @@ async def test_anthropic_client_integration_temperature_control() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_ordering() -> None:
     """Integration test with ordering."""
@@ -1048,6 +1051,7 @@ async def test_anthropic_client_integration_ordering() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_images() -> None:
     """Integration test with images."""

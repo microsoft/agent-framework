@@ -66,6 +66,8 @@ class AGUIHttpService:
         messages: list[dict[str, Any]],
         state: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
+        available_interrupts: list[dict[str, Any]] | None = None,
+        resume: dict[str, Any] | None = None,
     ) -> AsyncIterable[dict[str, Any]]:
         """Post a run request and stream AG-UI events.
 
@@ -75,6 +77,8 @@ class AGUIHttpService:
             messages: List of messages in AG-UI format
             state: Optional state object to send to server
             tools: Optional list of tools available to the agent
+            available_interrupts: Optional list of interrupt descriptors available for resumption
+            resume: Optional resume payload to continue a paused run
 
         Yields:
             AG-UI event dictionaries parsed from SSE stream
@@ -109,9 +113,16 @@ class AGUIHttpService:
         if tools is not None:
             request_data["tools"] = tools
 
+        if available_interrupts is not None:
+            request_data["availableInterrupts"] = available_interrupts
+
+        if resume is not None:
+            request_data["resume"] = resume
+
         logger.debug(
             f"Posting run to {self.endpoint}: thread_id={thread_id}, run_id={run_id}, "
-            f"messages={len(messages)}, has_state={state is not None}, has_tools={tools is not None}"
+            f"messages={len(messages)}, has_state={state is not None}, has_tools={tools is not None}, "
+            f"has_available_interrupts={available_interrupts is not None}, has_resume={resume is not None}"
         )
 
         # Stream the response using SSE

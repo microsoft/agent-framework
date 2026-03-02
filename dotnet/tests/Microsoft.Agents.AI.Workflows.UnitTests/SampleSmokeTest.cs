@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Sample;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -378,9 +379,9 @@ public class SampleSmokeTest
     [InlineData(ExecutionEnvironment.InProcess_Concurrent)]
     internal async Task Test_RunSample_Step13Async(ExecutionEnvironment environment)
     {
-        IWorkflowExecutionEnvironment executionEnvironment = environment.ToWorkflowExecutionEnvironment();
-
         CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        InProcessExecutionEnvironment executionEnvironment = environment.ToWorkflowExecutionEnvironment().WithCheckpointing(checkpointManager);
+
         CheckpointInfo? resumeFrom = null;
 
         await RunAndValidateAsync(1);
@@ -393,7 +394,7 @@ public class SampleSmokeTest
             using StringWriter writer = new();
             string input = $"[{step}] Hello, World!";
 
-            resumeFrom = await Step13EntryPoint.RunAsync(writer, input, executionEnvironment, checkpointManager, resumeFrom);
+            resumeFrom = await Step13EntryPoint.RunAsync(writer, input, executionEnvironment, resumeFrom);
 
             string result = writer.ToString();
             string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);

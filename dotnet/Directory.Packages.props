@@ -58,6 +58,8 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.13.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.13.0" />
     <!-- Microsoft.AspNetCore.* -->
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.0" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.0.0" />
     <!-- Microsoft.Extensions.* -->
@@ -111,9 +113,9 @@
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.78.0" />
     <!-- Workflows -->
-    <PackageVersion Include="Microsoft.Agents.ObjectModel" Version="2026.2.3.1" />
-    <PackageVersion Include="Microsoft.Agents.ObjectModel.Json" Version="2026.2.3.1" />
-    <PackageVersion Include="Microsoft.Agents.ObjectModel.PowerFx" Version="2026.2.3.1" />
+    <PackageVersion Include="Microsoft.Agents.ObjectModel" Version="2026.2.4.1" />
+    <PackageVersion Include="Microsoft.Agents.ObjectModel.Json" Version="2026.2.4.1" />
+    <PackageVersion Include="Microsoft.Agents.ObjectModel.PowerFx" Version="2026.2.4.1" />
     <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.8.1" />
     <!-- Durable Task -->
     <PackageVersion Include="Microsoft.DurableTask.Client" Version="1.18.0" />

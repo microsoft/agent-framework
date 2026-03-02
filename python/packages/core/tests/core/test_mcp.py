@@ -34,12 +34,8 @@ from agent_framework.exceptions import ToolException, ToolExecutionException
 
 # Integration test skip condition
 skip_if_mcp_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true" or os.getenv("LOCAL_MCP_URL", "") == "",
-    reason=(
-        "No LOCAL_MCP_URL provided; skipping integration tests."
-        if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-        else "Integration tests are disabled."
-    ),
+    os.getenv("LOCAL_MCP_URL", "") == "",
+    reason="No LOCAL_MCP_URL provided; skipping integration tests.",
 )
 
 
@@ -1105,6 +1101,7 @@ def test_local_mcp_streamable_http_tool_init():
 
 # Integration test
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_mcp_integration_tests_disabled
 async def test_streamable_http_integration():
     """Test MCP StreamableHTTP integration."""
@@ -1133,6 +1130,7 @@ async def test_streamable_http_integration():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_mcp_integration_tests_disabled
 async def test_mcp_connection_reset_integration():
     """Test that connection reset works correctly with a real MCP server.

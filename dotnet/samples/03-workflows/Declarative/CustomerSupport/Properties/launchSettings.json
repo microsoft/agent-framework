@@ -1,0 +1,19 @@
+{
+  "profiles": {
+    "Default": {
+      "commandName": "Project"
+    },
+    "Reboot": {
+      "commandName": "Project",
+      "commandLineArgs": "\"My PC keeps rebooting and I can't use it.\""
+    },
+    "License": {
+      "commandName": "Project",
+      "commandLineArgs": "\"My M365 Office license key isn't activating.\""
+    },
+    "Windows": {
+      "commandName": "Project",
+      "commandLineArgs": "\"How do I change my mouse speed settings?\""
+    }
+  }
+}

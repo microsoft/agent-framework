@@ -92,4 +92,23 @@ public static class OpenAIResponseClientExtensions
 
         return new ChatClientAgent(chatClient, options, loggerFactory, services);
     }
+
+    /// <summary>
+    /// Gets an <see cref="IChatClient"/> for use with this <see cref="ResponsesClient"/> that does not store responses for later retrieval.
+    /// </summary>
+    /// <remarks>
+    /// This corresponds to setting the "store" property in the JSON representation to false.
+    /// </remarks>
+    /// <param name="responseClient">The client.</param>
+    /// <returns>An <see cref="IChatClient"/> that can be used to converse via the <see cref="ResponsesClient"/> that does not store responses for later retrieval.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="responseClient"/> is <see langword="null"/>.</exception>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public static IChatClient AsIChatClientWithStoredOutputDisabled(this ResponsesClient responseClient)
+    {
+        return Throw.IfNull(responseClient)
+            .AsIChatClient()
+            .AsBuilder()
+            .ConfigureOptions(x => x.RawRepresentationFactory = _ => new CreateResponseOptions() { StoredOutputEnabled = false })
+            .Build();
+    }
 }

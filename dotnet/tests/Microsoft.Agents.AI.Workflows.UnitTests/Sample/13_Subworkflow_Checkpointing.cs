@@ -30,7 +30,7 @@ internal static class Step13EntryPoint
 
     public static async ValueTask<AgentSession> RunAsAgentAsync(TextWriter writer, string input, IWorkflowExecutionEnvironment environment, AgentSession? session)
     {
-        AIAgent hostAgent = WorkflowInstance.AsAgent("echo-workflow", "EchoW", executionEnvironment: environment, includeWorkflowOutputsInResponse: true);
+        AIAgent hostAgent = WorkflowInstance.AsAIAgent("echo-workflow", "EchoW", executionEnvironment: environment, includeWorkflowOutputsInResponse: true);
 
         session ??= await hostAgent.CreateSessionAsync();
         AgentResponse response;
@@ -48,10 +48,9 @@ internal static class Step13EntryPoint
         return session;
     }
 
-    public static async ValueTask<CheckpointInfo> RunAsync(TextWriter writer, string input, IWorkflowExecutionEnvironment environment, CheckpointManager checkpointManager, CheckpointInfo? resumeFrom)
+    public static async ValueTask<CheckpointInfo> RunAsync(TextWriter writer, string input, IWorkflowExecutionEnvironment environment, CheckpointInfo? resumeFrom)
     {
-        await using Checkpointed<StreamingRun> checkpointed = await BeginAsync();
-        StreamingRun run = checkpointed.Run;
+        await using StreamingRun run = await BeginAsync();
 
         await run.TrySendMessageAsync(new TurnToken());
 
@@ -80,16 +79,16 @@ internal static class Step13EntryPoint
 
         return lastCheckpoint!;
 
-        async ValueTask<Checkpointed<StreamingRun>> BeginAsync()
+        async ValueTask<StreamingRun> BeginAsync()
         {
             if (resumeFrom == null)
             {
-                return await environment.StreamAsync(WorkflowInstance, input, checkpointManager);
+                return await environment.RunStreamingAsync(WorkflowInstance, input);
             }
 
-            Checkpointed<StreamingRun> checkpointed = await environment.ResumeStreamAsync(WorkflowInstance, resumeFrom, checkpointManager);
-            await checkpointed.Run.TrySendMessageAsync(input);
-            return checkpointed;
+            StreamingRun run = await environment.ResumeStreamingAsync(WorkflowInstance, resumeFrom);
+            await run.TrySendMessageAsync(input);
+            return run;
         }
     }
 }
