@@ -1610,7 +1610,6 @@ def _make_file_citation_annotation(
     file_id: str = "file-abc123",
     start_index: int = 10,
     end_index: int = 24,
-    quote: str | None = None,
 ) -> MagicMock:
     """Create a mock FileCitationAnnotation."""
     annotation = MagicMock(spec=FileCitationAnnotation)
@@ -1619,7 +1618,6 @@ def _make_file_citation_annotation(
     annotation.end_index = end_index
     annotation.file_citation = MagicMock()
     annotation.file_citation.file_id = file_id
-    annotation.file_citation.quote = quote
     return annotation
 
 
@@ -1722,41 +1720,7 @@ class TestMessageCompletedAnnotations:
         assert ann["annotated_regions"][0]["start_index"] == 10
         assert ann["annotated_regions"][0]["end_index"] == 24
 
-    @pytest.mark.asyncio
-    async def test_message_completed_with_file_citation_quote(self, client):
-        """Verify the quote field from file_citation is included in additional_properties."""
-        citation = _make_file_citation_annotation(
-            text="【4:0†source】",
-            file_id="file-abc123",
-            start_index=10,
-            end_index=24,
-            quote="The exact quoted text from the source document.",
-        )
-        text_block = _make_text_block("Some text【4:0†source】", [citation])
-        msg = _make_thread_message([text_block])
 
-        events = [_make_stream_event("thread.message.completed", msg)]
-        updates = await _collect_updates(client, events)
-
-        assert len(updates) == 1
-        ann = updates[0].contents[0].annotations[0]
-        assert ann["additional_properties"]["quote"] == "The exact quoted text from the source document."
-
-    @pytest.mark.asyncio
-    async def test_message_completed_with_file_citation_no_quote(self, client):
-        """Verify annotations work when quote is None (not all citations have quotes)."""
-        citation = _make_file_citation_annotation(
-            text="【4:0†source】", file_id="file-abc123", start_index=10, end_index=24, quote=None
-        )
-        text_block = _make_text_block("Some text【4:0†source】", [citation])
-        msg = _make_thread_message([text_block])
-
-        events = [_make_stream_event("thread.message.completed", msg)]
-        updates = await _collect_updates(client, events)
-
-        assert len(updates) == 1
-        ann = updates[0].contents[0].annotations[0]
-        assert "quote" not in ann["additional_properties"]
 
     @pytest.mark.asyncio
     async def test_message_completed_with_file_path(self, client):

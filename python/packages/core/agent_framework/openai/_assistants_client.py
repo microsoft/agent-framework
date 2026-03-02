@@ -634,8 +634,6 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                                     props: dict[str, Any] = {
                                         "text": completed_annotation.text,
                                     }
-                                    if completed_annotation.file_citation and completed_annotation.file_citation.quote:
-                                        props["quote"] = completed_annotation.file_citation.quote
                                     ann = Annotation(
                                         type="citation",
                                         additional_properties=props,
