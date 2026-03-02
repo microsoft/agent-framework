@@ -1,0 +1,29 @@
+name: seattle-hotel-agent
+description: >
+  A travel assistant agent that helps users find hotels in Seattle.
+  Demonstrates local C# tool execution - a key advantage of code-based
+  hosted agents over prompt agents.
+metadata:
+  authors:
+    - Microsoft
+  tags:
+    - Azure AI AgentServer
+    - Microsoft Agent Framework
+    - Local Tools
+    - Travel Assistant
+    - Hotel Search
+template:
+  name: seattle-hotel-agent
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: v1
+  environment_variables:
+    - name: AZURE_AI_PROJECT_ENDPOINT
+      value: ${AZURE_AI_PROJECT_ENDPOINT}
+    - name: MODEL_DEPLOYMENT_NAME
+      value: gpt-4o-mini
+resources:
+  - kind: model
+    id: gpt-4o-mini
+    name: chat
