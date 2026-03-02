@@ -37,7 +37,7 @@ public class ChatHistoryCompactionPipeline : IChatReducer
     /// By default, <see cref="DefaultChatHistoryMetricsCalculator"/> is used.
     /// </remarks>
     public ChatHistoryCompactionPipeline(
-        IEnumerable<ChatHistoryCompactionStrategy> strategies)
+        params IEnumerable<ChatHistoryCompactionStrategy> strategies)
         : this(metricsCalculator: null, strategies) { }
 
     /// <summary>
