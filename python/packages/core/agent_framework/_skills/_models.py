@@ -2,7 +2,7 @@
 
 """Agent Skill data models.
 
-Defines :class:`AgentSkillResource` and :class:`AgentSkill`, the core
+Defines :class:`SkillResource` and :class:`AgentSkill`, the core
 data model classes for the agent skills system.
 """
 
@@ -13,7 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 
-class AgentSkillResource:
+class SkillResource:
     """A named piece of supplementary content attached to a skill.
 
     .. warning:: Experimental
@@ -41,11 +41,11 @@ class AgentSkillResource:
     Examples:
         Static resource::
 
-            AgentSkillResource(name="reference", content="Static docs here...")
+            SkillResource(name="reference", content="Static docs here...")
 
         Callable resource::
 
-            AgentSkillResource(name="schema", function=get_schema_func)
+            SkillResource(name="schema", function=get_schema_func)
     """
 
     def __init__(
@@ -78,7 +78,7 @@ class AgentSkill:
         in future versions without notice.
 
     A skill bundles a set of instructions (``content``) with metadata and
-    zero or more :class:`AgentSkillResource` instances.  Resources can be
+    zero or more :class:`SkillResource` instances.  Resources can be
     supplied at construction time or added later via the :meth:`resource`
     decorator.
 
@@ -94,7 +94,7 @@ class AgentSkill:
         name: Skill name (lowercase letters, numbers, hyphens only).
         description: Human-readable description of the skill.
         content: The skill instructions body.
-        resources: Mutable list of :class:`AgentSkillResource` instances.
+        resources: Mutable list of :class:`SkillResource` instances.
         path: Absolute path to the skill directory on disk, or ``None``
             for code-defined skills.
 
@@ -105,7 +105,7 @@ class AgentSkill:
                 name="my-skill",
                 description="A skill example",
                 content="Use this skill for ...",
-                resources=[AgentSkillResource(name="ref", content="...")],
+                resources=[SkillResource(name="ref", content="...")],
             )
 
         With dynamic resources::
@@ -127,7 +127,7 @@ class AgentSkill:
         name: str,
         description: str,
         content: str,
-        resources: list[AgentSkillResource] | None = None,
+        resources: list[SkillResource] | None = None,
         path: str | None = None,
     ) -> None:
         if not name or not name.strip():
@@ -138,7 +138,7 @@ class AgentSkill:
         self.name = name
         self.description = description
         self.content = content
-        self.resources: list[AgentSkillResource] = resources if resources is not None else []
+        self.resources: list[SkillResource] = resources if resources is not None else []
         self.path = path
 
     def resource(
@@ -153,7 +153,7 @@ class AgentSkill:
         Supports bare usage (``@skill.resource``) and parameterized usage
         (``@skill.resource(name="custom", description="...")``).  The
         decorated function is returned unchanged; a new
-        :class:`AgentSkillResource` is appended to :attr:`resources`.
+        :class:`SkillResource` is appended to :attr:`resources`.
 
         Args:
             func: The function being decorated.  Populated automatically when
@@ -186,7 +186,7 @@ class AgentSkill:
             resource_name = name or f.__name__
             resource_description = description or (inspect.getdoc(f) or None)
             self.resources.append(
-                AgentSkillResource(
+                SkillResource(
                     name=resource_name,
                     description=resource_description,
                     function=f,

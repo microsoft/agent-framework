@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final
 
 from .._sessions import BaseContextProvider
 from .._tools import FunctionTool
-from ._models import AgentSkill, AgentSkillResource
+from ._models import AgentSkill, SkillResource
 
 if TYPE_CHECKING:
     from .._agents import SupportsAgentRun
@@ -321,17 +321,13 @@ class AgentSkillsProvider(BaseContextProvider):
 
         # Find resource by name (case-insensitive)
         resource_name_lower = resource_name.lower()
-        resource: AgentSkillResource | None = None
-        for r in skill.resources:
-            if r.name.lower() == resource_name_lower:
-                resource = r
+        for resource in skill.resources:
+            if resource.name.lower() == resource_name_lower:
                 break
-
-        if resource is None:
+        else:
             return f"Error: Resource '{resource_name}' not found in skill '{skill_name}'."
 
         try:
-            # For file-based skill return content
             if resource.content is not None:
                 return resource.content
 
@@ -722,10 +718,10 @@ def _discover_file_skills(
             path=skill_path,
         )
 
-        # Discover and attach file-based resources as AgentSkillResource closures
+        # Discover and attach file-based resources as SkillResource closures
         for rn in _discover_resource_files(skill_path, resource_extensions):
             reader = (lambda s, r: lambda: _read_file_skill_resource(s, r))(file_skill, rn)
-            file_skill.resources.append(AgentSkillResource(name=rn, function=reader))
+            file_skill.resources.append(SkillResource(name=rn, function=reader))
 
         skills[file_skill.name] = file_skill
         logger.info("Loaded skill: %s", file_skill.name)
@@ -775,8 +771,8 @@ def _load_skills(
     return result
 
 
-def _create_resource_element(resource: AgentSkillResource) -> str:
-    """Create a self-closing ``<resource …/>`` XML element from an :class:`AgentSkillResource`.
+def _create_resource_element(resource: SkillResource) -> str:
+    """Create a self-closing ``<resource …/>`` XML element from an :class:`SkillResource`.
 
     Args:
         resource: The resource to create the element from.

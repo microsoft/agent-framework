@@ -5,7 +5,7 @@ import os
 import sys
 from textwrap import dedent
 
-from agent_framework import Agent, AgentSkill, AgentSkillResource, AgentSkillsProvider
+from agent_framework import Agent, AgentSkill, SkillResource, AgentSkillsProvider
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -39,7 +39,7 @@ code_style_skill = AgentSkill(
         or best practices for the team.
     """),
     resources=[
-        AgentSkillResource(
+        SkillResource(
             name="style-guide",
             content=dedent("""\
                 # Team Coding Style Guide

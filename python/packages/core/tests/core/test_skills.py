@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from agent_framework import AgentSkill, AgentSkillResource, AgentSkillsProvider, SessionContext
+from agent_framework import AgentSkill, SkillResource, AgentSkillsProvider, SessionContext
 from agent_framework._skills._agent_skills_provider import (
     DEFAULT_RESOURCE_EXTENSIONS,
     _create_instructions,
@@ -743,15 +743,15 @@ class TestSymlinkDetection:
 
 
 # ---------------------------------------------------------------------------
-# Tests: AgentSkillResource
+# Tests: SkillResource
 # ---------------------------------------------------------------------------
 
 
-class TestAgentSkillResource:
-    """Tests for AgentSkillResource dataclass."""
+class TestSkillResource:
+    """Tests for SkillResource dataclass."""
 
     def test_static_content(self) -> None:
-        resource = AgentSkillResource(name="ref", content="static content")
+        resource = SkillResource(name="ref", content="static content")
         assert resource.name == "ref"
         assert resource.content == "static content"
         assert resource.function is None
@@ -760,22 +760,22 @@ class TestAgentSkillResource:
         def my_func() -> str:
             return "dynamic"
 
-        resource = AgentSkillResource(name="func", function=my_func)
+        resource = SkillResource(name="func", function=my_func)
         assert resource.name == "func"
         assert resource.content is None
         assert resource.function is my_func
 
     def test_with_description(self) -> None:
-        resource = AgentSkillResource(name="ref", description="A reference doc.", content="data")
+        resource = SkillResource(name="ref", description="A reference doc.", content="data")
         assert resource.description == "A reference doc."
 
     def test_requires_content_or_function(self) -> None:
         with pytest.raises(ValueError, match="must have either content or function"):
-            AgentSkillResource(name="empty")
+            SkillResource(name="empty")
 
     def test_content_and_function_mutually_exclusive(self) -> None:
         with pytest.raises(ValueError, match="must have either content or function, not both"):
-            AgentSkillResource(name="both", content="static", function=lambda: "dynamic")
+            SkillResource(name="both", content="static", function=lambda: "dynamic")
 
 
 # ---------------------------------------------------------------------------
@@ -799,7 +799,7 @@ class TestAgentSkill:
             description="A test skill.",
             content="Instructions.",
             resources=[
-                AgentSkillResource(name="ref", content="Reference content"),
+                SkillResource(name="ref", content="Reference content"),
             ],
         )
         assert len(skill.resources) == 1
@@ -923,8 +923,8 @@ class TestAgentSkillsProviderCodeSkill:
             description="A skill.",
             content="Do things.",
             resources=[
-                AgentSkillResource(name="ref-a", content="a", description="First resource"),
-                AgentSkillResource(name="ref-b", content="b"),
+                SkillResource(name="ref-a", content="a", description="First resource"),
+                SkillResource(name="ref-b", content="b"),
             ],
         )
         provider = AgentSkillsProvider(skills=[skill])
@@ -948,7 +948,7 @@ class TestAgentSkillsProviderCodeSkill:
             name="prog-skill",
             description="A skill.",
             content="Body",
-            resources=[AgentSkillResource(name="ref", content="static content")],
+            resources=[SkillResource(name="ref", content="static content")],
         )
         provider = AgentSkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("prog-skill", "ref")
@@ -981,7 +981,7 @@ class TestAgentSkillsProviderCodeSkill:
             name="prog-skill",
             description="A skill.",
             content="Body",
-            resources=[AgentSkillResource(name="MyRef", content="content")],
+            resources=[SkillResource(name="MyRef", content="content")],
         )
         provider = AgentSkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("prog-skill", "myref")
@@ -1126,7 +1126,7 @@ class TestLoadSkillFormatting:
             name="prog-skill",
             description="A skill.",
             content="Body.",
-            resources=[AgentSkillResource(name="data", content="val")],
+            resources=[SkillResource(name="data", content="val")],
         )
         provider = AgentSkillsProvider(skills=[skill])
         result = provider._load_skill("prog-skill")
@@ -1381,22 +1381,22 @@ class TestCreateResourceElement:
     """Tests for _create_resource_element."""
 
     def test_name_only(self) -> None:
-        r = AgentSkillResource(name="my-ref", content="data")
+        r = SkillResource(name="my-ref", content="data")
         elem = _create_resource_element(r)
         assert elem == '  <resource name="my-ref"/>'
 
     def test_with_description(self) -> None:
-        r = AgentSkillResource(name="my-ref", description="A reference.", content="data")
+        r = SkillResource(name="my-ref", description="A reference.", content="data")
         elem = _create_resource_element(r)
         assert elem == '  <resource name="my-ref" description="A reference."/>'
 
     def test_xml_escapes_name(self) -> None:
-        r = AgentSkillResource(name='ref"special', content="data")
+        r = SkillResource(name='ref"special', content="data")
         elem = _create_resource_element(r)
         assert '&quot;' in elem
 
     def test_xml_escapes_description(self) -> None:
-        r = AgentSkillResource(name="ref", description='Uses <tags> & "quotes"', content="data")
+        r = SkillResource(name="ref", description='Uses <tags> & "quotes"', content="data")
         elem = _create_resource_element(r)
         assert "&lt;tags&gt;" in elem
         assert "&amp;" in elem
@@ -1622,23 +1622,23 @@ class TestAgentSkillsProviderEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# Tests: AgentSkillResource edge cases
+# Tests: SkillResource edge cases
 # ---------------------------------------------------------------------------
 
 
-class TestAgentSkillResourceEdgeCases:
-    """Additional edge-case tests for AgentSkillResource."""
+class TestSkillResourceEdgeCases:
+    """Additional edge-case tests for SkillResource."""
 
     def test_empty_name_raises(self) -> None:
         with pytest.raises(ValueError, match="cannot be empty"):
-            AgentSkillResource(name="", content="data")
+            SkillResource(name="", content="data")
 
     def test_whitespace_only_name_raises(self) -> None:
         with pytest.raises(ValueError, match="cannot be empty"):
-            AgentSkillResource(name="   ", content="data")
+            SkillResource(name="   ", content="data")
 
     def test_description_defaults_to_none(self) -> None:
-        r = AgentSkillResource(name="ref", content="data")
+        r = SkillResource(name="ref", content="data")
         assert r.description is None
 
 
@@ -1647,7 +1647,7 @@ class TestAgentSkillResourceEdgeCases:
 # ---------------------------------------------------------------------------
 
 
-class TestAgentSkillResourceDecoratorEdgeCases:
+class TestSkillResourceDecoratorEdgeCases:
     """Additional edge-case tests for the @skill.resource decorator."""
 
     def test_decorator_no_docstring_description_is_none(self) -> None:
