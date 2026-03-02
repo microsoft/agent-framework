@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from openai.types.beta.threads import MessageDeltaEvent, Run, TextDeltaBlock
+from openai.types.beta.threads.file_citation_delta_annotation import FileCitationDeltaAnnotation
+from openai.types.beta.threads.file_path_delta_annotation import FilePathDeltaAnnotation
 from openai.types.beta.threads.runs import RunStep
 from pydantic import Field
 
@@ -441,6 +443,120 @@ async def test_process_stream_events_message_delta_text(mock_async_openai: Magic
     assert update.role == "assistant"
     assert update.text == "Hello from assistant"
     assert update.raw_representation == mock_message_delta
+
+
+async def test_process_stream_events_message_delta_text_with_file_citation_annotations(
+    mock_async_openai: MagicMock,
+) -> None:
+    """Test _process_stream_events maps file citation annotations from TextDeltaBlock."""
+    client = create_test_openai_assistants_client(mock_async_openai)
+
+    mock_annotation = FileCitationDeltaAnnotation(
+        index=0,
+        type="file_citation",
+        file_citation={"file_id": "file-abc123"},
+        start_index=10,
+        end_index=24,
+        text="【4:0†source】",
+    )
+
+    mock_delta_block = MagicMock(spec=TextDeltaBlock)
+    mock_delta_block.text = MagicMock()
+    mock_delta_block.text.value = "Some text 【4:0†source】 more text"
+    mock_delta_block.text.annotations = [mock_annotation]
+
+    mock_delta = MagicMock()
+    mock_delta.role = "assistant"
+    mock_delta.content = [mock_delta_block]
+
+    mock_message_delta = MagicMock(spec=MessageDeltaEvent)
+    mock_message_delta.delta = mock_delta
+
+    mock_response = MagicMock()
+    mock_response.event = "thread.message.delta"
+    mock_response.data = mock_message_delta
+
+    async def async_iterator() -> Any:
+        yield mock_response
+
+    mock_stream = MagicMock()
+    mock_stream.__aenter__ = AsyncMock(return_value=async_iterator())
+    mock_stream.__aexit__ = AsyncMock(return_value=None)
+
+    thread_id = "thread-789"
+    updates: list[ChatResponseUpdate] = []
+    async for update in client._process_stream_events(mock_stream, thread_id):  # type: ignore
+        updates.append(update)
+
+    assert len(updates) == 1
+    update = updates[0]
+    assert update.text == "Some text 【4:0†source】 more text"
+    assert update.contents is not None
+    content = update.contents[0]
+    assert content.annotations is not None
+    assert len(content.annotations) == 1
+    ann = content.annotations[0]
+    assert ann["type"] == "citation"
+    assert ann["file_id"] == "file-abc123"
+    assert ann["annotated_regions"] is not None
+    assert ann["annotated_regions"][0]["start_index"] == 10
+    assert ann["annotated_regions"][0]["end_index"] == 24
+    assert ann["additional_properties"]["text"] == "【4:0†source】"
+
+
+async def test_process_stream_events_message_delta_text_with_file_path_annotations(
+    mock_async_openai: MagicMock,
+) -> None:
+    """Test _process_stream_events maps file path annotations from TextDeltaBlock."""
+    client = create_test_openai_assistants_client(mock_async_openai)
+
+    mock_annotation = FilePathDeltaAnnotation(
+        index=0,
+        type="file_path",
+        file_path={"file_id": "file-xyz789"},
+        start_index=5,
+        end_index=20,
+        text="sandbox:/path/to/file",
+    )
+
+    mock_delta_block = MagicMock(spec=TextDeltaBlock)
+    mock_delta_block.text = MagicMock()
+    mock_delta_block.text.value = "Here sandbox:/path/to/file is the file"
+    mock_delta_block.text.annotations = [mock_annotation]
+
+    mock_delta = MagicMock()
+    mock_delta.role = "assistant"
+    mock_delta.content = [mock_delta_block]
+
+    mock_message_delta = MagicMock(spec=MessageDeltaEvent)
+    mock_message_delta.delta = mock_delta
+
+    mock_response = MagicMock()
+    mock_response.event = "thread.message.delta"
+    mock_response.data = mock_message_delta
+
+    async def async_iterator() -> Any:
+        yield mock_response
+
+    mock_stream = MagicMock()
+    mock_stream.__aenter__ = AsyncMock(return_value=async_iterator())
+    mock_stream.__aexit__ = AsyncMock(return_value=None)
+
+    thread_id = "thread-annotation"
+    updates: list[ChatResponseUpdate] = []
+    async for update in client._process_stream_events(mock_stream, thread_id):  # type: ignore
+        updates.append(update)
+
+    assert len(updates) == 1
+    content = updates[0].contents[0]
+    assert content.annotations is not None
+    assert len(content.annotations) == 1
+    ann = content.annotations[0]
+    assert ann["type"] == "citation"
+    assert ann["file_id"] == "file-xyz789"
+    assert ann["annotated_regions"] is not None
+    assert ann["annotated_regions"][0]["start_index"] == 5
+    assert ann["annotated_regions"][0]["end_index"] == 20
 
 
 async def test_process_stream_events_requires_action(mock_async_openai: MagicMock) -> None:

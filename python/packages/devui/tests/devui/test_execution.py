@@ -741,6 +741,51 @@ async def test_full_pipeline_workflow_output_event_serialization():
     assert len(output_events) >= 3, f"Expected 3+ output events for yield_output calls, got {len(output_events)}"
 
 
+async def test_workflow_error_yields_dict_event_without_crash():
+    """Test that workflow errors don't crash execute_entity (#3983).
+
+    When a workflow raises an exception, _execute_workflow yields a raw dict
+    {"type": "error", ...}. The execute_entity caller must handle both dict
+    events and object events without crashing on attribute access.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework_devui.models._discovery_models import EntityInfo
+
+    discovery = MagicMock(spec=EntityDiscovery)
+    mapper = MessageMapper()
+    executor = AgentFrameworkExecutor(discovery, mapper)
+
+    entity_info = EntityInfo(id="bad_wf", name="bad_wf", type="workflow", framework="agent_framework")
+    discovery.get_entity_info.return_value = entity_info
+
+    # Mock workflow whose run() raises
+    mock_workflow = MagicMock()
+    mock_workflow.name = "bad_wf"
+
+    def failing_run(*args, **kwargs):
+        raise RuntimeError("Sorry, something went wrong.")
+
+    mock_workflow.run = failing_run
+    discovery.load_entity = AsyncMock(return_value=mock_workflow)
+
+    request = AgentFrameworkRequest(
+        model="test",
+        input="hello",
+        metadata={"entity_id": "bad_wf"},
+    )
+
+    events = []
+    # This should NOT raise AttributeError: 'dict' object has no attribute 'type'
+    async for event in executor.execute_entity("bad_wf", request):
+        events.append(event)
+
+    # Should get at least one error event
+    assert len(events) > 0
+    error_events = [e for e in events if isinstance(e, dict) and e.get("type") == "error"]
+    assert len(error_events) > 0, f"Expected error dict events, got: {events}"
+
+
 if __name__ == "__main__":
     # Simple test runner
     async def run_tests():
