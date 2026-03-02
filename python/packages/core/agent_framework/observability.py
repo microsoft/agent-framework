@@ -1067,7 +1067,7 @@ def _get_token_usage_histogram() -> "metrics.Histogram":
 
 def _get_time_to_first_chunk_histogram() -> "metrics.Histogram":
     return get_meter().create_histogram(
-        name="gen_ai.client.operation.time_to_first_chunk",  # TODO(Brian Henson): Match semantic conventions
+        name="gen_ai.client.operation.time_to_first_chunk",
         unit=OtelAttr.DURATION_UNIT,
         description="Time from request start to first content chunk arrival",
         explicit_bucket_boundaries_advisory=TIME_TO_FIRST_CHUNK_BUCKET_BOUNDARIES,
@@ -1076,7 +1076,7 @@ def _get_time_to_first_chunk_histogram() -> "metrics.Histogram":
 
 def _get_time_per_output_chunk_histogram() -> "metrics.Histogram":
     return get_meter().create_histogram(
-        name="gen_ai.client.operation.time_per_output_chunk",  # TODO(Brian Henson): Match semantic conventions
+        name="gen_ai.client.operation.time_per_output_chunk",
         unit=OtelAttr.DURATION_UNIT,
         description="Average time between chunks after the first chunk",
         explicit_bucket_boundaries_advisory=TIME_PER_OUTPUT_CHUNK_BUCKET_BOUNDARIES,
