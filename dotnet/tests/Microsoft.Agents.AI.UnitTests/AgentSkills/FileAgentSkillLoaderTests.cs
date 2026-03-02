@@ -169,16 +169,17 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     }
 
     [Fact]
-    public void DiscoverAndLoadSkills_WithValidResourceLinks_ExtractsResourceNames()
+    public void DiscoverAndLoadSkills_FilesWithMatchingExtensions_DiscoveredAsResources()
     {
-        // Arrange
+        // Arrange — create resource files in the skill directory
         string skillDir = Path.Combine(this._testRoot, "resource-skill");
         string refsDir = Path.Combine(skillDir, "refs");
         Directory.CreateDirectory(refsDir);
         File.WriteAllText(Path.Combine(refsDir, "FAQ.md"), "FAQ content");
+        File.WriteAllText(Path.Combine(refsDir, "data.json"), "{}");
         File.WriteAllText(
             Path.Combine(skillDir, "SKILL.md"),
-            "---\nname: resource-skill\ndescription: Has resources\n---\nSee [FAQ](refs/FAQ.md) for details.");
+            "---\nname: resource-skill\ndescription: Has resources\n---\nSee docs for details.");
 
         // Act
         var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
@@ -186,29 +187,176 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         // Assert
         Assert.Single(skills);
         var skill = skills["resource-skill"];
-        Assert.Single(skill.ResourceNames);
-        Assert.Equal("refs/FAQ.md", skill.ResourceNames[0]);
+        Assert.Equal(2, skill.ResourceNames.Count);
+        Assert.Contains(skill.ResourceNames, r => r.Equals("refs/FAQ.md", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(skill.ResourceNames, r => r.Equals("refs/data.json", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
-    public void DiscoverAndLoadSkills_PathTraversal_ExcludesSkill()
+    public void DiscoverAndLoadSkills_FilesWithNonMatchingExtensions_NotDiscovered()
     {
-        // Arrange — resource links outside the skill directory
-        string skillDir = Path.Combine(this._testRoot, "traversal-skill");
+        // Arrange — create a file with an extension not in the default list
+        string skillDir = Path.Combine(this._testRoot, "ext-skill");
         Directory.CreateDirectory(skillDir);
-
-        // Create a file outside the skill dir that the traversal would resolve to
-        File.WriteAllText(Path.Combine(this._testRoot, "secret.txt"), "secret");
-
+        File.WriteAllText(Path.Combine(skillDir, "image.png"), "fake image");
+        File.WriteAllText(Path.Combine(skillDir, "data.json"), "{}");
         File.WriteAllText(
             Path.Combine(skillDir, "SKILL.md"),
-            "---\nname: traversal-skill\ndescription: Traversal attempt\n---\nSee [doc](../secret.txt).");
+            "---\nname: ext-skill\ndescription: Extension test\n---\nBody.");
 
         // Act
         var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
 
         // Assert
-        Assert.Empty(skills);
+        Assert.Single(skills);
+        var skill = skills["ext-skill"];
+        Assert.Single(skill.ResourceNames);
+        Assert.Equal("data.json", skill.ResourceNames[0]);
+    }
+
+    [Fact]
+    public void DiscoverAndLoadSkills_SkillMdFile_NotIncludedAsResource()
+    {
+        // Arrange — the SKILL.md file itself should not be in the resource list
+        string skillDir = Path.Combine(this._testRoot, "selfref-skill");
+        Directory.CreateDirectory(skillDir);
+        File.WriteAllText(Path.Combine(skillDir, "notes.md"), "notes");
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: selfref-skill\ndescription: Self ref test\n---\nBody.");
+
+        // Act
+        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
+
+        // Assert
+        Assert.Single(skills);
+        var skill = skills["selfref-skill"];
+        Assert.Single(skill.ResourceNames);
+        Assert.Equal("notes.md", skill.ResourceNames[0]);
+    }
+
+    [Fact]
+    public void DiscoverAndLoadSkills_NestedResourceFiles_Discovered()
+    {
+        // Arrange — resource files in nested subdirectories
+        string skillDir = Path.Combine(this._testRoot, "nested-res-skill");
+        string deepDir = Path.Combine(skillDir, "level1", "level2");
+        Directory.CreateDirectory(deepDir);
+        File.WriteAllText(Path.Combine(deepDir, "deep.md"), "deep content");
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: nested-res-skill\ndescription: Nested resources\n---\nBody.");
+
+        // Act
+        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
+
+        // Assert
+        Assert.Single(skills);
+        var skill = skills["nested-res-skill"];
+        Assert.Single(skill.ResourceNames);
+        Assert.Contains(skill.ResourceNames, r => r.Equals("level1/level2/deep.md", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static readonly string[] s_customExtensions = new[] { ".custom" };
+    private static readonly string[] s_validExtensions = new[] { ".md", ".json", ".custom" };
+    private static readonly string[] s_mixedValidInvalidExtensions = new[] { ".md", "json" };
+
+    [Fact]
+    public void DiscoverAndLoadSkills_CustomResourceExtensions_UsedForDiscovery()
+    {
+        // Arrange — use a loader with custom extensions
+        var customLoader = new FileAgentSkillLoader(NullLogger.Instance, s_customExtensions);
+        string skillDir = Path.Combine(this._testRoot, "custom-ext-skill");
+        Directory.CreateDirectory(skillDir);
+        File.WriteAllText(Path.Combine(skillDir, "data.custom"), "custom data");
+        File.WriteAllText(Path.Combine(skillDir, "data.json"), "{}");
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: custom-ext-skill\ndescription: Custom extensions\n---\nBody.");
+
+        // Act
+        var skills = customLoader.DiscoverAndLoadSkills(new[] { this._testRoot });
+
+        // Assert — only .custom files should be discovered, not .json
+        Assert.Single(skills);
+        var skill = skills["custom-ext-skill"];
+        Assert.Single(skill.ResourceNames);
+        Assert.Equal("data.custom", skill.ResourceNames[0]);
+    }
+
+    [Theory]
+    [InlineData("txt")]
+    [InlineData("")]
+    [InlineData(" ")]
+    public void Constructor_InvalidExtension_ThrowsArgumentException(string badExtension)
+    {
+        // Arrange & Act & Assert
+        Assert.Throws<ArgumentException>(() => new FileAgentSkillLoader(NullLogger.Instance, new[] { badExtension }));
+    }
+
+    [Fact]
+    public void Constructor_NullExtensions_UsesDefaults()
+    {
+        // Arrange & Act
+        var loader = new FileAgentSkillLoader(NullLogger.Instance, null);
+        string skillDir = this.CreateSkillDirectory("null-ext", "A skill", "Body.");
+        File.WriteAllText(Path.Combine(skillDir, "notes.md"), "notes");
+
+        // Assert — default extensions include .md
+        var skills = loader.DiscoverAndLoadSkills(new[] { this._testRoot });
+        Assert.Single(skills["null-ext"].ResourceNames);
+    }
+
+    [Fact]
+    public void Constructor_ValidExtensions_DoesNotThrow()
+    {
+        // Arrange & Act & Assert — should not throw
+        var loader = new FileAgentSkillLoader(NullLogger.Instance, s_validExtensions);
+        Assert.NotNull(loader);
+    }
+
+    [Fact]
+    public void Constructor_MixOfValidAndInvalidExtensions_ThrowsArgumentException()
+    {
+        // Arrange & Act & Assert — one bad extension in the list should cause failure
+        Assert.Throws<ArgumentException>(() => new FileAgentSkillLoader(NullLogger.Instance, s_mixedValidInvalidExtensions));
+    }
+
+    [Fact]
+    public void DiscoverAndLoadSkills_ResourceInSkillRoot_Discovered()
+    {
+        // Arrange — resource file directly in the skill directory (not in a subdirectory)
+        string skillDir = Path.Combine(this._testRoot, "root-resource-skill");
+        Directory.CreateDirectory(skillDir);
+        File.WriteAllText(Path.Combine(skillDir, "guide.md"), "guide content");
+        File.WriteAllText(Path.Combine(skillDir, "config.json"), "{}");
+        File.WriteAllText(
+            Path.Combine(skillDir, "SKILL.md"),
+            "---\nname: root-resource-skill\ndescription: Root resources\n---\nBody.");
+
+        // Act
+        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
+
+        // Assert — both root-level resource files should be discovered
+        Assert.Single(skills);
+        var skill = skills["root-resource-skill"];
+        Assert.Equal(2, skill.ResourceNames.Count);
+        Assert.Contains(skill.ResourceNames, r => r.Equals("guide.md", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(skill.ResourceNames, r => r.Equals("config.json", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void DiscoverAndLoadSkills_NoResourceFiles_ReturnsEmptyResourceNames()
+    {
+        // Arrange — skill with no resource files
+        _ = this.CreateSkillDirectory("no-resources", "A skill", "No resources here.");
+
+        // Act
+        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
+
+        // Assert
+        Assert.Single(skills);
+        Assert.Empty(skills["no-resources"].ResourceNames);
     }
 
     [Fact]
@@ -252,8 +400,11 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     [Fact]
     public async Task ReadSkillResourceAsync_ValidResource_ReturnsContentAsync()
     {
-        // Arrange
-        _ = this.CreateSkillDirectoryWithResource("read-skill", "A skill", "See [doc](refs/doc.md).", "refs/doc.md", "Document content here.");
+        // Arrange — create a skill with a resource file discovered from the directory
+        string skillDir = this.CreateSkillDirectory("read-skill", "A skill", "See docs for details.");
+        string refsDir = Path.Combine(skillDir, "refs");
+        Directory.CreateDirectory(refsDir);
+        File.WriteAllText(Path.Combine(refsDir, "doc.md"), "Document content here.");
         var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
         var skill = skills["read-skill"];
 
@@ -281,7 +432,10 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     public async Task ReadSkillResourceAsync_PathTraversal_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange — skill with a legitimate resource, then try to read a traversal path at read time
-        _ = this.CreateSkillDirectoryWithResource("traverse-read", "A skill", "See [doc](refs/doc.md).", "refs/doc.md", "legit");
+        string skillDir = this.CreateSkillDirectory("traverse-read", "A skill", "See docs.");
+        string refsDir = Path.Combine(skillDir, "refs");
+        Directory.CreateDirectory(refsDir);
+        File.WriteAllText(Path.Combine(refsDir, "doc.md"), "legit");
         var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
         var skill = skills["traverse-read"];
 
@@ -334,74 +488,13 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     }
 
     [Fact]
-    public void DiscoverAndLoadSkills_DuplicateResourceLinks_DeduplicatesResources()
-    {
-        // Arrange — body references the same resource twice
-        string skillDir = Path.Combine(this._testRoot, "dedup-skill");
-        string refsDir = Path.Combine(skillDir, "refs");
-        Directory.CreateDirectory(refsDir);
-        File.WriteAllText(Path.Combine(refsDir, "doc.md"), "content");
-        File.WriteAllText(
-            Path.Combine(skillDir, "SKILL.md"),
-            "---\nname: dedup-skill\ndescription: Dedup test\n---\nSee [doc](refs/doc.md) and [again](refs/doc.md).");
-
-        // Act
-        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
-
-        // Assert
-        Assert.Single(skills);
-        Assert.Single(skills["dedup-skill"].ResourceNames);
-    }
-
-    [Fact]
-    public void DiscoverAndLoadSkills_DotSlashPrefix_NormalizesToBarePath()
-    {
-        // Arrange — body references a resource with ./ prefix
-        string skillDir = Path.Combine(this._testRoot, "dotslash-skill");
-        string refsDir = Path.Combine(skillDir, "refs");
-        Directory.CreateDirectory(refsDir);
-        File.WriteAllText(Path.Combine(refsDir, "doc.md"), "content");
-        File.WriteAllText(
-            Path.Combine(skillDir, "SKILL.md"),
-            "---\nname: dotslash-skill\ndescription: Dot-slash test\n---\nSee [doc](./refs/doc.md).");
-
-        // Act
-        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
-
-        // Assert
-        Assert.Single(skills);
-        var skill = skills["dotslash-skill"];
-        Assert.Single(skill.ResourceNames);
-        Assert.Equal("refs/doc.md", skill.ResourceNames[0]);
-    }
-
-    [Fact]
-    public void DiscoverAndLoadSkills_DotSlashAndBarePath_DeduplicatesResources()
-    {
-        // Arrange — body references the same resource with and without ./ prefix
-        string skillDir = Path.Combine(this._testRoot, "mixed-prefix-skill");
-        string refsDir = Path.Combine(skillDir, "refs");
-        Directory.CreateDirectory(refsDir);
-        File.WriteAllText(Path.Combine(refsDir, "doc.md"), "content");
-        File.WriteAllText(
-            Path.Combine(skillDir, "SKILL.md"),
-            "---\nname: mixed-prefix-skill\ndescription: Mixed prefix test\n---\nSee [a](./refs/doc.md) and [b](refs/doc.md).");
-
-        // Act
-        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
-
-        // Assert
-        Assert.Single(skills);
-        var skill = skills["mixed-prefix-skill"];
-        Assert.Single(skill.ResourceNames);
-        Assert.Equal("refs/doc.md", skill.ResourceNames[0]);
-    }
-
-    [Fact]
     public async Task ReadSkillResourceAsync_DotSlashPrefix_MatchesNormalizedResourceAsync()
     {
         // Arrange — skill loaded with bare path, caller uses ./ prefix
-        _ = this.CreateSkillDirectoryWithResource("dotslash-read", "A skill", "See [doc](refs/doc.md).", "refs/doc.md", "Document content.");
+        string skillDir = this.CreateSkillDirectory("dotslash-read", "A skill", "See docs.");
+        string refsDir = Path.Combine(skillDir, "refs");
+        Directory.CreateDirectory(refsDir);
+        File.WriteAllText(Path.Combine(refsDir, "doc.md"), "Document content.");
         var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
         var skill = skills["dotslash-read"];
 
@@ -416,7 +509,10 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     public async Task ReadSkillResourceAsync_BackslashSeparator_MatchesNormalizedResourceAsync()
     {
         // Arrange — skill loaded with forward-slash path, caller uses backslashes
-        _ = this.CreateSkillDirectoryWithResource("backslash-read", "A skill", "See [doc](refs/doc.md).", "refs/doc.md", "Backslash content.");
+        string skillDir = this.CreateSkillDirectory("backslash-read", "A skill", "See docs.");
+        string refsDir = Path.Combine(skillDir, "refs");
+        Directory.CreateDirectory(refsDir);
+        File.WriteAllText(Path.Combine(refsDir, "doc.md"), "Backslash content.");
         var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
         var skill = skills["backslash-read"];
 
@@ -431,7 +527,10 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     public async Task ReadSkillResourceAsync_DotSlashWithBackslash_MatchesNormalizedResourceAsync()
     {
         // Arrange — skill loaded with forward-slash path, caller uses .\ prefix with backslashes
-        _ = this.CreateSkillDirectoryWithResource("mixed-sep-read", "A skill", "See [doc](refs/doc.md).", "refs/doc.md", "Mixed separator content.");
+        string skillDir = this.CreateSkillDirectory("mixed-sep-read", "A skill", "See docs.");
+        string refsDir = Path.Combine(skillDir, "refs");
+        Directory.CreateDirectory(refsDir);
+        File.WriteAllText(Path.Combine(refsDir, "doc.md"), "Mixed separator content.");
         var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
         var skill = skills["mixed-sep-read"];
 
@@ -443,14 +542,13 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     }
 
 #if NET
-    private static readonly string[] s_symlinkResource = ["refs/data.md"];
-
     [Fact]
-    public void DiscoverAndLoadSkills_SymlinkInPath_ExcludesSkill()
+    public void DiscoverAndLoadSkills_SymlinkInPath_SkipsSymlinkedResources()
     {
         // Arrange — a "refs" subdirectory is a symlink pointing outside the skill directory
         string skillDir = Path.Combine(this._testRoot, "symlink-escape-skill");
         Directory.CreateDirectory(skillDir);
+        File.WriteAllText(Path.Combine(skillDir, "legit.md"), "legit content");
 
         string outsideDir = Path.Combine(this._testRoot, "outside");
         Directory.CreateDirectory(outsideDir);
@@ -469,14 +567,19 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
 
         File.WriteAllText(
             Path.Combine(skillDir, "SKILL.md"),
-            "---\nname: symlink-escape-skill\ndescription: Symlinked directory escape\n---\nSee [doc](refs/secret.md).");
+            "---\nname: symlink-escape-skill\ndescription: Symlinked directory escape\n---\nBody.");
 
         // Act
         var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
 
-        // Assert — skill should be excluded because refs/ is a symlink (reparse point)
-        Assert.False(skills.ContainsKey("symlink-escape-skill"));
+        // Assert — skill should still load, but symlinked resources should be excluded
+        Assert.True(skills.ContainsKey("symlink-escape-skill"));
+        var skill = skills["symlink-escape-skill"];
+        Assert.Single(skill.ResourceNames);
+        Assert.Equal("legit.md", skill.ResourceNames[0]);
     }
+
+    private static readonly string[] s_symlinkResource = ["refs/data.md"];
 
     [Fact]
     public async Task ReadSkillResourceAsync_SymlinkInPath_ThrowsInvalidOperationExceptionAsync()
@@ -547,15 +650,6 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         string skillDir = Path.Combine(this._testRoot, directoryName);
         Directory.CreateDirectory(skillDir);
         File.WriteAllText(Path.Combine(skillDir, "SKILL.md"), rawContent);
-        return skillDir;
-    }
-
-    private string CreateSkillDirectoryWithResource(string name, string description, string body, string resourceRelativePath, string resourceContent)
-    {
-        string skillDir = this.CreateSkillDirectory(name, description, body);
-        string resourcePath = Path.Combine(skillDir, resourceRelativePath);
-        Directory.CreateDirectory(Path.GetDirectoryName(resourcePath)!);
-        File.WriteAllText(resourcePath, resourceContent);
         return skillDir;
     }
 }
