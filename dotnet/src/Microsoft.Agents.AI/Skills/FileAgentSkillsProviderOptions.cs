@@ -21,6 +21,8 @@ public sealed class FileAgentSkillsProviderOptions
 
     /// <summary>
     /// Gets or sets the file extensions recognized as discoverable skill resources.
+    /// Each value must start with a <c>'.'</c> character (for example, <c>.md</c>), and
+    /// extension comparisons are performed in a case-insensitive manner.
     /// Files in the skill directory (and its subdirectories) whose extension matches
     /// one of these values will be automatically discovered as resources.
     /// When <see langword="null"/>, a default set of extensions is used

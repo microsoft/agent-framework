@@ -281,7 +281,18 @@ internal sealed partial class FileAgentSkillLoader
 
         var resources = new List<string>();
 
+#if NET
+        var enumerationOptions = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+            AttributesToSkip = FileAttributes.ReparsePoint,
+        };
+
+        foreach (string filePath in Directory.EnumerateFiles(skillDirectoryFullPath, "*", enumerationOptions))
+#else
         foreach (string filePath in Directory.EnumerateFiles(skillDirectoryFullPath, "*", SearchOption.AllDirectories))
+#endif
         {
             string fileName = Path.GetFileName(filePath);
 
@@ -295,7 +306,10 @@ internal sealed partial class FileAgentSkillLoader
             string extension = Path.GetExtension(filePath);
             if (string.IsNullOrEmpty(extension) || !this._allowedResourceExtensions.Contains(extension))
             {
-                LogResourceSkippedExtension(this._logger, skillName, SanitizePathForLog(filePath), extension);
+                if (this._logger.IsEnabled(LogLevel.Debug))
+                {
+                    LogResourceSkippedExtension(this._logger, skillName, SanitizePathForLog(filePath), extension);
+                }
                 continue;
             }
 
@@ -307,14 +321,20 @@ internal sealed partial class FileAgentSkillLoader
             // Path containment check
             if (!IsPathWithinDirectory(resolvedFilePath, normalizedSkillDirectoryFullPath))
             {
-                LogResourcePathTraversal(this._logger, skillName, SanitizePathForLog(filePath));
+                if (this._logger.IsEnabled(LogLevel.Warning))
+                {
+                    LogResourcePathTraversal(this._logger, skillName, SanitizePathForLog(filePath));
+                }
                 continue;
             }
 
             // Symlink check
             if (HasSymlinkInPath(resolvedFilePath, normalizedSkillDirectoryFullPath))
             {
-                LogResourceSymlinkEscape(this._logger, skillName, SanitizePathForLog(filePath));
+                if (this._logger.IsEnabled(LogLevel.Warning))
+                {
+                    LogResourceSymlinkEscape(this._logger, skillName, SanitizePathForLog(filePath));
+                }
                 continue;
             }
 
@@ -429,7 +449,9 @@ internal sealed partial class FileAgentSkillLoader
         {
             if (string.IsNullOrWhiteSpace(ext) || !ext.StartsWith(".", StringComparison.Ordinal))
             {
-                throw new ArgumentException($"Each extension must start with '.'. Invalid value: '{ext}'", nameof(extensions));
+#pragma warning disable CA2208 // Instantiate argument exceptions correctly
+                throw new ArgumentException($"Each extension must start with '.'. Invalid value: '{ext}'", nameof(FileAgentSkillsProviderOptions.AllowedResourceExtensions));
+#pragma warning restore CA2208 // Instantiate argument exceptions correctly
             }
         }
     }
@@ -452,14 +474,14 @@ internal sealed partial class FileAgentSkillLoader
     [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' has an invalid '{FieldName}' value: {Reason}")]
     private static partial void LogInvalidFieldValue(ILogger logger, string skillFilePath, string fieldName, string reason);
 
-    [LoggerMessage(LogLevel.Warning, "Skipping resource in skill '{SkillName}': '{ResourceName}' references a path outside the skill directory")]
-    private static partial void LogResourcePathTraversal(ILogger logger, string skillName, string resourceName);
+    [LoggerMessage(LogLevel.Warning, "Skipping resource in skill '{SkillName}': '{ResourcePath}' references a path outside the skill directory")]
+    private static partial void LogResourcePathTraversal(ILogger logger, string skillName, string resourcePath);
 
     [LoggerMessage(LogLevel.Warning, "Duplicate skill name '{SkillName}': skill from '{NewPath}' skipped in favor of existing skill from '{ExistingPath}'")]
     private static partial void LogDuplicateSkillName(ILogger logger, string skillName, string newPath, string existingPath);
 
-    [LoggerMessage(LogLevel.Warning, "Skipping resource in skill '{SkillName}': '{ResourceName}' is a symlink that resolves outside the skill directory")]
-    private static partial void LogResourceSymlinkEscape(ILogger logger, string skillName, string resourceName);
+    [LoggerMessage(LogLevel.Warning, "Skipping resource in skill '{SkillName}': '{ResourcePath}' is a symlink that resolves outside the skill directory")]
+    private static partial void LogResourceSymlinkEscape(ILogger logger, string skillName, string resourcePath);
 
     [LoggerMessage(LogLevel.Information, "Reading resource '{FileName}' from skill '{SkillName}'")]
     private static partial void LogResourceReading(ILogger logger, string fileName, string skillName);
