@@ -268,6 +268,13 @@ OLLAMA_MODEL_OPTION_TRANSLATIONS: dict[str, str] = {
 }
 """Maps ChatOptions keys to Ollama model option parameter names."""
 
+# Kwargs that may be injected by orchestration layers (e.g. HandoffBuilder)
+# but are not supported by ollama.AsyncClient.chat().  These are silently
+# stripped in _inner_get_response so they never reach the Ollama API.
+_UNSUPPORTED_CHAT_KWARGS: set[str] = {
+    "allow_multiple_tool_calls",
+}
+
 OllamaChatOptionsT = TypeVar("OllamaChatOptionsT", bound=TypedDict, default="OllamaChatOptions", covariant=True)  # type: ignore[valid-type]
 
 
@@ -351,6 +358,11 @@ class OllamaChatClient(
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        # Filter out kwargs that are not supported by ollama.AsyncClient.chat().
+        # Orchestration layers (e.g. HandoffBuilder) may inject kwargs like
+        # allow_multiple_tool_calls that the Ollama Python client doesn't accept.
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k not in _UNSUPPORTED_CHAT_KWARGS}
+
         if stream:
             # Streaming mode
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
@@ -360,7 +372,7 @@ class OllamaChatClient(
                     response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
                         stream=True,
                         **options_dict,
-                        **kwargs,
+                        **filtered_kwargs,
                     )
                 except Exception as ex:
                     raise ChatClientException(f"Ollama streaming chat request failed : {ex}", ex) from ex
@@ -378,7 +390,7 @@ class OllamaChatClient(
                 response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
                     stream=False,
                     **options_dict,
-                    **kwargs,
+                    **filtered_kwargs,
                 )
             except Exception as ex:
                 raise ChatClientException(f"Ollama chat request failed : {ex}", ex) from ex
