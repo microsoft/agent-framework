@@ -108,7 +108,13 @@ class TurnManager(Executor):
         # Access the parsed structured model output via .value.
         # Since the agent is configured with response_format=GuessOutput,
         # .value returns the parsed GuessOutput instance directly.
-        last_guess = result.agent_response.value.guess
+        agent_value = result.agent_response.value
+        if agent_value is None:
+            raise RuntimeError(
+                "AgentResponse.value is None. Ensure that the agent is invoked with "
+                "options={'response_format': GuessOutput} so structured output is available."
+            )
+        last_guess = agent_value.guess
 
         # Craft a precise human prompt that defines higher and lower relative to the agent's guess.
         prompt = (
