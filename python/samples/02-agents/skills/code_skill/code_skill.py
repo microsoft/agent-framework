@@ -10,9 +10,6 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
-
 """
 Code-Defined Agent Skills — Define skills in Python code
 
@@ -29,6 +26,9 @@ Pattern 2: Dynamic Resources
 
 Both patterns can be combined with file-based skills in a single SkillsProvider.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Pattern 1: Basic Code Skill — direct construction with static resources
 code_style_skill = Skill(

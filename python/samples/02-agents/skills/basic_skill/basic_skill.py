@@ -9,9 +9,6 @@ from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
-
 """
 Agent Skills Sample
 
@@ -26,6 +23,9 @@ capabilities. They follow the progressive disclosure pattern:
 This sample includes the expense-report skill:
   - Policy-based expense filing with references and assets
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

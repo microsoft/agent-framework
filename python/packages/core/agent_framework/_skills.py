@@ -72,11 +72,15 @@ class SkillResource:
         function: Callable that returns content, or ``None`` if backed by static content.
 
     Examples:
-        Static resource::
+        Static resource:
+
+        .. code-block:: python
 
             SkillResource(name="reference", content="Static docs here...")
 
-        Callable resource::
+        Callable resource:
+
+        .. code-block:: python
 
             SkillResource(name="schema", function=get_schema_func)
     """
@@ -132,7 +136,9 @@ class Skill:
             for code-defined skills.
 
     Examples:
-        Direct construction::
+        Direct construction:
+
+        .. code-block:: python
 
             skill = Skill(
                 name="my-skill",
@@ -141,7 +147,9 @@ class Skill:
                 resources=[SkillResource(name="ref", content="...")],
             )
 
-        With dynamic resources::
+        With dynamic resources:
+
+        .. code-block:: python
 
             skill = Skill(
                 name="db-skill",
@@ -202,13 +210,17 @@ class Skill:
             called with keyword arguments.
 
         Examples:
-            Bare decorator::
+            Bare decorator:
+
+            .. code-block:: python
 
                 @skill.resource
                 def get_schema() -> str:
                     return "schema..."
 
-            With arguments::
+            With arguments:
+
+            .. code-block:: python
 
                 @skill.resource(name="custom-name", description="Custom desc")
                 async def get_data() -> str:
@@ -336,11 +348,15 @@ class SkillsProvider(BaseContextProvider):
         source_id: Unique identifier for this provider instance.
 
     Examples:
-        File-based only::
+        File-based only:
+
+        .. code-block:: python
 
             provider = SkillsProvider(skill_paths="./skills")
 
-        Code-defined only::
+        Code-defined only:
+
+        .. code-block:: python
 
             my_skill = Skill(
                 name="my-skill",
@@ -349,7 +365,9 @@ class SkillsProvider(BaseContextProvider):
             )
             provider = SkillsProvider(skills=[my_skill])
 
-        Combined::
+        Combined:
+
+        .. code-block:: python
 
             provider = SkillsProvider(
                 skill_paths="./skills",
