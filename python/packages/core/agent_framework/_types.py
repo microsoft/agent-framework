@@ -770,13 +770,29 @@ class Content:
             call_id: The ID of the function call this result corresponds to.
 
         Keyword Args:
-            result: The text result of the function call.
+            result: The text result, or a list of Content items. When a list is
+                provided, text items are concatenated as the text result and
+                media items (images, audio, files) are stored in ``items``.
             items: Optional rich content items (e.g. images, audio) produced by the tool.
+                Ignored when ``result`` is a list (items are extracted from it instead).
             exception: The exception message if the function call failed.
             annotations: Optional annotations for the content.
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from the provider.
         """
+        if isinstance(result, list):
+            text_parts = [c.text for c in result if c.type == "text" and c.text]
+            rich_items = [c for c in result if c.type in ("data", "uri")]
+            return cls(
+                "function_result",
+                call_id=call_id,
+                result="\n".join(text_parts) if text_parts else "",
+                items=rich_items or None,
+                exception=exception,
+                annotations=annotations,
+                additional_properties=additional_properties,
+                raw_representation=raw_representation,
+            )
         return cls(
             "function_result",
             call_id=call_id,

@@ -1357,33 +1357,6 @@ def normalize_function_invocation_configuration(
     return normalized
 
 
-def _build_function_result(call_id: str, function_result: str | list[Content]) -> Content:
-    """Build a function_result Content from a parsed tool result.
-
-    When the tool returned rich content (list of Content items), the text
-    items are concatenated as the text result and media items are stored
-    in the ``items`` field so providers can forward them to the model.
-
-    Args:
-        call_id: The function call ID this result corresponds to.
-        function_result: The parsed result from FunctionTool.invoke.
-
-    Returns:
-        A Content with type ``function_result``.
-    """
-    from ._types import Content
-
-    if isinstance(function_result, list):
-        text_parts = [c.text for c in function_result if c.type == "text" and c.text]
-        rich_items = [c for c in function_result if c.type in ("data", "uri")]
-        return Content.from_function_result(
-            call_id=call_id,
-            result="\n".join(text_parts) if text_parts else "",
-            items=rich_items or None,
-        )
-    return Content.from_function_result(call_id=call_id, result=function_result)
-
-
 async def _auto_invoke_function(
     function_call_content: Content,
     custom_args: dict[str, Any] | None = None,
@@ -1481,9 +1454,9 @@ async def _auto_invoke_function(
                 tool_call_id=function_call_content.call_id,
                 **runtime_kwargs if getattr(tool, "_forward_runtime_kwargs", False) else {},
             )
-            return _build_function_result(
+            return Content.from_function_result(
                 call_id=function_call_content.call_id,  # type: ignore[arg-type]
-                function_result=function_result,
+                result=function_result,
             )
         except Exception as exc:
             message = "Error: Function failed."
@@ -1515,9 +1488,9 @@ async def _auto_invoke_function(
     # MiddlewareTermination bubbles up to signal loop termination
     try:
         function_result = await middleware_pipeline.execute(middleware_context, final_function_handler)
-        return _build_function_result(
+        return Content.from_function_result(
             call_id=function_call_content.call_id,  # type: ignore[arg-type]
-            function_result=function_result,
+            result=function_result,
         )
     except MiddlewareTermination as term_exc:
         # Re-raise to signal loop termination, but first capture any result set by middleware

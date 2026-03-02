@@ -208,11 +208,19 @@ def _parse_tool_result_from_mcp(
                 text_parts.append(str(item))
 
     if rich_items:
-        # Return rich content list with text items included
+        # Return rich content list preserving original order
         result: list[Content] = []
-        for text in text_parts:
-            result.append(Content.from_text(text))
-        result.extend(rich_items)
+        text_idx = 0
+        rich_idx = 0
+        for item in mcp_type.content:
+            match item:
+                case types.ImageContent() | types.AudioContent():
+                    result.append(rich_items[rich_idx])
+                    rich_idx += 1
+                case _:
+                    if text_idx < len(text_parts):
+                        result.append(Content.from_text(text_parts[text_idx]))
+                        text_idx += 1
         return result
 
     if not text_parts:

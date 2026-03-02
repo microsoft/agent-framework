@@ -64,29 +64,31 @@ def test_mcp_prompt_message_to_ai_content():
 
 
 def test_parse_tool_result_from_mcp():
-    """Test conversion from MCP tool result with images returns rich content list."""
+    """Test conversion from MCP tool result with images preserves original order."""
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Result text"),
             types.ImageContent(type="image", data="eHl6", mimeType="image/png"),
+            types.TextContent(type="text", text="After image"),
             types.ImageContent(type="image", data="YWJj", mimeType="image/webp"),
         ]
     )
     result = _parse_tool_result_from_mcp(mcp_result)
 
-    # Results with images return a list of Content objects
+    # Results with images return a list of Content objects in original order
     assert isinstance(result, list)
-    assert len(result) == 3
-    # First item is the text content
+    assert len(result) == 4
+    # Order is preserved: text, image, text, image
     assert result[0].type == "text"
     assert result[0].text == "Result text"
-    # Image items are preserved as data Content objects (data URI)
     assert result[1].type == "data"
     assert result[1].media_type == "image/png"
     assert "eHl6" in result[1].uri
-    assert result[2].type == "data"
-    assert result[2].media_type == "image/webp"
-    assert "YWJj" in result[2].uri
+    assert result[2].type == "text"
+    assert result[2].text == "After image"
+    assert result[3].type == "data"
+    assert result[3].media_type == "image/webp"
+    assert "YWJj" in result[3].uri
 
 
 def test_parse_tool_result_from_mcp_single_text():

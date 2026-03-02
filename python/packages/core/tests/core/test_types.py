@@ -2250,15 +2250,13 @@ def test_parse_result_mixed_content_list():
     assert result[1].type == "data"
 
 
-def test_build_function_result_with_rich_content():
-    """Test _build_function_result separates text and rich items."""
-    from agent_framework._tools import _build_function_result
-
+def test_from_function_result_with_content_list():
+    """Test Content.from_function_result separates text and rich items from a list."""
     content_list = [
         Content.from_text("Chart rendered."),
         Content.from_data(data=b"image_bytes", media_type="image/png"),
     ]
-    result = _build_function_result(call_id="test-123", function_result=content_list)
+    result = Content.from_function_result(call_id="test-123", result=content_list)
     assert result.type == "function_result"
     assert result.call_id == "test-123"
     assert result.result == "Chart rendered."
@@ -2268,11 +2266,9 @@ def test_build_function_result_with_rich_content():
     assert result.items[0].media_type == "image/png"
 
 
-def test_build_function_result_with_string():
-    """Test _build_function_result with plain string result."""
-    from agent_framework._tools import _build_function_result
-
-    result = _build_function_result(call_id="test-123", function_result="just text")
+def test_from_function_result_with_string():
+    """Test Content.from_function_result with plain string result."""
+    result = Content.from_function_result(call_id="test-123", result="just text")
     assert result.type == "function_result"
     assert result.call_id == "test-123"
     assert result.result == "just text"
