@@ -194,8 +194,8 @@ public class WorkflowHostSmokeTests
     {
         // Arrange
         const string RequestId = "test-request-id";
-        McpServerToolCallContent mcpCalll = new("call-id", "testToolName", "http://localhost");
-        UserInputRequestContent originalContent = new McpServerToolApprovalRequestContent(RequestId, mcpCalll);
+        McpServerToolCallContent mcpCall = new("call-id", "testToolName", "http://localhost");
+        UserInputRequestContent originalContent = new McpServerToolApprovalRequestContent(RequestId, mcpCall);
         RequestEmittingAgent requestAgent = new(originalContent);
         ExecutorBinding agentBinding = requestAgent.BindAsExecutor(
             new AIAgentHostOptions { InterceptUserInputRequests = false, EmitAgentUpdateEvents = true });

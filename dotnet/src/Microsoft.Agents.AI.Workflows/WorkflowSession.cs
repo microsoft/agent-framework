@@ -159,7 +159,7 @@ internal sealed class WorkflowSession : AgentSession
                             .ConfigureAwait(false);
 
             // Process messages: convert response content to ExternalResponse, send regular messages as-is
-            await this.SendMessagesWithResponseConversionAsync(run, messages, cancellationToken).ConfigureAwait(false);
+            await this.SendMessagesWithResponseConversionAsync(run, messages).ConfigureAwait(false);
             return run;
         }
 
@@ -175,7 +175,7 @@ internal sealed class WorkflowSession : AgentSession
     /// Sends messages to the run, converting FunctionResultContent and UserInputResponseContent
     /// to ExternalResponse when there's a matching pending request.
     /// </summary>
-    private async ValueTask SendMessagesWithResponseConversionAsync(StreamingRun run, List<ChatMessage> messages, CancellationToken cancellationToken)
+    private async ValueTask SendMessagesWithResponseConversionAsync(StreamingRun run, List<ChatMessage> messages)
     {
         List<ChatMessage> regularMessages = [];
 
@@ -202,12 +202,9 @@ internal sealed class WorkflowSession : AgentSession
 
             if (regularContents.Count > 0)
             {
-                regularMessages.Add(new ChatMessage(message.Role, regularContents)
-                {
-                    AuthorName = message.AuthorName,
-                    MessageId = message.MessageId,
-                    CreatedAt = message.CreatedAt
-                });
+                ChatMessage cloned = message.Clone();
+                cloned.Contents = regularContents;
+                regularMessages.Add(cloned);
             }
         }
 
