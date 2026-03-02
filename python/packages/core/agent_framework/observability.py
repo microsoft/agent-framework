@@ -1266,18 +1266,15 @@ def _trace_get_streaming_response(
                 try:
                     async for update in func(self, messages=messages, options=options, **kwargs):
                         current_time = perf_counter()
-                        if first_chunk_time is None:
-                            # First chunk arrived
+                        if previous_chunk_time is None:
+                            # First chunk
                             first_chunk_time = current_time
-                            previous_chunk_time = current_time
-                            chunk_count = 1
                         else:
-                            # Subsequent chunk - track inter-chunk timing
-                            if previous_chunk_time is not None:
-                                inter_chunk_time = current_time - previous_chunk_time
-                                total_inter_chunk_time += inter_chunk_time
-                                chunk_count += 1
-                            previous_chunk_time = current_time
+                           # Subsequent chunks
+                           total_inter_chunk_time += current_time - previous_chunk_time
+
+                       previous_chunk_time = current_time
+                       chunk_count += 1
                         all_updates.append(update)
                         yield update
                     end_time_stamp = perf_counter()
