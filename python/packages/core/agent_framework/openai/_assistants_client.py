@@ -629,50 +629,50 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                         text_content = Content.from_text(block.text.value)
                         if block.text.annotations:
                             text_content.annotations = []
-                            for annotation in block.text.annotations:
-                                if isinstance(annotation, FileCitationAnnotation):
+                            for completed_annotation in block.text.annotations:
+                                if isinstance(completed_annotation, FileCitationAnnotation):
                                     props: dict[str, Any] = {
-                                        "text": annotation.text,
+                                        "text": completed_annotation.text,
                                     }
-                                    if annotation.file_citation and annotation.file_citation.quote:
-                                        props["quote"] = annotation.file_citation.quote
+                                    if completed_annotation.file_citation and completed_annotation.file_citation.quote:
+                                        props["quote"] = completed_annotation.file_citation.quote
                                     ann = Annotation(
                                         type="citation",
                                         additional_properties=props,
-                                        raw_representation=annotation,
+                                        raw_representation=completed_annotation,
                                     )
-                                    if annotation.file_citation and annotation.file_citation.file_id:
-                                        ann["file_id"] = annotation.file_citation.file_id
-                                    if annotation.start_index is not None and annotation.end_index is not None:
+                                    if completed_annotation.file_citation and completed_annotation.file_citation.file_id:
+                                        ann["file_id"] = completed_annotation.file_citation.file_id
+                                    if completed_annotation.start_index is not None and completed_annotation.end_index is not None:
                                         ann["annotated_regions"] = [
                                             TextSpanRegion(
                                                 type="text_span",
-                                                start_index=annotation.start_index,
-                                                end_index=annotation.end_index,
+                                                start_index=completed_annotation.start_index,
+                                                end_index=completed_annotation.end_index,
                                             )
                                         ]
                                     text_content.annotations.append(ann)
-                                elif isinstance(annotation, FilePathAnnotation):
+                                elif isinstance(completed_annotation, FilePathAnnotation):
                                     ann = Annotation(
                                         type="citation",
                                         additional_properties={
-                                            "text": annotation.text,
+                                            "text": completed_annotation.text,
                                         },
-                                        raw_representation=annotation,
+                                        raw_representation=completed_annotation,
                                     )
-                                    if annotation.file_path and annotation.file_path.file_id:
-                                        ann["file_id"] = annotation.file_path.file_id
-                                    if annotation.start_index is not None and annotation.end_index is not None:
+                                    if completed_annotation.file_path and completed_annotation.file_path.file_id:
+                                        ann["file_id"] = completed_annotation.file_path.file_id
+                                    if completed_annotation.start_index is not None and completed_annotation.end_index is not None:
                                         ann["annotated_regions"] = [
                                             TextSpanRegion(
                                                 type="text_span",
-                                                start_index=annotation.start_index,
-                                                end_index=annotation.end_index,
+                                                start_index=completed_annotation.start_index,
+                                                end_index=completed_annotation.end_index,
                                             )
                                         ]
                                     text_content.annotations.append(ann)
                                 else:
-                                    logger.debug("Unparsed annotation type: %s", annotation.type)
+                                    logger.debug("Unparsed annotation type: %s", completed_annotation.type)
                         completed_contents.append(text_content)
                     if completed_contents:
                         yield ChatResponseUpdate(
