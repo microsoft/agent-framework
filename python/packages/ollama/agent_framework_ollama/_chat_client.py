@@ -349,7 +349,7 @@ class OllamaChatClient(
         messages: Sequence[Message],
         options: Mapping[str, Any],
         stream: bool = False,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ARG002 — accepted for interface compatibility; not forwarded to Ollama
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         if stream:
             # Streaming mode
@@ -360,7 +360,6 @@ class OllamaChatClient(
                     response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
                         stream=True,
                         **options_dict,
-                        **kwargs,
                     )
                 except Exception as ex:
                     raise ChatClientException(f"Ollama streaming chat request failed : {ex}", ex) from ex
@@ -378,7 +377,6 @@ class OllamaChatClient(
                 response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
                     stream=False,
                     **options_dict,
-                    **kwargs,
                 )
             except Exception as ex:
                 raise ChatClientException(f"Ollama chat request failed : {ex}", ex) from ex
