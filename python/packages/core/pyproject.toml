@@ -105,6 +105,7 @@ extend = "../../pyproject.toml"
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework", "tests/workflow"]
 
 [tool.mypy]
 plugins = ['pydantic.mypy']

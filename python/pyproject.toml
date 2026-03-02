@@ -182,7 +182,7 @@ omit = [
 ]
 
 [tool.pyright]
-include = ["agent_framework*", "packages/core/tests/workflow"]
+include = ["agent_framework*"]
 exclude = ["**/.venv/**", "packages/devui/frontend/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
