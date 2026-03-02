@@ -246,7 +246,7 @@ response = await get_response(messages=groups.to_messages())
 # add messages from response into new group and to the groups.
 ```
 
-**Note on tool loop integration (C1):** For in-run compaction with Variant C1, the function-invocation layer will maintain a `MessageGroups` object (instead of repeatedly rebuilding groups from a flat list). As the loop produces new messages, it appends them directly as groups (e.g., a `tool_call` group after collecting the assistant message and its tool results, or a standalone `assistant_text` group). The flat message list is only rebuilt from groups when needed (after compaction, or before sending to the LLM). This avoids O(n) re-grouping on every tool-call iteration.
+**Note on in-run integration (C1):** Variant C1 requires maintaining grouped sidecar state (`MessageGroups` / underlying `list[MessageGroup]`) alongside the function-calling loop message list. Because `BaseChatClient` is stateless between calls, C1 cannot be cleanly implemented only in `BaseChatClient`; a stateful loop layer must own and update that grouped structure across roundtrips.
 
 ##### Variant C2: `_`-prefixed metadata directly on `Message`
 
@@ -295,7 +295,7 @@ class CompactionStrategy(Protocol):
         ...
 ```
 
-**Note on tool loop integration (C2):** The loop should annotate new messages incrementally as they are appended (rather than re-running `_annotate_groups` over the full list every iteration). For example, when a tool call completes, tag the assistant tool-call message and all tool results with the same `_group_id`.
+**Note on in-run integration (C2):** `BaseChatClient` should annotate new messages incrementally as they are appended (rather than re-running `_annotate_groups` over the full list every roundtrip). Unlike C1, C2 does not require a separate grouped sidecar in the function-calling loop; strategies can operate directly on `list[Message]` using `_group_*` metadata attached to the messages themselves. This makes C2 feasible as a fully `BaseChatClient`-localized implementation and provides a cleaner separation of responsibilities. In C2 and derived variants (D2/E2/F2), full ownership of compaction and message-attribute lifecycle belongs to the chat client to avoid double work: the chat client assigns/updates attributes (including `_group_id` for new tool-result messages added by function calling), and the function-calling layer remains unaware of this mechanism.
 
 #### Variant D: Exclude-based projection (builds on Variant C1/C2)
 
@@ -589,7 +589,7 @@ async def compact_with_annotations(
     return [m for m in messages if not m.additional_properties.get("_excluded", False)]
 ```
 
-F2 avoids a sidecar object but requires strict ownership rules for `_` attributes (who sets, updates, clears, and validates them).
+F2 avoids a sidecar object but requires strict ownership rules for `_` attributes (who sets, updates, clears, and validates them). To prevent duplicate work and drift, this ownership should live entirely in `BaseChatClient`, while the function-calling layer remains attribute-unaware.
 
 **Trade-offs between variants:**
 
@@ -615,6 +615,7 @@ class HistoryProvider(ContextProvider):
         load_messages: bool = True,
         store_inputs: bool = True,
         store_responses: bool = True,
+        store_excluded_messages: bool = True,  # NEW: persist excluded groups/messages or only included
         # NEW: optional compaction strategy, can be a single strategy or a chained/composed strategy
         compaction_strategy: CompactionStrategy | None = None,
         # NEW: optional tokenizer for token-aware compaction strategies
@@ -626,7 +627,7 @@ class HistoryProvider(ContextProvider):
         groups = MessageGroups.from_messages(messages_to_store, tokenizer=self.tokenizer)
         if self.compaction_strategy:
             await self.compaction_strategy(groups)
-        messages_to_store = groups.to_messages()
+        messages_to_store = groups.get_messages(excluded=self.store_excluded_messages)
         if messages_to_store:
             await self.save_messages(context.session_id, messages_to_store)
 ```
@@ -663,26 +664,22 @@ There are two ways we can do this:
 
 Given the explicit nature, and the ability to do the heavy lifting of reading, compacting and writing outside of the agent loop, we decide to go with the first setup, if we decide to use Option 1 overall.
 
-**Usage for in-run compaction (tool loop):**
+**Usage for in-run compaction (BaseChatClient):**
 
-In-run compaction is executed within the Function Calling Layer, this loop is controlled by the existing TypedDict that controls the function calling loop (max iterations, error handling, etc.). Adding compaction and return-shape fields keeps loop-related behavior in one place.
+In-run compaction should execute in `BaseChatClient` before every `get_response` call, regardless of whether function calling is enabled. This makes compaction behavior uniform for single-shot and looped invocations.
 
-For token-aware variants (E1/E2/F1/F2), a tokenizer must also be configured because token counts are part of compaction decisions, this could be optional to allow simple compaction strategies that don't use token metrics. For the grouped-state path (F1), use `MessageGroups.from_messages(..., tokenizer=...)` so tokenization and grouping happen together before strategy invocation.
+For token-aware variants (E1/E2/F1/F2), a tokenizer must be configured because token counts are part of compaction decisions. For the grouped-state path (F1), use `MessageGroups.from_messages(..., tokenizer=...)` so tokenization and grouping happen together before strategy invocation.
+
+For C2/D2/E2/F2 specifically, `BaseChatClient` is the sole owner of compaction + `_`-attribute lifecycle. It should assume this work is required, annotate/refresh metadata on appended messages (including tool-result messages coming from function calling), and project included messages for model calls. The function-calling layer should not implement or duplicate any part of this mechanism.
 
 ```python
-class FunctionInvocationConfiguration(TypedDict, total=False):
-    enabled: bool
-    max_iterations: int
-    max_consecutive_errors_per_request: int
-    terminate_on_unknown_calls: bool
-    additional_tools: Sequence[ToolProtocol]
-    include_detailed_errors: bool
-    compaction_strategy: CompactionStrategy | None  # NEW
-    tokenizer: TokenizerProtocol | None  # NEW; required for token-aware variants (E1/E2/F1/F2)
-    include_excluded_messages_in_final_response: bool  # NEW; default True
+class BaseChatClient:
+    # NEW attributes on the existing class
+    compaction_strategy: CompactionStrategy | None = None
+    tokenizer: TokenizerProtocol | None = None  # required for token-aware variants
 ```
 
-However these should *also* be first-class parameters on `Agent`, then propagated and stored into `FunctionInvocationConfiguration` at agent creation time:
+Agent attributes stay the same and are passed into the chat client (similar to `ChatMiddleware` propagation):
 
 ```python
 agent = Agent(
@@ -693,42 +690,47 @@ agent = Agent(
     compaction_strategy=compaction_strategy,
     tokenizer=model_tokenizer,  # required for token-aware variants (E1/E2/F1/F2)
 )
+
+chat_client.compaction_strategy = agent.compaction_strategy
+chat_client.tokenizer = agent.tokenizer
 ```
 
-During the function calling loop, the strategy should be applied immediately before **every** `get_response` call (each model roundtrip):
+Execution then lives in `BaseChatClient.get_response(...)`:
 
 ```python
-# Inside the function invocation loop (e.g., in _try_execute_function_calls)
-logger = logging.getLogger(__name__)
-groups = MessageGroups.from_messages(
-    all_messages,
-    tokenizer=config["tokenizer"],  # required for token-aware variants (E1/E2/F1/F2)
-)
-group_metrics = groups.summary()
+def get_response(
+    self,
+    messages: Sequence[Message],
+    *,
+    stream: bool = False,
+    options: Mapping[str, Any] | None = None,
+    **kwargs: Any,
+) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
+    if not self.compaction_strategy:
+        return self._inner_get_response(
+            messages=messages,
+            stream=stream,
+            options=options or {},
+            **kwargs,
+        )
 
-if config.get("compaction_strategy"):
-    before_compaction = groups.summary()
-    await config["compaction_strategy"](groups)
-    after_compaction = groups.summary()
-    logger.info(
-        "In-run compaction applied",
-        strategy=type(config["compaction_strategy"]).__name__,
-        summary_before=before_compaction,
-        summary_after=after_compaction,
+    groups = MessageGroups.from_messages(
+        messages,
+        tokenizer=self.tokenizer,
     )
-    # Strategies can set groups.groups[i].excluded True/False with reasons
-
-response = await super_get_response(messages=groups.included_messages(), ...)
-# tokenize and store response messages, append to all_messages/groups as new groups, then next loop iteration will re-apply compaction with updated state
+    # Compaction hook runs here and updates included/excluded state on groups.
+    projected = groups.included_messages()
+    return self._inner_get_response(
+        messages=projected,
+        stream=stream,
+        options=options or {},
+        **kwargs,
+    )
 ```
 
-After the loop completes, final response shape is controlled by config:
+`BaseChatClient` always keeps the full grouped state (included + excluded) in memory and uses only the projected included messages for model calls. Return/persistence policy is handled outside the client (e.g., `HistoryProvider.store_excluded_messages`).
 
-```python
-return_messages = groups.get_messages(excluded=config.get("include_excluded_messages_in_final_response", True))
-```
-
-Even with Variant A as the baseline, grouped exclusion metadata can be maintained in the function-invocation layer while only included messages are sent to `get_response`.
+When function calling is enabled, every model roundtrip still goes through `BaseChatClient.get_response(...)`, so compaction runs automatically without duplicating logic in function-invocation code.
 
 **Built-in strategies:**
 
@@ -787,7 +789,7 @@ This pattern keeps composition explicit and deterministic: ordered strategies, s
 - Good, because with Variants C2-F2 (message annotations), we can avoid a sidecar `MessageGroups` container while still preserving logical groups through `_group_*` attributes
 - Good, because it is easy to test strategies in isolation
 - Good, because strategies can inspect `source_id` attribution on messages for informed decisions
-- Good, because in-run settings can be first-class `Agent` parameters while still being stored in `FunctionInvocationConfiguration` for loop execution
+- Good, because in-run settings can be first-class `Agent` parameters and are propagated into `BaseChatClient` attributes
 - Good, because **chaining is natural** — for Variants A/C1-F2, each strategy mutates the same shared state in sequence; for Variant B, output pipes into the next input
 - Neutral, because Variants C1-F2 add framework complexity (grouping/flattening or annotation lifecycle, plus tokenization/exclusion accounting) but reduce strategy complexity
 - Bad, because it adds a new concept (`CompactionStrategy`) alongside the existing `ContextProvider`/`HistoryProvider` hierarchy
@@ -837,7 +839,7 @@ class HistoryProvider(ContextProvider):
         context.extend_messages(self.source_id, history)
 ```
 
-For in-run compaction, the `FunctionInvocationConfiguration` would reference the provider's `compact()` method, but this requires knowing which provider to use:
+For in-run compaction, `BaseChatClient` attributes would reference the provider's `compact()` method, but this requires knowing which provider to use:
 
 ```python
 # Awkward: must extract compaction from a specific provider
@@ -845,9 +847,7 @@ compacting_provider = next(
     (p for p in agent._context_providers if isinstance(p, CompactingHistoryMixin)),
     None,
 )
-config: FunctionInvocationConfiguration = {
-    "compaction_strategy": compacting_provider,  # provider IS the strategy
-}
+base_chat_client.compaction_strategy = compacting_provider  # provider IS the strategy
 ```
 
 For existing storage:
@@ -865,7 +865,7 @@ await provider.save_messages(session_id, compacted)
 - Neutral, because mixins are idiomatic Python but can be harder to reason about in complex hierarchies
 - Bad, because **compaction strategy is coupled to the provider** — cannot share the same strategy across different providers, or in-run.
 - Bad, because different strategies per compaction point (pre-write vs existing) require additional configuration or separate methods
-- Bad, because in-run compaction via `FunctionInvocationConfiguration` requires extracting the mixin from the provider list — unclear which one to use if multiple exist
+- Bad, because in-run compaction via `BaseChatClient` attributes requires extracting the mixin from the provider list — unclear which one to use if multiple exist
 - Bad, because `isinstance` checks are fragile and don't compose well
 - Bad, because testing compaction requires instantiating a full provider rather than testing the strategy in isolation
 - Bad, because existing storage compaction requires having the right provider type, not just any strategy
@@ -912,14 +912,14 @@ agent = ChatAgent(
 )
 ```
 
-The agent recognizes `CompactionProvider` instances and wires `compact()` into `FunctionInvocationConfiguration`:
+The agent recognizes `CompactionProvider` instances and wires `compact()` into `BaseChatClient` attributes:
 
 ```python
 class ChatAgent:
-    def _build_function_config(self) -> FunctionInvocationConfiguration:
+    def _configure_base_chat_client(self, base_client: BaseChatClient) -> None:
         compactors = [p for p in self._context_providers if isinstance(p, CompactionProvider)]
         strategy = compactors[0] if compactors else None  # Which one if multiple?
-        return {"compaction_strategy": strategy, ...}
+        base_client.compaction_strategy = strategy
 ```
 
 For existing storage, the `compact()` method is called directly:
@@ -935,10 +935,10 @@ await my_history_provider.save_messages(session_id, compacted)
 - Good, because ordering relative to other providers is explicit (runs after RAG provider, etc.)
 - Good, because `before_run` can compact the combined output of all prior providers (history + RAG)
 - Good, because the `compact()` method works standalone for existing storage maintenance
-- Neutral, because **chaining is partially supported** — multiple `CompactionProvider` instances can be added to the provider list and will run in order during `before_run`/`after_run`, but in-run compaction via `FunctionInvocationConfiguration` only wires a single strategy (which one to pick is ambiguous), so chaining works at boundaries but not during the tool loop
+- Neutral, because **chaining is partially supported** — multiple `CompactionProvider` instances can be added to the provider list and will run in order during `before_run`/`after_run`, but in-run compaction via `BaseChatClient` attributes only wires a single strategy (which one to pick is ambiguous), so chaining works at boundaries but not during the tool loop
 - Bad, because the `CompactionProvider` has **dual roles** (context provider + compaction strategy), which muddies the ContextProvider contract
 - Bad, because `context.replace_messages()` is a new operation that doesn't exist today and conflicts with the append-only design of `SessionContext`
-- Bad, because in-run compaction still requires `isinstance` checks to wire into `FunctionInvocationConfiguration`
+- Bad, because in-run compaction still requires `isinstance` checks to wire into `BaseChatClient` attributes
 - Bad, because ordering sensitivity is subtle — must come after storage providers but before model invocation
 - Bad, because a `CompactionProvider` as a context provider gets `before_run`/`after_run` calls even when only its `compact()` method is needed (in-run and storage maintenance)
 
@@ -995,7 +995,7 @@ For boundary compaction, the same middleware runs at the chat client level. For 
 
 ## Decision Outcome
 
-Chosen option: **Option 1: Standalone `CompactionStrategy` Object** with **F2** (`_`-annotated messages) as the primary implementation model. We still document F1 as a valid alternative, but F2 is preferred because it introduces one less concept (no sidecar `MessageGroups` container) and enables native state sharing across compaction points (e.g., between the function-calling loop and `HistoryProvider.after_run`), improving efficiency by reducing translation/rebuild steps.
+Chosen option: **Option 1: Standalone `CompactionStrategy` Object** with **F2** (`_`-annotated messages) as the primary implementation model. We still document F1 as a valid alternative, but F2 is preferred because it introduces one less concept (no sidecar `MessageGroups` container), aligns with `BaseChatClient` statelessness by carrying state on messages themselves, and allows in-run compaction to stay localized to `BaseChatClient` rather than requiring extra grouped-state ownership in the function-calling loop.
 
 ## Comparison to .NET Implementation
 
@@ -1016,7 +1016,7 @@ Option 1's `CompactionStrategy` is the closest equivalent to .NET's `IChatReduce
 |-----------------|---------------------|-------------|
 | **Pre-write compaction** | `InMemoryChatHistoryProvider` + `ChatReducerTriggerEvent.AfterMessageAdded` | Reducer runs in `StoreChatHistoryAsync` after new request/response messages are added to storage (closest equivalent to pre-write persistence compaction). |
 | **Agent-level whole-list compaction (pre-send overlap with post-load)** | `ChatClientAgent` message assembly + chat-client decoration via `clientFactory` / `ChatClientAgentRunOptions.ChatClientFactory` | `ChatClientAgent` builds the full invocation message list (`ChatHistoryProvider` + `AIContextProviders` + input). A delegating `IChatClient` can compact that assembled list immediately before forwarding `GetResponseAsync`. |
-| **In-run compaction before every `get_response` call** | Function-invocation chat-client layer (`FunctionInvokingChatClient`) plus delegating `IChatClient` wrapper | The function-calling layer performs repeated model roundtrips; wrapping this layer allows compaction to execute before each `GetResponseAsync` call. |
+| **In-run compaction before every `get_response` call** | Base chat-client layer + delegating `IChatClient` wrapper | Compaction is executed in the base chat client before every `GetResponseAsync` call, so both single-shot and function-calling roundtrips get the same behavior. |
 | **Variant C1 grouped-state maintenance (`MessageGroup`)** | Keep grouped state in the same function-invocation/delegating-chat-client layer | Maintain and update grouped state across loop iterations in that layer, then flatten only for model calls. |
 | **Variant C2 message-annotation maintenance (`_group_*`)** | Keep message annotations in the same function-invocation/delegating-chat-client layer | Incrementally annotate newly appended messages with `_group_id`, `_group_kind`, and related metadata; filter/project directly from annotated message lists. |
 | **Compaction on existing storage** | `InMemoryChatHistoryProvider.GetMessages(...)` + `SetMessages(...)` (or custom provider equivalent) | Read stored history, apply reducer/strategy, and write back compacted history as a maintenance operation. |
@@ -1028,7 +1028,7 @@ How each option addresses the three primary compaction points and the current ar
 | Compaction Point | Option 1 (Strategy) | Option 2 (Mixin) | Option 3 (Provider) | Option 4 (Middleware) |
 |-----------------|---------------------|-------------------|---------------------|-----------------------|
 | **Pre-write** | ✅ `HistoryProvider` param | ⚠️ Needs extra method | ⚠️ `after_run` override | ❌ Not supported |
-| **In-run (tool loop)** | ✅ `FunctionInvocationConfiguration` | ⚠️ Awkward extraction | ⚠️ `isinstance` wiring | ⚠️ Requires refactoring copy semantics |
+| **In-run (tool loop)** | ✅ `BaseChatClient` attrs | ⚠️ Awkward extraction | ⚠️ `isinstance` wiring | ⚠️ Requires refactoring copy semantics |
 | **Existing storage** | ✅ Standalone `compact()` | ✅ Provider's `compact()` | ✅ Standalone `compact()` | ❌ Not supported |
 | **Solves copy problem** | ✅ Runs inside loop | ⚠️ Indirectly | ⚠️ Indirectly | ⚠️ Requires deep refactor |
 | **Chaining** | ✅ Natural composition via wrapper | ❌ Coupled to provider | ⚠️ Boundary only, not in-run | ⚠️ Implicit via stacking |
@@ -1239,4 +1239,4 @@ class AttributionAwareStrategy(CompactionStrategy):
 ### Related Decisions
 
 - [ADR-0016: Unifying Context Management with ContextPlugin](0016-python-context-middleware.md) — Parent ADR that established `ContextProvider`, `HistoryProvider`, and `AgentSession` architecture.
-- [Context Compaction Limitations Analysis](https://gist.github.com/victordibia/ec3f3baf97345f7e47da025cf55b999f) — Detailed analysis of why current architecture cannot support in-run compaction, with attempted solutions and their failure modes. Option 4 in this ADR corresponds to "Option A: Middleware Access to Mutable Message Source" from that analysis; Options 1-3 correspond to "Option B: Tool Loop Hook" (via `FunctionInvocationConfiguration`).
+- [Context Compaction Limitations Analysis](https://gist.github.com/victordibia/ec3f3baf97345f7e47da025cf55b999f) — Detailed analysis of why current architecture cannot support in-run compaction, with attempted solutions and their failure modes. Option 4 in this ADR corresponds to "Option A: Middleware Access to Mutable Message Source" from that analysis; Options 1-3 correspond to "Option B: Tool Loop Hook", adapted here to a `BaseChatClient` hook instead of `FunctionInvocationConfiguration`.
