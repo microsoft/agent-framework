@@ -2889,12 +2889,12 @@ async def test_prepare_options_strips_reasoning_and_function_call_ids_when_store
     items when store=False.
 
     When store is disabled, server-assigned IDs (rs_*, fc_*) reference non-existent
-    server-persisted objects, causing 'Item not found' API errors during handoff workflows.
+    server-persisted objects, causing 'Item not found' API errors.
     See: https://github.com/microsoft/agent-framework/issues/4357
     """
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
-    # Simulate a handoff conversation with reasoning + function_call from a previous turn
+    # Simulate a multi-turn conversation with reasoning + function_call from a previous turn
     messages = [
         Message(role="user", contents=[Content.from_text(text="search for hotels")]),
         Message(

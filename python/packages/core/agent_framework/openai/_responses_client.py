@@ -849,7 +849,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
         # When store=False, strip server-assigned IDs from reasoning and function_call
         # items. These IDs (rs_*, fc_*) reference server-persisted objects that don't exist
-        # when store is disabled, causing "Item not found" API errors during handoff workflows.
+        # when store is disabled, causing "Item not found" API errors.
         if run_options.get("store") is False:
             for item in run_options.get("input", []):
                 if isinstance(item, dict):
