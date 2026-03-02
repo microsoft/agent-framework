@@ -8,6 +8,8 @@ Key features:
 - Managing conversation memory with a rolling window approach
 - Citing source documents in AI responses
 
+> For common prerequisites and setup instructions, see the [Hosted Agent Samples README](../README.md).
+
 ## Prerequisites
 
 Before running this sample, ensure you have:

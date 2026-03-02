@@ -82,7 +82,6 @@
   <Folder Name="/Samples/02-agents/AgentSkills/">
     <File Path="samples/02-agents/AgentSkills/README.md" />
     <Project Path="samples/02-agents/AgentSkills/Agent_Step01_BasicSkills/Agent_Step01_BasicSkills.csproj" />
-    <Project Path="samples/02-agents/AgentSkills/Agent_Step02_ScriptExecutionWithCodeInterpreter/Agent_Step02_ScriptExecutionWithCodeInterpreter.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AGUI/Step05_StateManagement/">
     <Project Path="samples/02-agents/AGUI/Step05_StateManagement/Client/Client.csproj" />
