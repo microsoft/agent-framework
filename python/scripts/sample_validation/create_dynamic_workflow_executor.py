@@ -4,16 +4,6 @@ import logging
 from collections import deque
 from dataclasses import dataclass
 
-from _sample_validation.const import WORKER_COMPLETED
-from _sample_validation.discovery import DiscoveryResult
-from _sample_validation.models import (
-    ExecutionResult,
-    RunResult,
-    RunStatus,
-    SampleInfo,
-    ValidationConfig,
-    WorkflowCreationResult,
-)
 from agent_framework import (
     Executor,
     Message,
@@ -27,6 +17,17 @@ from agent_framework.github import GitHubCopilotAgent
 from copilot.types import PermissionRequest, PermissionRequestResult
 from pydantic import BaseModel
 from typing_extensions import Never
+
+from sample_validation.const import WORKER_COMPLETED
+from sample_validation.discovery import DiscoveryResult
+from sample_validation.models import (
+    ExecutionResult,
+    RunResult,
+    RunStatus,
+    SampleInfo,
+    ValidationConfig,
+    WorkflowCreationResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,10 +90,14 @@ def status_from_text(value: str) -> RunStatus:
     return RunStatus.ERROR
 
 
-def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+def prompt_permission(
+    request: PermissionRequest, context: dict[str, str]
+) -> PermissionRequestResult:
     """Permission handler that always approves."""
     kind = request.get("kind", "unknown")
-    logger.debug(f"[Permission Request: {kind}] ({context})Automatically approved for sample validation.")
+    logger.debug(
+        f"[Permission Request: {kind}] ({context})Automatically approved for sample validation."
+    )
     return PermissionRequestResult(kind="approved")
 
 
@@ -108,12 +113,19 @@ class CustomAgentExecutor(Executor):
         self.agent = agent
 
     @handler
-    async def handle_task(self, sample: SampleInfo, ctx: WorkflowContext[WorkerFreed | RunResult]) -> None:
+    async def handle_task(
+        self, sample: SampleInfo, ctx: WorkflowContext[WorkerFreed | RunResult]
+    ) -> None:
         """Execute one sample task and notify collector + coordinator."""
         try:
-            response = await self.agent.run([
-                Message(role="user", text=f"Validate the following sample:\n\n{sample.relative_path}")
-            ])
+            response = await self.agent.run(
+                [
+                    Message(
+                        role="user",
+                        text=f"Validate the following sample:\n\n{sample.relative_path}",
+                    )
+                ]
+            )
             result_payload = parse_agent_json(response.text)
             result = RunResult(
                 sample=sample,
@@ -146,7 +158,9 @@ class BatchCoordinatorExecutor(Executor):
         self._pending: deque[SampleInfo] = deque()
         self._inflight: set[str] = set()
 
-    async def _assign_next(self, worker_id: str, ctx: WorkflowContext[SampleInfo | BatchCompletion]) -> None:
+    async def _assign_next(
+        self, worker_id: str, ctx: WorkflowContext[SampleInfo | BatchCompletion]
+    ) -> None:
         if not self._pending:
             # No more samples to assign
             if not self._inflight:
@@ -161,7 +175,11 @@ class BatchCoordinatorExecutor(Executor):
         await ctx.send_message(sample, target_id=worker_id)
 
     @handler
-    async def on_start(self, start: CoordinatorStart, ctx: WorkflowContext[SampleInfo | BatchCompletion]) -> None:
+    async def on_start(
+        self,
+        start: CoordinatorStart,
+        ctx: WorkflowContext[SampleInfo | BatchCompletion],
+    ) -> None:
         """Initialize queue and dispatch first wave of tasks."""
         self._pending = deque(start.samples)
         self._inflight.clear()
@@ -170,7 +188,9 @@ class BatchCoordinatorExecutor(Executor):
             await self._assign_next(worker_id, ctx)
 
     @handler
-    async def on_worker_freed(self, freed: WorkerFreed, ctx: WorkflowContext[SampleInfo | BatchCompletion]) -> None:
+    async def on_worker_freed(
+        self, freed: WorkerFreed, ctx: WorkflowContext[SampleInfo | BatchCompletion]
+    ) -> None:
         """Dispatch next queued sample when a worker finishes."""
         self._inflight.discard(freed.worker_id)
         await self._assign_next(freed.worker_id, ctx)
@@ -184,7 +204,11 @@ class CollectorExecutor(Executor):
         self._results: list[RunResult] = []
 
     @handler
-    async def on_all(self, batch_completion: BatchCompletion, ctx: WorkflowContext[Never, ExecutionResult]) -> None:
+    async def on_all(
+        self,
+        batch_completion: BatchCompletion,
+        ctx: WorkflowContext[Never, ExecutionResult],
+    ) -> None:
         """Receive all results at once and emit final output."""
         await ctx.yield_output(ExecutionResult(results=self._results))
 
@@ -212,7 +236,9 @@ class CreateConcurrentValidationWorkflowExecutor(Executor):
         print(f"\nCreating nested batched workflow for {sample_count} samples...")
 
         if sample_count == 0:
-            await ctx.send_message(WorkflowCreationResult(samples=[], workflow=None, agents=[]))
+            await ctx.send_message(
+                WorkflowCreationResult(samples=[], workflow=None, agents=[])
+            )
             return
 
         agents: list[GitHubCopilotAgent] = []
@@ -224,7 +250,10 @@ class CreateConcurrentValidationWorkflowExecutor(Executor):
                 id=agent_id,
                 name=agent_id,
                 instructions=AgentInstruction,
-                default_options={"on_permission_request": prompt_permission, "timeout": 180},  # type: ignore
+                default_options={
+                    "on_permission_request": prompt_permission,
+                    "timeout": 180,
+                },  # type: ignore
             )
             agents.append(agent)
 
@@ -236,7 +265,9 @@ class CreateConcurrentValidationWorkflowExecutor(Executor):
         )
         collector = CollectorExecutor()
 
-        nested_builder = WorkflowBuilder(start_executor=coordinator, output_executors=[collector])
+        nested_builder = WorkflowBuilder(
+            start_executor=coordinator, output_executors=[collector]
+        )
         nested_builder.add_edge(coordinator, collector)
         for worker in workers:
             nested_builder.add_edge(coordinator, worker)

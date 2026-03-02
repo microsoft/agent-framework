@@ -10,9 +10,9 @@ Validates all Python samples in the samples directory using a workflow that:
 4. Generates a validation report
 
 Usage:
-    uv run python -m _sample_validation
-    uv run python -m _sample_validation --subdir 03-workflows
-    uv run python -m _sample_validation --output-dir ./reports
+    uv run python -m sample_validation
+    uv run python -m sample_validation --subdir 03-workflows
+    uv run python -m sample_validation --output-dir ./reports
 """
 
 import argparse
@@ -25,9 +25,9 @@ from pathlib import Path
 # Add the samples directory to the path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from _sample_validation.models import Report
-from _sample_validation.report import save_report
-from _sample_validation.workflow import ValidationConfig, create_validation_workflow
+from sample_validation.models import Report
+from sample_validation.report import save_report
+from sample_validation.workflow import ValidationConfig, create_validation_workflow
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -37,9 +37,9 @@ def parse_arguments() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  uv run python -m _sample_validation                        # Validate all samples
-  uv run python -m _sample_validation --subdir 03-workflows  # Validate only workflows
-  uv run python -m _sample_validation --output-dir ./reports # Save reports to custom dir
+  uv run python -m sample_validation                        # Validate all samples
+  uv run python -m sample_validation --subdir 03-workflows  # Validate only workflows
+  uv run python -m sample_validation --output-dir ./reports # Save reports to custom dir
         """,
     )
 
@@ -52,8 +52,8 @@ Examples:
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="./_sample_validation/reports",
-        help="Directory to save validation reports (default: ./_sample_validation/reports)",
+        default="./sample_validation/reports",
+        help="Directory to save validation reports (default: ./sample_validation/reports)",
     )
 
     parser.add_argument(
@@ -83,8 +83,10 @@ async def main() -> int:
     args = parse_arguments()
 
     # Determine paths
-    samples_dir = Path(__file__).parent.parent
-    python_root = samples_dir.parent
+    # Script is at python/scripts/sample_validation/__main__.py
+    # python_root is python/, samples_dir is python/samples/
+    python_root = Path(__file__).parent.parent.parent
+    samples_dir = python_root / "samples"
 
     print("=" * 80)
     print("SAMPLE VALIDATION WORKFLOW")
@@ -93,7 +95,9 @@ async def main() -> int:
     print(f"Python root: {python_root}")
 
     if os.environ.get("GITHUB_COPILOT_MODEL"):
-        print(f"Using GitHub Copilot model override: {os.environ['GITHUB_COPILOT_MODEL']}")
+        print(
+            f"Using GitHub Copilot model override: {os.environ['GITHUB_COPILOT_MODEL']}"
+        )
 
     # Create validation config
     config = ValidationConfig(
