@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -10,7 +9,6 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -22,8 +20,7 @@ namespace Microsoft.Agents.AI;
 /// Each file is validated for YAML frontmatter and resource integrity. Invalid skills are excluded
 /// with logged warnings. Resource paths are checked against path traversal and symlink escape attacks.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed partial class FileAgentSkillLoader
+internal sealed partial class FileAgentSkillLoader
 {
     private const string SkillFileName = "SKILL.md";
     private const int MaxSearchDepth = 2;
@@ -36,16 +33,13 @@ public sealed partial class FileAgentSkillLoader
     // Example: "---\nname: foo\n---\nBody" → Group 1: "name: foo\n"
     private static readonly Regex s_frontmatterRegex = new(@"\A\uFEFF?^---\s*$(.+?)^---\s*$", RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
 
-    // Matches resource file references in skill markdown. Group 1 = relative file path.
-    // Supports two forms:
-    //   1. Markdown links: [text](path/file.ext)
-    //   2. Backtick-quoted paths: `path/file.ext`
+    // Matches markdown links to local resource files. Group 1 = relative file path.
     // Supports optional ./ or ../ prefixes; excludes URLs (no ":" in the path character class).
     // Intentionally conservative: only matches paths with word characters, hyphens, dots,
     // and forward slashes. Paths with spaces or special characters are not supported.
-    // Examples: [doc](refs/FAQ.md) → "refs/FAQ.md", `./scripts/run.py` → "./scripts/run.py",
+    // Examples: [doc](refs/FAQ.md) → "refs/FAQ.md", [s](./s.json) → "./s.json",
     //           [p](../shared/doc.txt) → "../shared/doc.txt"
-    private static readonly Regex s_resourceLinkRegex = new(@"(?:\[.*?\]\(|`)(\.?\.?/?[\w][\w\-./]*\.\w+)(?:\)|`)", RegexOptions.Compiled, TimeSpan.FromSeconds(5));
+    private static readonly Regex s_resourceLinkRegex = new(@"\[.*?\]\((\.?\.?/?[\w][\w\-./]*\.\w+)\)", RegexOptions.Compiled, TimeSpan.FromSeconds(5));
 
     // Matches YAML "key: value" lines. Group 1 = key, Group 2 = quoted value, Group 3 = unquoted value.
     // Accepts single or double quotes; the lazy quantifier trims trailing whitespace on unquoted values.
@@ -117,7 +111,7 @@ public sealed partial class FileAgentSkillLoader
     /// <exception cref="InvalidOperationException">
     /// The resource is not registered, resolves outside the skill directory, or does not exist.
     /// </exception>
-    public async Task<string> ReadSkillResourceAsync(FileAgentSkill skill, string resourceName, CancellationToken cancellationToken = default)
+    internal async Task<string> ReadSkillResourceAsync(FileAgentSkill skill, string resourceName, CancellationToken cancellationToken = default)
     {
         resourceName = NormalizeResourcePath(resourceName);
 
@@ -195,7 +189,7 @@ public sealed partial class FileAgentSkillLoader
 
         string content = File.ReadAllText(skillFilePath, Encoding.UTF8);
 
-        if (!this.TryParseSkillDocument(content, skillFilePath, out FileAgentSkillFrontmatter frontmatter, out string body))
+        if (!this.TryParseSkillDocument(content, skillFilePath, out SkillFrontmatter frontmatter, out string body))
         {
             return null;
         }
@@ -214,7 +208,7 @@ public sealed partial class FileAgentSkillLoader
             resourceNames: resourceNames);
     }
 
-    private bool TryParseSkillDocument(string content, string skillFilePath, out FileAgentSkillFrontmatter frontmatter, out string body)
+    private bool TryParseSkillDocument(string content, string skillFilePath, out SkillFrontmatter frontmatter, out string body)
     {
         frontmatter = null!;
         body = null!;
@@ -270,7 +264,7 @@ public sealed partial class FileAgentSkillLoader
             return false;
         }
 
-        frontmatter = new FileAgentSkillFrontmatter(name, description);
+        frontmatter = new SkillFrontmatter(name, description);
         body = content.Substring(match.Index + match.Length).TrimStart();
 
         return true;

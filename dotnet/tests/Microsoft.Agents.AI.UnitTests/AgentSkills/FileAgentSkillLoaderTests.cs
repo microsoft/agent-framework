@@ -501,7 +501,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         }
 
         // Manually construct a skill that bypasses discovery validation
-        var frontmatter = new FileAgentSkillFrontmatter("symlink-read-skill", "A skill");
+        var frontmatter = new SkillFrontmatter("symlink-read-skill", "A skill");
         var skill = new FileAgentSkill(
             frontmatter: frontmatter,
             body: "See [doc](refs/data.md).",
@@ -530,54 +530,6 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.True(skills.ContainsKey("bom-skill"));
         Assert.Equal("Skill with BOM", skills["bom-skill"].Frontmatter.Description);
         Assert.Equal("Body content.", skills["bom-skill"].Body);
-    }
-
-    [Theory]
-    [InlineData("No resource references.", new string[0])]
-    [InlineData("Review `refs/FAQ.md` for details.", new[] { "refs/FAQ.md" })]
-    [InlineData("See [guide](refs/guide.md) then run `scripts/run.py`.", new[] { "refs/guide.md", "scripts/run.py" })]
-    public void DiscoverAndLoadSkills_ResourceReferences_ExtractsExpectedResourceNames(string body, string[] expectedResources)
-    {
-        // Arrange — create skill with resource files on disk so validation passes
-        string skillDir = Path.Combine(this._testRoot, "res-skill");
-        Directory.CreateDirectory(skillDir);
-        foreach (string resource in expectedResources)
-        {
-            string resourcePath = Path.Combine(skillDir, resource.Replace('/', Path.DirectorySeparatorChar));
-            Directory.CreateDirectory(Path.GetDirectoryName(resourcePath)!);
-            File.WriteAllText(resourcePath, "content");
-        }
-
-        File.WriteAllText(
-            Path.Combine(skillDir, "SKILL.md"),
-            $"---\nname: res-skill\ndescription: Resource test\n---\n{body}");
-
-        // Act
-        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
-
-        // Assert
-        Assert.Single(skills);
-        var skill = skills["res-skill"];
-        Assert.Equal(expectedResources.Length, skill.ResourceNames.Count);
-        foreach (string expected in expectedResources)
-        {
-            Assert.Contains(expected, skill.ResourceNames);
-        }
-    }
-
-    [Fact]
-    public async Task ReadSkillResourceAsync_BacktickResourcePath_ReturnsContentAsync()
-    {
-        // Arrange — skill body uses backtick-quoted path
-        _ = this.CreateSkillDirectoryWithResource("backtick-read", "A skill", "Load `refs/doc.md` first.", "refs/doc.md", "Backtick content.");
-        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
-        var skill = skills["backtick-read"];
-
-        // Act
-        string content = await this._loader.ReadSkillResourceAsync(skill, "refs/doc.md");
-
-        // Assert
-        Assert.Equal("Backtick content.", content);
     }
 
     private string CreateSkillDirectory(string name, string description, string body)
