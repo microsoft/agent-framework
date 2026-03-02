@@ -172,71 +172,11 @@ OptionsT = TypeVar(
 )
 
 
-class _ClaudeAgentRunImpl:
-    """Core run() implementation for ClaudeAgent.
+class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
+    """Claude Agent using Claude Code CLI without telemetry layers.
 
-    Separated into a mixin so that AgentTelemetryLayer.run() can wrap it
-    via MRO: ClaudeAgent → AgentTelemetryLayer → _ClaudeAgentRunImpl → BaseAgent.
-    """
-
-    @overload
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: Literal[False] = ...,
-        session: AgentSession | None = None,
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse[Any]]: ...
-
-    @overload
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: Literal[True],
-        session: AgentSession | None = None,
-        **kwargs: Any,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
-
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: bool = False,
-        session: AgentSession | None = None,
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
-        """Run the agent with the given messages.
-
-        Args:
-            messages: The messages to process.
-
-        Keyword Args:
-            stream: If True, returns an async iterable of updates. If False (default),
-                returns an awaitable AgentResponse.
-            session: The conversation session. If session has service_session_id set,
-                the agent will resume that session.
-            kwargs: Additional keyword arguments including 'options' for runtime options
-                (model, permission_mode can be changed per-request).
-
-        Returns:
-            When stream=True: An ResponseStream for streaming updates.
-            When stream=False: An Awaitable[AgentResponse] with the complete response.
-        """
-        options = kwargs.pop("options", None)
-        response = ResponseStream(
-            self._get_stream(messages, session=session, options=options, **kwargs),  # type: ignore[attr-defined]
-            finalizer=self._finalize_response,  # type: ignore[attr-defined]
-        )
-
-        if stream:
-            return response
-        return response.get_final_response()
-
-
-class ClaudeAgent(AgentTelemetryLayer, _ClaudeAgentRunImpl, BaseAgent, Generic[OptionsT]):
-    """Claude Agent using Claude Code CLI.
+    This is the core Claude agent implementation without OpenTelemetry instrumentation.
+    For most use cases, prefer :class:`ClaudeAgent` which includes telemetry support.
 
     Wraps the Claude Agent SDK to provide agentic capabilities including
     tool use, session management, and streaming responses.
@@ -252,9 +192,9 @@ class ClaudeAgent(AgentTelemetryLayer, _ClaudeAgentRunImpl, BaseAgent, Generic[O
 
         .. code-block:: python
 
-            from agent_framework_claude import ClaudeAgent
+            from agent_framework_claude import RawClaudeAgent
 
-            async with ClaudeAgent(
+            async with RawClaudeAgent(
                 instructions="You are a helpful assistant.",
             ) as agent:
                 response = await agent.run("Hello!")
@@ -264,7 +204,7 @@ class ClaudeAgent(AgentTelemetryLayer, _ClaudeAgentRunImpl, BaseAgent, Generic[O
 
         .. code-block:: python
 
-            async with ClaudeAgent() as agent:
+            async with RawClaudeAgent() as agent:
                 async for update in agent.run("Write a poem"):
                     print(update.text, end="", flush=True)
 
@@ -272,7 +212,7 @@ class ClaudeAgent(AgentTelemetryLayer, _ClaudeAgentRunImpl, BaseAgent, Generic[O
 
         .. code-block:: python
 
-            async with ClaudeAgent() as agent:
+            async with RawClaudeAgent() as agent:
                 session = agent.create_session()
                 await agent.run("Remember my name is Alice", session=session)
                 response = await agent.run("What's my name?", session=session)
@@ -289,7 +229,7 @@ class ClaudeAgent(AgentTelemetryLayer, _ClaudeAgentRunImpl, BaseAgent, Generic[O
                 \"\"\"Greet someone by name.\"\"\"
                 return f"Hello, {name}!"
 
-            async with ClaudeAgent(tools=[greet]) as agent:
+            async with RawClaudeAgent(tools=[greet]) as agent:
                 response = await agent.run("Greet Alice")
     """
 
@@ -310,7 +250,7 @@ class ClaudeAgent(AgentTelemetryLayer, _ClaudeAgentRunImpl, BaseAgent, Generic[O
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize a ClaudeAgent instance.
+        """Initialize a RawClaudeAgent instance.
 
         Args:
             instructions: System prompt for the agent.
@@ -407,7 +347,7 @@ class ClaudeAgent(AgentTelemetryLayer, _ClaudeAgentRunImpl, BaseAgent, Generic[O
                 normalized = normalize_tools(tool)
                 self._custom_tools.extend(normalized)
 
-    async def __aenter__(self) -> ClaudeAgent[OptionsT]:
+    async def __aenter__(self) -> RawClaudeAgent[OptionsT]:
         """Start the agent when entering async context."""
         await self.start()
         return self
@@ -634,11 +574,11 @@ class ClaudeAgent(AgentTelemetryLayer, _ClaudeAgentRunImpl, BaseAgent, Generic[O
 
     @property
     def default_options(self) -> dict[str, Any]:
-        """Expose options for AgentTelemetryLayer compatibility.
+        """Expose options with ``instructions`` key.
 
-        AgentTelemetryLayer expects an ``instructions`` key to capture the
-        system prompt in telemetry spans.  ClaudeAgent stores the system
-        prompt as ``system_prompt``, so this property maps accordingly.
+        Maps ``system_prompt`` to ``instructions`` for compatibility with
+        :class:`AgentTelemetryLayer`, which reads the system prompt from
+        the ``instructions`` key.
         """
         opts = dict(self._default_options)
         system_prompt = opts.pop("system_prompt", None)
@@ -657,6 +597,61 @@ class ClaudeAgent(AgentTelemetryLayer, _ClaudeAgentRunImpl, BaseAgent, Generic[O
         """
         structured_output = getattr(self, "_structured_output", None)
         return AgentResponse.from_updates(updates, value=structured_output)
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        """Run the agent with the given messages.
+
+        Args:
+            messages: The messages to process.
+
+        Keyword Args:
+            stream: If True, returns an async iterable of updates. If False (default),
+                returns an awaitable AgentResponse.
+            session: The conversation session. If session has service_session_id set,
+                the agent will resume that session.
+            kwargs: Additional keyword arguments including 'options' for runtime options
+                (model, permission_mode can be changed per-request).
+
+        Returns:
+            When stream=True: An ResponseStream for streaming updates.
+            When stream=False: An Awaitable[AgentResponse] with the complete response.
+        """
+        options = kwargs.pop("options", None)
+        response = ResponseStream(
+            self._get_stream(messages, session=session, options=options, **kwargs),
+            finalizer=self._finalize_response,
+        )
+
+        if stream:
+            return response
+        return response.get_final_response()
 
     async def _get_stream(
         self,
@@ -743,3 +738,25 @@ class ClaudeAgent(AgentTelemetryLayer, _ClaudeAgentRunImpl, BaseAgent, Generic[O
 
         # Store structured output for the finalizer
         self._structured_output = structured_output
+
+
+class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[OptionsT]):
+    """Claude Agent with OpenTelemetry instrumentation.
+
+    This is the recommended agent class for most use cases. It includes
+    OpenTelemetry-based telemetry for observability. For a minimal
+    implementation without telemetry, use :class:`RawClaudeAgent`.
+
+    Examples:
+        Basic usage with context manager:
+
+        .. code-block:: python
+
+            from agent_framework_claude import ClaudeAgent
+
+            async with ClaudeAgent(
+                instructions="You are a helpful assistant.",
+            ) as agent:
+                response = await agent.run("Hello!")
+                print(response.text)
+    """
