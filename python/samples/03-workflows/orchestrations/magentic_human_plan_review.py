@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterable
 from typing import cast
 
@@ -11,8 +12,9 @@ from agent_framework import (
     Message,
     WorkflowEvent,
 )
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from agent_framework.orchestrations import MagenticBuilder, MagenticPlanReviewRequest, MagenticPlanReviewResponse
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -35,7 +37,9 @@ Plan review options:
 - revise(feedback): Provide textual feedback to modify the plan
 
 Prerequisites:
-- OpenAI credentials configured for `OpenAIChatClient`.
+- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
 # Keep track of the last response to format output nicely in streaming mode
@@ -96,25 +100,31 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 
 async def main() -> None:
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
+
     researcher_agent = Agent(
         name="ResearcherAgent",
         description="Specialist in research and information gathering",
         instructions="You are a Researcher. You find information and gather facts.",
-        client=OpenAIChatClient(model_id="gpt-4o"),
+        client=client,
     )
 
     analyst_agent = Agent(
         name="AnalystAgent",
         description="Data analyst who processes and summarizes research findings",
         instructions="You are an Analyst. You analyze findings and create summaries.",
-        client=OpenAIChatClient(model_id="gpt-4o"),
+        client=client,
     )
 
     manager_agent = Agent(
         name="MagenticManager",
         description="Orchestrator that coordinates the workflow",
         instructions="You coordinate a team to complete tasks efficiently.",
-        client=OpenAIChatClient(model_id="gpt-4o"),
+        client=client,
     )
 
     print("\nBuilding Magentic Workflow with Human Plan Review...")

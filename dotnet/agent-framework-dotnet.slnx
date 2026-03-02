@@ -287,6 +287,12 @@
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithHostedMCP/AgentWithHostedMCP.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
   </Folder>
+  <Folder Name="/Samples/05-end-to-end/AspNetAgentAuthorization/">
+    <File Path="samples/05-end-to-end/AspNetAgentAuthorization/docker-compose.yml" />
+    <File Path="samples/05-end-to-end/AspNetAgentAuthorization/README.md" />
+    <Project Path="samples/05-end-to-end/AspNetAgentAuthorization/Service/Service.csproj" />
+    <Project Path="samples/05-end-to-end/AspNetAgentAuthorization/RazorWebClient/RazorWebClient.csproj" />
+  </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
     <File Path=".gitignore" />
@@ -328,6 +334,10 @@
     <File Path="../docs/decisions/0012-python-typeddict-options.md" />
     <File Path="../docs/decisions/0013-python-get-response-simplification.md" />
     <File Path="../docs/decisions/0014-feature-collections.md" />
+    <File Path="../docs/decisions/0015-agent-run-context.md" />
+    <File Path="../docs/decisions/0016-python-context-middleware.md" />
+    <File Path="../docs/decisions/0017-agent-additional-properties.md" />
+    <File Path="../docs/decisions/0018-agentthread-serialization.md" />
     <File Path="../docs/decisions/adr-short-template.md" />
     <File Path="../docs/decisions/adr-template.md" />
     <File Path="../docs/decisions/README.md" />
