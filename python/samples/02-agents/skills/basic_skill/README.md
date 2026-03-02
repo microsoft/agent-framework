@@ -1,6 +1,6 @@
 # Agent Skills Sample
 
-This sample demonstrates how to use **Agent Skills** with a `AgentSkillsProvider` in the Microsoft Agent Framework.
+This sample demonstrates how to use **Agent Skills** with a `SkillsProvider` in the Microsoft Agent Framework.
 
 ## What are Agent Skills?
 

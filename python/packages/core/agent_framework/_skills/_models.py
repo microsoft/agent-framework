@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Agent Skill data models.
+"""Skill data models.
 
-Defines :class:`SkillResource` and :class:`AgentSkill`, the core
+Defines :class:`SkillResource` and :class:`Skill`, the core
 data model classes for the agent skills system.
 """
 
@@ -69,8 +69,8 @@ class SkillResource:
         self.function = function
 
 
-class AgentSkill:
-    """An agent skill definition with optional resources.
+class Skill:
+    """A skill definition with optional resources.
 
     .. warning:: Experimental
 
@@ -101,7 +101,7 @@ class AgentSkill:
     Examples:
         Direct construction::
 
-            skill = AgentSkill(
+            skill = Skill(
                 name="my-skill",
                 description="A skill example",
                 content="Use this skill for ...",
@@ -110,7 +110,7 @@ class AgentSkill:
 
         With dynamic resources::
 
-            skill = AgentSkill(
+            skill = Skill(
                 name="db-skill",
                 description="Database operations",
                 content="Use this skill for DB tasks.",

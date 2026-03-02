@@ -5,7 +5,7 @@ import os
 import sys
 from textwrap import dedent
 
-from agent_framework import Agent, AgentSkill, SkillResource, AgentSkillsProvider
+from agent_framework import Agent, Skill, SkillResource, SkillsProvider
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -20,18 +20,18 @@ This sample demonstrates how to create Agent Skills in code,
 without needing SKILL.md files on disk. Two patterns are shown:
 
 Pattern 1: Basic Code Skill
-  Create an AgentSkill instance directly with static resources (inline content).
+  Create a Skill instance directly with static resources (inline content).
 
 Pattern 2: Dynamic Resources
-  Create an AgentSkill and attach callable resources via the @skill.resource
+  Create a Skill and attach callable resources via the @skill.resource
   decorator. Resources can be sync or async functions that generate content at
   invocation time.
 
-Both patterns can be combined with file-based skills in a single AgentSkillsProvider.
+Both patterns can be combined with file-based skills in a single SkillsProvider.
 """
 
 # Pattern 1: Basic Code Skill — direct construction with static resources
-code_style_skill = AgentSkill(
+code_style_skill = Skill(
     name="code-style",
     description="Coding style guidelines and conventions for the team",
     content=dedent("""\
@@ -61,7 +61,7 @@ code_style_skill = AgentSkill(
 )
 
 # Pattern 2: Dynamic Resources — @skill.resource decorator
-project_info_skill = AgentSkill(
+project_info_skill = Skill(
     name="project-info",
     description="Project status and configuration information",
     content=dedent("""\
@@ -109,7 +109,7 @@ async def main() -> None:
     )
 
     # Create the skills provider with both code-defined skills
-    skills_provider = AgentSkillsProvider(
+    skills_provider = SkillsProvider(
         skills=[code_style_skill, project_info_skill],
     )
 

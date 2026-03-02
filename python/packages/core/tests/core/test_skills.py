@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from agent_framework import AgentSkill, SkillResource, AgentSkillsProvider, SessionContext
+from agent_framework import Skill, SkillResource, SkillsProvider, SessionContext
 from agent_framework._skills._agent_skills_provider import (
     DEFAULT_RESOURCE_EXTENSIONS,
     _create_instructions,
@@ -74,12 +74,12 @@ def _write_skill(
     return skill_dir
 
 
-def _read_and_parse_skill_file_for_test(skill_dir: Path) -> AgentSkill:
+def _read_and_parse_skill_file_for_test(skill_dir: Path) -> Skill:
     """Parse a SKILL.md file from the given directory, raising if invalid."""
     result = _read_and_parse_skill_file(str(skill_dir))
     assert result is not None, f"Failed to parse skill at {skill_dir}"
     name, description, content = result
-    return AgentSkill(
+    return Skill(
         name=name,
         description=description,
         content=content,
@@ -395,7 +395,7 @@ class TestReadSkillResource:
         assert content == "FAQ content"
 
     def test_path_traversal_raises(self, tmp_path: Path) -> None:
-        skill = AgentSkill(
+        skill = Skill(
             name="test",
             description="Test skill",
             content="Body",
@@ -407,7 +407,7 @@ class TestReadSkillResource:
 
     def test_similar_prefix_directory_does_not_match(self, tmp_path: Path) -> None:
         """A skill directory named 'skill-a-evil' must not access resources from 'skill-a'."""
-        skill = AgentSkill(
+        skill = Skill(
             name="test",
             description="Test skill",
             content="Body",
@@ -433,7 +433,7 @@ class TestBuildSkillsInstructionPrompt:
 
     def test_default_prompt_contains_skills(self) -> None:
         skills = {
-            "my-skill": AgentSkill(name="my-skill", description="Does stuff.", content="Body"),
+            "my-skill": Skill(name="my-skill", description="Does stuff.", content="Body"),
         }
         prompt = _create_instructions(None, skills)
         assert prompt is not None
@@ -443,8 +443,8 @@ class TestBuildSkillsInstructionPrompt:
 
     def test_skills_sorted_alphabetically(self) -> None:
         skills = {
-            "zebra": AgentSkill(name="zebra", description="Z skill.", content="Body"),
-            "alpha": AgentSkill(name="alpha", description="A skill.", content="Body"),
+            "zebra": Skill(name="zebra", description="Z skill.", content="Body"),
+            "alpha": Skill(name="alpha", description="A skill.", content="Body"),
         }
         prompt = _create_instructions(None, skills)
         assert prompt is not None
@@ -454,7 +454,7 @@ class TestBuildSkillsInstructionPrompt:
 
     def test_xml_escapes_metadata(self) -> None:
         skills = {
-            "my-skill": AgentSkill(name="my-skill", description='Uses <tags> & "quotes"', content="Body"),
+            "my-skill": Skill(name="my-skill", description='Uses <tags> & "quotes"', content="Body"),
         }
         prompt = _create_instructions(None, skills)
         assert prompt is not None
@@ -463,7 +463,7 @@ class TestBuildSkillsInstructionPrompt:
 
     def test_custom_prompt_template(self) -> None:
         skills = {
-            "my-skill": AgentSkill(name="my-skill", description="Does stuff.", content="Body"),
+            "my-skill": Skill(name="my-skill", description="Does stuff.", content="Body"),
         }
         custom = "Custom header:\n{skills}\nCustom footer."
         prompt = _create_instructions(custom, skills)
@@ -473,38 +473,38 @@ class TestBuildSkillsInstructionPrompt:
 
     def test_invalid_prompt_template_raises(self) -> None:
         skills = {
-            "my-skill": AgentSkill(name="my-skill", description="Does stuff.", content="Body"),
+            "my-skill": Skill(name="my-skill", description="Does stuff.", content="Body"),
         }
         with pytest.raises(ValueError, match="valid format string"):
             _create_instructions("{invalid}", skills)
 
     def test_positional_placeholder_raises(self) -> None:
         skills = {
-            "my-skill": AgentSkill(name="my-skill", description="Does stuff.", content="Body"),
+            "my-skill": Skill(name="my-skill", description="Does stuff.", content="Body"),
         }
         with pytest.raises(ValueError, match="valid format string"):
             _create_instructions("Header {0} footer", skills)
 
 
 # ---------------------------------------------------------------------------
-# Tests: AgentSkillsProvider (file-based)
+# Tests: SkillsProvider (file-based)
 # ---------------------------------------------------------------------------
 
 
-class TestAgentSkillsProvider:
-    """Tests for file-based usage of AgentSkillsProvider."""
+class TestSkillsProvider:
+    """Tests for file-based usage of SkillsProvider."""
 
     def test_default_source_id(self, tmp_path: Path) -> None:
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         assert provider.source_id == "agent_skills"
 
     def test_custom_source_id(self, tmp_path: Path) -> None:
-        provider = AgentSkillsProvider(str(tmp_path), source_id="custom")
+        provider = SkillsProvider(str(tmp_path), source_id="custom")
         assert provider.source_id == "custom"
 
     def test_accepts_single_path_string(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill")
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         assert len(provider._skills) == 1
 
     def test_accepts_sequence_of_paths(self, tmp_path: Path) -> None:
@@ -512,12 +512,12 @@ class TestAgentSkillsProvider:
         dir2 = tmp_path / "dir2"
         _write_skill(dir1, "skill-a")
         _write_skill(dir2, "skill-b")
-        provider = AgentSkillsProvider([str(dir1), str(dir2)])
+        provider = SkillsProvider([str(dir1), str(dir2)])
         assert len(provider._skills) == 2
 
     async def test_before_run_with_skills(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill")
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         context = SessionContext(input_messages=[])
 
         await provider.before_run(
@@ -534,7 +534,7 @@ class TestAgentSkillsProvider:
         assert tool_names == {"load_skill", "read_skill_resource"}
 
     async def test_before_run_without_skills(self, tmp_path: Path) -> None:
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         context = SessionContext(input_messages=[])
 
         await provider.before_run(
@@ -549,7 +549,7 @@ class TestAgentSkillsProvider:
 
     def test_load_skill_returns_body(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill", body="Skill body content.")
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         result = provider._load_skill("my-skill")
         assert "Skill body content." in result
 
@@ -560,17 +560,17 @@ class TestAgentSkillsProvider:
             body="See [doc](refs/FAQ.md).",
             resources={"refs/FAQ.md": "FAQ content"},
         )
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         result = provider._load_skill("my-skill")
         assert "See [doc](refs/FAQ.md)." in result
 
     def test_load_skill_unknown_returns_error(self, tmp_path: Path) -> None:
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         result = provider._load_skill("nonexistent")
         assert result.startswith("Error:")
 
     def test_load_skill_empty_name_returns_error(self, tmp_path: Path) -> None:
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         result = provider._load_skill("")
         assert result.startswith("Error:")
 
@@ -581,24 +581,24 @@ class TestAgentSkillsProvider:
             body="See [doc](refs/FAQ.md).",
             resources={"refs/FAQ.md": "FAQ content"},
         )
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         result = await provider._read_skill_resource("my-skill", "refs/FAQ.md")
         assert result == "FAQ content"
 
     async def test_read_skill_resource_unknown_skill_returns_error(self, tmp_path: Path) -> None:
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         result = await provider._read_skill_resource("nonexistent", "file.md")
         assert result.startswith("Error:")
 
     async def test_read_skill_resource_empty_name_returns_error(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill")
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         result = await provider._read_skill_resource("my-skill", "")
         assert result.startswith("Error:")
 
     async def test_read_skill_resource_unknown_resource_returns_error(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill")
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         result = await provider._read_skill_resource("my-skill", "nonexistent.md")
         assert result.startswith("Error:")
 
@@ -606,7 +606,7 @@ class TestAgentSkillsProvider:
         skills_dir = tmp_path / "skills"
         _write_skill(skills_dir, "zebra", description="Z skill.")
         _write_skill(skills_dir, "alpha", description="A skill.")
-        provider = AgentSkillsProvider(str(skills_dir))
+        provider = SkillsProvider(str(skills_dir))
         context = SessionContext(input_messages=[])
 
         await provider.before_run(
@@ -621,7 +621,7 @@ class TestAgentSkillsProvider:
 
     async def test_xml_escaping_in_prompt(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill", description="Uses <tags> & stuff")
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         context = SessionContext(input_messages=[])
 
         await provider.before_run(
@@ -732,7 +732,7 @@ class TestSymlinkDetection:
         refs_dir.mkdir()
         (refs_dir / "leak.md").symlink_to(outside_file)
 
-        skill = AgentSkill(
+        skill = Skill(
             name="test",
             description="Test skill",
             content="See [doc](refs/leak.md).",
@@ -779,22 +779,22 @@ class TestSkillResource:
 
 
 # ---------------------------------------------------------------------------
-# Tests: AgentSkill
+# Tests: Skill
 # ---------------------------------------------------------------------------
 
 
-class TestAgentSkill:
-    """Tests for AgentSkill dataclass and .resource decorator."""
+class TestSkill:
+    """Tests for Skill dataclass and .resource decorator."""
 
     def test_basic_construction(self) -> None:
-        skill = AgentSkill(name="my-skill", description="A test skill.", content="Instructions.")
+        skill = Skill(name="my-skill", description="A test skill.", content="Instructions.")
         assert skill.name == "my-skill"
         assert skill.description == "A test skill."
         assert skill.content == "Instructions."
         assert skill.resources == []
 
     def test_construction_with_static_resources(self) -> None:
-        skill = AgentSkill(
+        skill = Skill(
             name="my-skill",
             description="A test skill.",
             content="Instructions.",
@@ -807,34 +807,34 @@ class TestAgentSkill:
 
     def test_empty_name_raises(self) -> None:
         with pytest.raises(ValueError, match="cannot be empty"):
-            AgentSkill(name="", description="A skill.", content="Body")
+            Skill(name="", description="A skill.", content="Body")
 
     def test_invalid_name_skipped(self) -> None:
-        invalid_skill = AgentSkill(name="Invalid-Name", description="A skill.", content="Body")
-        provider = AgentSkillsProvider(skills=[invalid_skill])
+        invalid_skill = Skill(name="Invalid-Name", description="A skill.", content="Body")
+        provider = SkillsProvider(skills=[invalid_skill])
         assert len(provider._skills) == 0
 
     def test_name_starts_with_hyphen_skipped(self) -> None:
-        invalid_skill = AgentSkill(name="-bad-name", description="A skill.", content="Body")
-        provider = AgentSkillsProvider(skills=[invalid_skill])
+        invalid_skill = Skill(name="-bad-name", description="A skill.", content="Body")
+        provider = SkillsProvider(skills=[invalid_skill])
         assert len(provider._skills) == 0
 
     def test_name_too_long_skipped(self) -> None:
-        invalid_skill = AgentSkill(name="a" * 65, description="A skill.", content="Body")
-        provider = AgentSkillsProvider(skills=[invalid_skill])
+        invalid_skill = Skill(name="a" * 65, description="A skill.", content="Body")
+        provider = SkillsProvider(skills=[invalid_skill])
         assert len(provider._skills) == 0
 
     def test_empty_description_raises(self) -> None:
         with pytest.raises(ValueError, match="cannot be empty"):
-            AgentSkill(name="my-skill", description="", content="Body")
+            Skill(name="my-skill", description="", content="Body")
 
     def test_description_too_long_skipped(self) -> None:
-        invalid_skill = AgentSkill(name="my-skill", description="a" * 1025, content="Body")
-        provider = AgentSkillsProvider(skills=[invalid_skill])
+        invalid_skill = Skill(name="my-skill", description="a" * 1025, content="Body")
+        provider = SkillsProvider(skills=[invalid_skill])
         assert len(provider._skills) == 0
 
     def test_resource_decorator_bare(self) -> None:
-        skill = AgentSkill(name="my-skill", description="A skill.", content="Body")
+        skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
         def get_schema() -> str:
@@ -847,7 +847,7 @@ class TestAgentSkill:
         assert skill.resources[0].function is get_schema
 
     def test_resource_decorator_with_args(self) -> None:
-        skill = AgentSkill(name="my-skill", description="A skill.", content="Body")
+        skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource(name="custom-name", description="Custom description")
         def my_resource() -> str:
@@ -859,7 +859,7 @@ class TestAgentSkill:
 
     def test_resource_decorator_returns_function(self) -> None:
         """Decorator should return the original function unchanged."""
-        skill = AgentSkill(name="my-skill", description="A skill.", content="Body")
+        skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
         def get_data() -> str:
@@ -869,7 +869,7 @@ class TestAgentSkill:
         assert get_data() == "data"
 
     def test_multiple_resources(self) -> None:
-        skill = AgentSkill(name="my-skill", description="A skill.", content="Body")
+        skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
         def resource_a() -> str:
@@ -885,7 +885,7 @@ class TestAgentSkill:
         assert "resource_b" in names
 
     def test_resource_decorator_async(self) -> None:
-        skill = AgentSkill(name="my-skill", description="A skill.", content="Body")
+        skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
         async def get_async_data() -> str:
@@ -896,21 +896,21 @@ class TestAgentSkill:
 
 
 # ---------------------------------------------------------------------------
-# Tests: AgentSkillsProvider with code-defined skills
+# Tests: SkillsProvider with code-defined skills
 # ---------------------------------------------------------------------------
 
 
-class TestAgentSkillsProviderCodeSkill:
-    """Tests for AgentSkillsProvider with code-defined skills."""
+class TestSkillsProviderCodeSkill:
+    """Tests for SkillsProvider with code-defined skills."""
 
     def test_code_skill_only(self) -> None:
-        skill = AgentSkill(name="prog-skill", description="A code-defined skill.", content="Do the thing.")
-        provider = AgentSkillsProvider(skills=[skill])
+        skill = Skill(name="prog-skill", description="A code-defined skill.", content="Do the thing.")
+        provider = SkillsProvider(skills=[skill])
         assert "prog-skill" in provider._skills
 
     def test_load_skill_returns_content(self) -> None:
-        skill = AgentSkill(name="prog-skill", description="A skill.", content="Code-defined instructions.")
-        provider = AgentSkillsProvider(skills=[skill])
+        skill = Skill(name="prog-skill", description="A skill.", content="Code-defined instructions.")
+        provider = SkillsProvider(skills=[skill])
         result = provider._load_skill("prog-skill")
         assert "<name>prog-skill</name>" in result
         assert "<description>A skill.</description>" in result
@@ -918,7 +918,7 @@ class TestAgentSkillsProviderCodeSkill:
         assert "<resources>" not in result
 
     def test_load_skill_appends_resource_listing(self) -> None:
-        skill = AgentSkill(
+        skill = Skill(
             name="prog-skill",
             description="A skill.",
             content="Do things.",
@@ -927,7 +927,7 @@ class TestAgentSkillsProviderCodeSkill:
                 SkillResource(name="ref-b", content="b"),
             ],
         )
-        provider = AgentSkillsProvider(skills=[skill])
+        provider = SkillsProvider(skills=[skill])
         result = provider._load_skill("prog-skill")
         assert "<name>prog-skill</name>" in result
         assert "<description>A skill.</description>" in result
@@ -937,65 +937,65 @@ class TestAgentSkillsProviderCodeSkill:
         assert '<resource name="ref-b"/>' in result
 
     def test_load_skill_no_resources_no_listing(self) -> None:
-        skill = AgentSkill(name="prog-skill", description="A skill.", content="Body only.")
-        provider = AgentSkillsProvider(skills=[skill])
+        skill = Skill(name="prog-skill", description="A skill.", content="Body only.")
+        provider = SkillsProvider(skills=[skill])
         result = provider._load_skill("prog-skill")
         assert "Body only." in result
         assert "<resources>" not in result
 
     async def test_read_static_resource(self) -> None:
-        skill = AgentSkill(
+        skill = Skill(
             name="prog-skill",
             description="A skill.",
             content="Body",
             resources=[SkillResource(name="ref", content="static content")],
         )
-        provider = AgentSkillsProvider(skills=[skill])
+        provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("prog-skill", "ref")
         assert result == "static content"
 
     async def test_read_callable_resource_sync(self) -> None:
-        skill = AgentSkill(name="prog-skill", description="A skill.", content="Body")
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
 
         @skill.resource
         def get_schema() -> str:
             return "CREATE TABLE users"
 
-        provider = AgentSkillsProvider(skills=[skill])
+        provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("prog-skill", "get_schema")
         assert result == "CREATE TABLE users"
 
     async def test_read_callable_resource_async(self) -> None:
-        skill = AgentSkill(name="prog-skill", description="A skill.", content="Body")
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
 
         @skill.resource
         async def get_data() -> str:
             return "async data"
 
-        provider = AgentSkillsProvider(skills=[skill])
+        provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("prog-skill", "get_data")
         assert result == "async data"
 
     async def test_read_resource_case_insensitive(self) -> None:
-        skill = AgentSkill(
+        skill = Skill(
             name="prog-skill",
             description="A skill.",
             content="Body",
             resources=[SkillResource(name="MyRef", content="content")],
         )
-        provider = AgentSkillsProvider(skills=[skill])
+        provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("prog-skill", "myref")
         assert result == "content"
 
     async def test_read_unknown_resource_returns_error(self) -> None:
-        skill = AgentSkill(name="prog-skill", description="A skill.", content="Body")
-        provider = AgentSkillsProvider(skills=[skill])
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+        provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("prog-skill", "nonexistent")
         assert result.startswith("Error:")
 
     async def test_before_run_injects_code_skills(self) -> None:
-        skill = AgentSkill(name="prog-skill", description="A code-defined skill.", content="Body")
-        provider = AgentSkillsProvider(skills=[skill])
+        skill = Skill(name="prog-skill", description="A code-defined skill.", content="Body")
+        provider = SkillsProvider(skills=[skill])
         context = SessionContext(input_messages=[])
 
         await provider.before_run(agent=AsyncMock(), session=AsyncMock(), context=context, state={})
@@ -1005,7 +1005,7 @@ class TestAgentSkillsProviderCodeSkill:
         assert len(context.tools) == 2
 
     async def test_before_run_empty_provider(self) -> None:
-        provider = AgentSkillsProvider()
+        provider = SkillsProvider()
         context = SessionContext(input_messages=[])
 
         await provider.before_run(agent=AsyncMock(), session=AsyncMock(), context=context, state={})
@@ -1015,22 +1015,22 @@ class TestAgentSkillsProviderCodeSkill:
 
     def test_combined_file_and_code_skill(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "file-skill")
-        prog_skill = AgentSkill(name="prog-skill", description="Code-defined.", content="Body")
-        provider = AgentSkillsProvider(skill_paths=str(tmp_path), skills=[prog_skill])
+        prog_skill = Skill(name="prog-skill", description="Code-defined.", content="Body")
+        provider = SkillsProvider(skill_paths=str(tmp_path), skills=[prog_skill])
         assert "file-skill" in provider._skills
         assert "prog-skill" in provider._skills
 
     def test_duplicate_name_file_wins(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill", body="File version")
-        prog_skill = AgentSkill(name="my-skill", description="Code-defined.", content="Prog version")
-        provider = AgentSkillsProvider(skill_paths=str(tmp_path), skills=[prog_skill])
+        prog_skill = Skill(name="my-skill", description="Code-defined.", content="Prog version")
+        provider = SkillsProvider(skill_paths=str(tmp_path), skills=[prog_skill])
         # File-based is loaded first, so it wins
         assert "File version" in provider._skills["my-skill"].content
 
     async def test_combined_prompt_includes_both(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "file-skill")
-        prog_skill = AgentSkill(name="prog-skill", description="A code-defined skill.", content="Body")
-        provider = AgentSkillsProvider(skill_paths=str(tmp_path), skills=[prog_skill])
+        prog_skill = Skill(name="prog-skill", description="A code-defined skill.", content="Body")
+        provider = SkillsProvider(skill_paths=str(tmp_path), skills=[prog_skill])
         context = SessionContext(input_messages=[])
 
         await provider.before_run(agent=AsyncMock(), session=AsyncMock(), context=context, state={})
@@ -1040,7 +1040,7 @@ class TestAgentSkillsProviderCodeSkill:
         assert "prog-skill" in prompt
 
     def test_custom_resource_extensions(self, tmp_path: Path) -> None:
-        """AgentSkillsProvider accepts custom resource_extensions."""
+        """SkillsProvider accepts custom resource_extensions."""
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
@@ -1051,7 +1051,7 @@ class TestAgentSkillsProviderCodeSkill:
         (skill_dir / "notes.txt").write_text("notes", encoding="utf-8")
 
         # Only discover .json files
-        provider = AgentSkillsProvider(str(tmp_path), resource_extensions=(".json",))
+        provider = SkillsProvider(str(tmp_path), resource_extensions=(".json",))
         skill = provider._skills["my-skill"]
         resource_names = [r.name for r in skill.resources]
         assert "data.json" in resource_names
@@ -1105,7 +1105,7 @@ class TestLoadSkillFormatting:
     def test_file_skill_returns_raw_content(self, tmp_path: Path) -> None:
         """File-based skills return raw SKILL.md content without XML wrapping."""
         _write_skill(tmp_path, "my-skill", body="Do the thing.")
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         result = provider._load_skill("my-skill")
         assert "Do the thing." in result
         assert "<name>" not in result
@@ -1113,8 +1113,8 @@ class TestLoadSkillFormatting:
 
     def test_code_skill_wraps_in_xml(self) -> None:
         """Code-defined skills are wrapped with name, description, and instructions tags."""
-        skill = AgentSkill(name="prog-skill", description="A skill.", content="Do stuff.")
-        provider = AgentSkillsProvider(skills=[skill])
+        skill = Skill(name="prog-skill", description="A skill.", content="Do stuff.")
+        provider = SkillsProvider(skills=[skill])
         result = provider._load_skill("prog-skill")
         assert "<name>prog-skill</name>" in result
         assert "<description>A skill.</description>" in result
@@ -1122,13 +1122,13 @@ class TestLoadSkillFormatting:
 
     def test_code_skill_single_resource_no_description(self) -> None:
         """Resource without description omits the description attribute."""
-        skill = AgentSkill(
+        skill = Skill(
             name="prog-skill",
             description="A skill.",
             content="Body.",
             resources=[SkillResource(name="data", content="val")],
         )
-        provider = AgentSkillsProvider(skills=[skill])
+        provider = SkillsProvider(skills=[skill])
         result = provider._load_skill("prog-skill")
         assert '<resource name="data"/>' in result
         assert "description=" not in result
@@ -1412,14 +1412,14 @@ class TestReadFileSkillResourceEdgeCases:
     """Edge-case tests for _read_file_skill_resource."""
 
     def test_skill_with_no_path_raises(self) -> None:
-        skill = AgentSkill(name="no-path", description="No path.", content="Body")
+        skill = Skill(name="no-path", description="No path.", content="Body")
         with pytest.raises(ValueError, match="has no path set"):
             _read_file_skill_resource(skill, "some-file.md")
 
     def test_nonexistent_file_raises(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "skill"
         skill_dir.mkdir()
-        skill = AgentSkill(name="test", description="Test.", content="Body", path=str(skill_dir))
+        skill = Skill(name="test", description="Test.", content="Body", path=str(skill_dir))
         with pytest.raises(ValueError, match="not found in skill"):
             _read_file_skill_resource(skill, "missing.md")
 
@@ -1514,7 +1514,7 @@ class TestCreateInstructionsEdgeCases:
 
     def test_custom_template_with_literal_braces(self) -> None:
         skills = {
-            "my-skill": AgentSkill(name="my-skill", description="Skill.", content="Body"),
+            "my-skill": Skill(name="my-skill", description="Skill.", content="Body"),
         }
         template = "Header {{literal}} {skills} footer."
         result = _create_instructions(template, skills)
@@ -1524,9 +1524,9 @@ class TestCreateInstructionsEdgeCases:
 
     def test_multiple_skills_generates_sorted_xml(self) -> None:
         skills = {
-            "charlie": AgentSkill(name="charlie", description="C.", content="Body"),
-            "alpha": AgentSkill(name="alpha", description="A.", content="Body"),
-            "bravo": AgentSkill(name="bravo", description="B.", content="Body"),
+            "charlie": Skill(name="charlie", description="C.", content="Body"),
+            "alpha": Skill(name="alpha", description="A.", content="Body"),
+            "bravo": Skill(name="bravo", description="B.", content="Body"),
         }
         result = _create_instructions(None, skills)
         assert result is not None
@@ -1537,80 +1537,80 @@ class TestCreateInstructionsEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# Tests: AgentSkillsProvider edge cases
+# Tests: SkillsProvider edge cases
 # ---------------------------------------------------------------------------
 
 
-class TestAgentSkillsProviderEdgeCases:
-    """Additional edge-case tests for AgentSkillsProvider."""
+class TestSkillsProviderEdgeCases:
+    """Additional edge-case tests for SkillsProvider."""
 
     def test_accepts_path_object(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill")
-        provider = AgentSkillsProvider(tmp_path)
+        provider = SkillsProvider(tmp_path)
         assert "my-skill" in provider._skills
 
     def test_load_skill_whitespace_name_returns_error(self, tmp_path: Path) -> None:
         _write_skill(tmp_path, "my-skill")
-        provider = AgentSkillsProvider(str(tmp_path))
+        provider = SkillsProvider(str(tmp_path))
         result = provider._load_skill("   ")
         assert result.startswith("Error:")
         assert "empty" in result
 
     async def test_read_skill_resource_whitespace_skill_name_returns_error(self) -> None:
-        skill = AgentSkill(name="my-skill", description="A skill.", content="Body")
-        provider = AgentSkillsProvider(skills=[skill])
+        skill = Skill(name="my-skill", description="A skill.", content="Body")
+        provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("   ", "ref")
         assert result.startswith("Error:")
         assert "empty" in result
 
     async def test_read_skill_resource_whitespace_resource_name_returns_error(self) -> None:
-        skill = AgentSkill(name="my-skill", description="A skill.", content="Body")
-        provider = AgentSkillsProvider(skills=[skill])
+        skill = Skill(name="my-skill", description="A skill.", content="Body")
+        provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("my-skill", "   ")
         assert result.startswith("Error:")
         assert "empty" in result
 
     async def test_read_callable_resource_exception_returns_error(self) -> None:
-        skill = AgentSkill(name="my-skill", description="A skill.", content="Body")
+        skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
         def exploding_resource() -> str:
             raise RuntimeError("boom")
 
-        provider = AgentSkillsProvider(skills=[skill])
+        provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("my-skill", "exploding_resource")
         assert result.startswith("Error (RuntimeError):")
         assert "Failed to read resource" in result
 
     async def test_read_async_callable_resource_exception_returns_error(self) -> None:
-        skill = AgentSkill(name="my-skill", description="A skill.", content="Body")
+        skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
         async def async_exploding() -> str:
             raise ValueError("async boom")
 
-        provider = AgentSkillsProvider(skills=[skill])
+        provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("my-skill", "async_exploding")
         assert result.startswith("Error (ValueError):")
 
     def test_load_code_skill_xml_escapes_metadata(self) -> None:
-        skill = AgentSkill(name="my-skill", description='Uses <tags> & "quotes"', content="Body")
-        provider = AgentSkillsProvider(skills=[skill])
+        skill = Skill(name="my-skill", description='Uses <tags> & "quotes"', content="Body")
+        provider = SkillsProvider(skills=[skill])
         result = provider._load_skill("my-skill")
         assert "&lt;tags&gt;" in result
         assert "&amp;" in result
 
     def test_code_skill_deduplication(self) -> None:
-        skill1 = AgentSkill(name="my-skill", description="First.", content="Body 1")
-        skill2 = AgentSkill(name="my-skill", description="Second.", content="Body 2")
-        provider = AgentSkillsProvider(skills=[skill1, skill2])
+        skill1 = Skill(name="my-skill", description="First.", content="Body 1")
+        skill2 = Skill(name="my-skill", description="Second.", content="Body 2")
+        provider = SkillsProvider(skills=[skill1, skill2])
         assert len(provider._skills) == 1
         assert "First." in provider._skills["my-skill"].description
 
     async def test_before_run_extends_tools_even_without_instructions(self) -> None:
         """If instructions are somehow None but skills exist, tools should still be added."""
-        skill = AgentSkill(name="my-skill", description="A skill.", content="Body")
-        provider = AgentSkillsProvider(skills=[skill])
+        skill = Skill(name="my-skill", description="A skill.", content="Body")
+        provider = SkillsProvider(skills=[skill])
         context = SessionContext(input_messages=[])
 
         await provider.before_run(agent=AsyncMock(), session=AsyncMock(), context=context, state={})
@@ -1643,7 +1643,7 @@ class TestSkillResourceEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# Tests: AgentSkill.resource decorator edge cases
+# Tests: Skill.resource decorator edge cases
 # ---------------------------------------------------------------------------
 
 
@@ -1651,7 +1651,7 @@ class TestSkillResourceDecoratorEdgeCases:
     """Additional edge-case tests for the @skill.resource decorator."""
 
     def test_decorator_no_docstring_description_is_none(self) -> None:
-        skill = AgentSkill(name="my-skill", description="A skill.", content="Body")
+        skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
         def no_docs() -> str:
@@ -1660,7 +1660,7 @@ class TestSkillResourceDecoratorEdgeCases:
         assert skill.resources[0].description is None
 
     def test_decorator_with_name_only(self) -> None:
-        skill = AgentSkill(name="my-skill", description="A skill.", content="Body")
+        skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource(name="custom-name")
         def get_data() -> str:
@@ -1672,7 +1672,7 @@ class TestSkillResourceDecoratorEdgeCases:
         assert skill.resources[0].description == "Some docs."
 
     def test_decorator_with_description_only(self) -> None:
-        skill = AgentSkill(name="my-skill", description="A skill.", content="Body")
+        skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource(description="Custom desc")
         def get_data() -> str:
@@ -1682,7 +1682,7 @@ class TestSkillResourceDecoratorEdgeCases:
         assert skill.resources[0].description == "Custom desc"
 
     def test_decorator_preserves_original_function_identity(self) -> None:
-        skill = AgentSkill(name="my-skill", description="A skill.", content="Body")
+        skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
         def original() -> str:

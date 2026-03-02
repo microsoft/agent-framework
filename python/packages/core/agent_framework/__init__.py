@@ -59,8 +59,8 @@ from ._sessions import (
     register_state_type,
 )
 from ._settings import SecretString, load_settings
-from ._skills._agent_skills_provider import AgentSkillsProvider
-from ._skills._models import AgentSkill, SkillResource
+from ._skills._agent_skills_provider import SkillsProvider
+from ._skills._models import Skill, SkillResource
 from ._telemetry import (
     AGENT_FRAMEWORK_USER_AGENT,
     APP_INFO,
@@ -206,9 +206,9 @@ __all__ = [
     "AgentResponseUpdate",
     "AgentRunInputs",
     "AgentSession",
-    "AgentSkill",
+    "Skill",
     "SkillResource",
-    "AgentSkillsProvider",
+    "SkillsProvider",
     "Annotation",
     "BaseAgent",
     "BaseChatClient",

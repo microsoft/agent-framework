@@ -4,12 +4,12 @@ This sample demonstrates how to create **Agent Skills** in Python code, without 
 
 ## What are Code-Defined Skills?
 
-While file-based skills use `SKILL.md` files discovered on disk, code-defined skills let you define skills entirely in Python using `AgentSkill` and `SkillResource` classes. Two patterns are shown:
+While file-based skills use `SKILL.md` files discovered on disk, code-defined skills let you define skills entirely in Python using `Skill` and `SkillResource` classes. Two patterns are shown:
 
-1. **Basic Code Skill** — Create an `AgentSkill` directly with static resources (inline content)
+1. **Basic Code Skill** — Create a `Skill` directly with static resources (inline content)
 2. **Dynamic Resources** — Attach callable resources via the `@skill.resource` decorator that generate content at invocation time
 
-Both patterns can be combined with file-based skills in a single `AgentSkillsProvider`.
+Both patterns can be combined with file-based skills in a single `SkillsProvider`.
 
 ## Project Structure
 

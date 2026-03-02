@@ -13,7 +13,7 @@ Implements the progressive-disclosure pattern from the
 Skills can originate from two sources:
 
 - **File-based** — discovered by scanning configured directories for ``SKILL.md`` files.
-- **Code-defined** — created as :class:`AgentSkill` instances in Python code,
+- **Code-defined** — created as :class:`Skill` instances in Python code,
   with optional callable resources attached via the ``@skill.resource`` decorator.
 
 **Security:** file-based skill metadata is XML-escaped before prompt injection, and
@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final
 
 from .._sessions import BaseContextProvider
 from .._tools import FunctionTool
-from ._models import AgentSkill, SkillResource
+from ._models import Skill, SkillResource
 
 if TYPE_CHECKING:
     from .._agents import SupportsAgentRun
@@ -100,11 +100,11 @@ Only load what is needed, when it is needed."""
 
 # endregion
 
-# region AgentSkillsProvider
+# region SkillsProvider
 
 
-class AgentSkillsProvider(BaseContextProvider):
-    """Context provider that advertises agent skills and exposes skill tools.
+class SkillsProvider(BaseContextProvider):
+    """Context provider that advertises skills and exposes skill tools.
 
     .. warning:: Experimental
 
@@ -112,7 +112,7 @@ class AgentSkillsProvider(BaseContextProvider):
         in future versions without notice.
 
     Supports both **file-based** skills (discovered from ``SKILL.md`` files)
-    and **code-defined** skills (passed as :class:`AgentSkill` instances).
+    and **code-defined** skills (passed as :class:`Skill` instances).
 
     Follows the progressive-disclosure pattern from the
     `Agent Skills specification <https://agentskills.io/>`_:
@@ -134,7 +134,7 @@ class AgentSkillsProvider(BaseContextProvider):
             subdirectories.
 
     Keyword Args:
-        skills: Code-defined :class:`AgentSkill` instances to register.
+        skills: Code-defined :class:`Skill` instances to register.
         instruction_template: Custom system-prompt template for
             advertising skills.  Must contain a ``{skills}`` placeholder for the
             generated skills list.  Uses a built-in template when ``None``.
@@ -146,20 +146,20 @@ class AgentSkillsProvider(BaseContextProvider):
     Examples:
         File-based only::
 
-            provider = AgentSkillsProvider(skill_paths="./skills")
+            provider = SkillsProvider(skill_paths="./skills")
 
         Code-defined only::
 
-            my_skill = AgentSkill(
+            my_skill = Skill(
                 name="my-skill",
                 description="Example skill",
                 content="Use this skill for ...",
             )
-            provider = AgentSkillsProvider(skills=[my_skill])
+            provider = SkillsProvider(skills=[my_skill])
 
         Combined::
 
-            provider = AgentSkillsProvider(
+            provider = SkillsProvider(
                 skill_paths="./skills",
                 skills=[my_skill],
             )
@@ -174,7 +174,7 @@ class AgentSkillsProvider(BaseContextProvider):
         self,
         skill_paths: str | Path | Sequence[str | Path] | None = None,
         *,
-        skills: Sequence[AgentSkill] | None = None,
+        skills: Sequence[Skill] | None = None,
         instruction_template: str | None = None,
         resource_extensions: tuple[str, ...] | None = None,
         source_id: str | None = None,
@@ -629,14 +629,14 @@ def _discover_skill_directories(skill_paths: Sequence[str]) -> list[str]:
     return discovered
 
 
-def _read_file_skill_resource(skill: AgentSkill, resource_name: str) -> str:
+def _read_file_skill_resource(skill: Skill, resource_name: str) -> str:
     """Read a file-based resource from disk with security guards.
 
     Validates that the resolved path stays within the skill directory and
     does not traverse any symlinks before reading.
 
     Args:
-        skill: The owning skill (must have a non-``None`` :attr:`~AgentSkill.path`).
+        skill: The owning skill (must have a non-``None`` :attr:`~Skill.path`).
         resource_name: Relative path of the resource within the skill directory.
 
     Returns:
@@ -673,7 +673,7 @@ def _read_file_skill_resource(skill: AgentSkill, resource_name: str) -> str:
 def _discover_file_skills(
     skill_paths: str | Path | Sequence[str | Path] | None,
     resource_extensions: tuple[str, ...] = DEFAULT_RESOURCE_EXTENSIONS,
-) -> dict[str, AgentSkill]:
+) -> dict[str, Skill]:
     """Discover, parse, and load all file-based skills from the given paths.
 
     Each discovered ``SKILL.md`` is parsed for metadata, and resource files
@@ -685,7 +685,7 @@ def _discover_file_skills(
         resource_extensions: File extensions recognized as resources.
 
     Returns:
-        A dict mapping skill name → :class:`AgentSkill`.
+        A dict mapping skill name → :class:`Skill`.
     """
     if skill_paths is None:
         return {}
@@ -694,7 +694,7 @@ def _discover_file_skills(
         [str(skill_paths)] if isinstance(skill_paths, (str, Path)) else [str(p) for p in skill_paths]
     )
 
-    skills: dict[str, AgentSkill] = {}
+    skills: dict[str, Skill] = {}
 
     discovered = _discover_skill_directories(resolved_paths)
     logger.info("Discovered %d potential skills", len(discovered))
@@ -714,7 +714,7 @@ def _discover_file_skills(
             )
             continue
 
-        file_skill = AgentSkill(
+        file_skill = Skill(
             name=name,
             description=description,
             content=content,
@@ -735,9 +735,9 @@ def _discover_file_skills(
 
 def _load_skills(
     skill_paths: str | Path | Sequence[str | Path] | None,
-    skills: Sequence[AgentSkill] | None,
+    skills: Sequence[Skill] | None,
     resource_extensions: tuple[str, ...],
-) -> dict[str, AgentSkill]:
+) -> dict[str, Skill]:
     """Discover and merge skills from file paths and code-defined skills.
 
     File-based skills are discovered first.  Code-defined skills are then
@@ -746,11 +746,11 @@ def _load_skills(
 
     Args:
         skill_paths: Directory path(s) to scan for ``SKILL.md`` files, or ``None``.
-        skills: Code-defined :class:`AgentSkill` instances, or ``None``.
+        skills: Code-defined :class:`Skill` instances, or ``None``.
         resource_extensions: File extensions recognized as discoverable resources.
 
     Returns:
-        A dict mapping skill name → :class:`AgentSkill`.
+        A dict mapping skill name → :class:`Skill`.
     """
     result = _discover_file_skills(skill_paths, resource_extensions)
 
@@ -792,7 +792,7 @@ def _create_resource_element(resource: SkillResource) -> str:
 
 def _create_instructions(
     prompt_template: str | None,
-    skills: dict[str, AgentSkill],
+    skills: dict[str, Skill],
 ) -> str | None:
     """Create the system-prompt text that advertises available skills.
 
