@@ -31,6 +31,10 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(TargetFrameworkIdentifier)' != '.NETCoreApp'">
+    <PackageReference Include="Microsoft.Bcl.HashCode" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Abstractions.UnitTests" />
   </ItemGroup>
