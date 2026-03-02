@@ -8,6 +8,8 @@ Key features:
 - Filtering available tools from an MCP server
 - Using Azure OpenAI Responses with MCP tools
 
+> For common prerequisites and setup instructions, see the [Hosted Agent Samples README](../README.md).
+
 ## Prerequisites
 
 Before running this sample, ensure you have:
