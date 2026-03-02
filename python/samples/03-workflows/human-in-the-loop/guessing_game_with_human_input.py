@@ -102,12 +102,13 @@ class TurnManager(Executor):
         """Handle the agent's guess and request human guidance.
 
         Steps:
-        1) Parse the agent's JSON into GuessOutput for robustness.
+        1) Use .value to access the parsed structured output directly.
         2) Request info with a HumanFeedbackRequest as the payload.
         """
-        # Parse structured model output
-        text = result.agent_response.text
-        last_guess = GuessOutput.model_validate_json(text).guess
+        # Access the parsed structured model output via .value.
+        # Since the agent is configured with response_format=GuessOutput,
+        # .value returns the parsed GuessOutput instance directly.
+        last_guess = result.agent_response.value.guess
 
         # Craft a precise human prompt that defines higher and lower relative to the agent's guess.
         prompt = (
