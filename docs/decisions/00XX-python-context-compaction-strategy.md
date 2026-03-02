@@ -53,7 +53,7 @@ agent.run(task)
 
 A critical correctness constraint for any compaction strategy: **tool calls and their results must be kept together**. LLM APIs (OpenAI, Azure, etc.) require that an assistant message containing `tool_calls` is always followed by corresponding `tool` result messages. A compaction strategy that removes one without the other will cause API errors. This is extended for reasoning models, at least in the OpenAI Responses API with a Reasoning content, without it you also get failed calls.
 
-Strategies must treat `[assistant message with tool_calls] + [tool result messages]` as atomic groups — either keep the entire group or remove it entirely. Option 1 Variant C (pre-grouped messages) addresses this structurally by having the framework compute `MessageGroup` objects before calling the strategy, so strategy authors never see raw message boundaries.
+Strategies must treat `[assistant message with tool_calls] + [tool result messages]` as atomic groups — either keep the entire group or remove it entirely. Option 1 addresses this structurally in both Variant C1 (precomputed `MessageGroups`) and Variant C2 (precomputed `_group_*` annotations on messages), so strategy authors do not need to rediscover raw boundaries on every pass.
 
 ### Where Compaction Is Needed
 
@@ -144,11 +144,15 @@ if compacter := config.get("compaction_strategy"):
         messages.extend(compacted)
 ```
 
-#### Variant C: Pre-grouped messages
+#### Variant C: Group-aware compaction entry points
 
-Variant C models compaction as a callable that receives `MessageGroups` only. For in-place behavior, strategies mutate grouped state directly and return whether a change was applied.
+Variant C has two sub-variants that provide the same logical grouping behavior:
+- **C1 (`MessageGroups` state object):** group metadata lives in a sidecar container.
+- **C2 (`_`-prefixed message attributes):** group metadata lives directly on messages in `additional_properties`.
 
-Instead of requiring every strategy to parse boundaries manually, the framework can build pre-computed logical groups and pass those to the strategies. This shifts the atomic-group-preservation burden into shared grouping logic so strategy authors can focus on compaction logic.
+Both approaches let strategies operate on logical units (`system`, `user`, `assistant_text`, `tool_call`) instead of re-deriving boundaries every time.
+
+##### Variant C1: `MessageGroups` sidecar state
 
 ```python
 @dataclass
@@ -242,11 +246,64 @@ response = await get_response(messages=groups.to_messages())
 # add messages from response into new group and to the groups.
 ```
 
-**Note on tool loop integration:** For in-run compaction with Variant C, the function-invocation layer will maintain a `MessageGroups` object (instead of repeatedly rebuilding groups from a flat list). As the loop produces new messages, it appends them directly as groups (e.g., a `tool_call` group after collecting the assistant message and its tool results, or a standalone `assistant_text` group). The flat message list is only rebuilt from groups when needed (after compaction, or before sending to the LLM). This avoids O(n) re-grouping on every tool-call iteration.
+**Note on tool loop integration (C1):** For in-run compaction with Variant C1, the function-invocation layer will maintain a `MessageGroups` object (instead of repeatedly rebuilding groups from a flat list). As the loop produces new messages, it appends them directly as groups (e.g., a `tool_call` group after collecting the assistant message and its tool results, or a standalone `assistant_text` group). The flat message list is only rebuilt from groups when needed (after compaction, or before sending to the LLM). This avoids O(n) re-grouping on every tool-call iteration.
 
-#### Variant D: Exclude-based groups (builds on Variant C)
+##### Variant C2: `_`-prefixed metadata directly on `Message`
 
-Variant D extends Variant C by adding explicit exclusion metadata on groups. Strategies still use the callable shape from Variant C, but compaction is represented by toggling `excluded=True/False` (with optional `exclude_reason`) rather than deleting messages from loop history.
+Variant C2 achieves the same grouping behavior as C1 but stores grouping metadata on messages instead of in a sidecar `MessageGroups` object.
+
+```python
+def _annotate_groups(messages: list[Message]) -> None:
+    """Annotate messages with group metadata in additional_properties.
+
+    Metadata keys:
+    - "_group_id": stable group id for all messages in the same logical unit
+    - "_group_kind": "system" | "user" | "assistant_text" | "tool_call"
+    - "_group_index": order of groups in the current list
+    """
+    group_index = 0
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        group_id = f"g-{group_index}"
+        if msg.role == "assistant" and getattr(msg, "tool_calls", None):
+            msg.additional_properties["_group_id"] = group_id
+            msg.additional_properties["_group_kind"] = "tool_call"
+            msg.additional_properties["_group_index"] = group_index
+            i += 1
+            while i < len(messages) and messages[i].role == "tool":
+                messages[i].additional_properties["_group_id"] = group_id
+                messages[i].additional_properties["_group_kind"] = "tool_call"
+                messages[i].additional_properties["_group_index"] = group_index
+                i += 1
+        else:
+            kind = (
+                "system" if msg.role == "system"
+                else "user" if msg.role == "user"
+                else "assistant_text"
+            )
+            msg.additional_properties["_group_id"] = group_id
+            msg.additional_properties["_group_kind"] = kind
+            msg.additional_properties["_group_index"] = group_index
+            i += 1
+        group_index += 1
+
+
+class CompactionStrategy(Protocol):
+    async def __call__(self, messages: list[Message]) -> bool:
+        """Compact using message annotations; mutate in place."""
+        ...
+```
+
+**Note on tool loop integration (C2):** The loop should annotate new messages incrementally as they are appended (rather than re-running `_annotate_groups` over the full list every iteration). For example, when a tool call completes, tag the assistant tool-call message and all tool results with the same `_group_id`.
+
+#### Variant D: Exclude-based projection (builds on Variant C1/C2)
+
+Variant D also has two sub-variants:
+- **D1:** exclusion state on `MessageGroup`.
+- **D2:** exclusion state on message `_`-attributes.
+
+##### Variant D1: exclusion state on `MessageGroup`
 
 ```python
 @dataclass
@@ -284,9 +341,38 @@ class MessageGroups:
 
 During compaction, strategies/orchestrators mutate `group.excluded`/`group.exclude_reason` (including re-including groups with `excluded=False`) instead of discarding data.
 
-#### Variant E: Tokenization and MessageGroup accounting (builds on Variant C)
+##### Variant D2: exclusion state on message `_`-attributes
 
-Variant E adds tokenization metadata and cached token rollups to grouped state. This is independent of exclusion: token-aware strategies can use token metrics even if no groups are excluded. When combined with Variant D, token budgets can be enforced against included messages.
+```python
+def set_group_excluded(messages: list[Message], *, group_id: str, reason: str | None = None) -> None:
+    for msg in messages:
+        if msg.additional_properties.get("_group_id") == group_id:
+            msg.additional_properties["_excluded"] = True
+            msg.additional_properties["_exclude_reason"] = reason
+
+
+def clear_group_excluded(messages: list[Message], *, group_id: str) -> None:
+    for msg in messages:
+        if msg.additional_properties.get("_group_id") == group_id:
+            msg.additional_properties["_excluded"] = False
+            msg.additional_properties["_exclude_reason"] = None
+
+
+def included_messages(messages: list[Message]) -> list[Message]:
+    return [m for m in messages if not m.additional_properties.get("_excluded", False)]
+```
+
+In D2, strategies project included context by filtering on `_excluded` instead of filtering `MessageGroup` objects.
+
+#### Variant E: Tokenization and accounting (builds on Variant C1/C2)
+
+Variant E has two sub-variants:
+- **E1:** token rollups cached on `MessageGroup`/`MessageGroups`.
+- **E2:** token rollups cached directly on messages via `_`-attributes.
+
+##### Variant E1: token rollups on grouped state
+
+Variant E1 adds tokenization metadata and cached token rollups to grouped state. This is independent of exclusion: token-aware strategies can use token metrics even if no groups are excluded. When combined with Variant D, token budgets can be enforced against included messages.
 
 To make token-budget compaction deterministic:
 1. Before **every** `get_response` call in the tool loop, tokenize every message currently in `all_messages` (regardless of source).
@@ -343,11 +429,43 @@ def _to_tokenized_groups(
     return MessageGroups.from_messages(messages)
 ```
 
-#### Variant F: Combined grouped callable + exclude + tokenization (C + D + E)
+##### Variant E2: token rollups on message `_`-attributes
 
-Variant F combines Variant C's callable grouped interface, Variant D's exclusion semantics, and Variant E's token accounting in one integrated model. This gives one state container for projection (`excluded`) and budget control (`token_count`), while preserving full history for final-return and diagnostics.
+```python
+def annotate_token_counts(messages: list[Message], *, tokenizer: TokenizerProtocol) -> None:
+    for message in messages:
+        message_token_count = 0
+        for content in message.contents:
+            count = tokenizer.count_tokens(content)
+            content.additional_properties["_token_count"] = count
+            message_token_count += count
+        message.additional_properties["_message_token_count"] = message_token_count
 
-For Variant F, `MessageGroups.from_messages(...)` accepts an optional tokenizer and handles both tokenization and grouping before strategy execution:
+
+def sum_tokens_by_group(messages: list[Message]) -> dict[str, int]:
+    """Compute group totals on demand from `_message_token_count`."""
+    tokens_by_group: dict[str, int] = {}
+    for message in messages:
+        group_id = message.additional_properties["_group_id"]
+        tokens_by_group[group_id] = tokens_by_group.get(group_id, 0) + message.additional_properties.get(
+            "_message_token_count", 0
+        )
+    return tokens_by_group
+```
+
+In E2, strategies evaluate `_message_token_count`/`_token_count` directly from messages and compute per-group totals on demand via `_group_id` (instead of caching `_group_token_count` on every message). This avoids duplicated state and ambiguity when one copy is updated but others are stale. If needed for performance, the function-invocation loop can keep an ephemeral `dict[group_id, token_count]` alongside the annotated message list.
+
+#### Variant F: Combined projection + tokenization (C + D + E)
+
+Variant F has two sub-variants:
+- **F1:** combined model on `MessageGroups`.
+- **F2:** combined model on `_`-annotated messages.
+
+##### Variant F1: combined model on `MessageGroups`
+
+Variant F1 combines Variant C1's grouped interface, Variant D1's exclusion semantics, and Variant E1's token accounting in one integrated model. This gives one state container for projection (`excluded`) and budget control (`token_count`), while preserving full history for final-return and diagnostics.
+
+For Variant F1, `MessageGroups.from_messages(...)` accepts an optional tokenizer and handles both tokenization and grouping before strategy execution:
 
 ```python
 class TokenizerProtocol(Protocol):
@@ -446,15 +564,42 @@ class CompactionStrategy(Protocol):
         ...
 ```
 
+##### Variant F2: combined model on `_`-annotated messages
+
+```python
+class CompactionStrategy(Protocol):
+    async def __call__(self, messages: list[Message]) -> bool:
+        """Mutate message annotations in place."""
+        ...
+
+
+async def compact_with_annotations(
+    messages: list[Message], *, strategy: CompactionStrategy, tokenizer: TokenizerProtocol
+) -> list[Message]:
+    # C2: annotate group boundaries
+    _annotate_groups(messages)
+    # E2: annotate token metrics
+    annotate_token_counts(messages, tokenizer=tokenizer)
+    _ = sum_tokens_by_group(messages)  # optional ephemeral aggregate in loop state
+
+    # D2/F2: strategy toggles _excluded/_exclude_reason and can rewrite messages
+    _ = await strategy(messages)
+
+    # Project only included messages for model call
+    return [m for m in messages if not m.additional_properties.get("_excluded", False)]
+```
+
+F2 avoids a sidecar object but requires strict ownership rules for `_` attributes (who sets, updates, clears, and validates them).
+
 **Trade-offs between variants:**
 
-| Aspect | Variant A (in-place) | Variant B (return new) | Variant C (pre-grouped callable) | Variant D (exclude-based, on C) | Variant E (tokenization/accounting, on C) | Variant F (C + D + E combined) |
-|--------|---------------------|----------------------|-----------------------------------|---------------------------------|------------------------------------------|-------------------------------|
-| **Allocation** | Zero in no-op case | Always allocates tuple | Grouping overhead always | Grouping + exclusion-state bookkeeping | Grouping + tokenization/cache overhead | Grouping + exclusion + token/cache overhead |
-| **Safety** | Caller loses original | Original preserved | Caller loses original groups | Full grouped history preserved; model sees included projection | Same message inclusion as base variant; adds token observability | Full grouped history preserved with included/token projections |
-| **Strategy complexity** | Must handle atomic groups | Must handle atomic groups | Groups pre-computed by framework | Exclude/re-include policy on grouped state | Token-aware compaction policy and budget checks | Unified exclude + token budget policy on grouped state |
-| **Chaining** | Natural (same list) | Pipe output to next input | Natural (same group list) | Natural (same group state, exclude/re-include allowed) | Natural (same group state with shared token metrics) | Natural (same group state; compose exclude and budget passes) |
-| **Framework complexity** | Minimal | Reassignment logic | Grouping + flattening logic | Grouping + flattening + exclusion semantics | Grouping + tokenizer integration + cache invalidation | Highest: grouping + exclusion + tokenizer + cache invalidation |
+| Aspect | Variant A (in-place) | Variant B (return new) | Variant C1 (`MessageGroups`) | Variant C2 (`_` attrs) | Variant D1 (`MessageGroups` exclude) | Variant D2 (`_excluded` attrs) | Variant E1 (group token caches) | Variant E2 (message token attrs + on-demand group sums) | Variant F1 (`MessageGroups` combined) | Variant F2 (`_` attrs combined) |
+|--------|---------------------|----------------------|-------------------------------|-----------------------|--------------------------------------|-------------------------------|----------------------------------|-------------------------------------|-----------------------------------|----------------------------------|
+| **Allocation** | Zero in no-op case | Always allocates tuple | Grouping sidecar allocation | No sidecar; metadata writes | D1 + exclusion state | D2 + metadata writes | E1 + token cache sidecar | E2 + message metadata writes | Highest sidecar state | No sidecar; highest metadata writes |
+| **Safety** | Caller loses original | Original preserved | State isolated in sidecar | Metadata mutates source messages | Full grouped history preserved | Full message history preserved | Deterministic token rollups in sidecar | Deterministic token rollups on messages | Strong isolation of all compaction state | Shared-message mutation can leak across layers |
+| **Strategy complexity** | Must handle atomic groups | Must handle atomic groups | Groups pre-computed by framework | Reads `_group_*` fields | Exclude/re-include by group | Exclude/re-include by `_group_id` | Token budget via group APIs | Token budget via `_token*` fields | Unified exclude + token policy via group APIs | Unified policy via many message attrs |
+| **Chaining** | Natural (same list) | Pipe output to next input | Natural (same group state) | Natural (same annotated message list) | Natural | Natural | Natural | Natural | Natural | Natural |
+| **Framework complexity** | Minimal | Reassignment logic | Grouping + flattening layer | Annotation lifecycle/validation | C1 + exclusion semantics | C2 + projection/filter semantics | C1 + tokenizer + cache invalidation | C2 + tokenizer + attr invalidation | Highest sidecar orchestration | Highest attr lifecycle orchestration |
 
 **Usage with `HistoryProvider`:**
 
@@ -500,7 +645,7 @@ agent = client.create_agent(
 
 There are two ways we can do this:
 1. Before writing to storage in `after_run`, compaction is called on the new messages,
-    combined with: a new `compact` method, that reads the full history, calls the compaction strategy with the full history, then writes the compacted result back to storage (also requires a `overwrite` flag on the `save_messages` method). This makes removing old messages from storage a explicit action that the user initiaties instead of being implicitly triggered by `after_run` writes, but it also means compaction strategies only see new messages instead of the full history (unless they read it themselves), the `compact` method could then also have a override for the strategy to use (and/or the tokenizer in case of Variant E/F).
+    combined with: a new `compact` method, that reads the full history, calls the compaction strategy with the full history, then writes the compacted result back to storage (also requires a `overwrite` flag on the `save_messages` method). This makes removing old messages from storage a explicit action that the user initiaties instead of being implicitly triggered by `after_run` writes, but it also means compaction strategies only see new messages instead of the full history (unless they read it themselves), the `compact` method could then also have a override for the strategy to use (and/or the tokenizer in case of Variant E1/E2/F1/F2).
 
     ```python
     class HistoryProvider(ContextProvider):
@@ -522,7 +667,7 @@ Given the explicit nature, and the ability to do the heavy lifting of reading, c
 
 In-run compaction is executed within the Function Calling Layer, this loop is controlled by the existing TypedDict that controls the function calling loop (max iterations, error handling, etc.). Adding compaction and return-shape fields keeps loop-related behavior in one place.
 
-For Variant E and Variant F, a tokenizer must also be configured because token counts are part of compaction decisions, this could be optional to allow simple compaction strategies that don't use token metrics. For Variant F specifically, use `MessageGroups.from_messages(..., tokenizer=...)` so tokenization and grouping happen together before strategy invocation.
+For token-aware variants (E1/E2/F1/F2), a tokenizer must also be configured because token counts are part of compaction decisions, this could be optional to allow simple compaction strategies that don't use token metrics. For the grouped-state path (F1), use `MessageGroups.from_messages(..., tokenizer=...)` so tokenization and grouping happen together before strategy invocation.
 
 ```python
 class FunctionInvocationConfiguration(TypedDict, total=False):
@@ -533,7 +678,7 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
     additional_tools: Sequence[ToolProtocol]
     include_detailed_errors: bool
     compaction_strategy: CompactionStrategy | None  # NEW
-    tokenizer: TokenizerProtocol | None  # NEW; required for Variant E/F
+    tokenizer: TokenizerProtocol | None  # NEW; required for token-aware variants (E1/E2/F1/F2)
     include_excluded_messages_in_final_response: bool  # NEW; default True
 ```
 
@@ -546,7 +691,7 @@ agent = Agent(
         InMemoryHistoryProvider("memory", compaction_strategy=boundary_strategy),
     ],
     compaction_strategy=compaction_strategy,
-    tokenizer=model_tokenizer,  # required for Variant E/F
+    tokenizer=model_tokenizer,  # required for token-aware variants (E1/E2/F1/F2)
 )
 ```
 
@@ -557,7 +702,7 @@ During the function calling loop, the strategy should be applied immediately bef
 logger = logging.getLogger(__name__)
 groups = MessageGroups.from_messages(
     all_messages,
-    tokenizer=config["tokenizer"],  # required for Variant E/F
+    tokenizer=config["tokenizer"],  # required for token-aware variants (E1/E2/F1/F2)
 )
 group_metrics = groups.summary()
 
@@ -603,9 +748,9 @@ class SummarizationStrategy(CompactionStrategy):
 # etc
 ```
 
-**Opinionated token budget based composed strategy pattern (Variant F):**
+**Opinionated token budget based composed strategy pattern (Variant F1/F2):**
 
-This ADR proposes shipping a built-in composed strategy that enforces a token budget by running a list of regular strategies from top to bottom until the conversation fits the budget. This is intentionally opinionated and serves as a practical default/inspiration; advanced users can still implement custom orchestration logic. In the function loop, this strategy should drive `MessageGroup.excluded` flags so model calls project only included groups while preserving the full list.
+This ADR proposes shipping a built-in composed strategy that enforces a token budget by running a list of regular strategies from top to bottom until the conversation fits the budget. This is intentionally opinionated and serves as a practical default/inspiration; advanced users can still implement custom orchestration logic. In F1, this strategy should drive `MessageGroup.excluded`; in F2, it should drive message `_excluded` annotations so model calls project only included context while preserving the full list.
 
 ```python
 class TokenBudgetComposedStrategy(CompactionStrategy):
@@ -638,15 +783,16 @@ This pattern keeps composition explicit and deterministic: ordered strategies, s
 - Good, because new strategies can be added without modifying `HistoryProvider`
 - Good, because with Variant A (in-place), the tool loop integration is zero-allocation in the no-op case
 - Good, because with Variant B (return new list), the caller retains the original list for logging or fallback
-- Good, because with Variants C-F (pre-grouped), strategy authors don't need to implement atomic group preservation — the framework handles grouping/flattening, making strategies simpler and less error-prone
-- Good, because with Variants C-F, compaction mutates one shared `MessageGroups` object in place, which is simpler to reason about and avoids extra state copies
+- Good, because with Variants C1-F1 (grouped-state), strategy authors don't need to implement atomic group preservation — the framework handles grouping/flattening, making strategies simpler and less error-prone
+- Good, because with Variants C2-F2 (message annotations), we can avoid a sidecar `MessageGroups` container while still preserving logical groups through `_group_*` attributes
 - Good, because it is easy to test strategies in isolation
 - Good, because strategies can inspect `source_id` attribution on messages for informed decisions
 - Good, because in-run settings can be first-class `Agent` parameters while still being stored in `FunctionInvocationConfiguration` for loop execution
-- Good, because **chaining is natural** — for Variants A/C-F, each strategy mutates the same shared object in sequence; for Variant B, output pipes into the next input
-- Neutral, because Variants C-F add framework complexity (grouping/flattening/tokenization/exclusion accounting) but reduce strategy complexity
+- Good, because **chaining is natural** — for Variants A/C1-F2, each strategy mutates the same shared state in sequence; for Variant B, output pipes into the next input
+- Neutral, because Variants C1-F2 add framework complexity (grouping/flattening or annotation lifecycle, plus tokenization/exclusion accounting) but reduce strategy complexity
 - Bad, because it adds a new concept (`CompactionStrategy`) alongside the existing `ContextProvider`/`HistoryProvider` hierarchy
-- Bad, because Variants C-F introduce a `MessageGroup` model that must stay in sync with any future message role changes
+- Bad, because Variants C1-F1 introduce a `MessageGroup` model that must stay in sync with any future message role changes
+- Bad, because Variants C2-F2 depend on careful `_`-attribute lifecycle management to avoid stale or inconsistent annotations
 
 ### Option 2: `CompactionStrategy` as a Mixin for `HistoryProvider`
 
@@ -849,7 +995,7 @@ For boundary compaction, the same middleware runs at the chat client level. For 
 
 ## Decision Outcome
 
-Chosen option: **Option 1: Standalone `CompactionStrategy` Object** with Variant F (combined grouped callable + exclude + tokenization) as the primary strategy model, plus a built-in `TokenBudgetComposedStrategy` that implements a common token-budget orchestration pattern, as well as several simple built-in strategies (truncation, sliding window, summarization) that should work both with and without tokens.
+Chosen option: **Option 1: Standalone `CompactionStrategy` Object** with **F2** (`_`-annotated messages) as the primary implementation model. We still document F1 as a valid alternative, but F2 is preferred because it introduces one less concept (no sidecar `MessageGroups` container) and enables native state sharing across compaction points (e.g., between the function-calling loop and `HistoryProvider.after_run`), improving efficiency by reducing translation/rebuild steps.
 
 ## Comparison to .NET Implementation
 
@@ -871,7 +1017,8 @@ Option 1's `CompactionStrategy` is the closest equivalent to .NET's `IChatReduce
 | **Pre-write compaction** | `InMemoryChatHistoryProvider` + `ChatReducerTriggerEvent.AfterMessageAdded` | Reducer runs in `StoreChatHistoryAsync` after new request/response messages are added to storage (closest equivalent to pre-write persistence compaction). |
 | **Agent-level whole-list compaction (pre-send overlap with post-load)** | `ChatClientAgent` message assembly + chat-client decoration via `clientFactory` / `ChatClientAgentRunOptions.ChatClientFactory` | `ChatClientAgent` builds the full invocation message list (`ChatHistoryProvider` + `AIContextProviders` + input). A delegating `IChatClient` can compact that assembled list immediately before forwarding `GetResponseAsync`. |
 | **In-run compaction before every `get_response` call** | Function-invocation chat-client layer (`FunctionInvokingChatClient`) plus delegating `IChatClient` wrapper | The function-calling layer performs repeated model roundtrips; wrapping this layer allows compaction to execute before each `GetResponseAsync` call. |
-| **Variant C grouped-state maintenance (`MessageGroup`)** | Keep grouped state in the same function-invocation/delegating-chat-client layer | Maintain and update grouped state across loop iterations in that layer, then flatten only for model calls. |
+| **Variant C1 grouped-state maintenance (`MessageGroup`)** | Keep grouped state in the same function-invocation/delegating-chat-client layer | Maintain and update grouped state across loop iterations in that layer, then flatten only for model calls. |
+| **Variant C2 message-annotation maintenance (`_group_*`)** | Keep message annotations in the same function-invocation/delegating-chat-client layer | Incrementally annotate newly appended messages with `_group_id`, `_group_kind`, and related metadata; filter/project directly from annotated message lists. |
 | **Compaction on existing storage** | `InMemoryChatHistoryProvider.GetMessages(...)` + `SetMessages(...)` (or custom provider equivalent) | Read stored history, apply reducer/strategy, and write back compacted history as a maintenance operation. |
 
 ### Coverage Matrix
@@ -929,7 +1076,7 @@ Running compaction after **every** tool call is wasteful — most iterations the
 
 The recommended approach is **strategy-internal with a lightweight guard**: the `compact()` method is called after each tool result, but strategy implementations should include a fast short-circuit check (e.g., `if len(messages) < self.threshold: return False`) to minimize overhead when compaction is not needed. This keeps the tool loop simple (always call `compact()`) while letting each strategy define its own trigger logic.
 
-The following example illustrates this for Variant A (in-place flat list). See Variant C under Option 1 for the simpler pre-grouped equivalent.
+The following example illustrates this for Variant A (in-place flat list). See Variant C1/C2 under Option 1 for group-aware equivalents.
 
 ```python
 class SlidingWindowStrategy(CompactionStrategy):
