@@ -47,6 +47,9 @@ filterwarnings = [
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning:pydantic.*"
 ]
 timeout = 120
+markers = [
+    "integration: marks tests as integration tests that require external services",
+]
 
 [tool.ruff]
 extend = "../../pyproject.toml"
@@ -83,6 +86,7 @@ include = "../../shared_tasks.toml"
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azure_cosmos"
 test = "pytest --cov=agent_framework_azure_cosmos --cov-report=term-missing:skip-covered tests"
+integration-tests = "pytest tests/test_cosmos_history_provider.py -m integration"
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]

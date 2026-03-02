@@ -83,11 +83,13 @@ class CosmosHistoryProvider(BaseHistoryProvider):
         )
 
         self._cosmos_client: CosmosClient | None = cosmos_client
-        self._database_client: DatabaseProxy | None = None
-        self._container: ContainerProxy | None = container_client
+        self._container_proxy: ContainerProxy | None = container_client
         self._owns_client = False
+        self._database_client: DatabaseProxy | None = None
 
-        if self._container is not None:
+        if self._container_proxy is not None:
+            self.database_name: str = database_name or ""
+            self.container_name: str = container_name or ""
             return
 
         required_fields: list[str] = ["database_name", "container_name"]
@@ -107,70 +109,36 @@ class CosmosHistoryProvider(BaseHistoryProvider):
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-
-        database_name_value = settings.get("database_name")
-        container_name_value = settings.get("container_name")
-        if database_name_value is None or container_name_value is None:
-            raise ValueError("Both database_name and container_name are required to initialize CosmosHistoryProvider.")
-        self.database_name = database_name_value
-        self.container_name = container_name_value
-
+        self.database_name = settings["database_name"]  # type: ignore[assignment]
+        self.container_name = settings["container_name"]  # type: ignore[assignment]
         if self._cosmos_client is None:
-            endpoint_value = settings.get("endpoint")
-            if endpoint_value is None:
-                raise ValueError(
-                    "endpoint is required to initialize CosmosHistoryProvider when cosmos_client is not set."
-                )
-
-            resolved_credential = self._resolve_credential(credential, settings)
             self._cosmos_client = CosmosClient(
-                url=endpoint_value,
-                credential=resolved_credential,  # type: ignore[arg-type]
+                url=settings["endpoint"],  # type: ignore[arg-type]
+                credential=credential or settings["key"].get_secret_value(),  # type: ignore[arg-type,union-attr]
                 user_agent_suffix=AGENT_FRAMEWORK_USER_AGENT,
             )
             self._owns_client = True
 
         self._database_client = self._cosmos_client.get_database_client(self.database_name)
 
-    @staticmethod
-    def _resolve_credential(
-        credential: str | AzureCredentialTypes | None, settings: AzureCosmosHistorySettings
-    ) -> str | AzureCredentialTypes:
-        if credential is not None:
-            return credential
-
-        if settings.get("key") is not None:
-            return settings["key"].get_secret_value()  # type: ignore[union-attr]
-
-        raise ValueError(
-            "Azure Cosmos credential is required. Provide 'credential' or set 'AZURE_COSMOS_KEY' environment variable."
-        )
-
-    async def _get_container(self) -> ContainerProxy:
-        """Get or create the Cosmos DB container for storing messages."""
-        if self._container is not None:
-            return self._container
-        if self._database_client is None:
-            raise RuntimeError("Cosmos database client is not initialized.")
-
-        self._container = await self._database_client.create_container_if_not_exists(
-            id=self.container_name,
-            partition_key=PartitionKey(path="/session_id"),
-        )
-        return self._container
-
-    @staticmethod
-    def _session_partition_key(session_id: str | None) -> str:
-        return session_id or "default"
 
     async def get_messages(self, session_id: str | None, **kwargs: Any) -> list[Message]:
         """Retrieve stored messages for this session from Azure Cosmos DB."""
+        await self._ensure_container_proxy()
         session_key = self._session_partition_key(session_id)
-        container = await self._get_container()
 
-        query = "SELECT c.message FROM c WHERE c.session_id = @session_id ORDER BY c.sort_key ASC"
-        parameters: list[dict[str, object]] = [{"name": "@session_id", "value": session_key}]
-        items = container.query_items(query=query, parameters=parameters, partition_key=session_key)
+        query = (
+            "SELECT c.message FROM c "
+            "WHERE c.session_id = @session_id AND c.source_id = @source_id "
+            "ORDER BY c.sort_key ASC"
+        )
+        parameters: list[dict[str, object]] = [
+            {"name": "@session_id", "value": session_key},
+            {"name": "@source_id", "value": self.source_id},
+        ]
+        items = self._container_proxy.query_items(  # type: ignore[union-attr]
+            query=query, parameters=parameters, partition_key=session_key
+        )
 
         messages: list[Message] = []
         async for item in items:
@@ -185,8 +153,8 @@ class CosmosHistoryProvider(BaseHistoryProvider):
         if not messages:
             return
 
+        await self._ensure_container_proxy()
         session_key = self._session_partition_key(session_id)
-        container = await self._get_container()
 
         base_sort_key = time.time_ns()
         operations: list[tuple[str, tuple[dict[str, Any]]]] = []
@@ -202,16 +170,22 @@ class CosmosHistoryProvider(BaseHistoryProvider):
 
         for start in range(0, len(operations), self._BATCH_OPERATION_LIMIT):
             batch = operations[start : start + self._BATCH_OPERATION_LIMIT]
-            await container.execute_item_batch(batch_operations=batch, partition_key=session_key)
+            await self._container_proxy.execute_item_batch(  # type: ignore[union-attr]
+                batch_operations=batch, partition_key=session_key
+            )
 
     async def clear(self, session_id: str | None) -> None:
         """Clear all messages for a session from Azure Cosmos DB."""
+        await self._ensure_container_proxy()
         session_key = self._session_partition_key(session_id)
-        container = await self._get_container()
-
-        query = "SELECT c.id FROM c WHERE c.session_id = @session_id"
-        parameters: list[dict[str, object]] = [{"name": "@session_id", "value": session_key}]
-        items = container.query_items(query=query, parameters=parameters, partition_key=session_key)
+        query = "SELECT c.id FROM c WHERE c.session_id = @session_id AND c.source_id = @source_id"
+        parameters: list[dict[str, object]] = [
+            {"name": "@session_id", "value": session_key},
+            {"name": "@source_id", "value": self.source_id},
+        ]
+        items = self._container_proxy.query_items(  # type: ignore[union-attr]
+            query=query, parameters=parameters, partition_key=session_key
+        )
 
         delete_operations: list[tuple[str, tuple[str]]] = []
         async for item in items:
@@ -221,13 +195,22 @@ class CosmosHistoryProvider(BaseHistoryProvider):
 
         for start in range(0, len(delete_operations), self._BATCH_OPERATION_LIMIT):
             batch = delete_operations[start : start + self._BATCH_OPERATION_LIMIT]
-            await container.execute_item_batch(batch_operations=batch, partition_key=session_key)
+            await self._container_proxy.execute_item_batch(  # type: ignore[union-attr]
+                batch_operations=batch, partition_key=session_key
+            )
 
     async def list_sessions(self) -> list[str]:
         """List all session IDs stored in this provider's Cosmos container."""
-        container = await self._get_container()
-        query = "SELECT DISTINCT VALUE c.session_id FROM c"
-        items = container.query_items(query=query, enable_cross_partition_query=True)
+        await self._ensure_container_proxy()
+        query = (
+            "SELECT DISTINCT VALUE c.session_id FROM c WHERE c.source_id = @source_id"
+        )
+        parameters: list[dict[str, object]] = [
+            {"name": "@source_id", "value": self.source_id}
+        ]
+        items = self._container_proxy.query_items(  # type: ignore[union-attr]
+            query=query, parameters=parameters, enable_cross_partition_query=True
+        )
 
         session_ids: set[str] = set()
         async for item in items:
@@ -251,4 +234,26 @@ class CosmosHistoryProvider(BaseHistoryProvider):
         exc_tb: Any,
     ) -> None:
         """Async context manager exit."""
-        await self.close()
+        try:
+            await self.close()
+        except Exception:
+            if exc_type is None:
+                raise
+
+    async def _ensure_container_proxy(self) -> None:
+        """Get or create the Cosmos DB container for storing messages."""
+        if self._container_proxy is not None:
+            return
+        if self._database_client is None:
+            raise RuntimeError("Cosmos database client is not initialized.")
+
+        self._container_proxy = (
+            await self._database_client.create_container_if_not_exists(
+                id=self.container_name,
+                partition_key=PartitionKey(path="/session_id"),
+            )
+        )
+
+    @staticmethod
+    def _session_partition_key(session_id: str | None) -> str:
+        return session_id or "default"
