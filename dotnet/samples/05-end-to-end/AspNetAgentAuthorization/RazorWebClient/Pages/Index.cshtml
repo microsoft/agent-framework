@@ -1,0 +1,18 @@
+@page
+@model AspNetAgentAuthorization.RazorWebClient.Pages.IndexModel
+@{
+    Layout = "_Layout";
+}
+
+<h1>Welcome</h1>
+<p>This sample demonstrates securing an AI agent API with OAuth 2.0 / OpenID Connect.</p>
+
+@if (User.Identity?.IsAuthenticated == true)
+{
+    <p>You are logged in as <strong>@User.Identity.Name</strong>.</p>
+    <p><a href="/Chat">Go to Chat →</a></p>
+}
+else
+{
+    <p>Please <a href="/Chat">log in</a> to chat with the agent.</p>
+}
