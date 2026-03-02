@@ -58,12 +58,13 @@ _FRONTMATTER_RE = re.compile(
 )
 
 # Matches resource file references in skill markdown. Group 1 = relative file path.
-# Supports two forms:
-#   1. Markdown links: [text](path/file.ext)
-#   2. Backtick-quoted paths: `path/file.ext`
+# Only matches markdown links: [text](path/file.ext)
+# Backtick-quoted paths are intentionally excluded because backticks are standard
+# inline code formatting in markdown and do not imply the referenced file exists
+# in the skill directory.
 # Supports optional ./ or ../ prefixes; excludes URLs (no ":" in the path character class).
 _RESOURCE_LINK_RE = re.compile(
-    r"(?:\[.*?\]\(|`)(\.?\.?/?[\w][\w\-./]*\.\w+)(?:\)|`)",
+    r"\[.*?\]\((\.?\.?/?[\w][\w\-./]*\.\w+)\)",
 )
 
 # Matches YAML "key: value" lines. Group 1 = key, Group 2 = quoted value,

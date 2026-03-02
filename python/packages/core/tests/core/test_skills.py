@@ -117,15 +117,17 @@ class TestExtractResourcePaths:
     def test_empty_content(self) -> None:
         assert _extract_resource_paths("") == []
 
-    def test_extracts_backtick_quoted_paths(self) -> None:
+    def test_ignores_backtick_quoted_paths(self) -> None:
+        """Backtick-quoted filenames are standard markdown code formatting, not resource references."""
         content = "Use the template at `assets/template.md` and the script `./scripts/run.py`."
         paths = _extract_resource_paths(content)
-        assert paths == ["assets/template.md", "scripts/run.py"]
+        assert paths == []
 
-    def test_deduplicates_across_link_and_backtick(self) -> None:
+    def test_backtick_filenames_do_not_shadow_markdown_links(self) -> None:
+        """Markdown links are still extracted even when backtick filenames are present."""
         content = "See [doc](refs/FAQ.md) and also `refs/FAQ.md`."
         paths = _extract_resource_paths(content)
-        assert len(paths) == 1
+        assert paths == ["refs/FAQ.md"]
 
 
 class TestTryParseSkillDocument:
@@ -287,6 +289,18 @@ class TestDiscoverAndLoadSkills:
         )
         skills = _discover_and_load_skills([str(tmp_path)])
         assert len(skills) == 0
+
+    def test_loads_skill_with_backtick_filenames_that_do_not_exist(self, tmp_path: Path) -> None:
+        """Backtick-quoted filenames should not be treated as resource references (issue #4369)."""
+        _write_skill(
+            tmp_path,
+            "my-skill",
+            body="Configure using `config.json` and `deploy.sh`.\nSee [prompt](prompt.jinja2) for the template.",
+            resources={"prompt.jinja2": "template content"},
+        )
+        skills = _discover_and_load_skills([str(tmp_path)])
+        assert "my-skill" in skills
+        assert skills["my-skill"].resource_names == ["prompt.jinja2"]
 
     def test_excludes_skill_with_path_traversal_resource(self, tmp_path: Path) -> None:
         _write_skill(
