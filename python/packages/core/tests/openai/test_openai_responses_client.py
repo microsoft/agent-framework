@@ -676,6 +676,7 @@ async def test_local_shell_tool_is_invoked_in_function_loop() -> None:
     mock_response1.model = "test-model"
     mock_response1.created_at = 1000000000
     mock_response1.status = "completed"
+    mock_response1.finish_reason = "tool_calls"
     mock_response1.incomplete = None
 
     mock_action = MagicMock()
@@ -698,6 +699,7 @@ async def test_local_shell_tool_is_invoked_in_function_loop() -> None:
     mock_response2.model = "test-model"
     mock_response2.created_at = 1000000001
     mock_response2.status = "completed"
+    mock_response2.finish_reason = "stop"
     mock_response2.incomplete = None
 
     mock_text_item = MagicMock()
@@ -746,6 +748,7 @@ async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
     mock_response1.model = "test-model"
     mock_response1.created_at = 1000000000
     mock_response1.status = "completed"
+    mock_response1.finish_reason = "tool_calls"
     mock_response1.incomplete = None
 
     mock_action = MagicMock()
@@ -769,6 +772,7 @@ async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
     mock_response2.model = "test-model"
     mock_response2.created_at = 1000000001
     mock_response2.status = "completed"
+    mock_response2.finish_reason = "stop"
     mock_response2.incomplete = None
 
     mock_text_item = MagicMock()
