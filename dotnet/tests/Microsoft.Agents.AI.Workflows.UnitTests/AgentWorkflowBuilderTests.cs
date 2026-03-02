@@ -88,6 +88,50 @@ public class AgentWorkflowBuilderTests
         Assert.Equal(int.MaxValue, manager.MaximumIterationCount);
     }
 
+    [Fact]
+    public void BuildGroupChat_WithNameAndDescription_SetsWorkflowNameAndDescription()
+    {
+        const string WorkflowName = "Test Group Chat";
+        const string WorkflowDescription = "A test group chat workflow";
+
+        var workflow = AgentWorkflowBuilder
+            .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 2 })
+            .AddParticipants(new DoubleEchoAgent("agent1"), new DoubleEchoAgent("agent2"))
+            .WithName(WorkflowName)
+            .WithDescription(WorkflowDescription)
+            .Build();
+
+        Assert.Equal(WorkflowName, workflow.Name);
+        Assert.Equal(WorkflowDescription, workflow.Description);
+    }
+
+    [Fact]
+    public void BuildGroupChat_WithNameOnly_SetsWorkflowName()
+    {
+        const string WorkflowName = "Named Group Chat";
+
+        var workflow = AgentWorkflowBuilder
+            .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 2 })
+            .AddParticipants(new DoubleEchoAgent("agent1"))
+            .WithName(WorkflowName)
+            .Build();
+
+        Assert.Equal(WorkflowName, workflow.Name);
+        Assert.Null(workflow.Description);
+    }
+
+    [Fact]
+    public void BuildGroupChat_WithoutNameOrDescription_DefaultsToNull()
+    {
+        var workflow = AgentWorkflowBuilder
+            .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 2 })
+            .AddParticipants(new DoubleEchoAgent("agent1"))
+            .Build();
+
+        Assert.Null(workflow.Name);
+        Assert.Null(workflow.Description);
+    }
+
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
