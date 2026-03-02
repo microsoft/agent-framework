@@ -268,9 +268,9 @@ OLLAMA_MODEL_OPTION_TRANSLATIONS: dict[str, str] = {
 }
 """Maps ChatOptions keys to Ollama model option parameter names."""
 
-# Kwargs that may be injected by orchestration layers (e.g. HandoffBuilder)
-# but are not supported by ollama.AsyncClient.chat().  These are silently
-# stripped in _inner_get_response so they never reach the Ollama API.
+# Framework-level kwargs that are not supported by ollama.AsyncClient.chat().
+# These are silently stripped in _inner_get_response so they never reach the
+# Ollama API.
 _UNSUPPORTED_CHAT_KWARGS: set[str] = {
     "allow_multiple_tool_calls",
 }
@@ -358,9 +358,8 @@ class OllamaChatClient(
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-        # Filter out kwargs that are not supported by ollama.AsyncClient.chat().
-        # Orchestration layers (e.g. HandoffBuilder) may inject kwargs like
-        # allow_multiple_tool_calls that the Ollama Python client doesn't accept.
+        # Filter out framework-level kwargs that are not supported by
+        # ollama.AsyncClient.chat().
         filtered_kwargs = {k: v for k, v in kwargs.items() if k not in _UNSUPPORTED_CHAT_KWARGS}
 
         if stream:
