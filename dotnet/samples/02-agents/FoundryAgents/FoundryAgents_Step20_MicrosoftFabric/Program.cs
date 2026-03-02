@@ -2,30 +2,33 @@
 
 // This sample shows how to use Microsoft Fabric Tool with AI Agents.
 
-using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 string fabricConnectionId = Environment.GetEnvironmentVariable("FABRIC_PROJECT_CONNECTION_ID") ?? throw new InvalidOperationException("FABRIC_PROJECT_CONNECTION_ID is not set.");
 
 const string AgentInstructions = "You are a helpful assistant with access to Microsoft Fabric data. Answer questions based on data available through your Fabric connection.";
 
-// Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
+// Create a Foundry project Responses API client.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+IChatClient chatClient = new ProjectResponsesClient(
+    projectEndpoint: new Uri(endpoint),
+    tokenProvider: new DefaultAzureCredential())
+    .AsIChatClient();
 
 // Configure Microsoft Fabric tool options with project connection
 var fabricToolOptions = new FabricDataAgentToolOptions();
 fabricToolOptions.ProjectConnections.Add(new ToolProjectConnection(fabricConnectionId));
 
-AIAgent agent = await CreateAgentWithMEAIAsync();
-// AIAgent agent = await CreateAgentWithNativeSDKAsync();
+ChatClientAgent agent = CreateAgentWithMEAI();
+// ChatClientAgent agent = CreateAgentWithNativeSDK();
 
 Console.WriteLine($"Created agent: {agent.Name}");
 
@@ -38,35 +41,35 @@ foreach (var message in response.Messages)
     Console.WriteLine(message.Text);
 }
 
-// Cleanup by deleting the agent
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
-Console.WriteLine($"\nDeleted agent: {agent.Name}");
-
 // --- Agent Creation Options ---
 
+#pragma warning disable CS8321 // Local function is declared but never used
 // Option 1 - Using AsAITool wrapping for the ResponseTool returned by AgentTool.CreateMicrosoftFabricTool (MEAI + AgentFramework)
-async Task<AIAgent> CreateAgentWithMEAIAsync()
+ChatClientAgent CreateAgentWithMEAI()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
-        model: deploymentName,
-        name: "FabricAgent-MEAI",
-        instructions: AgentInstructions,
-        tools: [((ResponseTool)AgentTool.CreateMicrosoftFabricTool(fabricToolOptions)).AsAITool()]);
+    return new ChatClientAgent(chatClient, new ChatClientAgentOptions
+    {
+        Name = "FabricAgent-MEAI",
+        ChatOptions = new()
+        {
+            ModelId = deploymentName,
+            Instructions = AgentInstructions,
+            Tools = [((ResponseTool)AgentTool.CreateMicrosoftFabricTool(fabricToolOptions)).AsAITool()]
+        },
+    });
 }
 
-// Option 2 - Using PromptAgentDefinition with AgentTool.CreateMicrosoftFabricTool (Native SDK)
-async Task<AIAgent> CreateAgentWithNativeSDKAsync()
+// Option 2 - Using ResponseTool via AsAITool (Native SDK type)
+ChatClientAgent CreateAgentWithNativeSDK()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
-        name: "FabricAgent-NATIVE",
-        creationOptions: new AgentVersionCreationOptions(
-            new PromptAgentDefinition(model: deploymentName)
-            {
-                Instructions = AgentInstructions,
-                Tools =
-                {
-                    AgentTool.CreateMicrosoftFabricTool(fabricToolOptions),
-                }
-            })
-    );
+    return new ChatClientAgent(chatClient, new ChatClientAgentOptions
+    {
+        Name = "FabricAgent-NATIVE",
+        ChatOptions = new()
+        {
+            ModelId = deploymentName,
+            Instructions = AgentInstructions,
+            Tools = [((ResponseTool)AgentTool.CreateMicrosoftFabricTool(fabricToolOptions)).AsAITool()]
+        },
+    });
 }

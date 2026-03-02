@@ -2,14 +2,14 @@
 
 // This sample shows how to use SharePoint Grounding Tool with AI Agents.
 
-using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 string sharepointConnectionId = Environment.GetEnvironmentVariable("SHAREPOINT_PROJECT_CONNECTION_ID") ?? throw new InvalidOperationException("SHAREPOINT_PROJECT_CONNECTION_ID is not set.");
 
 const string AgentInstructions = """
@@ -17,18 +17,21 @@ const string AgentInstructions = """
     Use the available SharePoint tools to answer questions and perform tasks.
     """;
 
-// Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
+// Create a Foundry project Responses API client.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+IChatClient chatClient = new ProjectResponsesClient(
+    projectEndpoint: new Uri(endpoint),
+    tokenProvider: new DefaultAzureCredential())
+    .AsIChatClient();
 
 // Create SharePoint tool options with project connection
 var sharepointOptions = new SharePointGroundingToolOptions();
 sharepointOptions.ProjectConnections.Add(new ToolProjectConnection(sharepointConnectionId));
 
-AIAgent agent = await CreateAgentWithMEAIAsync();
-// AIAgent agent = await CreateAgentWithNativeSDKAsync();
+ChatClientAgent agent = CreateAgentWithMEAI();
+// ChatClientAgent agent = CreateAgentWithNativeSDK();
 
 Console.WriteLine($"Created agent: {agent.Name}");
 
@@ -53,32 +56,35 @@ foreach (var message in response.Messages)
     }
 }
 
-// Cleanup by agent name removes the agent version created.
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
-Console.WriteLine($"\nDeleted agent: {agent.Name}");
-
 // --- Agent Creation Options ---
 
+#pragma warning disable CS8321 // Local function is declared but never used
 // Option 1 - Using AgentTool.CreateSharepointTool + AsAITool() (MEAI + AgentFramework)
-async Task<AIAgent> CreateAgentWithMEAIAsync()
+ChatClientAgent CreateAgentWithMEAI()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
-        model: deploymentName,
-        name: "SharePointAgent-MEAI",
-        instructions: AgentInstructions,
-        tools: [((ResponseTool)AgentTool.CreateSharepointTool(sharepointOptions)).AsAITool()]);
+    return new ChatClientAgent(chatClient, new ChatClientAgentOptions
+    {
+        Name = "SharePointAgent-MEAI",
+        ChatOptions = new()
+        {
+            ModelId = deploymentName,
+            Instructions = AgentInstructions,
+            Tools = [((ResponseTool)AgentTool.CreateSharepointTool(sharepointOptions)).AsAITool()]
+        },
+    });
 }
 
-// Option 2 - Using PromptAgentDefinition SDK native type
-async Task<AIAgent> CreateAgentWithNativeSDKAsync()
+// Option 2 - Using ResponseTool via AsAITool (Native SDK type)
+ChatClientAgent CreateAgentWithNativeSDK()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
-        name: "SharePointAgent-NATIVE",
-        creationOptions: new AgentVersionCreationOptions(
-            new PromptAgentDefinition(model: deploymentName)
-            {
-                Instructions = AgentInstructions,
-                Tools = { AgentTool.CreateSharepointTool(sharepointOptions) }
-            })
-    );
+    return new ChatClientAgent(chatClient, new ChatClientAgentOptions
+    {
+        Name = "SharePointAgent-NATIVE",
+        ChatOptions = new()
+        {
+            ModelId = deploymentName,
+            Instructions = AgentInstructions,
+            Tools = [((ResponseTool)AgentTool.CreateSharepointTool(sharepointOptions)).AsAITool()]
+        },
+    });
 }

@@ -7,23 +7,21 @@ This sample uses Qdrant for the vector store, but this can easily be swapped out
 ## Prerequisites
 
 - .NET 10 SDK or later
-- Azure OpenAI service endpoint
-- Both a chat completion and embedding deployment configured in the Azure OpenAI resource
+- Azure AI Foundry project endpoint
+- An embedding deployment configured in an Azure OpenAI resource
 - Azure CLI installed and authenticated (for Azure credential authentication)
-- User has the `Cognitive Services OpenAI Contributor` role for the Azure OpenAI resource.
 - An existing Qdrant instance. You can use a managed service or run a local instance using Docker, but the sample assumes the instance is running locally.
 
-**Note**: These samples use Azure OpenAI models. For more information, see [how to deploy Azure OpenAI models with Azure AI Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/deploy-models-openai).
-
-**Note**: These samples use Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure OpenAI resource and have the `Cognitive Services OpenAI Contributor` role. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
+**Note**: These samples use Azure AI Foundry for agent chat and Azure OpenAI for embeddings. Make sure you're logged in with `az login` and have access to both resources.
 
 ## Running the sample from the console
 
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" # Replace with your Azure OpenAI resource endpoint
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"  # Azure AI Foundry project endpoint
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
+$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"  # Azure OpenAI endpoint for embeddings
 $env:AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME="text-embedding-3-large"  # Optional, defaults to text-embedding-3-large
 ```
 

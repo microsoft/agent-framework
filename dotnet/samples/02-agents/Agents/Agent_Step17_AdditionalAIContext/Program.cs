@@ -9,16 +9,14 @@
 
 using System.Text;
 using System.Text.Json;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 using SampleApp;
-using MEAI = Microsoft.Extensions.AI;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5-mini";
 
 // A sample function to load the next three calendar events for the user.
 Func<Task<string[]>> loadNextThreeCalendarEvents = async () =>
@@ -36,13 +34,13 @@ Func<Task<string[]>> loadNextThreeCalendarEvents = async () =>
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
+AIAgent agent = new ProjectResponsesClient(
+    projectEndpoint: new Uri(endpoint),
+    tokenProvider: new DefaultAzureCredential())
+    .AsIChatClient()
     .AsAIAgent(new ChatClientAgentOptions()
     {
-        ChatOptions = new() { Instructions = """
+        ChatOptions = new() { ModelId = deploymentName, Instructions = """
         You are a helpful personal assistant.
         You manage a TODO list for the user. When the user has completed one of the tasks it can be removed from the TODO list. Only provide the list of TODO items if asked.
         You remind users of upcoming calendar events when the user interacts with you.
@@ -120,7 +118,7 @@ namespace SampleApp
                 ],
                 Messages =
                 [
-                    new MEAI.ChatMessage(ChatRole.User, outputMessageBuilder.ToString())
+                    new ChatMessage(ChatRole.User, outputMessageBuilder.ToString())
                 ]
             });
         }
@@ -150,7 +148,7 @@ namespace SampleApp
     /// </summary>
     internal sealed class CalendarSearchAIContextProvider(Func<Task<string[]>> loadNextThreeCalendarEvents) : MessageAIContextProvider
     {
-        protected override async ValueTask<IEnumerable<MEAI.ChatMessage>> ProvideMessagesAsync(InvokingContext context, CancellationToken cancellationToken = default)
+        protected override async ValueTask<IEnumerable<ChatMessage>> ProvideMessagesAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             var events = await loadNextThreeCalendarEvents();
 
@@ -161,7 +159,7 @@ namespace SampleApp
                 outputMessageBuilder.AppendLine($" - {calendarEvent}");
             }
 
-            return [new MEAI.ChatMessage(ChatRole.User, outputMessageBuilder.ToString())];
+            return [new ChatMessage(ChatRole.User, outputMessageBuilder.ToString())];
         }
     }
 }
