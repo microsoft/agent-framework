@@ -217,10 +217,11 @@ uv run poe setup --python 3.12
 ```
 
 #### `install`
-Install all dependencies including extras and dev dependencies, including updates:
+Install all dependencies (including extras and dev dependencies) from the lockfile using frozen resolution:
 ```bash
 uv run poe install
 ```
+For intentional dependency upgrades, run `uv lock --upgrade-package <dependency-name>` and then run `uv run poe install`.
 
 #### `venv`
 Create a virtual environment with specified Python version or switch python version:
@@ -276,6 +277,30 @@ uv run poe typing
 Lint markdown code blocks:
 ```bash
 uv run poe markdown-code-lint
+```
+
+#### `validate-dependency-ranges`
+Validate and extend external dependency upper bounds by running package checks/tests in isolated environments:
+```bash
+uv run poe validate-dependency-ranges
+```
+
+#### `validate-dependency-lower-bounds`
+Validate and extend external dependency lower bounds by running package checks/tests in isolated environments:
+```bash
+uv run poe validate-dependency-lower-bounds
+```
+
+When adding or changing an external dependency, run lower bounds first, then upper bounds:
+```bash
+uv run poe validate-dependency-lower-bounds
+uv run poe validate-dependency-ranges
+```
+
+#### `add-dependency-and-validate-bounds`
+Add an external dependency to a workspace project and run both validators for that same project/dependency:
+```bash
+uv run poe add-dependency-and-validate-bounds --project <workspace-package-name> --dependency "<dependency-spec>"
 ```
 
 ### Comprehensive Checks

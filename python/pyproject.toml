@@ -211,7 +211,7 @@ executor.type = "uv"
 [tool.poe.tasks]
 markdown-code-lint = "uv run python scripts/check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend' --exclude context_providers/azure_ai_search"
 prek-install = "prek install --overwrite"
-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit"
+install = "uv sync --all-packages --all-extras --dev --frozen --prerelease=if-necessary-or-explicit"
 test = "python scripts/run_tasks_in_packages_if_exists.py test"
 fmt = "python scripts/run_tasks_in_packages_if_exists.py fmt"
 format.ref = "fmt"
@@ -222,6 +222,7 @@ mypy = "python scripts/run_tasks_in_packages_if_exists.py mypy"
 samples-syntax = "pyright -p pyrightconfig.samples.json --warnings"
 typing = "python scripts/run_tasks_in_packages_if_exists.py mypy pyright"
 validate-dependency-ranges = "python scripts/validate_dependency_ranges.py"
+validate-dependency-lower-bounds = "python scripts/validate_dependency_lower_bounds.py"
 # cleaning
 clean-dist-packages = "python scripts/run_tasks_in_packages_if_exists.py clean-dist"
 clean-dist-meta = "rm -rf dist"
@@ -285,6 +286,38 @@ sequence = [
     { ref = "prek-install" }
 ]
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
+
+[tool.poe.tasks.add-dependency-to-project]
+cmd = "uv add --package ${project} ${dependency}"
+args = [
+    { name = "project", options = ["-p", "--project"] },
+    { name = "dependency", options = ["-d", "--dependency"] },
+]
+
+[tool.poe.tasks.validate-dependency-lower-bounds-project]
+cmd = "python scripts/validate_dependency_lower_bounds.py --packages ${project} --dependencies ${dependency}"
+args = [
+    { name = "project", options = ["-p", "--project"] },
+    { name = "dependency", options = ["-d", "--dependency"] },
+]
+
+[tool.poe.tasks.validate-dependency-ranges-project]
+cmd = "python scripts/validate_dependency_ranges.py --packages ${project} --dependencies ${dependency}"
+args = [
+    { name = "project", options = ["-p", "--project"] },
+    { name = "dependency", options = ["-d", "--dependency"] },
+]
+
+[tool.poe.tasks.add-dependency-and-validate-bounds]
+sequence = [
+    { ref = "add-dependency-to-project --project ${project} --dependency ${dependency}" },
+    { ref = "validate-dependency-lower-bounds-project --project ${project} --dependency ${dependency}" },
+    { ref = "validate-dependency-ranges-project --project ${project} --dependency ${dependency}" },
+]
+args = [
+    { name = "project", options = ["-p", "--project"] },
+    { name = "dependency", options = ["-d", "--dependency"] },
+]
 
 [tool.poe.tasks.prek-pyright]
 cmd = "uv run python scripts/run_tasks_in_changed_packages.py pyright --files ${files}"

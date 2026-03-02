@@ -33,12 +33,31 @@ Uses [uv](https://github.com/astral-sh/uv) for dependency management and
 # Full setup (venv + install + prek hooks)
 uv run poe setup
 
-# Install/update all dependencies
+# Install dependencies from lockfile (frozen resolution with prerelease policy)
 uv run poe install
 
 # Create venv with specific Python version
 uv run poe venv --python 3.12
+
+# Intentionally upgrade a specific dependency to reduce lockfile conflicts
+uv lock --upgrade-package <dependency-name> && uv run poe install
+
+# After adding/changing an external dependency, extend min then max bounds
+uv run poe validate-dependency-lower-bounds
+uv run poe validate-dependency-ranges
+
+# Add a dependency to one project and run both validators for that project/dependency
+uv run poe add-dependency-and-validate-bounds --project <workspace-package-name> --dependency "<dependency-spec>"
 ```
+
+### Dependency Bound Notes
+
+- Stable dependencies (`>=1.0`) should typically be bounded as `>=<known-good>,<next-major>`.
+- Prerelease (`dev`/`a`/`b`/`rc`) and `<1.0` dependencies should use hard bounds on a known-good line (avoid open-ended ranges).
+- Prefer supporting multiple majors when practical; if APIs diverge across supported majors, use version-conditional imports/paths.
+- For dependency changes, run lower-bound discovery first, then upper-bound validation to keep both minimum and maximum constraints current.
+- Prefer targeted lock updates with `uv lock --upgrade-package <dependency-name>` to reduce `uv.lock` merge conflicts.
+- Use `add-dependency-and-validate-bounds` for package-scoped dependency additions plus bound validation in one command.
 
 ## Lazy Loading Pattern
 
@@ -73,6 +92,18 @@ def __getattr__(name: str) -> Any:
 3. Include samples inside the package (e.g., `packages/my-connector/samples/`)
 4. Do **NOT** add to `[all]` extra in `packages/core/pyproject.toml`
 5. Do **NOT** create lazy loading in core yet
+
+Recommended dependency workflow during connector implementation:
+
+1. Add the dependency to the target package:
+   `uv run poe add-dependency-to-project --project <workspace-package-name> --dependency "<dependency-spec>"`
+2. Implement connector code and tests.
+3. Validate dependency bounds for that package/dependency:
+   - `uv run poe validate-dependency-lower-bounds-project --project <workspace-package-name> --dependency "<dependency-name>"`
+   - `uv run poe validate-dependency-ranges-project --project <workspace-package-name> --dependency "<dependency-name>"`
+4. If the package has meaningful tests/checks that validate dependency compatibility, you can use the add + validation flow in one command:
+   `uv run poe add-dependency-and-validate-bounds --project <workspace-package-name> --dependency "<dependency-spec>"`
+   If compatibility checks are not in place yet, add the dependency first, then implement tests before running bound validation.
 
 ### Promotion to Stable
 

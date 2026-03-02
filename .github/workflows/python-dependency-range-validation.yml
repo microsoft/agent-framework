@@ -161,7 +161,7 @@ jobs:
 
       - name: Refresh lockfile
         if: steps.validate_ranges.outcome == 'success'
-        run: uv lock
+        run: uv lock --upgrade
         working-directory: ./python
 
       - name: Commit and push dependency updates
@@ -197,7 +197,7 @@ jobs:
 
           - Ran `uv run poe validate-dependency-ranges`
           - Updated package dependency bounds
-          - Refreshed `python/uv.lock`
+          - Refreshed `python/uv.lock` with `uv lock --upgrade`
           EOF
 
           PR_NUMBER="$(gh pr list --head "${BRANCH}" --base main --state open --json number --jq '.[0].number')"
