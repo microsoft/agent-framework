@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from collections.abc import Sequence
@@ -15,6 +16,8 @@ from agent_framework._settings import SecretString, load_settings
 from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.cosmos import PartitionKey
 from azure.cosmos.aio import ContainerProxy, CosmosClient, DatabaseProxy
+
+logger = logging.getLogger(__name__)
 
 
 class AzureCosmosHistorySettings(TypedDict, total=False):
@@ -256,4 +259,12 @@ class CosmosHistoryProvider(BaseHistoryProvider):
 
     @staticmethod
     def _session_partition_key(session_id: str | None) -> str:
-        return session_id or "default"
+        if session_id:
+            return session_id
+
+        generated_session_id = str(uuid.uuid4())
+        logger.warning(
+            "Received empty session_id; generated temporary session id '%s' for Cosmos partition key.",
+            generated_session_id,
+        )
+        return generated_session_id
