@@ -2,7 +2,7 @@
 
 import importlib.metadata
 
-from ._agent import CodexAgent, CodexAgentOptions, CodexAgentSettings
+from ._agent import CodexAgent, CodexAgentOptions, CodexAgentSettings, RawCodexAgent
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -13,5 +13,6 @@ __all__ = [
     "CodexAgent",
     "CodexAgentOptions",
     "CodexAgentSettings",
+    "RawCodexAgent",
     "__version__",
 ]

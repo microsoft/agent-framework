@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, overload
 
 from agent_framework import (
@@ -25,6 +25,7 @@ from agent_framework import (
     normalize_messages,
     normalize_tools,
 )
+from agent_framework.observability import AgentTelemetryLayer
 from agent_framework.exceptions import AgentException
 from codex_sdk import (
     AssistantMessage,
@@ -167,7 +168,7 @@ OptionsT = TypeVar(
 )
 
 
-class CodexAgent(BaseAgent, Generic[OptionsT]):
+class RawCodexAgent(BaseAgent, Generic[OptionsT]):
     """OpenAI Codex Agent using Codex CLI.
 
     Wraps the Codex SDK to provide agentic coding capabilities including
@@ -238,7 +239,7 @@ class CodexAgent(BaseAgent, Generic[OptionsT]):
         context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | str | Sequence[ToolTypes | Callable[..., Any] | str] | None = None,
-        default_options: OptionsT | MutableMapping[str, Any] | None = None,
+        default_options: OptionsT | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -339,7 +340,7 @@ class CodexAgent(BaseAgent, Generic[OptionsT]):
                 normalized = normalize_tools(tool)
                 self._custom_tools.extend(normalized)
 
-    async def __aenter__(self) -> CodexAgent[OptionsT]:
+    async def __aenter__(self) -> RawCodexAgent[OptionsT]:
         """Start the agent when entering async context."""
         await self.start()
         return self
@@ -575,7 +576,7 @@ class CodexAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
-        options: OptionsT | MutableMapping[str, Any] | None = None,
+        options: OptionsT | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]: ...
 
@@ -586,7 +587,7 @@ class CodexAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        options: OptionsT | MutableMapping[str, Any] | None = None,
+        options: OptionsT | None = None,
         **kwargs: Any,
     ) -> AgentResponse[Any]: ...
 
@@ -596,7 +597,7 @@ class CodexAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        options: OptionsT | MutableMapping[str, Any] | None = None,
+        options: OptionsT | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate] | Awaitable[AgentResponse[Any]]:
         """Run the agent with the given messages.
@@ -641,7 +642,7 @@ class CodexAgent(BaseAgent, Generic[OptionsT]):
         messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
-        options: OptionsT | MutableMapping[str, Any] | None = None,
+        options: OptionsT | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal streaming implementation."""
@@ -721,3 +722,14 @@ class CodexAgent(BaseAgent, Generic[OptionsT]):
 
         # Store structured output for the finalizer
         self._structured_output = structured_output
+
+
+class CodexAgent(AgentTelemetryLayer, RawCodexAgent[OptionsT], Generic[OptionsT]):
+    """OpenAI Codex Agent with built-in OpenTelemetry instrumentation.
+
+    Extends :class:`RawCodexAgent` with automatic telemetry spans via
+    :class:`AgentTelemetryLayer`. Use ``RawCodexAgent`` directly if you
+    need the agent without telemetry overhead.
+    """
+
+    pass
