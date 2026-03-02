@@ -174,7 +174,8 @@ public sealed partial class FileAgentSkillsProvider : AIContextProvider
         {
             try
             {
-                promptTemplate = string.Format(optionsInstructions, string.Empty);
+                _ = string.Format(optionsInstructions, string.Empty);
+                promptTemplate = optionsInstructions;
             }
             catch (FormatException ex)
             {
