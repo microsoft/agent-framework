@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
@@ -23,11 +23,12 @@ from agent_framework import (
     FunctionTool,
     Message,
     ResponseStream,
-    ShellTool,
     TextSpanRegion,
     UsageDetails,
+    tool,
 )
 from agent_framework._settings import SecretString, load_settings
+from agent_framework._tools import SHELL_TOOL_KIND_KEY, SHELL_TOOL_KIND_VALUE
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropic
@@ -327,6 +328,7 @@ class AnthropicClient(
         # streaming requires tracking the last function call ID, name, and content type
         self._last_call_id_name: tuple[str, str] | None = None
         self._last_call_content_type: str | None = None
+        self._tool_name_aliases: dict[str, str] = {}
 
     # region Static factory methods for hosted tools
 
@@ -379,6 +381,62 @@ class AnthropicClient(
                 agent = AnthropicClient().as_agent(tools=[tool])
         """
         return {"type": type_name or "web_search_20250305", "name": name}
+
+    @staticmethod
+    def get_shell_tool(
+        *,
+        func: Callable[..., Any] | FunctionTool,
+        description: str | None = None,
+        type_name: str | None = None,
+        approval_mode: Literal["always_require", "never_require"] | None = None,
+    ) -> FunctionTool:
+        """Create a local shell FunctionTool for Anthropic.
+
+        This helper wraps ``func`` as a shell-enabled ``FunctionTool`` for local
+        execution and configures Anthropic API declaration details via metadata.
+
+        Anthropic always exposes this tool to the model as ``name="bash"`` and
+        executes it using a ``bash_*`` tool type.
+
+        Keyword Args:
+            func: Python callable or ``FunctionTool`` that executes the requested shell command.
+            description: Optional tool description shown to the model.
+            type_name: Optional Anthropic shell tool type override.
+                Defaults to ``"bash_20250124"`` when omitted.
+            approval_mode: Optional approval mode for local execution.
+
+        Returns:
+            A shell-enabled ``FunctionTool`` suitable for ``ChatOptions.tools``.
+        """
+        base_tool: FunctionTool
+        if isinstance(func, FunctionTool):
+            base_tool = func
+        else:
+            base_tool = tool(
+                func=func,
+                description=description,
+                approval_mode=approval_mode,
+            )
+
+        additional_properties: dict[str, Any] = dict(base_tool.additional_properties or {})
+        additional_properties[SHELL_TOOL_KIND_KEY] = SHELL_TOOL_KIND_VALUE
+        if type_name:
+            additional_properties["type"] = type_name
+
+        if base_tool.func is None:
+            raise ValueError("Shell tool requires an executable function.")
+
+        return FunctionTool(
+            name=base_tool.name,
+            description=description if description is not None else base_tool.description,
+            approval_mode=approval_mode or base_tool.approval_mode,
+            max_invocations=base_tool.max_invocations,
+            max_invocation_exceptions=base_tool.max_invocation_exceptions,
+            additional_properties=additional_properties,
+            func=base_tool.func,
+            input_model=base_tool.parameters() if base_tool._schema_supplied else base_tool.input_model,
+            result_parser=base_tool.result_parser,
+        )
 
     @staticmethod
     def get_mcp_tool(
@@ -716,12 +774,14 @@ class AnthropicClient(
         if tools:
             tool_list: list[Any] = []
             mcp_server_list: list[Any] = []
+            tool_name_aliases: dict[str, str] = {}
             for tool in tools:
-                if isinstance(tool, ShellTool):
+                if (
+                    isinstance(tool, FunctionTool)
+                    and (tool.additional_properties or {}).get(SHELL_TOOL_KIND_KEY) == SHELL_TOOL_KIND_VALUE
+                ):
                     api_type = (tool.additional_properties or {}).get("type", "bash_20250124")
-                    # Anthropic requires name="bash" — align tool.name so
-                    # the function invocation layer can match tool_use calls.
-                    tool.name = "bash"
+                    tool_name_aliases["bash"] = tool.name
                     tool_list.append({
                         "type": api_type,
                         "name": "bash",
@@ -754,6 +814,9 @@ class AnthropicClient(
                 result["tools"] = tool_list
             if mcp_server_list:
                 result["mcp_servers"] = mcp_server_list
+            self._tool_name_aliases = tool_name_aliases
+        else:
+            self._tool_name_aliases = {}
 
         # Process tool choice
         if options.get("tool_choice") is None:
@@ -770,9 +833,18 @@ class AnthropicClient(
                 result["tool_choice"] = tool_choice
             case "required":
                 if "required_function_name" in tool_mode:
+                    required_name = tool_mode["required_function_name"]
+                    api_tool_name = next(
+                        (
+                            api_name
+                            for api_name, local_name in self._tool_name_aliases.items()
+                            if local_name == required_name
+                        ),
+                        required_name,
+                    )
                     tool_choice = {
                         "type": "tool",
-                        "name": tool_mode["required_function_name"],
+                        "name": api_tool_name,
                     }
                 else:
                     tool_choice = {"type": "any"}
@@ -924,10 +996,11 @@ class AnthropicClient(
                             )
                         )
                     else:
+                        resolved_tool_name = self._tool_name_aliases.get(content_block.name, content_block.name)
                         contents.append(
                             Content.from_function_call(
                                 call_id=content_block.id,
-                                name=content_block.name,
+                                name=resolved_tool_name,
                                 arguments=content_block.input,
                                 raw_representation=content_block,
                             )

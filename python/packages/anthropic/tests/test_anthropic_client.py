@@ -14,6 +14,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework._settings import load_settings
+from agent_framework._tools import SHELL_TOOL_KIND_KEY, SHELL_TOOL_KIND_VALUE
 from anthropic.types.beta import (
     BetaMessage,
     BetaTextBlock,
@@ -40,6 +41,8 @@ def create_test_anthropic_client(
     anthropic_settings: AnthropicSettings | None = None,
 ) -> AnthropicClient:
     """Helper function to create AnthropicClient instances for testing, bypassing normal validation."""
+    from agent_framework._tools import normalize_function_invocation_configuration
+
     if anthropic_settings is None:
         anthropic_settings = load_settings(
             AnthropicSettings,
@@ -55,9 +58,13 @@ def create_test_anthropic_client(
     client.anthropic_client = mock_anthropic_client
     client.model_id = model_id or anthropic_settings["chat_model_id"]
     client._last_call_id_name = None
+    client._tool_name_aliases = {}
     client.additional_properties = {}
     client.middleware = None
     client.additional_beta_flags = []
+    client.chat_middleware = []
+    client.function_middleware = []
+    client.function_invocation_configuration = normalize_function_invocation_configuration(None)
 
     return client
 
@@ -415,11 +422,14 @@ def _dummy_bash(command: str) -> str:
 
 
 def test_prepare_tools_for_anthropic_shell_tool(mock_anthropic_client: MagicMock) -> None:
-    """Test converting ShellTool to Anthropic bash format."""
-    from agent_framework import ShellTool
-
+    """Test converting tool-decorated FunctionTool to Anthropic bash format."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    chat_options = ChatOptions(tools=[ShellTool(func=_dummy_bash)])
+
+    @tool(additional_properties={SHELL_TOOL_KIND_KEY: SHELL_TOOL_KIND_VALUE})
+    def run_bash(command: str) -> str:
+        return _dummy_bash(command)
+
+    chat_options = ChatOptions(tools=[run_bash])
 
     result = client._prepare_tools_for_anthropic(chat_options)
 
@@ -432,11 +442,13 @@ def test_prepare_tools_for_anthropic_shell_tool(mock_anthropic_client: MagicMock
 
 def test_prepare_tools_for_anthropic_shell_tool_custom_type(mock_anthropic_client: MagicMock) -> None:
     """Test shell tool with custom type via additional_properties."""
-    from agent_framework import ShellTool
-
     client = create_test_anthropic_client(mock_anthropic_client)
-    shell = ShellTool(func=_dummy_bash, additional_properties={"type": "bash_20241022"})
-    chat_options = ChatOptions(tools=[shell])
+
+    @tool(additional_properties={SHELL_TOOL_KIND_KEY: SHELL_TOOL_KIND_VALUE, "type": "bash_20241022"})
+    def run_bash(command: str) -> str:
+        return _dummy_bash(command)
+
+    chat_options = ChatOptions(tools=[run_bash])
 
     result = client._prepare_tools_for_anthropic(chat_options)
 
@@ -444,6 +456,26 @@ def test_prepare_tools_for_anthropic_shell_tool_custom_type(mock_anthropic_clien
     assert "tools" in result
     assert result["tools"][0]["type"] == "bash_20241022"
     assert result["tools"][0]["name"] == "bash"
+
+
+def test_prepare_tools_for_anthropic_shell_tool_does_not_mutate_name(mock_anthropic_client: MagicMock) -> None:
+    """Shell tool API name should be 'bash' without mutating local FunctionTool name."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    @tool(
+        name="run_local_shell",
+        approval_mode="never_require",
+        additional_properties={SHELL_TOOL_KIND_KEY: SHELL_TOOL_KIND_VALUE},
+    )
+    def run_local_shell(command: str) -> str:
+        return command
+
+    chat_options = ChatOptions(tools=[run_local_shell])
+    result = client._prepare_tools_for_anthropic(chat_options)
+
+    assert result is not None
+    assert result["tools"][0]["name"] == "bash"
+    assert run_local_shell.name == "run_local_shell"
 
 
 def test_prepare_tools_for_anthropic_mcp_tool(mock_anthropic_client: MagicMock) -> None:
@@ -536,6 +568,62 @@ async def test_prepare_options_with_system_message(mock_anthropic_client: MagicM
 
     assert run_options["system"] == "You are helpful."
     assert len(run_options["messages"]) == 1  # System message not in messages list
+
+
+async def test_anthropic_shell_tool_is_invoked_in_function_loop(mock_anthropic_client: MagicMock) -> None:
+    """Function invocation loop should execute shell tool when Anthropic returns bash tool_use."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    executed_commands: list[str] = []
+
+    def run_local_shell(command: str) -> str:
+        executed_commands.append(command)
+        return f"executed: {command}"
+
+    shell_tool_instance = client.get_shell_tool(func=run_local_shell, approval_mode="never_require")
+
+    mock_tool_use = MagicMock()
+    mock_tool_use.type = "tool_use"
+    mock_tool_use.id = "call_bash_loop"
+    mock_tool_use.name = "bash"
+    mock_tool_use.input = {"command": "pwd"}
+
+    first_message = MagicMock()
+    first_message.id = "msg_1"
+    first_message.content = [mock_tool_use]
+    first_message.usage = None
+    first_message.model = "claude-test"
+    first_message.stop_reason = "tool_use"
+
+    mock_text_block = MagicMock()
+    mock_text_block.type = "text"
+    mock_text_block.text = "Done"
+
+    second_message = MagicMock()
+    second_message.id = "msg_2"
+    second_message.content = [mock_text_block]
+    second_message.usage = None
+    second_message.model = "claude-test"
+    second_message.stop_reason = "end_turn"
+
+    mock_anthropic_client.beta.messages.create.side_effect = [first_message, second_message]
+
+    await client.get_response(
+        messages=[Message(role="user", text="Run pwd")],
+        options={"tools": [shell_tool_instance], "max_tokens": 64},
+    )
+
+    assert executed_commands == ["pwd"]
+    assert mock_anthropic_client.beta.messages.create.call_count == 2
+    second_request_messages = mock_anthropic_client.beta.messages.create.call_args_list[1].kwargs["messages"]
+    tool_results = [
+        block
+        for message in second_request_messages
+        for block in message.get("content", [])
+        if block.get("type") == "tool_result"
+    ]
+    assert len(tool_results) == 1
+    assert tool_results[0]["tool_use_id"] == "call_bash_loop"
+    assert "executed: pwd" in tool_results[0]["content"]
 
 
 async def test_prepare_options_with_tool_choice_auto(mock_anthropic_client: MagicMock) -> None:

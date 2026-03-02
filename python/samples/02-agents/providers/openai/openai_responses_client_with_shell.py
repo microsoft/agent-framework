@@ -12,7 +12,7 @@ load_dotenv()
 """
 OpenAI Responses Client with Shell Tool Example
 
-This sample demonstrates using get_hosted_shell_tool() with OpenAI Responses Client
+This sample demonstrates using get_shell_tool() with OpenAI Responses Client
 for executing shell commands in a managed container environment hosted by OpenAI.
 
 The shell tool allows the model to run commands like listing files, running scripts,
@@ -27,7 +27,7 @@ async def main() -> None:
     client = OpenAIResponsesClient()
 
     # Create a hosted shell tool with the default auto container environment
-    shell_tool = client.get_hosted_shell_tool()
+    shell_tool = client.get_shell_tool()
 
     agent = Agent(
         client=client,

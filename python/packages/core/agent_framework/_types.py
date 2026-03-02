@@ -944,6 +944,9 @@ class Content:
     ) -> ContentT:
         """Create shell tool call content.
 
+        This content represents the model's request to run one or more shell
+        commands. It is request metadata, not command output.
+
         Keyword Args:
             call_id: The unique identifier for this tool call.
             commands: The list of commands to execute.
@@ -979,6 +982,10 @@ class Content:
     ) -> ContentT:
         """Create shell tool result content.
 
+        This content represents the aggregate result for a shell tool call.
+        Use :meth:`from_shell_command_output` to build each per-command output
+        item and pass those objects via ``outputs``.
+
         Keyword Args:
             call_id: The function call ID for which this is the result.
             outputs: The list of shell command output Content objects.
@@ -1008,7 +1015,7 @@ class Content:
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
     ) -> ContentT:
-        """Create shell command output content representing a single command execution result.
+        """Create shell command output content for one command execution.
 
         Keyword Args:
             stdout: The standard output of the command.
