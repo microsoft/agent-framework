@@ -5,10 +5,12 @@ import asyncio
 import os
 
 from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework_azure_cosmos import CosmosHistoryProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
-from agent_framework_azure_cosmos import CosmosHistoryProvider
+# Load environment variables from .env file.
+load_dotenv()
 
 """
 This sample demonstrates CosmosHistoryProvider as an agent context provider.
@@ -28,8 +30,6 @@ Optional:
   AZURE_COSMOS_KEY
 """
 
-# Load environment variables from .env file.
-load_dotenv()
 
 
 async def main() -> None:
