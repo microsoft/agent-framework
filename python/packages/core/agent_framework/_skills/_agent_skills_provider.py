@@ -327,21 +327,21 @@ class AgentSkillsProvider(BaseContextProvider):
         else:
             return f"Error: Resource '{resource_name}' not found in skill '{skill_name}'."
 
-        try:
-            if resource.content is not None:
-                return resource.content
+        if resource.content is not None:
+            return resource.content
 
-            if resource.function is not None:
+        if resource.function is not None:
+            try:
                 if inspect.iscoroutinefunction(resource.function):
                     result = await resource.function()
                 else:
                     result = resource.function()
                 return str(result)
+            except Exception as exc:
+                logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
+                return f"Error ({type(exc).__name__}): Failed to read resource '{resource_name}' from skill '{skill_name}'."
 
-            return f"Error: Resource '{resource.name}' has no content or function."
-        except Exception as exc:
-            logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
-            return f"Error ({type(exc).__name__}): Failed to read resource '{resource_name}' from skill '{skill_name}'."
+        return f"Error: Resource '{resource.name}' has no content or function."
 
 
 # endregion
