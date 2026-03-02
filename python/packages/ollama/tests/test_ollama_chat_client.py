@@ -420,7 +420,7 @@ async def test_cmc_filters_unsupported_kwargs(
     chat_history.append(Message(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
-    # Pass allow_multiple_tool_calls as a kwarg — this is what HandoffBuilder does
+    # Pass allow_multiple_tool_calls as a top-level kwarg — this is what HandoffBuilder does
     await ollama_client.get_response(
         messages=chat_history,
         allow_multiple_tool_calls=True,
@@ -457,6 +457,35 @@ async def test_cmc_streaming_filters_unsupported_kwargs(
         assert chunk.text == "test"
 
     # Verify allow_multiple_tool_calls was NOT forwarded
+    mock_chat.assert_called_once()
+    call_kwargs = mock_chat.call_args.kwargs
+    assert "allow_multiple_tool_calls" not in call_kwargs
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_filters_unsupported_options(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+    mock_chat_completion_response: OllamaChatResponse,
+) -> None:
+    """Verify that unsupported keys inside the options dict (e.g. from
+    Agent.default_options or workflow cloning) are also stripped before
+    reaching ollama.AsyncClient.chat().
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/4402
+    """
+    mock_chat.return_value = mock_chat_completion_response
+    chat_history.append(Message(text="hello world", role="user"))
+
+    ollama_client = OllamaChatClient()
+    # Pass allow_multiple_tool_calls inside the options dict
+    await ollama_client.get_response(
+        messages=chat_history,
+        options={"allow_multiple_tool_calls": True},
+    )
+
+    # Verify the call succeeded and allow_multiple_tool_calls was NOT forwarded
     mock_chat.assert_called_once()
     call_kwargs = mock_chat.call_args.kwargs
     assert "allow_multiple_tool_calls" not in call_kwargs
