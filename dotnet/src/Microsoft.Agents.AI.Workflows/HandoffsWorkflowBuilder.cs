@@ -48,20 +48,6 @@ public sealed class HandoffsWorkflowBuilder
               """;
 
     /// <summary>
-    /// Sets the human-readable name for the handoffs workflow.
-    /// </summary>
-    /// <param name="name">The name of the workflow.</param>
-    /// <returns>The current <see cref="HandoffsWorkflowBuilder"/> instance, enabling fluent configuration.</returns>
-    /// <remarks>
-    /// This is required to test the workflow using DevUI.
-    /// </remarks>
-    public HandoffsWorkflowBuilder WithName(string name)
-    {
-        this._name = name;
-        return this;
-    }
-
-    /// <summary>
     /// Sets additional instructions to provide to an agent that has handoffs about how and when to
     /// perform them.
     /// </summary>
@@ -203,7 +189,6 @@ public sealed class HandoffsWorkflowBuilder
         HandoffsStartExecutor start = new();
         HandoffsEndExecutor end = new();
         WorkflowBuilder builder = new(start);
-        builder.WithName(this._name);
 
         builder.WithName(this._name);
 
