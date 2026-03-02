@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from agent_framework import Skill, SkillResource, SkillsProvider, SessionContext
-from agent_framework._skills._agent_skills_provider import (
+from agent_framework._skills import (
     DEFAULT_RESOURCE_EXTENSIONS,
     _create_instructions,
     _create_resource_element,

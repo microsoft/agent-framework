@@ -59,8 +59,7 @@ from ._sessions import (
     register_state_type,
 )
 from ._settings import SecretString, load_settings
-from ._skills._agent_skills_provider import SkillsProvider
-from ._skills._models import Skill, SkillResource
+from ._skills import Skill, SkillResource, SkillsProvider
 from ._telemetry import (
     AGENT_FRAMEWORK_USER_AGENT,
     APP_INFO,
