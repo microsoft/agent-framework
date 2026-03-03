@@ -9,7 +9,7 @@ import os
 import re
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import Any, ClassVar, Generic, TypedDict, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -997,39 +997,40 @@ class AzureAIAgentClient(
                                     role="assistant",
                                 )
                     case RunStepDeltaChunk():  # type: ignore
-                        if (
-                            event_data.delta.step_details is not None
-                            and event_data.delta.step_details.type == "tool_calls"
-                            and event_data.delta.step_details.tool_calls is not None  # type: ignore[attr-defined]
-                        ):
-                            for tool_call in event_data.delta.step_details.tool_calls:  # type: ignore[attr-defined]
-                                if tool_call.type == "code_interpreter" and isinstance(
-                                    tool_call.code_interpreter,
-                                    RunStepDeltaCodeInterpreterDetailItemObject,
-                                ):
-                                    code_contents: list[Content] = []
-                                    if tool_call.code_interpreter.input is not None:
-                                        logger.debug(f"Code Interpreter Input: {tool_call.code_interpreter.input}")
-                                    if tool_call.code_interpreter.outputs is not None:
-                                        for output in tool_call.code_interpreter.outputs:
-                                            if isinstance(output, RunStepDeltaCodeInterpreterLogOutput) and output.logs:
-                                                code_contents.append(Content.from_text(text=output.logs))
-                                            if (
-                                                isinstance(output, RunStepDeltaCodeInterpreterImageOutput)
-                                                and output.image is not None
-                                                and output.image.file_id is not None
-                                            ):
-                                                code_contents.append(
-                                                    Content.from_hosted_file(file_id=output.image.file_id)
-                                                )
-                                    yield ChatResponseUpdate(
-                                        role="assistant",
-                                        contents=code_contents,
-                                        conversation_id=thread_id,
-                                        message_id=response_id,
-                                        raw_representation=tool_call.code_interpreter,
-                                        response_id=response_id,
-                                    )
+                        step_details: Any = event_data.delta.step_details
+                        if step_details is not None and getattr(step_details, "type", None) == "tool_calls":
+                            tool_calls = getattr(step_details, "tool_calls", None)
+                            if isinstance(tool_calls, list):
+                                for tool_call in cast(list[object], tool_calls):
+                                    tool_type = getattr(tool_call, "type", None)
+                                    code_interpreter = getattr(tool_call, "code_interpreter", None)
+                                    if tool_type == "code_interpreter" and isinstance(
+                                        code_interpreter,
+                                        RunStepDeltaCodeInterpreterDetailItemObject,
+                                    ):
+                                        code_contents: list[Content] = []
+                                        if code_interpreter.input is not None:
+                                            logger.debug(f"Code Interpreter Input: {code_interpreter.input}")
+                                        if code_interpreter.outputs is not None:
+                                            for output in code_interpreter.outputs:
+                                                if isinstance(output, RunStepDeltaCodeInterpreterLogOutput) and output.logs:
+                                                    code_contents.append(Content.from_text(text=output.logs))
+                                                if (
+                                                    isinstance(output, RunStepDeltaCodeInterpreterImageOutput)
+                                                    and output.image is not None
+                                                    and output.image.file_id is not None
+                                                ):
+                                                    code_contents.append(
+                                                        Content.from_hosted_file(file_id=output.image.file_id)
+                                                    )
+                                        yield ChatResponseUpdate(
+                                            role="assistant",
+                                            contents=code_contents,
+                                            conversation_id=thread_id,
+                                            message_id=response_id,
+                                            raw_representation=code_interpreter,
+                                            response_id=response_id,
+                                        )
                     case _:  # ThreadMessage or string
                         # possible event_types for ThreadMessage:
                         # AgentStreamEvent.THREAD_MESSAGE_CREATED
@@ -1056,17 +1057,15 @@ class AzureAIAgentClient(
     ) -> None:
         """Capture Azure AI Search tool call data from completed steps."""
         try:
-            if (
-                hasattr(step_data, "step_details")
-                and hasattr(step_data.step_details, "tool_calls")
-                and step_data.step_details.tool_calls
-            ):
-                for tool_call in step_data.step_details.tool_calls:
-                    if hasattr(tool_call, "type") and tool_call.type == "azure_ai_search":
+            step_details: Any = getattr(step_data, "step_details", None)
+            tool_calls = getattr(step_details, "tool_calls", None) if step_details is not None else None
+            if isinstance(tool_calls, list):
+                for tool_call in cast(list[object], tool_calls):
+                    if getattr(tool_call, "type", None) == "azure_ai_search":
                         # Store the complete tool call as a dictionary
                         tool_call_dict = {
                             "id": getattr(tool_call, "id", None),
-                            "type": tool_call.type,
+                            "type": getattr(tool_call, "type", None),
                             "azure_ai_search": getattr(tool_call, "azure_ai_search", None),
                         }
                         azure_search_tool_calls.append(tool_call_dict)
@@ -1226,13 +1225,15 @@ class AzureAIAgentClient(
             return AgentsToolChoiceOptionMode.NONE
         if tool_choice == "auto":
             return AgentsToolChoiceOptionMode.AUTO
-        if isinstance(tool_choice, Mapping) and tool_choice.get("mode") == "required":
-            req_fn = tool_choice.get("required_function_name")
-            if req_fn:
-                return AgentsNamedToolChoice(
-                    type=AgentsNamedToolChoiceType.FUNCTION,
-                    function=FunctionName(name=str(req_fn)),
-                )
+        if isinstance(tool_choice, Mapping):
+            tool_choice_mapping = cast(Mapping[str, Any], tool_choice)
+            if tool_choice_mapping.get("mode") == "required":
+                req_fn = tool_choice_mapping.get("required_function_name")
+                if req_fn:
+                    return AgentsNamedToolChoice(
+                        type=AgentsNamedToolChoiceType.FUNCTION,
+                        function=FunctionName(name=str(req_fn)),
+                    )
         return None
 
     async def _prepare_tool_definitions_and_resources(
@@ -1369,15 +1370,12 @@ class AzureAIAgentClient(
                 # SDK Tool wrappers (McpTool, FileSearchTool, BingGroundingTool, etc.)
                 tool_definitions.extend(tool.definitions)
                 # Handle tool resources (MCP resources handled separately by _prepare_mcp_resources)
-                if (
-                    run_options is not None
-                    and hasattr(tool, "resources")
-                    and tool.resources
-                    and "mcp" not in tool.resources
-                ):
+                resources = getattr(tool, "resources", None)
+                if run_options is not None and isinstance(resources, Mapping) and resources and "mcp" not in resources:
                     if "tool_resources" not in run_options:
                         run_options["tool_resources"] = {}
-                    run_options["tool_resources"].update(tool.resources)
+                    tool_resources = cast(MutableMapping[str, Any], run_options["tool_resources"])
+                    tool_resources.update(dict(cast(Mapping[str, Any], resources)))
             else:
                 # Pass through ToolDefinition, dict, and other types unchanged
                 tool_definitions.append(tool)

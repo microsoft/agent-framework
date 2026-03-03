@@ -60,6 +60,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_bedrock"]
 
 [tool.mypy]
 plugins = ['pydantic.mypy']

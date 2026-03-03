@@ -73,6 +73,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_durabletask"]
 
 [tool.mypy]
 plugins = ['pydantic.mypy']

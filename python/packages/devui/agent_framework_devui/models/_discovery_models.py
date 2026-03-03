@@ -8,6 +8,10 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 
+def _default_entities() -> list["EntityInfo"]:
+    return []
+
+
 class EnvVarRequirement(BaseModel):
     """Environment variable requirement for an entity."""
 
@@ -57,7 +61,7 @@ class EntityInfo(BaseModel):
 class DiscoveryResponse(BaseModel):
     """Response model for entity discovery."""
 
-    entities: list[EntityInfo] = Field(default_factory=list)
+    entities: list[EntityInfo] = Field(default_factory=_default_entities)
 
 
 # ============================================================================

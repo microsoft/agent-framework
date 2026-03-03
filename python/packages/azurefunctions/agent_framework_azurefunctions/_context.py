@@ -44,10 +44,10 @@ class CapturingRunnerContext(RunnerContext):
 
     # region Messaging
 
-    async def send_message(self, message: WorkflowMessage) -> None:
+    async def send_message(self, WorkflowMessage: WorkflowMessage) -> None:
         """Capture a message sent by an executor."""
-        self._messages.setdefault(message.source_id, [])
-        self._messages[message.source_id].append(message)
+        self._messages.setdefault(WorkflowMessage.source_id, [])
+        self._messages[WorkflowMessage.source_id].append(WorkflowMessage)
 
     async def drain_messages(self) -> dict[str, list[WorkflowMessage]]:
         """Drain and return all captured messages."""

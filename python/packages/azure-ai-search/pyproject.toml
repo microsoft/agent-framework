@@ -62,6 +62,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_azure_ai_search"]
 exclude = ['tests']
 
 [tool.mypy]

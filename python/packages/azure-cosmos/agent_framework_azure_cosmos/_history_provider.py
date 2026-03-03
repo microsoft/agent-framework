@@ -8,7 +8,7 @@ import logging
 import time
 import uuid
 from collections.abc import Sequence
-from typing import Any, ClassVar, TypedDict
+from typing import Any, ClassVar, TypeGuard, TypedDict, cast
 
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message
 from agent_framework._sessions import BaseHistoryProvider
@@ -18,6 +18,18 @@ from azure.cosmos import PartitionKey
 from azure.cosmos.aio import ContainerProxy, CosmosClient, DatabaseProxy
 
 logger = logging.getLogger(__name__)
+
+
+def _is_str_key_dict(value: object) -> TypeGuard[dict[str, Any]]:
+    if not isinstance(value, dict):
+        return False
+
+    candidate_dict = cast(dict[object, Any], value)
+    for key_obj in candidate_dict:
+        if not isinstance(key_obj, str):
+            return False
+
+    return True
 
 
 class AzureCosmosHistorySettings(TypedDict, total=False):
@@ -146,7 +158,7 @@ class CosmosHistoryProvider(BaseHistoryProvider):
         messages: list[Message] = []
         async for item in items:
             message_payload = item.get("message")
-            if isinstance(message_payload, dict):
+            if _is_str_key_dict(message_payload):
                 messages.append(Message.from_dict(message_payload))
 
         return messages

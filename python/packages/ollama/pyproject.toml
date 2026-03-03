@@ -62,6 +62,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_ollama"]
 exclude = ['tests']
 
 [tool.mypy]

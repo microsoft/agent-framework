@@ -107,7 +107,7 @@ class RawOllamaEmbeddingClient(
             env_file_encoding=env_file_encoding,
         )
 
-        self.model_id = ollama_settings["embedding_model_id"]
+        self.model_id = ollama_settings["embedding_model_id"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
         self.client = client or AsyncClient(host=ollama_settings.get("host"))
         self.host = str(self.client._client.base_url)  # pyright: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
         super().__init__(**kwargs)
@@ -134,10 +134,19 @@ class RawOllamaEmbeddingClient(
         Raises:
             ValueError: If model_id is not provided or values is empty.
         """
-        if not values:
-            return GeneratedEmbeddings([], options=options)
-
         opts: dict[str, Any] = dict(options) if options else {}
+
+        if not values:
+            return GeneratedEmbeddings([], options=None)
+
+        response_options: EmbeddingGenerationOptions | None = None
+        if options:
+            response_options = {}
+            if (model_id := opts.get("model_id")) is not None:
+                response_options["model_id"] = model_id
+            if (dimensions := opts.get("dimensions")) is not None:
+                response_options["dimensions"] = dimensions
+
         model = opts.get("model_id") or self.model_id
         if not model:
             raise ValueError("model_id is required")
@@ -166,7 +175,7 @@ class RawOllamaEmbeddingClient(
         if prompt_eval_count is not None:
             usage_dict = {"input_token_count": prompt_eval_count}
 
-        return GeneratedEmbeddings(embeddings, options=options, usage=usage_dict)
+        return GeneratedEmbeddings(embeddings, options=response_options, usage=usage_dict)
 
 
 class OllamaEmbeddingClient(

@@ -63,6 +63,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_redis"]
 
 [tool.mypy]
 plugins = ['pydantic.mypy']

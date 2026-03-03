@@ -119,7 +119,7 @@ class FunctionExecutor(Executor):
         # Determine if function has WorkflowContext parameter
         self._has_context = ctx_annotation is not None
         # Determine if the function is an async function
-        self._is_async = asyncio.iscoroutinefunction(func)
+        self._is_async = inspect.iscoroutinefunction(func)
 
         # Initialize parent WITHOUT calling _discover_handlers yet
         # We'll manually set up the attributes first

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import re
@@ -26,6 +27,8 @@ from agent_framework import (
     Message,
     MiddlewareTypes,
     ResponseStream,
+    Role,
+    RoleLiteral,
     TextSpanRegion,
 )
 from agent_framework._settings import load_settings
@@ -68,6 +71,15 @@ else:
 
 
 logger = logging.getLogger("agent_framework.azure")
+
+
+AzureMonitorConfigurator = Callable[..., Any]
+
+
+def _normalize_chat_role(role: Role | str | None) -> RoleLiteral | Role | None:
+    if role in {"system", "user", "assistant", "tool"}:
+        return cast(RoleLiteral, role)
+    return None
 
 
 class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):
@@ -304,12 +316,17 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
 
         # Import Azure Monitor with proper error handling
         try:
-            from azure.monitor.opentelemetry import configure_azure_monitor
+            monitor_module = importlib.import_module("azure.monitor.opentelemetry")
         except ImportError as exc:
             raise ImportError(
                 "azure-monitor-opentelemetry is required for Azure Monitor integration. "
                 "Install it with: pip install azure-monitor-opentelemetry"
             ) from exc
+
+        configure_azure_monitor_attr = getattr(monitor_module, "configure_azure_monitor", None)
+        if not callable(configure_azure_monitor_attr):
+            raise ImportError("azure-monitor-opentelemetry does not expose configure_azure_monitor")
+        configure_azure_monitor: AzureMonitorConfigurator = configure_azure_monitor_attr
 
         from agent_framework.observability import create_metric_views, create_resource, enable_instrumentation
 
@@ -433,31 +450,41 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """Extract comparable tool names from runtime tool payloads."""
         if not isinstance(tools, Sequence) or isinstance(tools, str | bytes):
             return set()
-        return {self._get_tool_name(tool) for tool in tools}
+        tool_names: set[str] = set()
+        for tool_item in cast(Sequence[object], tools):
+            tool_names.add(self._get_tool_name(tool_item))
+        return tool_names
 
     def _get_tool_name(self, tool: Any) -> str:
         """Get a stable name for a tool for runtime comparison."""
         if isinstance(tool, FunctionTool):
             return tool.name
+
         if isinstance(tool, Mapping):
-            tool_type = tool.get("type")
+            tool_mapping = cast(Mapping[str, Any], tool)
+            tool_type = tool_mapping.get("type")
             if tool_type == "function":
-                if isinstance(function_data := tool.get("function"), Mapping) and function_data.get("name"):
-                    return str(function_data["name"])
-                if tool.get("name"):
-                    return str(tool["name"])
-            if tool.get("name"):
-                return str(tool["name"])
-            if tool.get("server_label"):
-                return f"mcp:{tool['server_label']}"
+                function_data = tool_mapping.get("function")
+                if isinstance(function_data, Mapping):
+                    function_mapping = cast(Mapping[str, Any], function_data)
+                    if function_name := function_mapping.get("name"):
+                        return str(function_name)
+                if tool_name := tool_mapping.get("name"):
+                    return str(tool_name)
+            if tool_name := tool_mapping.get("name"):
+                return str(tool_name)
+            if server_label := tool_mapping.get("server_label"):
+                return f"mcp:{server_label}"
             if tool_type:
                 return str(tool_type)
-        if getattr(tool, "name", None):
-            return str(tool.name)
-        if getattr(tool, "server_label", None):
-            return f"mcp:{tool.server_label}"
-        if getattr(tool, "type", None):
-            return str(tool.type)
+            return type(cast(Any, tool)).__name__
+
+        if name_value := getattr(tool, "name", None):
+            return str(name_value)
+        if server_label_value := getattr(tool, "server_label", None):
+            return f"mcp:{server_label_value}"
+        if tool_type_value := getattr(tool, "type", None):
+            return str(tool_type_value)
         return type(tool).__name__
 
     def _get_structured_output_signature(self, chat_options: Mapping[str, Any] | None) -> str | None:
@@ -545,14 +572,14 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         return run_options
 
     @override
-    def _check_model_presence(self, run_options: dict[str, Any]) -> None:
+    def _check_model_presence(self, options: dict[str, Any]) -> None:
         # Skip model check for application endpoints - model is pre-configured on server
         if self._is_application_endpoint:
             return
-        if not run_options.get("model"):
+        if not options.get("model"):
             if not self.model_id:
                 raise ValueError("model_deployment_name must be a non-empty string")
-            run_options["model"] = self.model_id
+            options["model"] = self.model_id
 
     def _transform_input_for_azure_ai(self, input_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Transform input items to match Azure AI Projects expected schema.
@@ -576,10 +603,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             # Add 'annotations' only to output_text content items (assistant messages)
             # User messages (input_text) do NOT support annotations in Azure AI
             if "content" in new_item and isinstance(new_item["content"], list):
-                new_content: list[dict[str, Any] | Any] = []
-                for content_item in new_item["content"]:
-                    if isinstance(content_item, dict):
-                        new_content_item: dict[str, Any] = dict(content_item)
+                new_content: list[Any] = []
+                for content_item in cast(list[object], new_item["content"]):
+                    if isinstance(content_item, Mapping):
+                        new_content_item: dict[str, Any] = dict(cast(Mapping[str, Any], content_item))
                         # Only add annotations to output_text (assistant content)
                         if new_content_item.get("type") == "output_text" and "annotations" not in new_content_item:
                             new_content_item["annotations"] = []
@@ -721,9 +748,18 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 # Streaming "added" events send output as an empty list; skip.
                 continue
             if output is not None:
-                urls = output.get("get_urls") if isinstance(output, dict) else output.get_urls
-                if urls and isinstance(urls, list):
-                    get_urls.extend(urls)
+                urls: Any
+                if isinstance(output, Mapping):
+                    output_mapping = cast(Mapping[str, Any], output)
+                    urls = output_mapping.get("get_urls")
+                else:
+                    urls = getattr(output, "get_urls", None)
+                if isinstance(urls, list):
+                    string_urls: list[str] = []
+                    for url_item in cast(list[object], urls):
+                        if isinstance(url_item, str):
+                            string_urls.append(url_item)
+                    get_urls.extend(string_urls)
         return get_urls
 
     def _get_search_doc_url(self, citation_title: str | None, get_urls: list[str]) -> str | None:
@@ -878,7 +914,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                         contents=contents_list,
                         conversation_id=update.conversation_id,
                         response_id=update.response_id,
-                        role=update.role,
+                        role=_normalize_chat_role(update.role),
                         model_id=update.model_id,
                         continuation_token=update.continuation_token,
                         additional_properties=update.additional_properties,

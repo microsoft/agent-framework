@@ -67,6 +67,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_azurefunctions"]
 
 [tool.mypy]
 plugins = ['pydantic.mypy']

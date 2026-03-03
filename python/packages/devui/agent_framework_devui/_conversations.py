@@ -300,12 +300,15 @@ class InMemoryConversationStore(ConversationStore):
         stored_messages: list[Message] = conv_data["messages"]
 
         # Convert items to Messages and add to storage
-        chat_messages = []
+        chat_messages: list[Message] = []
         for item in items:
             # Simple conversion - assume text content for now
             role = item.get("role", "user")
-            content = item.get("content", [])
-            text = content[0].get("text", "") if content else ""
+            content_obj = item.get("content", [])
+            content = cast(list[dict[str, Any]], content_obj) if isinstance(content_obj, list) else []
+            first_content = content[0] if content and isinstance(content[0], dict) else {}
+            text_obj = first_content.get("text", "")
+            text = text_obj if isinstance(text_obj, str) else str(text_obj)
 
             chat_msg = Message(role=role, text=text)  # type: ignore[arg-type]
             chat_messages.append(chat_msg)
@@ -319,15 +322,17 @@ class InMemoryConversationStore(ConversationStore):
             item_id = f"item_{uuid.uuid4().hex}"
 
             # Extract role - handle both string and enum
-            role_str = msg.role if hasattr(msg.role, "value") else str(msg.role)
+            msg_role_obj: object = getattr(msg, "role", "user")
+            role_str = str(getattr(msg_role_obj, "value", msg_role_obj))
             role = cast(MessageRole, role_str)  # Safe: Agent Framework roles match OpenAI roles
 
             # Convert Message contents to OpenAI TextContent format
-            message_content = []
-            for content_item in msg.contents:
-                if content_item.type == "text":
+            message_content: list[TextContent] = []
+            for content_item in cast(list[Any], msg.contents):
+                if getattr(content_item, "type", None) == "text":
                     # Extract text from TextContent object
-                    text_value = getattr(content_item, "text", "")
+                    text_value_obj = getattr(content_item, "text", "")
+                    text_value = text_value_obj if isinstance(text_value_obj, str) else str(text_value_obj)
                     message_content.append(TextContent(type="text", text=text_value))
 
             # Create Message object (concrete type from ConversationItem union)
@@ -335,7 +340,7 @@ class InMemoryConversationStore(ConversationStore):
                 id=item_id,
                 type="message",  # Required discriminator for union
                 role=role,
-                content=message_content,
+                content=cast(Any, message_content),
                 status="completed",  # Required field
             )
             conv_items.append(message)
@@ -383,8 +388,8 @@ class InMemoryConversationStore(ConversationStore):
             # A single Message may produce multiple ConversationItems
             # (e.g., a message with both text and a function call)
             message_contents: list[TextContent | ResponseInputImage | ResponseInputFile] = []
-            function_calls = []
-            function_results = []
+            function_calls: list[ResponseFunctionToolCallItem] = []
+            function_results: list[ResponseFunctionToolCallOutputItem] = []
 
             for content in msg.contents:
                 content_type = getattr(content, "type", None)
@@ -628,7 +633,7 @@ class InMemoryConversationStore(ConversationStore):
 
     async def list_conversations_by_metadata(self, metadata_filter: dict[str, str]) -> list[Conversation]:
         """Filter conversations by metadata (e.g., agent_id)."""
-        results = []
+        results: list[Conversation] = []
         for conv_data in self._conversations.values():
             conv_meta = conv_data.get("metadata", {}).copy()  # Copy to avoid mutating original
 
@@ -704,7 +709,8 @@ class CheckpointConversationManager:
             ValueError: If conversation not found
         """
         # Access internal conversations dict (we know it's InMemoryConversationStore)
-        conv_data = self._store._conversations.get(conversation_id)
+        conversations_dict = cast(dict[str, dict[str, Any]], getattr(self._store, "_conversations", {}))
+        conv_data = conversations_dict.get(conversation_id)
         if not conv_data:
             raise ValueError(f"Conversation {conversation_id} not found")
 

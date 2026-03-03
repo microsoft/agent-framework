@@ -122,6 +122,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["gaia/agent_framework_lab_gaia", "lightning/agent_framework_lab_lightning", "tau2/agent_framework_lab_tau2"]
 exclude = ['gaia/tests', 'lightning/tests', 'tau2/tests', 'namespace', '**/samples']
 
 [tool.mypy]

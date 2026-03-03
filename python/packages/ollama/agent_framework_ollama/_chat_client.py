@@ -329,7 +329,7 @@ class OllamaChatClient(
             env_file_path=env_file_path,
         )
 
-        self.model_id = ollama_settings["model_id"]
+        self.model_id = ollama_settings["model_id"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
         # we can just pass in None for the host, the default is set by the Ollama package.
         self.client = client or AsyncClient(host=ollama_settings.get("host"))
         # Save Host URL for serialization with to_dict()

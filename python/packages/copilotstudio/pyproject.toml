@@ -61,6 +61,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_copilotstudio"]
 
 [tool.mypy]
 plugins = ['pydantic.mypy']

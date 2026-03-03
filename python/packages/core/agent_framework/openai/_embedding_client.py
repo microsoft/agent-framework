@@ -6,7 +6,7 @@ import base64
 import struct
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, Generic, Literal, TypedDict
+from typing import Any, Generic, Literal, TypedDict, cast
 
 from openai import AsyncOpenAI
 
@@ -81,7 +81,7 @@ class RawOpenAIEmbeddingClient(
             ValueError: If model_id is not provided or values is empty.
         """
         if not values:
-            return GeneratedEmbeddings([], options=options)
+            return cast(GeneratedEmbeddings[list[float]], GeneratedEmbeddings([], options=options))
 
         opts: dict[str, Any] = dict(options) if options else {}
         model = opts.get("model_id") or self.model_id
@@ -123,7 +123,7 @@ class RawOpenAIEmbeddingClient(
                 "total_token_count": response.usage.total_tokens,
             }
 
-        return GeneratedEmbeddings(embeddings, options=options, usage=usage_dict)
+        return cast(GeneratedEmbeddings[list[float]], GeneratedEmbeddings(embeddings, options=options, usage=usage_dict))
 
 
 class OpenAIEmbeddingClient(
@@ -193,21 +193,26 @@ class OpenAIEmbeddingClient(
             env_file_encoding=env_file_encoding,
         )
 
-        if not async_client and not openai_settings["api_key"]:
+        api_key_value = openai_settings.get("api_key")
+        if not async_client and not api_key_value:
             raise ValueError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
-        if not openai_settings["embedding_model_id"]:
+
+        embedding_model_id = openai_settings.get("embedding_model_id")
+        if not embedding_model_id:
             raise ValueError(
                 "OpenAI embedding model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_EMBEDDING_MODEL_ID' environment variable."
             )
 
+        base_url_value = openai_settings.get("base_url")
+
         super().__init__(
-            model_id=openai_settings["embedding_model_id"],
-            api_key=self._get_api_key(openai_settings["api_key"]),
-            base_url=openai_settings["base_url"] if openai_settings["base_url"] else None,
-            org_id=openai_settings["org_id"],
+            model_id=embedding_model_id,
+            api_key=self._get_api_key(api_key_value),
+            base_url=base_url_value if base_url_value else None,
+            org_id=openai_settings.get("org_id"),
             default_headers=default_headers,
             client=async_client,
             otel_provider_name=otel_provider_name,

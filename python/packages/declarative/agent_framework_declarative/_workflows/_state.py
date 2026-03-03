@@ -284,8 +284,9 @@ class WorkflowState:
         if existing is None:
             self.set(path, [value])
         elif isinstance(existing, list):
-            existing.append(value)
-            self.set(path, existing)
+            existing_list = cast(list[Any], existing)  # type: ignore[redundant-cast]
+            existing_list.append(value)
+            self.set(path, existing_list)
         else:
             raise ValueError(f"Cannot append to non-list at path '{path}'")
 
@@ -614,9 +615,11 @@ class WorkflowState:
         if isinstance(value, str):
             return self.eval(value)
         if isinstance(value, dict):
-            return {str(k): self.eval_if_expression(v) for k, v in value.items()}
+            value_dict = cast(dict[Any, Any], value)  # type: ignore[redundant-cast]
+            return {str(k): self.eval_if_expression(v) for k, v in value_dict.items()}
         if isinstance(value, list):
-            return [self.eval_if_expression(item) for item in value]
+            value_list = cast(list[Any], value)  # type: ignore[redundant-cast]
+            return [self.eval_if_expression(item) for item in value_list]
         return value
 
     def reset_local(self) -> None:

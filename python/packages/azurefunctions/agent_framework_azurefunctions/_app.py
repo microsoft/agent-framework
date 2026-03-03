@@ -274,10 +274,27 @@ class AgentFunctionApp(DFAppBase):
             """
             from agent_framework._workflows._state import State
 
-            data = json.loads(inputData)
-            message_data = data["message"]
-            shared_state_snapshot = data.get("shared_state_snapshot", {})
-            source_executor_ids = data.get("source_executor_ids", [SOURCE_ORCHESTRATOR])
+            data_obj = json.loads(inputData)
+            if not isinstance(data_obj, dict):
+                raise ValueError("Activity inputData must decode to a JSON object")
+            data = cast(dict[str, Any], data_obj)
+
+            message_data = data.get("message")
+            shared_state_raw = data.get("shared_state_snapshot", {})
+            source_executor_ids_raw = data.get("source_executor_ids", [SOURCE_ORCHESTRATOR])
+
+            shared_state_snapshot: dict[str, Any]
+            if isinstance(shared_state_raw, dict):
+                shared_state_snapshot = cast(dict[str, Any], shared_state_raw)
+            else:
+                shared_state_snapshot = {}
+
+            source_executor_ids: list[str]
+            if isinstance(source_executor_ids_raw, list):
+                source_executor_ids_values = cast(list[object], source_executor_ids_raw)
+                source_executor_ids = [str(source_executor_id) for source_executor_id in source_executor_ids_values]
+            else:
+                source_executor_ids = [SOURCE_ORCHESTRATOR]
 
             if not self.workflow:
                 raise RuntimeError("Workflow not initialized in AgentFunctionApp")
@@ -299,15 +316,20 @@ class AgentFunctionApp(DFAppBase):
                 shared_state = State()
 
                 # Deserialize shared state values to reconstruct dataclasses/Pydantic models
-                deserialized_state = {k: deserialize_value(v) for k, v in (shared_state_snapshot or {}).items()}
-                original_snapshot = dict(deserialized_state)
+                deserialized_state: dict[str, Any] = {
+                    str(k): deserialize_value(v) for k, v in shared_state_snapshot.items()
+                }
+                original_snapshot: dict[str, Any] = dict(deserialized_state)
                 shared_state.import_state(deserialized_state)
 
                 if is_hitl_response:
                     # Handle HITL response by calling the executor's @response_handler
+                    if not isinstance(message_data, dict):
+                        raise ValueError("HITL message payload must be a JSON object")
+
                     await execute_hitl_response_handler(
                         executor=executor,
-                        hitl_message=message_data,
+                        hitl_message=cast(dict[str, Any], message_data),
                         shared_state=shared_state,
                         runner_context=runner_context,
                     )
@@ -323,11 +345,11 @@ class AgentFunctionApp(DFAppBase):
                 # Commit pending state changes and export
                 shared_state.commit()
                 current_state = shared_state.export_state()
-                original_keys = set(original_snapshot.keys())
-                current_keys = set(current_state.keys())
+                original_keys: set[str] = set(original_snapshot.keys())
+                current_keys: set[str] = set(current_state.keys())
 
                 # Deleted = was in original, not in current
-                deletes = original_keys - current_keys
+                deletes: set[str] = original_keys - current_keys
 
                 # Updates = keys in current that are new or have different values
                 updates = {
@@ -348,7 +370,7 @@ class AgentFunctionApp(DFAppBase):
                 pending_request_info_events = await runner_context.get_pending_request_info_events()
 
                 # Serialize pending request info events for orchestrator
-                serialized_pending_requests = []
+                serialized_pending_requests: list[dict[str, Any]] = []
                 for _request_id, event in pending_request_info_events.items():
                     serialized_pending_requests.append({
                         "request_id": event.request_id,
@@ -361,7 +383,7 @@ class AgentFunctionApp(DFAppBase):
                     })
 
                 # Serialize messages for JSON compatibility
-                serialized_sent_messages = []
+                serialized_sent_messages: list[dict[str, Any]] = []
                 for _source_id, msg_list in sent_messages.items():
                     for msg in msg_list:
                         serialized_sent_messages.append({
@@ -441,6 +463,9 @@ class AgentFunctionApp(DFAppBase):
         ) -> func.HttpResponse:
             """HTTP endpoint to get workflow status."""
             instance_id = req.route_params.get("instanceId")
+            if not instance_id:
+                return self._build_error_response("Instance ID is required", status_code=400)
+
             status = await client.get_status(instance_id)
 
             if not status:
@@ -457,20 +482,29 @@ class AgentFunctionApp(DFAppBase):
             }
 
             # Add pending HITL requests info if available
-            custom_status = status.custom_status or {}
-            if isinstance(custom_status, dict) and custom_status.get("pending_requests"):
-                base_url = self._build_base_url(req.url)
-                pending_requests = []
-                for req_id, req_data in custom_status["pending_requests"].items():
-                    pending_requests.append({
-                        "requestId": req_id,
-                        "sourceExecutor": req_data.get("source_executor_id"),
-                        "requestData": req_data.get("data"),
-                        "requestType": req_data.get("request_type"),
-                        "responseType": req_data.get("response_type"),
-                        "respondUrl": f"{base_url}/api/workflow/respond/{instance_id}/{req_id}",
-                    })
-                response["pendingHumanInputRequests"] = pending_requests
+            custom_status = status.custom_status
+            if isinstance(custom_status, dict):
+                custom_status_typed = cast(dict[str, Any], custom_status)
+                pending_requests_raw = custom_status_typed.get("pending_requests")
+                if isinstance(pending_requests_raw, dict):
+                    base_url = self._build_base_url(req.url)
+                    pending_requests: list[dict[str, Any]] = []
+                    pending_requests_dict = cast(dict[str, Any], pending_requests_raw)
+                    for req_id_raw, req_data_raw in pending_requests_dict.items():
+                        if not isinstance(req_data_raw, dict):
+                            continue
+
+                        req_id = str(req_id_raw)
+                        req_data = cast(dict[str, Any], req_data_raw)
+                        pending_requests.append({
+                            "requestId": req_id,
+                            "sourceExecutor": req_data.get("source_executor_id"),
+                            "requestData": req_data.get("data"),
+                            "requestType": req_data.get("request_type"),
+                            "responseType": req_data.get("response_type"),
+                            "respondUrl": f"{base_url}/api/workflow/respond/{instance_id}/{req_id}",
+                        })
+                    response["pendingHumanInputRequests"] = pending_requests
 
             return func.HttpResponse(
                 json.dumps(response, default=str),
@@ -514,6 +548,11 @@ class AgentFunctionApp(DFAppBase):
                 status_code=200,
                 mimetype="application/json",
             )
+
+        # Ensure route handlers are registered (prevents unused function warnings)
+        _ = start_workflow_orchestration
+        _ = get_workflow_status
+        _ = send_hitl_response
 
     def _build_status_url(self, request_url: str, instance_id: str) -> str:
         """Build the status URL for a workflow instance."""

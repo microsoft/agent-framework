@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, cast
 
 from openai import APIStatusError, AsyncOpenAI, AsyncStream, AuthenticationError, PermissionDeniedError, RateLimitError
 from openai.types.responses import Response, ResponseStreamEvent
@@ -20,6 +20,28 @@ from .._conversations import ConversationStore
 from ..models import AgentFrameworkRequest, OpenAIResponse
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_error_details(body: object) -> tuple[str | None, str | None, str | None]:
+    """Extract typed OpenAI error fields from error body payload."""
+    if not isinstance(body, dict):
+        return None, None, None
+
+    body_dict = cast(dict[str, object], body)
+    error_obj = body_dict.get("error")
+    if not isinstance(error_obj, dict):
+        return None, None, None
+
+    error_dict = cast(dict[str, object], error_obj)
+    message = error_dict.get("message")
+    error_type = error_dict.get("type")
+    code = error_dict.get("code")
+
+    return (
+        message if isinstance(message, str) else None,
+        error_type if isinstance(error_type, str) else None,
+        code if isinstance(code, str) else None,
+    )
 
 
 class OpenAIExecutor:
@@ -138,68 +160,64 @@ class OpenAIExecutor:
         except AuthenticationError as e:
             # 401 - Invalid API key or authentication issue
             logger.error(f"OpenAI authentication error: {e}", exc_info=True)
-            error_body = e.body if hasattr(e, "body") else {}
-            error_data = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+            message, error_type, code = _extract_error_details(e.body if hasattr(e, "body") else None)
             yield {
                 "type": "response.failed",
                 "response": {
                     "id": f"resp_{os.urandom(16).hex()}",
                     "status": "failed",
                     "error": {
-                        "message": error_data.get("message", str(e)),
-                        "type": error_data.get("type", "authentication_error"),
-                        "code": error_data.get("code", "invalid_api_key"),
+                        "message": message or str(e),
+                        "type": error_type or "authentication_error",
+                        "code": code or "invalid_api_key",
                     },
                 },
             }
         except PermissionDeniedError as e:
             # 403 - Permission denied
             logger.error(f"OpenAI permission denied: {e}", exc_info=True)
-            error_body = e.body if hasattr(e, "body") else {}
-            error_data = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+            message, error_type, code = _extract_error_details(e.body if hasattr(e, "body") else None)
             yield {
                 "type": "response.failed",
                 "response": {
                     "id": f"resp_{os.urandom(16).hex()}",
                     "status": "failed",
                     "error": {
-                        "message": error_data.get("message", str(e)),
-                        "type": error_data.get("type", "permission_denied"),
-                        "code": error_data.get("code", "insufficient_permissions"),
+                        "message": message or str(e),
+                        "type": error_type or "permission_denied",
+                        "code": code or "insufficient_permissions",
                     },
                 },
             }
         except RateLimitError as e:
             # 429 - Rate limit exceeded
             logger.error(f"OpenAI rate limit exceeded: {e}", exc_info=True)
-            error_body = e.body if hasattr(e, "body") else {}
-            error_data = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+            message, error_type, code = _extract_error_details(e.body if hasattr(e, "body") else None)
             yield {
                 "type": "response.failed",
                 "response": {
                     "id": f"resp_{os.urandom(16).hex()}",
                     "status": "failed",
                     "error": {
-                        "message": error_data.get("message", str(e)),
-                        "type": error_data.get("type", "rate_limit_error"),
-                        "code": error_data.get("code", "rate_limit_exceeded"),
+                        "message": message or str(e),
+                        "type": error_type or "rate_limit_error",
+                        "code": code or "rate_limit_exceeded",
                     },
                 },
             }
         except APIStatusError as e:
             # Other OpenAI API errors
             logger.error(f"OpenAI API error: {e}", exc_info=True)
-            error_body = e.body if hasattr(e, "body") else {}
-            error_data = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+            message, error_type, code = _extract_error_details(e.body if hasattr(e, "body") else None)
             yield {
                 "type": "response.failed",
                 "response": {
                     "id": f"resp_{os.urandom(16).hex()}",
                     "status": "failed",
                     "error": {
-                        "message": error_data.get("message", str(e)),
-                        "type": error_data.get("type", "api_error"),
-                        "code": error_data.get("code", "unknown_error"),
+                        "message": message or str(e),
+                        "type": error_type or "api_error",
+                        "code": code or "unknown_error",
                     },
                 },
             }

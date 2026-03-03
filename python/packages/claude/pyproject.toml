@@ -61,6 +61,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_claude"]
 exclude = ['tests']
 
 [tool.mypy]

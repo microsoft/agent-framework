@@ -13,7 +13,7 @@ This module adds:
 - serialize_value / deserialize_value: convenience aliases for encode/decode
 - reconstruct_to_type: for HITL responses where external data (without type markers)
   needs to be reconstructed to a known type
-- _resolve_type: resolves 'module:class' type keys to Python types
+- resolve_type: resolves 'module:class' type keys to Python types
 """
 
 from __future__ import annotations
@@ -21,14 +21,14 @@ from __future__ import annotations
 import importlib
 import logging
 from dataclasses import is_dataclass
-from typing import Any
+from typing import Any, Callable, cast
 
 from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 
 logger = logging.getLogger(__name__)
 
 
-def _resolve_type(type_key: str) -> type | None:
+def resolve_type(type_key: str) -> type | None:
     """Resolve a 'module:class' type key to its Python type.
 
     Args:
@@ -123,9 +123,11 @@ def reconstruct_to_type(value: Any, target_type: type) -> Any:
         return decoded
 
     # Try Pydantic model validation (for unmarked dicts, e.g., external HITL data)
-    if hasattr(target_type, "model_validate"):
+    model_validate = getattr(target_type, "model_validate", None)
+    if callable(model_validate):
         try:
-            return target_type.model_validate(value)
+            model_validate_fn = cast(Callable[[Any], Any], model_validate)
+            return model_validate_fn(value)
         except Exception:
             logger.debug("Could not validate Pydantic model %s", target_type)
 
@@ -136,4 +138,4 @@ def reconstruct_to_type(value: Any, target_type: type) -> Any:
         except Exception:
             logger.debug("Could not construct dataclass %s", target_type)
 
-    return value
+    return cast(Any, value)

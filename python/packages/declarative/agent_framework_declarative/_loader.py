@@ -34,7 +34,7 @@ from ._models import (
     RemoteConnection,
     Tool,
     WebSearchTool,
-    _safe_mode_context,
+    _safe_mode_context,  # pyright: ignore[reportPrivateUsage]
     agent_schema_dispatch,
 )
 
@@ -598,6 +598,9 @@ class AgentFactory:
                 case ApiKeyConnection():
                     if prompt_agent.model.connection.endpoint:
                         provider_kwargs["project_endpoint"] = prompt_agent.model.connection.endpoint
+                case ReferenceConnection():
+                    # Reference connections are resolved by concrete providers when supported.
+                    pass
 
         # Create the provider and use it to create the agent
         provider = provider_class(**provider_kwargs)

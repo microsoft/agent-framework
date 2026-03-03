@@ -64,6 +64,7 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 
 [tool.pyright]
+include = ["agent_framework_ag_ui"]
 exclude = ["tests", "tests/ag_ui", "examples"]
 typeCheckingMode = "basic"
 

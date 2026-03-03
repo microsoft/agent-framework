@@ -188,7 +188,7 @@ def _validate_conversation_history(messages: list[Message], agent_name: str) -> 
     tool_result_ids: set[str] = set()
 
     for i, msg in enumerate(messages):
-        if not hasattr(msg, "contents") or msg.contents is None:
+        if not hasattr(msg, "contents"):
             continue
         for content in msg.contents:
             if content.type == "function_call" and content.call_id:

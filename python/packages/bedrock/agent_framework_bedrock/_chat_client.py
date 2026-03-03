@@ -8,7 +8,7 @@ import logging
 import sys
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, Literal, TypedDict
+from typing import Any, ClassVar, Generic, Literal, Protocol, TypeGuard, TypedDict, cast
 from uuid import uuid4
 
 from agent_framework import (
@@ -214,6 +214,10 @@ class BedrockSettings(TypedDict, total=False):
     session_token: SecretString | None
 
 
+class BedrockRuntimeClient(Protocol):
+    def converse(self, **kwargs: Any) -> Mapping[str, object]: ...
+
+
 class BedrockChatClient(
     ChatMiddlewareLayer[BedrockChatOptionsT],
     FunctionInvocationLayer[BedrockChatOptionsT],
@@ -224,6 +228,37 @@ class BedrockChatClient(
     """Async chat client for Amazon Bedrock's Converse API with middleware, telemetry, and function invocation."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    _bedrock_client: BedrockRuntimeClient
+
+    @staticmethod
+    def _is_runtime_client(value: object) -> TypeGuard[BedrockRuntimeClient]:
+        converse = getattr(value, "converse", None)
+        return callable(converse)
+
+    @staticmethod
+    def _get_str(value: object) -> str | None:
+        return value if isinstance(value, str) else None
+
+    @staticmethod
+    def _get_dict(value: object) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        return cast(dict[str, Any], value)
+
+    @staticmethod
+    def _is_nonstring_sequence(value: object) -> TypeGuard[Sequence[object]]:
+        return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
+
+    @staticmethod
+    def _get_content_blocks(value: object) -> list[dict[str, Any]]:
+        if not BedrockChatClient._is_nonstring_sequence(value):
+            return []
+        blocks: list[dict[str, Any]] = []
+        for item in value:
+            block = BedrockChatClient._get_dict(item)
+            if block is not None:
+                blocks.append(block)
+        return blocks
 
     def __init__(
         self,
@@ -288,35 +323,54 @@ class BedrockChatClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        if not settings.get("region"):
-            settings["region"] = DEFAULT_REGION
+        region = settings.get("region") or DEFAULT_REGION
+        chat_model_id = settings.get("chat_model_id")
 
         if client is None:
             session = boto3_session or self._create_session(settings)
-            client = session.client(
+            client_factory = getattr(session, "client", None)
+            if not callable(client_factory):
+                raise TypeError("Boto3 session does not provide a callable client factory.")
+            created_client: object = client_factory(
                 "bedrock-runtime",
-                region_name=settings["region"],
+                region_name=region,
                 config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
             )
+            if not self._is_runtime_client(created_client):
+                raise TypeError("Boto3 session did not create a compatible Bedrock runtime client.")
+            runtime_client = created_client
+        elif not self._is_runtime_client(client):
+            raise TypeError("Provided client must expose a callable 'converse' method.")
+        else:
+            runtime_client = client
 
         super().__init__(
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
             **kwargs,
         )
-        self._bedrock_client = client
-        self.model_id = settings["chat_model_id"]
-        self.region = settings["region"]
+        self._bedrock_client = runtime_client
+        self.model_id = chat_model_id
+        self.region = region
 
     @staticmethod
     def _create_session(settings: BedrockSettings) -> Boto3Session:
         session_kwargs: dict[str, Any] = {"region_name": settings.get("region") or DEFAULT_REGION}
-        if settings.get("access_key") and settings.get("secret_key"):
-            session_kwargs["aws_access_key_id"] = settings["access_key"].get_secret_value()  # type: ignore[union-attr]
-            session_kwargs["aws_secret_access_key"] = settings["secret_key"].get_secret_value()  # type: ignore[union-attr]
-        if settings.get("session_token"):
-            session_kwargs["aws_session_token"] = settings["session_token"].get_secret_value()  # type: ignore[union-attr]
+        access_key = settings.get("access_key")
+        secret_key = settings.get("secret_key")
+        session_token = settings.get("session_token")
+        if access_key is not None and secret_key is not None:
+            session_kwargs["aws_access_key_id"] = access_key.get_secret_value()
+            session_kwargs["aws_secret_access_key"] = secret_key.get_secret_value()
+        if session_token is not None:
+            session_kwargs["aws_session_token"] = session_token.get_secret_value()
         return Boto3Session(**session_kwargs)
+
+    def _invoke_converse(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        response = self._bedrock_client.converse(**request)
+        if not isinstance(response, Mapping):
+            raise ChatClientInvalidResponseException("Bedrock converse response must be a mapping.")
+        return dict(response)
 
     @override
     def _inner_get_response(
@@ -332,16 +386,18 @@ class BedrockChatClient(
         if stream:
             # Streaming mode - simulate streaming by yielding a single update
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-                response = await asyncio.to_thread(self._bedrock_client.converse, **request)
+                response = await asyncio.to_thread(self._invoke_converse, request)
                 parsed_response = self._process_converse_response(response)
                 contents = list(parsed_response.messages[0].contents if parsed_response.messages else [])
                 if parsed_response.usage_details:
                     contents.append(Content.from_usage(usage_details=parsed_response.usage_details))  # type: ignore[arg-type]
+                raw_finish_reason = self._get_str(parsed_response.finish_reason)
+                finish_reason = self._map_finish_reason(raw_finish_reason)
                 yield ChatResponseUpdate(
                     response_id=parsed_response.response_id,
                     contents=contents,
                     model_id=parsed_response.model_id,
-                    finish_reason=parsed_response.finish_reason,
+                    finish_reason=finish_reason,
                     raw_representation=parsed_response.raw_representation,
                 )
 
@@ -349,7 +405,7 @@ class BedrockChatClient(
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
-            raw_response = await asyncio.to_thread(self._bedrock_client.converse, **request)
+            raw_response = await asyncio.to_thread(self._invoke_converse, request)
             return self._process_converse_response(raw_response)
 
         return _get_response()
@@ -529,25 +585,25 @@ class BedrockChatClient(
     def _convert_tool_result_to_blocks(self, result: Any) -> list[dict[str, Any]]:
         prepared_result = result if isinstance(result, str) else FunctionTool.parse_result(result)
         try:
-            parsed_result = json.loads(prepared_result)
+            parsed_result: object = json.loads(prepared_result)
         except json.JSONDecodeError:
             return [{"text": prepared_result}]
 
         return self._convert_prepared_tool_result_to_blocks(parsed_result)
 
-    def _convert_prepared_tool_result_to_blocks(self, value: Any) -> list[dict[str, Any]]:
-        if isinstance(value, list):
+    def _convert_prepared_tool_result_to_blocks(self, value: object) -> list[dict[str, Any]]:
+        if self._is_nonstring_sequence(value):
             blocks: list[dict[str, Any]] = []
             for item in value:
                 blocks.extend(self._convert_prepared_tool_result_to_blocks(item))
             return blocks or [{"text": ""}]
         return [self._normalize_tool_result_value(value)]
 
-    def _normalize_tool_result_value(self, value: Any) -> dict[str, Any]:
+    def _normalize_tool_result_value(self, value: object) -> dict[str, Any]:
         if isinstance(value, dict):
             return {"json": value}
-        if isinstance(value, (list, tuple)):
-            return {"json": list(value)}
+        if self._is_nonstring_sequence(value):
+            return {"json": [item for item in value]}
         if isinstance(value, str):
             return {"text": value}
         if isinstance(value, (int, float, bool)) or value is None:
@@ -586,15 +642,18 @@ class BedrockChatClient(
         return f"tool-call-{uuid4().hex}"
 
     def _process_converse_response(self, response: dict[str, Any]) -> ChatResponse:
-        output = response.get("output", {})
-        message = output.get("message", {})
-        content_blocks = message.get("content", []) or []
+        output = self._get_dict(response.get("output")) or {}
+        message = self._get_dict(output.get("message")) or {}
+        content_blocks = self._get_content_blocks(message.get("content"))
         contents = self._parse_message_contents(content_blocks)
         chat_message = Message(role="assistant", contents=contents, raw_representation=message)
-        usage_details = self._parse_usage(response.get("usage") or output.get("usage"))
-        finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
-        response_id = response.get("responseId") or message.get("id")
-        model_id = response.get("modelId") or output.get("modelId") or self.model_id
+        usage_source = self._get_dict(response.get("usage")) or self._get_dict(output.get("usage"))
+        usage_details = self._parse_usage(usage_source)
+        finish_reason = self._map_finish_reason(
+            self._get_str(output.get("completionReason")) or self._get_str(response.get("stopReason"))
+        )
+        response_id = self._get_str(response.get("responseId")) or self._get_str(message.get("id"))
+        model_id = self._get_str(response.get("modelId")) or self._get_str(output.get("modelId")) or self.model_id
         return ChatResponse(
             response_id=response_id,
             messages=[chat_message],
@@ -616,7 +675,7 @@ class BedrockChatClient(
             details["total_token_count"] = total_tokens
         return details
 
-    def _parse_message_contents(self, content_blocks: Sequence[MutableMapping[str, Any]]) -> list[Any]:
+    def _parse_message_contents(self, content_blocks: Sequence[dict[str, Any]]) -> list[Any]:
         contents: list[Any] = []
         for block in content_blocks:
             if text_value := block.get("text"):
@@ -625,32 +684,32 @@ class BedrockChatClient(
             if (json_value := block.get("json")) is not None:
                 contents.append(Content.from_text(text=json.dumps(json_value), raw_representation=block))
                 continue
-            tool_use = block.get("toolUse")
-            if isinstance(tool_use, MutableMapping):
-                tool_name = tool_use.get("name")
+            tool_use = self._get_dict(block.get("toolUse"))
+            if tool_use is not None:
+                tool_name = self._get_str(tool_use.get("name"))
                 if not tool_name:
                     raise ChatClientInvalidResponseException(
                         "Bedrock response missing required tool name in toolUse block."
                     )
                 contents.append(
                     Content.from_function_call(
-                        call_id=tool_use.get("toolUseId") or self._generate_tool_call_id(),
+                        call_id=self._get_str(tool_use.get("toolUseId")) or self._generate_tool_call_id(),
                         name=tool_name,
                         arguments=tool_use.get("input"),
                         raw_representation=block,
                     )
                 )
                 continue
-            tool_result = block.get("toolResult")
-            if isinstance(tool_result, MutableMapping):
-                status = (tool_result.get("status") or "success").lower()
+            tool_result = self._get_dict(block.get("toolResult"))
+            if tool_result is not None:
+                status = (self._get_str(tool_result.get("status")) or "success").lower()
                 exception = None
                 if status not in {"success", "ok"}:
                     exception = RuntimeError(f"Bedrock tool result status: {status}")
                 result_value = self._convert_bedrock_tool_result_to_value(tool_result.get("content"))
                 contents.append(
                     Content.from_function_result(
-                        call_id=tool_result.get("toolUseId") or self._generate_tool_call_id(),
+                        call_id=self._get_str(tool_result.get("toolUseId")) or self._generate_tool_call_id(),
                         result=result_value,
                         exception=str(exception) if exception else None,  # type: ignore[arg-type]
                         raw_representation=block,
@@ -673,24 +732,26 @@ class BedrockChatClient(
         """
         return f"https://bedrock-runtime.{self.region}.amazonaws.com"
 
-    def _convert_bedrock_tool_result_to_value(self, content: Any) -> Any:
+    def _convert_bedrock_tool_result_to_value(self, content: object) -> object:
         if not content:
             return None
-        if isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray)):
-            values: list[Any] = []
+        if self._is_nonstring_sequence(content):
+            values: list[object] = []
             for item in content:
-                if isinstance(item, MutableMapping):
-                    if (text_value := item.get("text")) is not None:
+                item_dict = self._get_dict(item)
+                if item_dict is not None:
+                    if (text_value := self._get_str(item_dict.get("text"))) is not None:
                         values.append(text_value)
                         continue
-                    if "json" in item:
-                        values.append(item["json"])
+                    if "json" in item_dict:
+                        values.append(item_dict["json"])
                         continue
                 values.append(item)
             return values[0] if len(values) == 1 else values
-        if isinstance(content, MutableMapping):
-            if (text_value := content.get("text")) is not None:
+        content_dict = self._get_dict(content)
+        if content_dict is not None:
+            if (text_value := self._get_str(content_dict.get("text"))) is not None:
                 return text_value
-            if "json" in content:
-                return content["json"]
+            if "json" in content_dict:
+                return content_dict["json"]
         return content

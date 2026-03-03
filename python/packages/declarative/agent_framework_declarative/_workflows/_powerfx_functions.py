@@ -51,7 +51,8 @@ def message_text(messages: Any) -> str:
     if isinstance(messages, list):
         # List of messages - concatenate all text
         texts: list[str] = []
-        for msg in messages:
+        message_list = cast(list[Any], messages)  # type: ignore[redundant-cast]
+        for msg in message_list:
             if isinstance(msg, str):
                 texts.append(msg)
             elif isinstance(msg, dict):
@@ -61,14 +62,16 @@ def message_text(messages: Any) -> str:
                     texts.append(msg_content)
                 elif msg_content:
                     texts.append(str(msg_content))
-            elif hasattr(msg, "content"):
-                msg_obj_content: Any = msg.content
-                if isinstance(msg_obj_content, str):
-                    texts.append(msg_obj_content)
-                elif hasattr(msg_obj_content, "text"):
-                    texts.append(str(msg_obj_content.text))
-                elif msg_obj_content:
-                    texts.append(str(msg_obj_content))
+            else:
+                msg_obj: object = msg
+                if hasattr(msg_obj, "content"):
+                    msg_obj_content: Any = getattr(msg_obj, "content")
+                    if isinstance(msg_obj_content, str):
+                        texts.append(msg_obj_content)
+                    elif hasattr(msg_obj_content, "text"):
+                        texts.append(str(getattr(msg_obj_content, "text")))
+                    elif msg_obj_content:
+                        texts.append(str(msg_obj_content))
         return " ".join(texts)
 
     # Try to get text attribute
@@ -192,9 +195,11 @@ def is_blank(value: Any) -> bool:
     if isinstance(value, str) and not value.strip():
         return True
     if isinstance(value, list):
-        return len(value) == 0
+        value_list = cast(list[Any], value)  # type: ignore[redundant-cast]
+        return len(value_list) == 0
     if isinstance(value, dict):
-        return len(value) == 0
+        value_dict = cast(dict[Any, Any], value)  # type: ignore[redundant-cast]
+        return len(value_dict) == 0
     return False
 
 

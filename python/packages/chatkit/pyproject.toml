@@ -61,6 +61,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_chatkit"]
 exclude = ['tests', 'chatkit-python', 'openai-chatkit-advanced-samples']
 
 [tool.mypy]

@@ -7,7 +7,7 @@ import json
 import logging
 import sys
 from collections.abc import Sequence
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import Any, ClassVar, Generic, Protocol, TypedDict, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -28,6 +28,33 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
 else:
     from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+
+
+
+
+class BedrockRuntimeMeta(Protocol):
+    endpoint_url: str
+
+
+class BedrockResponseBody(Protocol):
+    def read(self) -> bytes | bytearray | str: ...
+
+
+class BedrockInvokeModelResponse(TypedDict):
+    body: BedrockResponseBody
+
+
+class BedrockRuntimeClient(Protocol):
+    meta: BedrockRuntimeMeta
+
+    def invoke_model(
+        self,
+        *,
+        modelId: str,
+        contentType: str,
+        accept: str,
+        body: str,
+    ) -> BedrockInvokeModelResponse: ...
 
 
 logger = logging.getLogger("agent_framework.bedrock")
@@ -101,7 +128,7 @@ class RawBedrockEmbeddingClient(
         access_key: str | None = None,
         secret_key: str | None = None,
         session_token: str | None = None,
-        client: BaseClient | None = None,
+        client: BaseClient | BedrockRuntimeClient | None = None,
         boto3_session: Boto3Session | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -128,19 +155,24 @@ class RawBedrockEmbeddingClient(
                 if region := settings.get("region"):
                     session_kwargs["region_name"] = region
                 if (access_key := settings.get("access_key")) and (secret_key := settings.get("secret_key")):
-                    session_kwargs["aws_access_key_id"] = access_key.get_secret_value()  # type: ignore[union-attr]
-                    session_kwargs["aws_secret_access_key"] = secret_key.get_secret_value()  # type: ignore[union-attr]
+                    session_kwargs["aws_access_key_id"] = access_key.get_secret_value()
+                    session_kwargs["aws_secret_access_key"] = secret_key.get_secret_value()
                 if session_token := settings.get("session_token"):
-                    session_kwargs["aws_session_token"] = session_token.get_secret_value()  # type: ignore[union-attr]
+                    session_kwargs["aws_session_token"] = session_token.get_secret_value()
                 boto3_session = Boto3Session(**session_kwargs)
-            client = boto3_session.client(
-                "bedrock-runtime",
-                region_name=boto3_session.region_name or resolved_region,
-                config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
+            region_name = cast(str | None, getattr(boto3_session, "region_name", None))
+            client_factory = cast(Any, boto3_session.client)  # pyright: ignore[reportUnknownMemberType]
+            client = cast(
+                BedrockRuntimeClient,
+                client_factory(
+                    "bedrock-runtime",
+                    region_name=region_name if isinstance(region_name, str) else resolved_region,
+                    config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
+                ),
             )
 
-        self._bedrock_client = client
-        self.model_id = settings["embedding_model_id"]  # type: ignore[assignment]
+        self._bedrock_client: BedrockRuntimeClient = cast(BedrockRuntimeClient, client)
+        self.model_id: str = settings["embedding_model_id"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
         self.region = resolved_region
         super().__init__(**kwargs)
 
@@ -169,8 +201,9 @@ class RawBedrockEmbeddingClient(
         Raises:
             ValueError: If model_id is not provided or values is empty.
         """
+        resolved_options = cast(EmbeddingGenerationOptions | None, options)
         if not values:
-            return GeneratedEmbeddings([], options=options)
+            return GeneratedEmbeddings([], options=resolved_options)
 
         opts: dict[str, Any] = dict(options) if options else {}
         model = opts.get("model_id") or self.model_id
@@ -190,7 +223,7 @@ class RawBedrockEmbeddingClient(
         if total_input_tokens > 0:
             usage_dict = {"input_token_count": total_input_tokens}
 
-        return GeneratedEmbeddings(embeddings, options=options, usage=usage_dict)
+        return GeneratedEmbeddings(embeddings, options=resolved_options, usage=usage_dict)
 
     async def _generate_embedding_for_text(
         self,
@@ -212,10 +245,25 @@ class RawBedrockEmbeddingClient(
             body=json.dumps(body),
         )
 
-        response_body = json.loads(response["body"].read())
+        response_body_raw = response["body"]
+        response_payload = response_body_raw.read()
+        payload_text = response_payload.decode() if isinstance(response_payload, (bytes, bytearray)) else response_payload
+        response_body_raw_map: object = json.loads(payload_text)
+        if not isinstance(response_body_raw_map, dict):
+            raise ValueError("Bedrock embedding response body must be a JSON object")
+        response_body = cast(dict[str, Any], response_body_raw_map)
+        embedding_values = response_body.get("embedding")
+        if not isinstance(embedding_values, list):
+            raise ValueError("Bedrock embedding response missing 'embedding' list")
+        vector: list[float] = []
+        for value in cast(list[object], embedding_values):
+            if isinstance(value, (int, float, str)):
+                vector.append(float(value))
+                continue
+            raise ValueError("Bedrock embedding response contains non-numeric embedding value")
         embedding = Embedding(
-            vector=response_body["embedding"],
-            dimensions=len(response_body["embedding"]),
+            vector=vector,
+            dimensions=len(vector),
             model_id=model,
         )
         input_tokens = int(response_body.get("inputTextTokenCount", 0))
@@ -269,7 +317,7 @@ class BedrockEmbeddingClient(
         access_key: str | None = None,
         secret_key: str | None = None,
         session_token: str | None = None,
-        client: BaseClient | None = None,
+        client: BaseClient | BedrockRuntimeClient | None = None,
         boto3_session: Boto3Session | None = None,
         otel_provider_name: str | None = None,
         env_file_path: str | None = None,

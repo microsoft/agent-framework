@@ -73,7 +73,7 @@ def register_cleanup(entity: Any, *hooks: Callable[[], Any]) -> None:
     )
 
 
-def _get_registered_cleanup_hooks(entity: Any) -> list[Callable[[], Any]]:
+def get_registered_cleanup_hooks(entity: Any) -> list[Callable[[], Any]]:
     """Get cleanup hooks registered for an entity (internal use).
 
     Args:
@@ -84,6 +84,10 @@ def _get_registered_cleanup_hooks(entity: Any) -> list[Callable[[], Any]]:
     """
     entity_id = id(entity)
     return _cleanup_registry.get(entity_id, [])
+
+
+# Backward-compatible private alias
+_get_registered_cleanup_hooks = get_registered_cleanup_hooks
 
 
 def serve(
@@ -193,7 +197,7 @@ def serve(
     if entities:
         logger.info(f"Registering {len(entities)} in-memory entities")
         # Store entities for later registration during server startup
-        server._pending_entities = entities
+        server.set_pending_entities(entities)
 
     app = server.get_app()
 
@@ -263,5 +267,6 @@ __all__ = [
     "ResponseStreamEvent",
     "main",
     "register_cleanup",
+    "get_registered_cleanup_hooks",
     "serve",
 ]

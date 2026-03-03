@@ -58,6 +58,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_orchestrations"]
 exclude = ['tests']
 
 [tool.mypy]

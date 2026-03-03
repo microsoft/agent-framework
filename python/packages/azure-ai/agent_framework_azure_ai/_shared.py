@@ -102,8 +102,9 @@ def _extract_project_connection_id(additional_properties: dict[str, Any] | None)
     # Check for connection.name structure (declarative/YAML usage)
     if "connection" in additional_properties:
         conn = additional_properties["connection"]
-        if isinstance(conn, dict):
-            name = conn.get("name")
+        if isinstance(conn, Mapping):
+            conn_mapping = cast(Mapping[str, Any], conn)
+            name = conn_mapping.get("name")
             if isinstance(name, str):
                 return name
 
@@ -191,7 +192,9 @@ def to_azure_ai_agent_tools(
             ):
                 if "tool_resources" not in run_options:
                     run_options["tool_resources"] = {}
-                run_options["tool_resources"].update(tool.resources)
+                tool_resources = cast(MutableMapping[str, Any], run_options["tool_resources"])
+                if isinstance(tool.resources, Mapping):
+                    tool_resources.update(dict(cast(Mapping[str, Any], tool.resources)))
         elif isinstance(tool, (dict, MutableMapping)):
             # Handle dict-based tools - pass through directly
             tool_dict = tool if isinstance(tool, dict) else dict(tool)
@@ -422,9 +425,16 @@ def to_azure_ai_tools(
         elif isinstance(tool, Tool):
             # Pass through SDK Tool types directly (CodeInterpreterTool, FileSearchTool, etc.)
             azure_tools.append(tool)
+        elif isinstance(tool, MutableMapping):
+            # Convert mutable mappings into plain dicts for stable typing.
+            tool_dict: dict[str, Any] = dict(tool)
+            if tool_dict.get("type") == "mcp":
+                azure_tools.append(_prepare_mcp_tool_dict_for_azure_ai(tool_dict))
+            else:
+                azure_tools.append(tool_dict)
         else:
-            # Pass through dict-based tools directly
-            azure_tools.append(dict(tool) if isinstance(tool, MutableMapping) else tool)  # type: ignore[arg-type]
+            # Pass through any other supported tool objects unchanged.
+            azure_tools.append(tool)
 
     return azure_tools
 
@@ -446,7 +456,13 @@ def _prepare_mcp_tool_dict_for_azure_ai(tool_dict: dict[str, Any]) -> MCPTool:
         mcp["server_description"] = description
 
     # Check for project_connection_id
-    if project_connection_id := tool_dict.get("project_connection_id"):
+    additional_properties = tool_dict.get("additional_properties")
+    extracted_project_connection_id = (
+        _extract_project_connection_id(dict(cast(Mapping[str, Any], additional_properties)))
+        if isinstance(additional_properties, Mapping)
+        else None
+    )
+    if project_connection_id := tool_dict.get("project_connection_id") or extracted_project_connection_id:
         mcp["project_connection_id"] = project_connection_id
     elif headers := tool_dict.get("headers"):
         mcp["headers"] = headers

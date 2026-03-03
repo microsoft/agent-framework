@@ -59,6 +59,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_foundry_local"]
 exclude = ['tests']
 
 [tool.mypy]

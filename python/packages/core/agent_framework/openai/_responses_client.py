@@ -2293,24 +2293,26 @@ class OpenAIResponsesClient(  # type: ignore[misc]
             env_file_encoding=env_file_encoding,
         )
 
-        if not async_client and not openai_settings["api_key"]:
+        api_key_setting = openai_settings.get("api_key")
+        if not async_client and not api_key_setting:
             raise ValueError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
-        if not openai_settings["responses_model_id"]:
+        responses_model_id = openai_settings.get("responses_model_id")
+        if not responses_model_id:
             raise ValueError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_RESPONSES_MODEL_ID' environment variable."
             )
 
         super().__init__(
-            model_id=openai_settings["responses_model_id"],
-            api_key=self._get_api_key(openai_settings["api_key"]),
-            org_id=openai_settings["org_id"],
+            model_id=responses_model_id,
+            api_key=self._get_api_key(api_key_setting),
+            org_id=openai_settings.get("org_id"),
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
-            base_url=openai_settings["base_url"],
+            base_url=openai_settings.get("base_url"),
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
             **kwargs,
