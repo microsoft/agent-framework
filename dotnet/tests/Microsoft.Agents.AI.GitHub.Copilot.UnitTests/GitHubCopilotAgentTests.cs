@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using System.Threading.Tasks;
 using GitHub.Copilot.SDK;
 using Microsoft.Extensions.AI;
@@ -237,14 +236,7 @@ public sealed class GitHubCopilotAgentTests
         CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
         const string TestId = "agent-id";
         var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, tools: null);
-        MethodInfo method = typeof(GitHubCopilotAgent).GetMethod(
-            "ConvertToAgentResponseUpdate",
-            BindingFlags.NonPublic | BindingFlags.Instance,
-            binder: null,
-            types: [typeof(AssistantMessageEvent)],
-            modifiers: null)!;
-
-        var result = (AgentResponseUpdate)method.Invoke(agent, [assistantMessage])!;
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage);
 
         // result.Text need to be empty because the content was already delivered via delta events, and we want to avoid emitting duplicate content in the response update.
         // The content should be delivered through TextContent in the Contents collection instead.
