@@ -6,16 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
 import pytest
-from azure.identity import AzureCliCredential
-from httpx import Request, Response
-from openai import AsyncAzureOpenAI, AsyncStream
-from openai.resources.chat.completions import AsyncCompletions as AsyncChatCompletions
-from openai.types.chat import ChatCompletion, ChatCompletionChunk
-from openai.types.chat.chat_completion import Choice
-from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
-from openai.types.chat.chat_completion_chunk import ChoiceDelta as ChunkChoiceDelta
-from openai.types.chat.chat_completion_message import ChatCompletionMessage
-
 from agent_framework import (
     Agent,
     AgentResponse,
@@ -33,6 +23,15 @@ from agent_framework.openai import (
     ContentFilterResultSeverity,
     OpenAIContentFilterException,
 )
+from azure.identity import AzureCliCredential
+from httpx import Request, Response
+from openai import AsyncAzureOpenAI, AsyncStream
+from openai.resources.chat.completions import AsyncCompletions as AsyncChatCompletions
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from openai.types.chat.chat_completion import Choice
+from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+from openai.types.chat.chat_completion_chunk import ChoiceDelta as ChunkChoiceDelta
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
 # region Service Setup
 
@@ -48,7 +47,10 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
 
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
-    assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    assert (
+        azure_chat_client.model_id
+        == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    )
     assert isinstance(azure_chat_client, SupportsChatGetResponse)
 
 
@@ -71,7 +73,10 @@ def test_init_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
 
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
-    assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    assert (
+        azure_chat_client.model_id
+        == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    )
     assert isinstance(azure_chat_client, SupportsChatGetResponse)
     for key, value in default_headers.items():
         assert key in azure_chat_client.client.default_headers
@@ -84,23 +89,38 @@ def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
 
     assert azure_chat_client.client is not None
     assert isinstance(azure_chat_client.client, AsyncAzureOpenAI)
-    assert azure_chat_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    assert (
+        azure_chat_client.model_id
+        == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    )
     assert isinstance(azure_chat_client, SupportsChatGetResponse)
 
 
-@pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
-def test_init_with_empty_deployment_name(azure_openai_unit_test_env: dict[str, str]) -> None:
+@pytest.mark.parametrize(
+    "exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True
+)
+def test_init_with_empty_deployment_name(
+    azure_openai_unit_test_env: dict[str, str],
+) -> None:
     with pytest.raises(ValueError):
         AzureOpenAIChatClient()
 
 
-@pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL"]], indirect=True)
-def test_init_with_empty_endpoint_and_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
+@pytest.mark.parametrize(
+    "exclude_list", [["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL"]], indirect=True
+)
+def test_init_with_empty_endpoint_and_base_url(
+    azure_openai_unit_test_env: dict[str, str],
+) -> None:
     with pytest.raises(ValueError):
         AzureOpenAIChatClient()
 
 
-@pytest.mark.parametrize("override_env_param_dict", [{"AZURE_OPENAI_ENDPOINT": "http://test.com"}], indirect=True)
+@pytest.mark.parametrize(
+    "override_env_param_dict",
+    [{"AZURE_OPENAI_ENDPOINT": "http://test.com"}],
+    indirect=True,
+)
 def test_init_with_invalid_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
     # Note: URL scheme validation was previously handled by pydantic's HTTPsUrl type.
     # After migrating to load_settings with TypedDict, endpoint is a plain string and no longer
@@ -114,7 +134,9 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
     default_headers = {"X-Test": "test"}
 
     settings = {
-        "deployment_name": azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+        "deployment_name": azure_openai_unit_test_env[
+            "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
+        ],
         "endpoint": azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"],
         "api_key": azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"],
         "api_version": azure_openai_unit_test_env["AZURE_OPENAI_API_VERSION"],
@@ -147,7 +169,11 @@ def mock_chat_completion_response() -> ChatCompletion:
     return ChatCompletion(
         id="test_id",
         choices=[
-            Choice(index=0, message=ChatCompletionMessage(content="test", role="assistant"), finish_reason="stop")
+            Choice(
+                index=0,
+                message=ChatCompletionMessage(content="test", role="assistant"),
+                finish_reason="stop",
+            )
         ],
         created=0,
         model="test",
@@ -159,7 +185,13 @@ def mock_chat_completion_response() -> ChatCompletion:
 def mock_streaming_chat_completion_response() -> AsyncStream[ChatCompletionChunk]:
     content = ChatCompletionChunk(
         id="test_id",
-        choices=[ChunkChoice(index=0, delta=ChunkChoiceDelta(content="test", role="assistant"), finish_reason="stop")],
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=ChunkChoiceDelta(content="test", role="assistant"),
+                finish_reason="stop",
+            )
+        ],
         created=0,
         model="test",
         object="chat.completion.chunk",
@@ -205,7 +237,9 @@ async def test_cmc_with_logit_bias(
 
     azure_chat_client = AzureOpenAIChatClient()
 
-    await azure_chat_client.get_response(messages=chat_history, options={"logit_bias": token_bias})
+    await azure_chat_client.get_response(
+        messages=chat_history, options={"logit_bias": token_bias}
+    )
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
@@ -323,18 +357,20 @@ async def test_azure_on_your_data_string(
             message=ChatCompletionMessage(
                 content="test",
                 role="assistant",
-                context=json.dumps({  # type: ignore
-                    "citations": [
-                        {
-                            "content": "test content",
-                            "title": "test title",
-                            "url": "test url",
-                            "filepath": "test filepath",
-                            "chunk_id": "test chunk_id",
-                        }
-                    ],
-                    "intent": "query used",
-                }),
+                context=json.dumps(
+                    {  # type: ignore
+                        "citations": [
+                            {
+                                "content": "test content",
+                                "title": "test title",
+                                "url": "test url",
+                                "filepath": "test filepath",
+                                "chunk_id": "test chunk_id",
+                            }
+                        ],
+                        "intent": "query used",
+                    }
+                ),
             ),
             finish_reason="stop",
         )
@@ -484,7 +520,9 @@ async def test_content_filtering_raises_correct_exception(
 
     azure_chat_client = AzureOpenAIChatClient()
 
-    with pytest.raises(OpenAIContentFilterException, match="service encountered a content error") as exc_info:
+    with pytest.raises(
+        OpenAIContentFilterException, match="service encountered a content error"
+    ) as exc_info:
         await azure_chat_client.get_response(
             messages=chat_history,
         )
@@ -492,7 +530,10 @@ async def test_content_filtering_raises_correct_exception(
     content_filter_exc = exc_info.value
     assert content_filter_exc.param == "prompt"
     assert content_filter_exc.content_filter_result["hate"].filtered
-    assert content_filter_exc.content_filter_result["hate"].severity == ContentFilterResultSeverity.HIGH
+    assert (
+        content_filter_exc.content_filter_result["hate"].severity
+        == ContentFilterResultSeverity.HIGH
+    )
 
 
 @patch.object(AsyncChatCompletions, "create")
@@ -528,7 +569,9 @@ async def test_content_filtering_without_response_code_raises_with_default_code(
 
     azure_chat_client = AzureOpenAIChatClient()
 
-    with pytest.raises(OpenAIContentFilterException, match="service encountered a content error"):
+    with pytest.raises(
+        OpenAIContentFilterException, match="service encountered a content error"
+    ):
         await azure_chat_client.get_response(
             messages=chat_history,
         )
@@ -546,12 +589,16 @@ async def test_bad_request_non_content_filter(
     test_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     assert test_endpoint is not None
     mock_create.side_effect = openai.BadRequestError(
-        "The request was bad.", response=Response(400, request=Request("POST", test_endpoint)), body={}
+        "The request was bad.",
+        response=Response(400, request=Request("POST", test_endpoint)),
+        body={},
     )
 
     azure_chat_client = AzureOpenAIChatClient()
 
-    with pytest.raises(ChatClientException, match="service failed to complete the prompt"):
+    with pytest.raises(
+        ChatClientException, match="service failed to complete the prompt"
+    ):
         await azure_chat_client.get_response(
             messages=chat_history,
         )
@@ -594,7 +641,9 @@ async def test_streaming_with_none_delta(
 ) -> None:
     """Test streaming handles None delta from async content filtering."""
     # First chunk has None delta (simulates async filtering)
-    chunk_choice_with_none = ChunkChoice.model_construct(index=0, delta=None, finish_reason=None)
+    chunk_choice_with_none = ChunkChoice.model_construct(
+        index=0, delta=None, finish_reason=None
+    )
     chunk_with_none_delta = ChatCompletionChunk.model_construct(
         id="test_id",
         choices=[chunk_choice_with_none],
@@ -605,7 +654,13 @@ async def test_streaming_with_none_delta(
     # Second chunk has actual content
     chunk_with_content = ChatCompletionChunk(
         id="test_id",
-        choices=[ChunkChoice(index=0, delta=ChunkChoiceDelta(content="test", role="assistant"), finish_reason="stop")],
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=ChunkChoiceDelta(content="test", role="assistant"),
+                finish_reason="stop",
+            )
+        ],
         created=0,
         model="test",
         object="chat.completion.chunk",
@@ -622,7 +677,11 @@ async def test_streaming_with_none_delta(
         results.append(msg)
 
     assert len(results) > 0
-    assert any(content.type == "text" and content.text == "test" for msg in results for content in msg.contents)
+    assert any(
+        content.type == "text" and content.text == "test"
+        for msg in results
+        for content in msg.contents
+    )
     assert any(msg.contents for msg in results)
 
 
@@ -670,7 +729,8 @@ async def test_azure_openai_chat_client_response() -> None:
     assert isinstance(response, ChatResponse)
     # Check for any relevant keywords that indicate the AI understood the context
     assert any(
-        word in response.text.lower() for word in ["scientists", "research", "antarctica", "glaciology", "climate"]
+        word in response.text.lower()
+        for word in ["scientists", "research", "antarctica", "glaciology", "climate"]
     )
 
 
@@ -769,7 +829,9 @@ async def test_azure_openai_chat_client_agent_basic_run():
         client=AzureOpenAIChatClient(credential=AzureCliCredential()),
     ) as agent:
         # Test basic run
-        response = await agent.run("Please respond with exactly: 'This is a response test.'")
+        response = await agent.run(
+            "Please respond with exactly: 'This is a response test.'"
+        )
 
         assert isinstance(response, AgentResponse)
         assert response.text is not None
@@ -787,7 +849,10 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
     ) as agent:
         # Test streaming run
         full_text = ""
-        async for chunk in agent.run("Please respond with exactly: 'This is a streaming response test.'", stream=True):
+        async for chunk in agent.run(
+            "Please respond with exactly: 'This is a streaming response test.'",
+            stream=True,
+        ):
             assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:
                 full_text += chunk.text
@@ -836,7 +901,9 @@ async def test_azure_openai_chat_client_agent_existing_session():
     ) as first_agent:
         # Start a conversation and capture the session
         session = first_agent.create_session()
-        first_response = await first_agent.run("My name is Alice. Remember this.", session=session)
+        first_response = await first_agent.run(
+            "My name is Alice. Remember this.", session=session
+        )
 
         assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
@@ -851,7 +918,9 @@ async def test_azure_openai_chat_client_agent_existing_session():
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
             # Reuse the preserved session
-            second_response = await second_agent.run("What is my name?", session=preserved_session)
+            second_response = await second_agent.run(
+                "What is my name?", session=preserved_session
+            )
 
             assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None
@@ -875,7 +944,9 @@ async def test_azure_chat_client_agent_level_tool_persistence():
         assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
         # Should use the agent-level weather tool
-        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
+        assert any(
+            term in first_response.text.lower() for term in ["chicago", "sunny", "72"]
+        )
 
         # Second run - agent-level tool should still be available (persistence test)
         second_response = await agent.run("What's the weather in Miami?")
@@ -883,4 +954,6 @@ async def test_azure_chat_client_agent_level_tool_persistence():
         assert isinstance(second_response, AgentResponse)
         assert second_response.text is not None
         # Should use the agent-level weather tool again
-        assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
+        assert any(
+            term in second_response.text.lower() for term in ["miami", "sunny", "72"]
+        )

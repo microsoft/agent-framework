@@ -3,14 +3,11 @@
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Annotated, Any
 from unittest.mock import MagicMock
 
 import pytest
-from azure.identity import AzureCliCredential
-from pydantic import BaseModel
-from pytest import param
-
 from agent_framework import (
     Agent,
     AgentResponse,
@@ -21,6 +18,9 @@ from agent_framework import (
     tool,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
+from pydantic import BaseModel
+from pytest import param
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
@@ -44,23 +44,32 @@ async def get_weather(location: Annotated[str, "The location as a city name"]) -
     return f"The weather in {location} is sunny and 72°F."
 
 
-async def create_vector_store(client: AzureOpenAIResponsesClient) -> tuple[str, Content]:
+async def create_vector_store(
+    client: AzureOpenAIResponsesClient,
+) -> tuple[str, Content]:
     """Create a vector store with sample documents for testing."""
     file = await client.client.files.create(
-        file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."), purpose="assistants"
+        file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."),
+        purpose="assistants",
     )
     vector_store = await client.client.vector_stores.create(
         name="knowledge_base",
         expires_after={"anchor": "last_active_at", "days": 1},
     )
-    result = await client.client.vector_stores.files.create_and_poll(vector_store_id=vector_store.id, file_id=file.id)
+    result = await client.client.vector_stores.files.create_and_poll(
+        vector_store_id=vector_store.id, file_id=file.id
+    )
     if result.last_error is not None:
-        raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
+        raise Exception(
+            f"Vector store file processing failed with status: {result.last_error.message}"
+        )
 
     return file.id, Content.from_hosted_vector_store(vector_store_id=vector_store.id)
 
 
-async def delete_vector_store(client: AzureOpenAIResponsesClient, file_id: str, vector_store_id: str) -> None:
+async def delete_vector_store(
+    client: AzureOpenAIResponsesClient, file_id: str, vector_store_id: str
+) -> None:
     """Delete the vector store after tests."""
 
     await client.client.vector_stores.delete(vector_store_id=vector_store_id)
@@ -71,7 +80,10 @@ def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
     azure_responses_client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
-    assert azure_responses_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+    assert (
+        azure_responses_client.model_id
+        == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+    )
     assert isinstance(azure_responses_client, SupportsChatGetResponse)
 
 
@@ -98,9 +110,13 @@ def test_init_model_id_kwarg(azure_openai_unit_test_env: dict[str, str]) -> None
     assert isinstance(azure_responses_client, SupportsChatGetResponse)
 
 
-def test_init_model_id_kwarg_does_not_override_deployment_name(azure_openai_unit_test_env: dict[str, str]) -> None:
+def test_init_model_id_kwarg_does_not_override_deployment_name(
+    azure_openai_unit_test_env: dict[str, str],
+) -> None:
     """Test that deployment_name takes precedence over model_id kwarg (issue #4299)."""
-    azure_responses_client = AzureOpenAIResponsesClient(deployment_name="my-deployment", model_id="gpt-4o")
+    azure_responses_client = AzureOpenAIResponsesClient(
+        deployment_name="my-deployment", model_id="gpt-4o"
+    )
 
     assert azure_responses_client.model_id == "my-deployment"
     assert isinstance(azure_responses_client, SupportsChatGetResponse)
@@ -110,7 +126,10 @@ def test_init_model_id_kwarg_none(azure_openai_unit_test_env: dict[str, str]) ->
     """Test that model_id=None does not override the env-var deployment name."""
     azure_responses_client = AzureOpenAIResponsesClient(model_id=None)
 
-    assert azure_responses_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+    assert (
+        azure_responses_client.model_id
+        == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+    )
 
 
 def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -121,7 +140,10 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
         default_headers=default_headers,
     )
 
-    assert azure_responses_client.model_id == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+    assert (
+        azure_responses_client.model_id
+        == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+    )
     assert isinstance(azure_responses_client, SupportsChatGetResponse)
 
     # Assert that the default header we added is present in the client's default headers
@@ -130,7 +152,9 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
         assert azure_responses_client.client.default_headers[key] == value
 
 
-@pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]], indirect=True)
+@pytest.mark.parametrize(
+    "exclude_list", [["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]], indirect=True
+)
 def test_init_with_empty_model_id(azure_openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ValueError):
         AzureOpenAIResponsesClient()
@@ -214,7 +238,9 @@ def test_create_client_from_project_with_endpoint() -> None:
     mock_openai_client = MagicMock(spec=AsyncOpenAI)
     mock_credential = MagicMock()
 
-    with patch("agent_framework.azure._responses_client.AIProjectClient") as MockAIProjectClient:
+    with patch(
+        "agent_framework.azure._responses_client.AIProjectClient"
+    ) as MockAIProjectClient:
         mock_instance = MockAIProjectClient.return_value
         mock_instance.get_openai_client.return_value = mock_openai_client
 
@@ -253,14 +279,19 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
     default_headers = {"X-Unit-Test": "test-guid"}
 
     settings = {
-        "deployment_name": azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        "deployment_name": azure_openai_unit_test_env[
+            "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"
+        ],
         "api_key": azure_openai_unit_test_env["AZURE_OPENAI_API_KEY"],
         "default_headers": default_headers,
     }
 
     azure_responses_client = AzureOpenAIResponsesClient.from_dict(settings)
     dumped_settings = azure_responses_client.to_dict()
-    assert dumped_settings["deployment_name"] == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+    assert (
+        dumped_settings["deployment_name"]
+        == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+    )
     assert "api_key" not in dumped_settings
     # Assert that the default header we added is present in the dumped_settings default headers
     for key, value in default_headers.items():
@@ -323,7 +354,12 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
                             "temperature_c": {"type": "number"},
                             "advisory": {"type": "string"},
                         },
-                        "required": ["location", "conditions", "temperature_c", "advisory"],
+                        "required": [
+                            "location",
+                            "conditions",
+                            "temperature_c",
+                            "advisory",
+                        ],
                         "additionalProperties": False,
                     },
                 },
@@ -388,7 +424,9 @@ async def test_integration_options(
 
         assert response is not None
         assert isinstance(response, ChatResponse)
-        assert response.text is not None, f"No text in response for option '{option_name}'"
+        assert response.text is not None, (
+            f"No text in response for option '{option_name}'"
+        )
         assert len(response.text) > 0, f"Empty response for option '{option_name}'"
 
         # Validate based on option type
@@ -396,7 +434,9 @@ async def test_integration_options(
             if option_name == "tools" or option_name == "tool_choice":
                 # Should have called the weather function
                 text = response.text.lower()
-                assert "sunny" in text or "seattle" in text, f"Tool not invoked for {option_name}"
+                assert "sunny" in text or "seattle" in text, (
+                    f"Tool not invoked for {option_name}"
+                )
             elif option_name == "response_format":
                 if option_value == OutputStruct:
                     # Should have structured output
@@ -405,7 +445,9 @@ async def test_integration_options(
                     assert "seattle" in response.value.location.lower()
                 else:
                     # Runtime JSON schema
-                    assert response.value is None, "No structured output, can't parse any json."
+                    assert response.value is None, (
+                        "No structured output, can't parse any json."
+                    )
                     response_value = json.loads(response.text)
                     assert isinstance(response_value, dict)
                     assert "location" in response_value
@@ -445,11 +487,18 @@ async def test_integration_web_search() -> None:
 
         # Test that the client will use the web search tool with location
         content = {
-            "messages": [Message(role="user", text="What is the current weather? Do not ask for my current location.")],
+            "messages": [
+                Message(
+                    role="user",
+                    text="What is the current weather? Do not ask for my current location.",
+                )
+            ],
             "options": {
                 "tool_choice": "auto",
                 "tools": [
-                    AzureOpenAIResponsesClient.get_web_search_tool(user_location={"country": "US", "city": "Seattle"})
+                    AzureOpenAIResponsesClient.get_web_search_tool(
+                        user_location={"country": "US", "city": "Seattle"}
+                    )
                 ],
             },
             "stream": streaming,
@@ -479,7 +528,9 @@ async def test_integration_client_file_search() -> None:
             ],
             options={
                 "tools": [
-                    AzureOpenAIResponsesClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
+                    AzureOpenAIResponsesClient.get_file_search_tool(
+                        vector_store_ids=[vector_store.vector_store_id]
+                    )
                 ],
                 "tool_choice": "auto",
             },
@@ -488,7 +539,9 @@ async def test_integration_client_file_search() -> None:
         assert "sunny" in response.text.lower()
         assert "75" in response.text
     finally:
-        await delete_vector_store(azure_responses_client, file_id, vector_store.vector_store_id)
+        await delete_vector_store(
+            azure_responses_client, file_id, vector_store.vector_store_id
+        )
 
 
 @pytest.mark.flaky
@@ -510,7 +563,9 @@ async def test_integration_client_file_search_streaming() -> None:
             stream=True,
             options={
                 "tools": [
-                    AzureOpenAIResponsesClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])
+                    AzureOpenAIResponsesClient.get_file_search_tool(
+                        vector_store_ids=[vector_store.vector_store_id]
+                    )
                 ],
                 "tool_choice": "auto",
             },
@@ -520,7 +575,9 @@ async def test_integration_client_file_search_streaming() -> None:
         assert "sunny" in full_response.text.lower()
         assert "75" in full_response.text
     finally:
-        await delete_vector_store(azure_responses_client, file_id, vector_store.vector_store_id)
+        await delete_vector_store(
+            azure_responses_client, file_id, vector_store.vector_store_id
+        )
 
 
 @pytest.mark.flaky
@@ -530,7 +587,11 @@ async def test_integration_client_agent_hosted_mcp_tool() -> None:
     """Integration test for MCP tool with Azure Response Agent using Microsoft Learn MCP."""
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
     response = await client.get_response(
-        messages=[Message(role="user", text="How to create an Azure storage account using az cli?")],
+        messages=[
+            Message(
+                role="user", text="How to create an Azure storage account using az cli?"
+            )
+        ],
         options={
             # this needs to be high enough to handle the full MCP tool response.
             "max_tokens": 5000,
@@ -545,7 +606,9 @@ async def test_integration_client_agent_hosted_mcp_tool() -> None:
     if not response.text:
         pytest.skip("MCP server returned empty response - service-side issue")
     # Should contain Azure-related content since it's asking about Azure CLI
-    assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
+    assert any(
+        term in response.text.lower() for term in ["azure", "storage", "account", "cli"]
+    )
 
 
 @pytest.mark.flaky
@@ -556,14 +619,20 @@ async def test_integration_client_agent_hosted_code_interpreter_tool():
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
     response = await client.get_response(
-        messages=[Message(role="user", text="Calculate the sum of numbers from 1 to 10 using Python code.")],
+        messages=[
+            Message(
+                role="user",
+                text="Calculate the sum of numbers from 1 to 10 using Python code.",
+            )
+        ],
         options={
             "tools": [AzureOpenAIResponsesClient.get_code_interpreter_tool()],
         },
     )
     # Should contain calculation result (sum of 1-10 = 55) or code execution content
     contains_relevant_content = any(
-        term in response.text.lower() for term in ["55", "sum", "code", "python", "calculate", "10"]
+        term in response.text.lower()
+        for term in ["55", "sum", "code", "python", "calculate", "10"]
     )
     assert contains_relevant_content or len(response.text.strip()) > 10
 
@@ -582,7 +651,9 @@ async def test_integration_client_agent_existing_session():
     ) as first_agent:
         # Start a conversation and capture the session
         session = first_agent.create_session()
-        first_response = await first_agent.run("My hobby is photography. Remember this.", session=session, store=True)
+        first_response = await first_agent.run(
+            "My hobby is photography. Remember this.", session=session, store=True
+        )
 
         assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
@@ -597,8 +668,49 @@ async def test_integration_client_agent_existing_session():
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
             # Reuse the preserved session
-            second_response = await second_agent.run("What is my hobby?", session=preserved_session)
+            second_response = await second_agent.run(
+                "What is my hobby?", session=preserved_session
+            )
 
             assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None
             assert "photography" in second_response.text.lower()
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_azure_integration_tests_disabled
+async def test_azure_openai_responses_client_tool_rich_content_image() -> None:
+    """Test that Azure OpenAI Responses client can handle tool results containing images."""
+    image_path = Path(__file__).parent.parent / "assets" / "sample_image.jpg"
+    image_bytes = image_path.read_bytes()
+
+    @tool(approval_mode="never_require")
+    def get_test_image() -> Content:
+        """Return a test image for analysis."""
+        return Content.from_data(data=image_bytes, media_type="image/jpeg")
+
+    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    client.function_invocation_configuration["max_iterations"] = 2
+
+    for streaming in [False, True]:
+        messages = [
+            Message(
+                role="user",
+                text="Call the get_test_image tool and describe what you see.",
+            )
+        ]
+        options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
+
+        if streaming:
+            response = await client.get_response(
+                messages=messages, stream=True, options=options
+            ).get_final_response()
+        else:
+            response = await client.get_response(messages=messages, options=options)
+
+        assert response is not None
+        assert isinstance(response, ChatResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"

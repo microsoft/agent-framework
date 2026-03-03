@@ -574,18 +574,13 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     # Always include content for tool results - API requires it even if empty
                     # Functions returning None should still have a tool result message
                     args["content"] = content.result if content.result is not None else ""
+                    if content.items:
+                        logger.warning(
+                            "OpenAI Chat Completions API does not support rich content (images, audio) in tool results. "
+                            "Rich content items will be omitted. Use the Responses API client for rich tool results."
+                        )
                     if args:
                         all_messages.append(args)
-                    # Chat Completions API only supports string content in tool messages.
-                    # Forward rich items as a follow-up user message (same as Responses client).
-                    if content.items:
-                        rich_parts = [self._prepare_content_for_openai(item) for item in content.items]
-                        rich_parts = [p for p in rich_parts if p]
-                        if rich_parts:
-                            all_messages.append({
-                                "role": "user",
-                                "content": rich_parts,
-                            })
                     continue
                 case "text_reasoning" if (protected_data := content.protected_data) is not None:
                     all_messages[-1]["reasoning_details"] = json.loads(protected_data)

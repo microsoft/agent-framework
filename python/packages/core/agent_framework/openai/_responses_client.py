@@ -931,19 +931,6 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     new_args.update(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore[arg-type]
                     if new_args:
                         all_messages.append(new_args)
-                    # Forward rich content items (images, audio, files) as a user message
-                    if content.items:
-                        rich_parts = [
-                            self._prepare_content_for_openai("user", item, call_id_to_id)  # type: ignore[arg-type]
-                            for item in content.items
-                        ]
-                        rich_parts = [p for p in rich_parts if p]
-                        if rich_parts:
-                            all_messages.append({
-                                "type": "message",
-                                "role": "user",
-                                "content": rich_parts,
-                            })
                 case "function_call":
                     function_call = self._prepare_content_for_openai(message.role, content, call_id_to_id)  # type: ignore[arg-type]
                     if function_call:
@@ -1058,10 +1045,21 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 }
             case "function_result":
                 # call_id for the result needs to be the same as the call_id for the function call
+                output: str | list[dict[str, Any]] = content.result if content.result is not None else ""
+                if content.items:
+                    output_parts: list[dict[str, Any]] = []
+                    if content.result:
+                        output_parts.append({"type": "input_text", "text": content.result})
+                    for item in content.items:
+                        part = self._prepare_content_for_openai("user", item, call_id_to_id)  # type: ignore[arg-type]
+                        if part:
+                            output_parts.append(part)
+                    if output_parts:
+                        output = output_parts
                 args: dict[str, Any] = {
                     "call_id": content.call_id,
                     "type": "function_call_output",
-                    "output": content.result if content.result is not None else "",
+                    "output": output,
                 }
                 return args
             case "function_approval_request":
