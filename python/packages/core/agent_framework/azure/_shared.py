@@ -319,11 +319,7 @@ def _normalize_hosted_ids(
     if value is None:
         return None
 
-    items: list[str | Content]
-    if isinstance(value, (str, Content)):
-        items = [value]
-    else:
-        items = list(value)
+    items: list[str | Content] = [value] if isinstance(value, (str, Content)) else list(value)
 
     normalized_ids: list[str] = []
     for item in items:

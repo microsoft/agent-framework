@@ -476,11 +476,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         if value is None:
             return None
 
-        items: list[str | Content]
-        if isinstance(value, (str, Content)):
-            items = [value]
-        else:
-            items = list(value)
+        items: list[str | Content] = [value] if isinstance(value, (str, Content)) else list(value)
 
         normalized_ids: list[str] = []
         for item in items:
@@ -538,8 +534,9 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 # Use with agent
                 agent = ChatAgent(client, tools=[tool])
         """
-        container_config: CodeInterpreterContainerCodeInterpreterToolAuto = (
-            dict(container) if isinstance(container, dict) else {"type": "auto"}
+        container_config = cast(
+            "CodeInterpreterContainerCodeInterpreterToolAuto",
+            dict(container) if isinstance(container, dict) else {"type": "auto"},
         )
 
         if file_ids is None and isinstance(container_config, dict):

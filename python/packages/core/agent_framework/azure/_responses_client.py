@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic
 from urllib.parse import urljoin, urlparse
 
@@ -255,19 +255,23 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
 
     def _attach_project_tool_methods(self) -> None:
         """Attach project-mode hosted tool methods dynamically."""
-        self.get_code_interpreter_tool = create_code_interpreter_tool
-        self.get_file_search_tool = create_file_search_tool
-        self.get_web_search_tool = create_web_search_tool
-        self.get_bing_tool = create_bing_tool
-        self.get_image_generation_tool = create_image_generation_tool
-        self.get_mcp_tool = create_mcp_tool
-        self.get_fabric_data_agent_tool = create_fabric_data_agent_tool
-        self.get_sharepoint_grounding_tool = create_sharepoint_grounding_tool
-        self.get_azure_ai_search_tool = create_azure_ai_search_tool
-        self.get_browser_automation_tool = create_browser_automation_tool
-        self.get_openapi_tool = create_openapi_tool
-        self.get_a2a_tool = create_a2a_tool
-        self.get_memory_search_tool = create_memory_search_tool
+        tool_methods: dict[str, Callable[..., Any]] = {
+            "get_code_interpreter_tool": create_code_interpreter_tool,
+            "get_file_search_tool": create_file_search_tool,
+            "get_web_search_tool": create_web_search_tool,
+            "get_bing_tool": create_bing_tool,
+            "get_image_generation_tool": create_image_generation_tool,
+            "get_mcp_tool": create_mcp_tool,
+            "get_fabric_data_agent_tool": create_fabric_data_agent_tool,
+            "get_sharepoint_grounding_tool": create_sharepoint_grounding_tool,
+            "get_azure_ai_search_tool": create_azure_ai_search_tool,
+            "get_browser_automation_tool": create_browser_automation_tool,
+            "get_openapi_tool": create_openapi_tool,
+            "get_a2a_tool": create_a2a_tool,
+            "get_memory_search_tool": create_memory_search_tool,
+        }
+        for method_name, method in tool_methods.items():
+            setattr(self, method_name, method)
 
     @staticmethod
     def _create_client_from_project(
