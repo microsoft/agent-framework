@@ -146,7 +146,7 @@ async def main() -> None:
     # Use the chat client directly
     print("Using chat client directly:")
     direct_response = await echo_client.get_response(
-        "Hello, custom chat client!",
+        [Message(role="user", contents=[Content.from_text("Hello, custom chat client!")])],
         options={
             "uppercase": True,
             "suffix": "(CUSTOM OPTIONS)",
