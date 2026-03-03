@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -992,6 +993,42 @@ class TestSkillsProviderCodeSkill:
         provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("prog-skill", "nonexistent")
         assert result.startswith("Error:")
+
+    async def test_read_callable_resource_sync_with_kwargs(self) -> None:
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+
+        @skill.resource
+        def get_user_config(**kwargs: Any) -> str:
+            user_id = kwargs.get("user_id", "unknown")
+            return f"config for {user_id}"
+
+        provider = SkillsProvider(skills=[skill])
+        result = await provider._read_skill_resource("prog-skill", "get_user_config", user_id="user_123")
+        assert result == "config for user_123"
+
+    async def test_read_callable_resource_async_with_kwargs(self) -> None:
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+
+        @skill.resource
+        async def get_user_data(**kwargs: Any) -> str:
+            token = kwargs.get("auth_token", "none")
+            return f"data with token={token}"
+
+        provider = SkillsProvider(skills=[skill])
+        result = await provider._read_skill_resource("prog-skill", "get_user_data", auth_token="abc")
+        assert result == "data with token=abc"
+
+    async def test_read_callable_resource_without_kwargs_ignores_extra_args(self) -> None:
+        """Resource functions without **kwargs should still work when kwargs are passed."""
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+
+        @skill.resource
+        def static_resource() -> str:
+            return "static content"
+
+        provider = SkillsProvider(skills=[skill])
+        result = await provider._read_skill_resource("prog-skill", "static_resource", user_id="ignored")
+        assert result == "static content"
 
     async def test_before_run_injects_code_skills(self) -> None:
         skill = Skill(name="prog-skill", description="A code-defined skill.", content="Body")

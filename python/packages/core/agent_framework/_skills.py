@@ -510,7 +510,7 @@ class SkillsProvider(BaseContextProvider):
 
         return content
 
-    async def _read_skill_resource(self, skill_name: str, resource_name: str) -> str:
+    async def _read_skill_resource(self, skill_name: str, resource_name: str, **kwargs: Any) -> str:
         """Read a named resource from a skill.
 
         Resolves the resource by case-insensitive name lookup.  Static
@@ -520,6 +520,9 @@ class SkillsProvider(BaseContextProvider):
         Args:
             skill_name: The name of the owning skill.
             resource_name: The resource name to look up (case-insensitive).
+            **kwargs: Runtime keyword arguments forwarded to resource functions
+                that accept ``**kwargs`` (e.g. arguments passed via
+                ``agent.run(user_id="123")``).
 
         Returns:
             The resource content string, or a user-facing error message on
@@ -547,11 +550,19 @@ class SkillsProvider(BaseContextProvider):
             return resource.content
 
         if resource.function is not None:
+            # Check if the resource function accepts **kwargs
+            forward_kwargs = False
+            sig = inspect.signature(resource.function)
+            for param in sig.parameters.values():
+                if param.kind == inspect.Parameter.VAR_KEYWORD:
+                    forward_kwargs = True
+                    break
+
             try:
                 if inspect.iscoroutinefunction(resource.function):
-                    result = await resource.function()
+                    result = await resource.function(**kwargs) if forward_kwargs else await resource.function()
                 else:
-                    result = resource.function()
+                    result = resource.function(**kwargs) if forward_kwargs else resource.function()
                 return str(result)
             except Exception as exc:
                 logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
