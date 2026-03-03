@@ -41,8 +41,8 @@ For the Foundry project sample (`azure_responses_client_with_foundry.py`), also 
 - `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
 
 For the Foundry tools sample (`azure_responses_client_with_foundry_tools.py`), set:
-- `FOUNDRY_PROJECT_ENDPOINT` (or `AZURE_AI_PROJECT_ENDPOINT`)
-- `FOUNDRY_MODEL_DEPLOYMENT_NAME` (or `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`)
+- `AZURE_AI_PROJECT_ENDPOINT`
+- `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`
 - Tool-specific connection variables as needed (for example `FABRIC_PROJECT_CONNECTION_ID`, `BING_PROJECT_CONNECTION_ID`).
 
 Optionally, you can set:
