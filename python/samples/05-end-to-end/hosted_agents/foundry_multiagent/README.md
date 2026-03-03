@@ -62,24 +62,24 @@ Before running this sample, ensure you have:
 
 Set the following environment variables:
 
-- `PROJECT_ENDPOINT` - Your Microsoft Foundry project endpoint URL (required)
-- `MODEL_DEPLOYMENT_NAME` - The deployment name for your chat model (defaults to `gpt-4.1-mini`)
+- `AZURE_AI_PROJECT_ENDPOINT` - Your Microsoft Foundry project endpoint URL (required)
+- `MODEL_DEPLOYMENT_NAME` - The deployment name for your chat model (defaults to `gpt-4o-mini`)
 
 This sample loads environment variables from a local `.env` file if present.
 
 Create a `.env` file in this directory with the following content:
 
 ```
-PROJECT_ENDPOINT=https://<your-resource>.services.ai.azure.com/api/projects/<your-project>
-MODEL_DEPLOYMENT_NAME=gpt-4.1-mini
+AZURE_AI_PROJECT_ENDPOINT=https://<your-resource>.services.ai.azure.com/api/projects/<your-project>
+MODEL_DEPLOYMENT_NAME=gpt-4o-mini
 ```
 
 Or set them via PowerShell:
 
 ```powershell
 # Replace with your actual values
-$env:PROJECT_ENDPOINT="https://<your-resource>.services.ai.azure.com/api/projects/<your-project>"
-$env:MODEL_DEPLOYMENT_NAME="gpt-4.1-mini"
+$env:AZURE_AI_PROJECT_ENDPOINT="https://<your-resource>.services.ai.azure.com/api/projects/<your-project>"
+$env:MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
 ```
 
 ### Setting Up a Virtual Environment

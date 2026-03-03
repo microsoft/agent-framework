@@ -21,8 +21,8 @@ template:
     - protocol: responses
       version: v1
   environment_variables:
-    - name: PROJECT_ENDPOINT
-      value: ${PROJECT_ENDPOINT}
+    - name: AZURE_AI_PROJECT_ENDPOINT
+      value: ${AZURE_AI_PROJECT_ENDPOINT}
     - name: MODEL_DEPLOYMENT_NAME
       value: gpt-4o-mini
 resources:

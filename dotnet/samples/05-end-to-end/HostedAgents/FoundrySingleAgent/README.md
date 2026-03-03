@@ -58,21 +58,21 @@ Before running this sample, ensure you have:
 Set the following environment variables (matching `agent.yaml`):
 
 - `AZURE_AI_PROJECT_ENDPOINT` - Your Azure AI Foundry project endpoint URL (required)
-- `MODEL_DEPLOYMENT_NAME` - The deployment name for your chat model (defaults to `gpt-4.1-mini`)
+- `MODEL_DEPLOYMENT_NAME` - The deployment name for your chat model (defaults to `gpt-4o-mini`)
 
 **PowerShell:**
 
 ```powershell
 # Replace with your actual values
 $env:AZURE_AI_PROJECT_ENDPOINT="https://<your-resource>.services.ai.azure.com/api/projects/<your-project>"
-$env:MODEL_DEPLOYMENT_NAME="gpt-4.1-mini"
+$env:MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
 ```
 
 **Bash:**
 
 ```bash
 export AZURE_AI_PROJECT_ENDPOINT="https://<your-resource>.services.ai.azure.com/api/projects/<your-project>"
-export MODEL_DEPLOYMENT_NAME="gpt-4.1-mini"
+export MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
 ```
 
 ### Running the Sample

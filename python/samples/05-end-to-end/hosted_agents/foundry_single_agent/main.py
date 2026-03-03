@@ -19,10 +19,10 @@ load_dotenv(override=True)
 # Configure these for your Foundry project
 # Read the explicit variables present in the .env file
 PROJECT_ENDPOINT = os.getenv(
-    "PROJECT_ENDPOINT"
+    "AZURE_AI_PROJECT_ENDPOINT"
 )  # e.g., "https://<project>.services.ai.azure.com"
 MODEL_DEPLOYMENT_NAME = os.getenv(
-    "MODEL_DEPLOYMENT_NAME", "gpt-4.1-mini"
+    "MODEL_DEPLOYMENT_NAME", "gpt-4o-mini"
 )  # Your model deployment name e.g., "gpt-4.1-mini"
 
 
