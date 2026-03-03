@@ -408,34 +408,17 @@ internal sealed partial class FileAgentSkillLoader
     /// </summary>
     private static string SanitizePathForLog(string path)
     {
-        foreach (char c in path)
+        char[]? chars = null;
+        for (int i = 0; i < path.Length; i++)
         {
-            if (char.IsControl(c))
+            if (char.IsControl(path[i]))
             {
-#if NET
-                return string.Create(path.Length, path, static (span, source) =>
-                {
-                    for (int i = 0; i < source.Length; i++)
-                    {
-                        span[i] = char.IsControl(source[i]) ? '?' : source[i];
-                    }
-                });
-#else
-                char[] chars = path.ToCharArray();
-                for (int i = 0; i < chars.Length; i++)
-                {
-                    if (char.IsControl(chars[i]))
-                    {
-                        chars[i] = '?';
-                    }
-                }
-
-                return new string(chars);
-#endif
+                chars ??= path.ToCharArray();
+                chars[i] = '?';
             }
         }
 
-        return path;
+        return chars is null ? path : new string(chars);
     }
 
     private static void ValidateExtensions(IEnumerable<string>? extensions)
