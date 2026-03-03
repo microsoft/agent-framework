@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics;
 using Microsoft.Agents.AI.Workflows;
@@ -12,7 +12,6 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows;
 public sealed class DurableWorkflowOptions
 {
     private readonly Dictionary<string, Workflow> _workflows = new(StringComparer.OrdinalIgnoreCase);
-    private readonly DurableOptions? _parentOptions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DurableWorkflowOptions"/> class.
@@ -20,8 +19,13 @@ public sealed class DurableWorkflowOptions
     /// <param name="parentOptions">Optional parent options container for accessing related configuration.</param>
     internal DurableWorkflowOptions(DurableOptions? parentOptions = null)
     {
-        this._parentOptions = parentOptions;
+        this.ParentOptions = parentOptions;
     }
+
+    /// <summary>
+    /// Gets the parent <see cref="DurableOptions"/> container, if available.
+    /// </summary>
+    internal DurableOptions? ParentOptions { get; }
 
     /// <summary>
     /// Gets the collection of workflows available in the current context, keyed by their unique names.
@@ -77,7 +81,7 @@ public sealed class DurableWorkflowOptions
     /// </summary>
     private void RegisterWorkflowExecutors(Workflow workflow)
     {
-        DurableAgentsOptions? agentOptions = this._parentOptions?.Agents;
+        DurableAgentsOptions? agentOptions = this.ParentOptions?.Agents;
 
         foreach ((string executorId, ExecutorBinding binding) in workflow.ReflectExecutors())
         {

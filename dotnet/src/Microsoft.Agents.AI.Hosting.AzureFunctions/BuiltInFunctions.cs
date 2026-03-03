@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Net;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.DurableTask.Workflows;
@@ -26,6 +27,8 @@ internal static class BuiltInFunctions
     internal static readonly string RunWorkflowOrchestrationHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowOrchestrationHttpTriggerAsync)}";
     internal static readonly string RunWorkflowOrchestrationFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowOrchestration)}";
     internal static readonly string InvokeWorkflowActivityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeWorkflowActivityAsync)}";
+    internal static readonly string GetWorkflowStatusHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(GetWorkflowStatusAsync)}";
+    internal static readonly string RespondToWorkflowHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RespondToWorkflowAsync)}";
 
 #pragma warning disable IL3000 // Avoid accessing Assembly file path when publishing as a single file - Azure Functions does not use single-file publishing
     internal static readonly string ScriptFile = Path.GetFileName(typeof(BuiltInFunctions).Assembly.Location);
@@ -60,6 +63,122 @@ internal static class BuiltInFunctions
 
         HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
         await response.WriteStringAsync($"Workflow orchestration started for {workflowName}. Orchestration runId: {resolvedInstanceId}");
+        return response;
+    }
+
+    /// <summary>
+    /// Returns the workflow status including any pending HITL requests.
+    /// The run ID is extracted from the route parameter <c>{runId}</c>.
+    /// </summary>
+    public static async Task<HttpResponseData> GetWorkflowStatusAsync(
+        [HttpTrigger] HttpRequestData req,
+        [DurableClient] DurableTaskClient client,
+        FunctionContext context)
+    {
+        string? runId = context.BindingContext.BindingData.TryGetValue("runId", out object? value) ? value?.ToString() : null;
+        if (string.IsNullOrEmpty(runId))
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest, "Run ID is required.");
+        }
+
+        OrchestrationMetadata? metadata = await client.GetInstanceAsync(runId, getInputsAndOutputs: true);
+        if (metadata is null)
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.NotFound, $"Workflow run '{runId}' not found.");
+        }
+
+        // Parse HITL inputs the workflow is waiting for from the durable workflow status
+        List<PendingRequestPortStatus>? waitingForInput = null;
+        if (DurableWorkflowLiveStatus.TryParse(metadata.SerializedCustomStatus, out DurableWorkflowLiveStatus liveStatus)
+            && liveStatus.PendingEvents.Count > 0)
+        {
+            waitingForInput = liveStatus.PendingEvents;
+        }
+
+        HttpResponseData response = req.CreateResponse(HttpStatusCode.OK);
+        await response.WriteAsJsonAsync(new
+        {
+            runId,
+            status = metadata.RuntimeStatus.ToString(),
+            waitingForInput = waitingForInput?.Select(p => new { eventName = p.EventName, input = JsonDocument.Parse(p.Input).RootElement })
+        });
+        return response;
+    }
+
+    /// <summary>
+    /// Sends a response to a pending RequestPort, resuming the workflow.
+    /// Expects a JSON body: <c>{ "eventName": "...", "response": { ... } }</c>.
+    /// </summary>
+    public static async Task<HttpResponseData> RespondToWorkflowAsync(
+        [HttpTrigger] HttpRequestData req,
+        [DurableClient] DurableTaskClient client,
+        FunctionContext context)
+    {
+        string? runId = context.BindingContext.BindingData.TryGetValue("runId", out object? value) ? value?.ToString() : null;
+        if (string.IsNullOrEmpty(runId))
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest, "Run ID is required.");
+        }
+
+        WorkflowRespondRequest? request;
+        try
+        {
+            request = await req.ReadFromJsonAsync<WorkflowRespondRequest>(context.CancellationToken);
+        }
+        catch (JsonException)
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest, "Request body is not valid JSON.");
+        }
+
+        if (request is null || string.IsNullOrEmpty(request.EventName)
+            || request.Response.ValueKind == JsonValueKind.Undefined)
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest, "Body must contain a non-empty 'eventName' and a 'response' property.");
+        }
+
+        // Verify the orchestration exists and is in a valid state
+        OrchestrationMetadata? metadata = await client.GetInstanceAsync(runId, getInputsAndOutputs: true);
+        if (metadata is null)
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.NotFound, $"Workflow run '{runId}' not found.");
+        }
+
+        if (metadata.RuntimeStatus is OrchestrationRuntimeStatus.Completed
+            or OrchestrationRuntimeStatus.Failed
+            or OrchestrationRuntimeStatus.Terminated)
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest,
+                $"Workflow run '{runId}' is in terminal state '{metadata.RuntimeStatus}'.");
+        }
+
+        // Verify the workflow is waiting for the specified event.
+        // If status can't be parsed (e.g., not yet set during early execution), allow the event through —
+        // Durable Task safely queues it until the orchestration reaches WaitForExternalEvent.
+        bool eventValidated = false;
+        if (DurableWorkflowLiveStatus.TryParse(metadata.SerializedCustomStatus, out DurableWorkflowLiveStatus liveStatus))
+        {
+            if (!liveStatus.PendingEvents.Exists(p => string.Equals(p.EventName, request.EventName, StringComparison.Ordinal)))
+            {
+                return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest,
+                    $"Workflow is not waiting for event '{request.EventName}'.");
+            }
+
+            eventValidated = true;
+        }
+
+        // Raise the external event to unblock the orchestration's WaitForExternalEvent call
+        await client.RaiseEventAsync(runId, request.EventName, request.Response.GetRawText());
+
+        HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
+        await response.WriteAsJsonAsync(new
+        {
+            message = eventValidated
+                ? "Response sent to workflow."
+                : "Response sent to workflow. Event could not be validated against pending requests.",
+            runId,
+            eventName = request.EventName,
+            validated = eventValidated,
+        });
         return response;
     }
 
@@ -412,6 +531,15 @@ internal static class BuiltInFunctions
     private sealed record AgentRunAcceptedResponse(
         [property: JsonPropertyName("status")] int Status,
         [property: JsonPropertyName("thread_id")] string ThreadId);
+
+    /// <summary>
+    /// Represents a request to respond to a pending RequestPort in a workflow.
+    /// </summary>
+    /// <param name="EventName">The name of the event to raise (the RequestPort ID).</param>
+    /// <param name="Response">The response payload to send to the workflow.</param>
+    private sealed record WorkflowRespondRequest(
+        [property: JsonPropertyName("eventName")] string? EventName,
+        [property: JsonPropertyName("response")] JsonElement Response);
 
     /// <summary>
     /// A service provider that combines the original service provider with an additional DurableTaskClient instance.

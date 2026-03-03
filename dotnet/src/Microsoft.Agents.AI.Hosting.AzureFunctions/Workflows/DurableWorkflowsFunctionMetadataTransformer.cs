@@ -25,18 +25,20 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions;
 internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMetadataTransformer
 {
     private readonly ILogger<DurableWorkflowsFunctionMetadataTransformer> _logger;
-    private readonly DurableWorkflowOptions _options;
+    private readonly FunctionsDurableOptions _options;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DurableWorkflowsFunctionMetadataTransformer"/> class.
     /// </summary>
     /// <param name="logger">The logger instance for diagnostic output.</param>
     /// <param name="durableOptions">The durable options containing workflow configurations.</param>
-    public DurableWorkflowsFunctionMetadataTransformer(ILogger<DurableWorkflowsFunctionMetadataTransformer> logger, DurableOptions durableOptions)
+    public DurableWorkflowsFunctionMetadataTransformer(
+        ILogger<DurableWorkflowsFunctionMetadataTransformer> logger,
+        FunctionsDurableOptions durableOptions)
     {
         this._logger = logger ?? throw new ArgumentNullException(nameof(logger));
         ArgumentNullException.ThrowIfNull(durableOptions);
-        this._options = durableOptions.Workflows;
+        this._options = durableOptions;
     }
 
     /// <inheritdoc />
@@ -51,7 +53,8 @@ internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMet
         // Track registered function names to avoid duplicates when workflows share executors.
         HashSet<string> registeredFunctions = [];
 
-        foreach (var workflow in this._options.Workflows)
+        DurableWorkflowOptions workflowOptions = this._options.Workflows;
+        foreach (var workflow in workflowOptions.Workflows)
         {
             string httpFunctionName = $"{BuiltInFunctions.HttpPrefix}{workflow.Key}";
 
@@ -80,12 +83,42 @@ internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMet
                     BuiltInFunctions.RunWorkflowOrchestrationHttpFunctionEntryPoint));
             }
 
+            // Register a status endpoint if opted in via AddWorkflow(exposeStatusEndpoint: true).
+            if (this._options.IsStatusEndpointEnabled(workflow.Key))
+            {
+                string statusFunctionName = $"{BuiltInFunctions.HttpPrefix}{workflow.Key}-status";
+                if (registeredFunctions.Add(statusFunctionName))
+                {
+                    this._logger.LogRegisteringWorkflowTrigger(workflow.Key, statusFunctionName, "http-status");
+                    original.Add(FunctionMetadataFactory.CreateHttpTrigger(
+                        $"{workflow.Key}-status",
+                        $"workflows/{workflow.Key}/status/{{runId}}",
+                        BuiltInFunctions.GetWorkflowStatusHttpFunctionEntryPoint,
+                        methods: "\"get\""));
+                }
+            }
+
+            // Register a respond endpoint when the workflow contains RequestPort nodes.
+            bool hasRequestPorts = workflow.Value.ReflectExecutors().Values.Any(b => b is RequestPortBinding);
+            if (hasRequestPorts)
+            {
+                string respondFunctionName = $"{BuiltInFunctions.HttpPrefix}{workflow.Key}-respond";
+                if (registeredFunctions.Add(respondFunctionName))
+                {
+                    this._logger.LogRegisteringWorkflowTrigger(workflow.Key, respondFunctionName, "http-respond");
+                    original.Add(FunctionMetadataFactory.CreateHttpTrigger(
+                        $"{workflow.Key}-respond",
+                        $"workflows/{workflow.Key}/respond/{{runId}}",
+                        BuiltInFunctions.RespondToWorkflowHttpFunctionEntryPoint));
+                }
+            }
+
             // Register activity or entity functions for each executor in the workflow.
             // ReflectExecutors() returns all executors across the graph; no need to manually traverse edges.
             foreach (KeyValuePair<string, ExecutorBinding> entry in workflow.Value.ReflectExecutors())
             {
-                // Sub-workflow bindings are handled as separate orchestrations, not activities.
-                if (entry.Value is SubworkflowBinding)
+                // Sub-workflow and RequestPort bindings use specialized dispatch, not activities.
+                if (entry.Value is SubworkflowBinding or RequestPortBinding)
                 {
                     continue;
                 }

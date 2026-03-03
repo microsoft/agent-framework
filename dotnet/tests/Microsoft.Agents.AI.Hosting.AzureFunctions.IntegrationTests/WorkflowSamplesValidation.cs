@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics;
 using System.Reflection;
@@ -114,6 +114,115 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
                 },
                 message: "OrderStatus workflow completed",
                 timeout: s_orchestrationTimeout);
+        });
+    }
+
+    [Fact]
+    public async Task HITLWorkflowSampleValidationAsync()
+    {
+        string samplePath = Path.Combine(s_samplesPath, "03_WorkflowHITL");
+        await this.RunSampleTestAsync(samplePath, requiresOpenAI: false, async (logs) =>
+        {
+            // Use a unique run ID to avoid conflicts with previous test runs
+            string runId = $"hitl-test-{Guid.NewGuid():N}";
+
+            // Step 1: Start the expense reimbursement workflow
+            Uri runUri = new($"http://localhost:{AzureFunctionsPort}/api/workflows/ExpenseReimbursement/run?runId={runId}");
+            this._outputHelper.WriteLine($"Starting ExpenseReimbursement workflow via POST request to {runUri}...");
+
+            using HttpContent runContent = new StringContent("EXP-2025-001", Encoding.UTF8, "text/plain");
+            using HttpResponseMessage runResponse = await s_sharedHttpClient.PostAsync(runUri, runContent);
+
+            Assert.True(runResponse.IsSuccessStatusCode, $"Run request failed with status: {runResponse.StatusCode}");
+            string runResponseText = await runResponse.Content.ReadAsStringAsync();
+            Assert.Contains("ExpenseReimbursement", runResponseText);
+            this._outputHelper.WriteLine($"Run response: {runResponseText}");
+
+            // Step 2: Wait for the workflow to pause at the ManagerApproval RequestPort
+            await this.WaitForConditionAsync(
+                condition: () =>
+                {
+                    lock (logs)
+                    {
+                        bool exists = logs.Any(log => log.Message.Contains("Workflow waiting for external input at RequestPort 'ManagerApproval'"));
+                        return Task.FromResult(exists);
+                    }
+                },
+                message: "Workflow paused at ManagerApproval RequestPort",
+                timeout: s_orchestrationTimeout);
+
+            // Step 3: Send approval response to resume the workflow
+            Uri respondUri = new($"http://localhost:{AzureFunctionsPort}/api/workflows/ExpenseReimbursement/respond/{runId}");
+            this._outputHelper.WriteLine($"Sending approval response via POST request to {respondUri}...");
+
+            using HttpContent respondContent = new StringContent(
+                """{"eventName": "ManagerApproval", "response": {"Approved": true, "Comments": "Approved by test."}}""",
+                Encoding.UTF8, "application/json");
+            using HttpResponseMessage respondResponse = await s_sharedHttpClient.PostAsync(respondUri, respondContent);
+
+            Assert.True(respondResponse.IsSuccessStatusCode, $"Respond request failed with status: {respondResponse.StatusCode}");
+            string respondResponseText = await respondResponse.Content.ReadAsStringAsync();
+            Assert.Contains("Response sent to workflow", respondResponseText);
+            this._outputHelper.WriteLine($"Respond response: {respondResponseText}");
+
+            // Step 4: Wait for the workflow to pause at the parallel BudgetApproval and ComplianceApproval RequestPorts
+            await this.WaitForConditionAsync(
+                condition: () =>
+                {
+                    lock (logs)
+                    {
+                        bool exists = logs.Any(log => log.Message.Contains("Workflow waiting for external input at RequestPort 'BudgetApproval'"));
+                        return Task.FromResult(exists);
+                    }
+                },
+                message: "Workflow paused at BudgetApproval RequestPort",
+                timeout: s_orchestrationTimeout);
+
+            // Step 5a: Send budget approval response
+            this._outputHelper.WriteLine("Sending BudgetApproval response...");
+
+            using HttpContent budgetContent = new StringContent(
+                """{"eventName": "BudgetApproval", "response": {"Approved": true, "Comments": "Budget approved by test."}}""",
+                Encoding.UTF8, "application/json");
+            using HttpResponseMessage budgetResponse = await s_sharedHttpClient.PostAsync(respondUri, budgetContent);
+
+            Assert.True(budgetResponse.IsSuccessStatusCode, $"BudgetApproval request failed with status: {budgetResponse.StatusCode}");
+            this._outputHelper.WriteLine($"BudgetApproval response: {await budgetResponse.Content.ReadAsStringAsync()}");
+
+            // Step 5b: Send compliance approval response
+            this._outputHelper.WriteLine("Sending ComplianceApproval response...");
+
+            using HttpContent complianceContent = new StringContent(
+                """{"eventName": "ComplianceApproval", "response": {"Approved": true, "Comments": "Compliance approved by test."}}""",
+                Encoding.UTF8, "application/json");
+            using HttpResponseMessage complianceResponse = await s_sharedHttpClient.PostAsync(respondUri, complianceContent);
+
+            Assert.True(complianceResponse.IsSuccessStatusCode, $"ComplianceApproval request failed with status: {complianceResponse.StatusCode}");
+            this._outputHelper.WriteLine($"ComplianceApproval response: {await complianceResponse.Content.ReadAsStringAsync()}");
+
+            // Step 6: Wait for the workflow to complete
+            await this.WaitForConditionAsync(
+                condition: () =>
+                {
+                    lock (logs)
+                    {
+                        bool exists = logs.Any(log => log.Message.Contains("Workflow completed"));
+                        return Task.FromResult(exists);
+                    }
+                },
+                message: "HITL workflow completed",
+                timeout: s_orchestrationTimeout);
+
+            // Verify executor activities ran
+            lock (logs)
+            {
+                Assert.True(logs.Any(log => log.Message.Contains("Received external event for RequestPort 'ManagerApproval'")),
+                    "ManagerApproval external event receipt not found in logs.");
+                Assert.True(logs.Any(log => log.Message.Contains("Received external event for RequestPort 'BudgetApproval'")),
+                    "BudgetApproval external event receipt not found in logs.");
+                Assert.True(logs.Any(log => log.Message.Contains("Received external event for RequestPort 'ComplianceApproval'")),
+                    "ComplianceApproval external event receipt not found in logs.");
+            }
         });
     }
 

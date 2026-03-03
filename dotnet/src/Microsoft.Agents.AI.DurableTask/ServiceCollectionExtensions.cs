@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Agents.AI.Workflows;
@@ -234,11 +234,12 @@ public static class ServiceCollectionExtensions
         HashSet<string> registeredActivities = [];
         HashSet<string> registeredOrchestrations = [];
 
-        foreach (Workflow workflow in durableOptions.Workflows.Workflows.Values.ToList())
+        DurableWorkflowOptions workflowOptions = durableOptions.Workflows;
+        foreach (Workflow workflow in workflowOptions.Workflows.Values.ToList())
         {
             BuildWorkflowRegistrationRecursive(
                 workflow,
-                durableOptions.Workflows,
+                workflowOptions,
                 registrations,
                 registeredActivities,
                 registeredOrchestrations);
@@ -329,12 +330,14 @@ public static class ServiceCollectionExtensions
 
     /// <summary>
     /// Returns <see langword="true"/> for bindings that should be registered as Durable Task activities.
-    /// <see cref="AIAgentBinding"/> (Durable Entities) and <see cref="SubworkflowBinding"/> (sub-orchestrations)
-    /// use specialized dispatch and are excluded.
+    /// <see cref="AIAgentBinding"/> (Durable Entities), <see cref="SubworkflowBinding"/> (sub-orchestrations),
+    /// and <see cref="RequestPortBinding"/> (human-in-the-loop via external events) use specialized dispatch
+    /// and are excluded.
     /// </summary>
     private static bool IsActivityBinding(ExecutorBinding binding)
         => binding is not AIAgentBinding
-            and not SubworkflowBinding;
+            and not SubworkflowBinding
+            and not RequestPortBinding;
 
     private static async Task<DurableWorkflowResult> RunWorkflowOrchestrationAsync(
         TaskOrchestrationContext context,

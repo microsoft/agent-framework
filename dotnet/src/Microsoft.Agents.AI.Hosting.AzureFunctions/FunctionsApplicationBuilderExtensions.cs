@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.DurableTask.Workflows;
@@ -62,10 +62,10 @@ public static class FunctionsApplicationBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(configure);
 
-        builder.Services.ConfigureDurableOptions(configure);
+        // Ensure FunctionsDurableOptions is registered BEFORE the core extension creates a plain DurableOptions
+        FunctionsDurableOptions sharedOptions = GetOrCreateSharedOptions(builder.Services);
 
-        // Read the shared options to check if workflows were added
-        DurableOptions sharedOptions = GetOrCreateSharedOptions(builder.Services);
+        builder.Services.ConfigureDurableOptions(configure);
 
         if (sharedOptions.Workflows.Workflows.Count > 0)
         {
@@ -105,7 +105,9 @@ public static class FunctionsApplicationBuilderExtensions
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentEntityFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrchestrationHttpFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrchestrationFunctionEntryPoint, StringComparison.Ordinal) ||
-            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint, StringComparison.Ordinal)
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint, StringComparison.Ordinal) ||
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.GetWorkflowStatusHttpFunctionEntryPoint, StringComparison.Ordinal) ||
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RespondToWorkflowHttpFunctionEntryPoint, StringComparison.Ordinal)
         );
         builder.Services.TryAddSingleton<BuiltInFunctionExecutor>();
     }
@@ -113,17 +115,18 @@ public static class FunctionsApplicationBuilderExtensions
     /// <summary>
     /// Gets or creates a shared <see cref="DurableOptions"/> instance from the service collection.
     /// </summary>
-    private static DurableOptions GetOrCreateSharedOptions(IServiceCollection services)
+    private static FunctionsDurableOptions GetOrCreateSharedOptions(IServiceCollection services)
     {
         ServiceDescriptor? existingDescriptor = services.FirstOrDefault(
             d => d.ServiceType == typeof(DurableOptions) && d.ImplementationInstance is not null);
 
-        if (existingDescriptor?.ImplementationInstance is DurableOptions existing)
+        if (existingDescriptor?.ImplementationInstance is FunctionsDurableOptions existing)
         {
             return existing;
         }
 
-        DurableOptions options = new();
+        FunctionsDurableOptions options = new();
+        services.AddSingleton<DurableOptions>(options);
         services.AddSingleton(options);
         return options;
     }

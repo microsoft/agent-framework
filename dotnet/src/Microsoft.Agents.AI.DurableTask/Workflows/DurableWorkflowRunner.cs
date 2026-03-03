@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // ConfigureAwait Usage in Orchestration Code:
 // This file uses ConfigureAwait(true) because it runs within orchestration context.
@@ -173,7 +173,7 @@ internal sealed class DurableWorkflowRunner
                 logger.LogSuperstepExecutors(superstep, string.Join(", ", executorInputs.Select(e => e.ExecutorId)));
             }
 
-            string[] results = await DispatchExecutorsInParallelAsync(context, executorInputs, state.SharedState, logger).ConfigureAwait(true);
+            string[] results = await DispatchExecutorsInParallelAsync(context, executorInputs, state, logger).ConfigureAwait(true);
 
             haltRequested = ProcessSuperstepResults(executorInputs, results, state, context, logger);
 
@@ -193,7 +193,7 @@ internal sealed class DurableWorkflowRunner
         // Publish final events for live streaming (skip during replay)
         if (!context.IsReplaying)
         {
-            PublishEventsToCustomStatus(context, state);
+            PublishEventsToLiveStatus(context, state);
         }
 
         string finalResult = GetFinalResult(state.LastResults);
@@ -226,11 +226,11 @@ internal sealed class DurableWorkflowRunner
     private static async Task<string[]> DispatchExecutorsInParallelAsync(
         TaskOrchestrationContext context,
         List<ExecutorInput> executorInputs,
-        Dictionary<string, string> sharedState,
+        SuperstepState state,
         ILogger logger)
     {
         Task<string>[] dispatchTasks = executorInputs
-            .Select(input => DurableExecutorDispatcher.DispatchAsync(context, input.Info, input.Envelope, sharedState, logger))
+            .Select(input => DurableExecutorDispatcher.DispatchAsync(context, input.Info, input.Envelope, state.SharedState, state.LiveStatus, logger))
             .ToArray();
 
         return await Task.WhenAll(dispatchTasks).ConfigureAwait(true);
@@ -273,9 +273,14 @@ internal sealed class DurableWorkflowRunner
         public Dictionary<string, string> SharedState { get; } = [];
 
         /// <summary>
-        /// Accumulated workflow events for custom status (streaming consumption).
+        /// Accumulated workflow events for the durable workflow status (streaming consumption).
         /// </summary>
         public List<string> AccumulatedEvents { get; } = [];
+
+        /// <summary>
+        /// Workflow status published via <c>SetCustomStatus</c> so external clients can poll for streaming events and pending HITL requests.
+        /// </summary>
+        public DurableWorkflowLiveStatus LiveStatus { get; } = new();
     }
 
     /// <summary>
@@ -378,7 +383,7 @@ internal sealed class DurableWorkflowRunner
             // Merge state updates from activity into shared state
             MergeStateUpdates(state, resultInfo.StateUpdates, resultInfo.ClearedScopes);
 
-            // Accumulate events for custom status (streaming)
+            // Accumulate events for the durable workflow status (streaming)
             state.AccumulatedEvents.AddRange(resultInfo.Events);
 
             // Check for halt request
@@ -387,7 +392,7 @@ internal sealed class DurableWorkflowRunner
             // Publish events for live streaming (skip during replay)
             if (!context.IsReplaying)
             {
-                PublishEventsToCustomStatus(context, state);
+                PublishEventsToLiveStatus(context, state);
             }
 
             RouteOutputToSuccessors(executorId, resultInfo.Result, resultInfo.SentMessages, state, logger);
@@ -464,24 +469,23 @@ internal sealed class DurableWorkflowRunner
     }
 
     /// <summary>
-    /// Publishes accumulated workflow events to the orchestration's custom status,
+    /// Publishes accumulated workflow events to the durable workflow's custom status,
     /// making them available to <see cref="DurableStreamingWorkflowRun"/> for live streaming.
     /// </summary>
     /// <remarks>
-    /// Custom status is the only orchestration metadata readable by external clients while
+    /// Custom status is the only orchestration state readable by external clients while
     /// the orchestration is still running. It is cleared by the framework on completion,
     /// so events are also included in <see cref="DurableWorkflowResult"/> for final retrieval.
     /// </remarks>
-    private static void PublishEventsToCustomStatus(TaskOrchestrationContext context, SuperstepState state)
+    private static void PublishEventsToLiveStatus(
+        TaskOrchestrationContext context,
+        SuperstepState state)
     {
-        DurableWorkflowCustomStatus customStatus = new()
-        {
-            Events = state.AccumulatedEvents
-        };
+        state.LiveStatus.Events = state.AccumulatedEvents;
 
         // Pass the object directly — the framework's DataConverter handles serialization.
         // Pre-serializing would cause double-serialization (string wrapped in JSON quotes).
-        context.SetCustomStatus(customStatus);
+        context.SetCustomStatus(state.LiveStatus);
     }
 
     /// <summary>

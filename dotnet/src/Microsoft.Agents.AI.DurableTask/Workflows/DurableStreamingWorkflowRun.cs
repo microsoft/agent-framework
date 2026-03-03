@@ -14,15 +14,24 @@ namespace Microsoft.Agents.AI.DurableTask.Workflows;
 /// Represents a durable workflow run that supports streaming workflow events as they occur.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Events are detected by monitoring the orchestration's custom status at regular intervals.
 /// When executors emit events via <see cref="IWorkflowContext.AddEventAsync"/> or
 /// <see cref="IWorkflowContext.YieldOutputAsync"/>, they are written to the orchestration's
 /// custom status and picked up by this streaming run.
+/// </para>
+/// <para>
+/// When the workflow reaches a <see cref="RequestPort"/> executor, a <see cref="DurableWorkflowWaitingForInputEvent"/>
+/// is yielded containing the request data. The caller should then call
+/// <see cref="SendResponseAsync{TResponse}(DurableWorkflowWaitingForInputEvent, TResponse, CancellationToken)"/>
+/// to provide the response and resume the workflow.
+/// </para>
 /// </remarks>
 [DebuggerDisplay("{WorkflowName} ({RunId})")]
 internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
 {
     private readonly DurableTaskClient _client;
+    private readonly Dictionary<string, RequestPort> _requestPorts;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DurableStreamingWorkflowRun"/> class.
@@ -35,6 +44,7 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
         this._client = client;
         this.RunId = instanceId;
         this.WorkflowName = workflow.Name ?? string.Empty;
+        this._requestPorts = ExtractRequestPorts(workflow);
     }
 
     /// <inheritdoc/>
@@ -92,8 +102,11 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
         TimeSpan maxInterval = TimeSpan.FromSeconds(2);
         TimeSpan currentInterval = minInterval;
 
-        // Track how many events we've already read from custom status
+        // Track how many events we've already read from the durable workflow status
         int lastReadEventIndex = 0;
+
+        // Track which pending events we've already yielded to avoid duplicates
+        HashSet<string> yieldedPendingEvents = [];
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -111,26 +124,54 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
 
             bool hasNewEvents = false;
 
-            // Always drain any unread events from custom status before checking terminal states.
+            // Always drain any unread events from the durable workflow status before checking terminal states.
             // The orchestration may complete before the next poll, so events would be lost if we
             // check terminal status first.
             if (metadata.SerializedCustomStatus is not null)
             {
-                if (TryParseCustomStatus(metadata.SerializedCustomStatus, out DurableWorkflowCustomStatus customStatus))
+                if (DurableWorkflowLiveStatus.TryParse(metadata.SerializedCustomStatus, out DurableWorkflowLiveStatus liveStatus))
                 {
-                    (List<WorkflowEvent> events, lastReadEventIndex) = DrainNewEvents(customStatus.Events, lastReadEventIndex);
+                    (List<WorkflowEvent> events, lastReadEventIndex) = DrainNewEvents(liveStatus.Events, lastReadEventIndex);
                     foreach (WorkflowEvent evt in events)
                     {
                         hasNewEvents = true;
                         yield return evt;
                     }
+
+                    // Yield a DurableWorkflowWaitingForInputEvent for each new pending request port
+                    foreach (PendingRequestPortStatus pending in liveStatus.PendingEvents)
+                    {
+                        if (yieldedPendingEvents.Add(pending.EventName))
+                        {
+                            if (!this._requestPorts.TryGetValue(pending.EventName, out RequestPort? matchingPort))
+                            {
+                                // RequestPort may not exist in the current workflow definition (e.g., during rolling deployments).
+                                continue;
+                            }
+
+                            hasNewEvents = true;
+                            yield return new DurableWorkflowWaitingForInputEvent(
+                                pending.Input,
+                                matchingPort);
+                        }
+                    }
+
+                    // Sync tracking with current pending events so re-used RequestPort names can be yielded again
+                    if (liveStatus.PendingEvents.Count == 0)
+                    {
+                        yieldedPendingEvents.Clear();
+                    }
+                    else
+                    {
+                        yieldedPendingEvents.IntersectWith(liveStatus.PendingEvents.Select(p => p.EventName));
+                    }
                 }
             }
 
-            // Check terminal states after draining events from custom status
+            // Check terminal states after draining events from the durable workflow status
             if (metadata.RuntimeStatus == OrchestrationRuntimeStatus.Completed)
             {
-                // The framework clears custom status on completion, so events may be in
+                // The framework clears the durable workflow status on completion, so events may be in
                 // SerializedOutput as a DurableWorkflowResult wrapper.
                 if (TryParseWorkflowResult(metadata.SerializedOutput, out DurableWorkflowResult? outputResult))
                 {
@@ -181,6 +222,28 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
                 yield break;
             }
         }
+    }
+
+    /// <summary>
+    /// Sends a response to a <see cref="DurableWorkflowWaitingForInputEvent"/> to resume the workflow.
+    /// </summary>
+    /// <typeparam name="TResponse">The type of the response data.</typeparam>
+    /// <param name="requestEvent">The request event to respond to.</param>
+    /// <param name="response">The response data to send.</param>
+    /// <param name="cancellationToken">A cancellation token to observe.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing workflow types provided by the caller.")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing workflow types provided by the caller.")]
+    public async ValueTask SendResponseAsync<TResponse>(DurableWorkflowWaitingForInputEvent requestEvent, TResponse response, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(requestEvent);
+
+        string serializedResponse = JsonSerializer.Serialize(response, DurableSerialization.Options);
+        await this._client.RaiseEventAsync(
+            this.RunId,
+            requestEvent.RequestPort.Id,
+            serializedResponse,
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -240,22 +303,6 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
         }
 
         return (events, lastReadIndex);
-    }
-
-    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Deserializing workflow custom status.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing workflow custom status.")]
-    private static bool TryParseCustomStatus(string serializedStatus, out DurableWorkflowCustomStatus result)
-    {
-        try
-        {
-            result = JsonSerializer.Deserialize(serializedStatus, DurableWorkflowJsonContext.Default.DurableWorkflowCustomStatus)!;
-            return result is not null;
-        }
-        catch (JsonException)
-        {
-            result = default!;
-            return false;
-        }
     }
 
     /// <summary>
@@ -394,5 +441,12 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
         }
 
         return dataElement.ValueKind == JsonValueKind.Null ? null : dataElement.Clone();
+    }
+
+    private static Dictionary<string, RequestPort> ExtractRequestPorts(Workflow workflow)
+    {
+        return WorkflowAnalyzer.GetExecutorsFromWorkflowInOrder(workflow)
+            .Where(e => e.RequestPort is not null)
+            .ToDictionary(e => e.RequestPort!.Id, e => e.RequestPort!);
     }
 }
