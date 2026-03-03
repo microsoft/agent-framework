@@ -2,8 +2,12 @@
 
 from agent_framework_copilotstudio import (
     CopilotStudioAgent,
-    __version__,
     acquire_token,
+)
+from agent_framework_foundry_local import (
+    FoundryLocalChatOptions,
+    FoundryLocalClient,
+    FoundryLocalSettings,
 )
 from agent_framework_purview import (
     CacheProvider,
@@ -22,6 +26,9 @@ from agent_framework_purview import (
 __all__ = [
     "CacheProvider",
     "CopilotStudioAgent",
+    "FoundryLocalChatOptions",
+    "FoundryLocalClient",
+    "FoundryLocalSettings",
     "PurviewAppLocation",
     "PurviewAuthenticationError",
     "PurviewChatPolicyMiddleware",
@@ -32,6 +39,5 @@ __all__ = [
     "PurviewRequestError",
     "PurviewServiceError",
     "PurviewSettings",
-    "__version__",
     "acquire_token",
 ]

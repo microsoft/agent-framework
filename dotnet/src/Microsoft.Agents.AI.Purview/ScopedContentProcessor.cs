@@ -121,9 +121,10 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         {
             string messageId = message.MessageId ?? Guid.NewGuid().ToString();
             ContentBase content = new PurviewTextContent(message.Text);
-            ProcessConversationMetadata conversationmetadata = new(content, messageId, false, $"Agent Framework Message {messageId}")
+            string correlationId = (sessionId ?? Guid.NewGuid().ToString()) + "@AF";
+            ProcessConversationMetadata conversationMetadata = new(content, messageId, false, $"Agent Framework Message {messageId}", correlationId)
             {
-                CorrelationId = sessionId ?? Guid.NewGuid().ToString()
+                SequenceNumber = DateTime.UtcNow.Ticks,
             };
             ActivityMetadata activityMetadata = new(activity);
             PolicyLocation policyLocation;
@@ -162,7 +163,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
                     OperatingSystemVersion = "Unknown"
                 }
             };
-            ContentToProcess contentToProcess = new([conversationmetadata], activityMetadata, deviceMetadata, integratedAppMetadata, protectedAppMetadata);
+            ContentToProcess contentToProcess = new([conversationMetadata], activityMetadata, deviceMetadata, integratedAppMetadata, protectedAppMetadata);
 
             if (userId == null &&
                 tokenInfo?.UserId != null)

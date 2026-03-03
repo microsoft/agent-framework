@@ -9,10 +9,12 @@ This module provides state management for declarative workflows, handling:
 - Agent results and context
 """
 
+from __future__ import annotations
+
+import logging
+import uuid
 from collections.abc import Mapping
 from typing import Any, cast
-
-from agent_framework import get_logger
 
 try:
     from powerfx import Engine
@@ -23,7 +25,7 @@ except (ImportError, RuntimeError):
     # RuntimeError: .NET runtime not available or misconfigured
     _powerfx_engine = None
 
-logger = get_logger("agent_framework.declarative.workflows")
+logger = logging.getLogger("agent_framework.declarative")
 
 
 class WorkflowState:
@@ -106,11 +108,15 @@ class WorkflowState:
         self._inputs: dict[str, Any] = dict(inputs) if inputs else {}
         self._local: dict[str, Any] = {}
         self._outputs: dict[str, Any] = {}
+        conversation_id = str(uuid.uuid4())
         self._system: dict[str, Any] = {
-            "ConversationId": "default",
+            "ConversationId": conversation_id,
             "LastMessage": {"Text": "", "Id": ""},
             "LastMessageText": "",
             "LastMessageId": "",
+            "conversations": {
+                conversation_id: {"id": conversation_id, "messages": []},
+            },
         }
         self._agent: dict[str, Any] = {}
         self._conversation: dict[str, Any] = {
@@ -312,7 +318,7 @@ class WorkflowState:
         """Add a message to the conversation history.
 
         Args:
-            message: The message to add (typically a ChatMessage or similar)
+            message: The message to add (typically a Message or similar)
         """
         self._conversation["messages"].append(message)
         self._conversation["history"].append(message)
@@ -624,7 +630,7 @@ class WorkflowState:
         """Reset the agent result for a new agent invocation."""
         self._agent.clear()
 
-    def clone(self) -> "WorkflowState":
+    def clone(self) -> WorkflowState:
         """Create a shallow copy of the state.
 
         Returns:

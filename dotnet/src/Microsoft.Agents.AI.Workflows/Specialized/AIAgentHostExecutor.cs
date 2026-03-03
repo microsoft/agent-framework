@@ -36,27 +36,26 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         this._options = options;
     }
 
-    private RouteBuilder ConfigureUserInputRoutes(RouteBuilder routeBuilder)
+    private ProtocolBuilder ConfigureUserInputHandling(ProtocolBuilder protocolBuilder)
     {
         this._userInputHandler = new AIContentExternalHandler<UserInputRequestContent, UserInputResponseContent>(
-            ref routeBuilder,
+            ref protocolBuilder,
             portId: $"{this.Id}_UserInput",
             intercepted: this._options.InterceptUserInputRequests,
             handler: this.HandleUserInputResponseAsync);
 
         this._functionCallHandler = new AIContentExternalHandler<FunctionCallContent, FunctionResultContent>(
-            ref routeBuilder,
+            ref protocolBuilder,
             portId: $"{this.Id}_FunctionCall",
             intercepted: this._options.InterceptUnterminatedFunctionCalls,
             handler: this.HandleFunctionResultAsync);
 
-        return routeBuilder;
+        return protocolBuilder;
     }
 
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        routeBuilder = base.ConfigureRoutes(routeBuilder);
-        return this.ConfigureUserInputRoutes(routeBuilder);
+        return this.ConfigureUserInputHandling(base.ConfigureProtocol(protocolBuilder));
     }
 
     private ValueTask HandleUserInputResponseAsync(
@@ -93,7 +92,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         => emitEvents ?? this._options.EmitAgentUpdateEvents ?? false;
 
     private async ValueTask<AgentSession> EnsureSessionAsync(IWorkflowContext context, CancellationToken cancellationToken) =>
-        this._session ??= await this._agent.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        this._session ??= await this._agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
     private const string UserInputRequestStateKey = nameof(_userInputHandler);
     private const string FunctionCallRequestStateKey = nameof(_functionCallHandler);
@@ -101,7 +100,8 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
     protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        AIAgentHostState state = new(this._session?.Serialize(), this._currentTurnEmitEvents);
+        JsonElement? sessionState = this._session is not null ? await this._agent.SerializeSessionAsync(this._session, cancellationToken: cancellationToken).ConfigureAwait(false) : null;
+        AIAgentHostState state = new(sessionState, this._currentTurnEmitEvents);
         Task coreStateTask = context.QueueStateUpdateAsync(AIAgentHostStateKey, state, cancellationToken: cancellationToken).AsTask();
         Task userInputRequestsTask = this._userInputHandler?.OnCheckpointingAsync(UserInputRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
         Task functionCallRequestsTask = this._functionCallHandler?.OnCheckpointingAsync(FunctionCallRequestStateKey, context, cancellationToken).AsTask() ?? Task.CompletedTask;
@@ -180,7 +180,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
             List<AgentResponseUpdate> updates = [];
             await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
             {
-                await context.AddEventAsync(new AgentResponseUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
+                await context.YieldOutputAsync(update, cancellationToken).ConfigureAwait(false);
                 ExtractUnservicedRequests(update.Contents);
                 updates.Add(update);
             }
@@ -200,7 +200,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 
         if (this._options.EmitAgentResponseEvents == true)
         {
-            await context.AddEventAsync(new AgentResponseEvent(this.Id, response), cancellationToken).ConfigureAwait(false);
+            await context.YieldOutputAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
         if (userInputRequests.Count > 0 || functionCalls.Count > 0)

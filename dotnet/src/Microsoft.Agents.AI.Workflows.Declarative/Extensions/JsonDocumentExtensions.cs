@@ -42,6 +42,40 @@ internal static class JsonDocumentExtensions
             };
     }
 
+    /// <summary>
+    /// Creates a VariableType.List with schema inferred from the first object element in the array.
+    /// </summary>
+    public static VariableType GetListTypeFromJson(this JsonElement arrayElement)
+    {
+        // Find the first object element to infer schema
+        foreach (JsonElement element in arrayElement.EnumerateArray())
+        {
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                // Build schema from the object's properties
+                List<(string Key, VariableType Type)> fields = [];
+                foreach (JsonProperty property in element.EnumerateObject())
+                {
+                    VariableType fieldType = property.Value.ValueKind switch
+                    {
+                        JsonValueKind.String => typeof(string),
+                        JsonValueKind.Number => typeof(decimal),
+                        JsonValueKind.True or JsonValueKind.False => typeof(bool),
+                        JsonValueKind.Object => VariableType.RecordType,
+                        JsonValueKind.Array => VariableType.ListType,
+                        _ => typeof(string),
+                    };
+                    fields.Add((property.Name, fieldType));
+                }
+
+                return VariableType.List(fields);
+            }
+        }
+
+        // Fallback for arrays of primitives or empty arrays
+        return VariableType.ListType;
+    }
+
     private static Dictionary<string, object?> ParseRecord(this JsonElement currentElement, VariableType targetType)
     {
         IEnumerable<KeyValuePair<string, object?>> keyValuePairs =
@@ -111,11 +145,14 @@ internal static class JsonDocumentExtensions
                     VariableType? currentType =
                         element.ValueKind switch
                         {
-                            JsonValueKind.Object => VariableType.Record(targetType.Schema?.Select(kvp => (kvp.Key, kvp.Value)) ?? []),
+                            JsonValueKind.Object => targetType.HasSchema
+                                ? VariableType.Record(targetType.Schema!.Select(kvp => (kvp.Key, kvp.Value)))
+                                : VariableType.RecordType,
                             JsonValueKind.String => typeof(string),
                             JsonValueKind.True => typeof(bool),
                             JsonValueKind.False => typeof(bool),
                             JsonValueKind.Number => typeof(decimal),
+                            JsonValueKind.Array => (VariableType)VariableType.ListType, // Add support for nested arrays
                             _ => null,
                         };
 
@@ -283,9 +320,16 @@ internal static class JsonDocumentExtensions
 
     private static bool TryParseList(JsonElement propertyElement, VariableType? targetType, out object? value)
     {
+        // Handle empty arrays without needing to determine element type
+        if (propertyElement.GetArrayLength() == 0)
+        {
+            value = new List<object?>();
+            return true;
+        }
+
         try
         {
-            value = ParseTable(propertyElement, targetType ?? VariableType.ListType);
+            value = ParseTable(propertyElement, targetType ?? GetListTypeFromJson(propertyElement));
             return true;
         }
         catch

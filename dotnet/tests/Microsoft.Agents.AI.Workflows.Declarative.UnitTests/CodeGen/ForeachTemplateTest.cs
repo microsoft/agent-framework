@@ -54,7 +54,7 @@ public class ForeachTemplateTest(ITestOutputHelper output) : WorkflowActionTempl
         AssertGeneratedCode<ActionExecutor>(template.Id, workflowCode);
         AssertAgentProvider(template.UseAgentProvider, workflowCode);
         AssertGeneratedMethod(nameof(ForeachExecutor.TakeNextAsync), workflowCode);
-        AssertGeneratedMethod(nameof(ForeachExecutor.ResetAsync), workflowCode);
+        AssertGeneratedMethod(nameof(ForeachExecutor.CompleteAsync), workflowCode);
     }
 
     private Foreach CreateModel(

@@ -48,7 +48,7 @@ export function WorkflowInputForm({
   const requiredFields = inputSchema.required || [];
   const isSimpleInput = inputSchema.type === "string" && !inputSchema.enum;
 
-  // Detect ChatMessage-like pattern for auto-filling role
+  // Detect Message-like pattern for auto-filling role
   const isChatMessageLike = detectChatMessagePattern(inputSchema, requiredFields);
 
   // Validation: check if required fields are filled
@@ -82,7 +82,7 @@ export function WorkflowInputForm({
         }
       });
 
-      // Auto-fill role="user" for ChatMessage-like inputs
+      // Auto-fill role="user" for Message-like inputs
       if (isChatMessageLike && !initialData["role"]) {
         initialData["role"] = "user";
       }

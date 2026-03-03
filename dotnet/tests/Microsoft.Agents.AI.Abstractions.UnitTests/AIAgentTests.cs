@@ -220,6 +220,133 @@ public class AIAgentTests
                 ItExpr.Is<CancellationToken>(ct => ct == cancellationToken));
     }
 
+    /// <summary>
+    /// Theory data for RunAsync overloads.
+    /// </summary>
+    public static TheoryData<string> RunAsyncOverloads => new()
+    {
+        "NoMessage",
+        "StringMessage",
+        "ChatMessage",
+        "MessagesCollection"
+    };
+
+    /// <summary>
+    /// Verifies that CurrentRunContext is properly set and accessible from RunCoreAsync for all RunAsync overloads.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RunAsyncOverloads))]
+    public async Task RunAsync_SetsCurrentRunContext_AccessibleFromRunCoreAsync(string overload)
+    {
+        // Arrange
+        AgentRunContext? capturedContext = null;
+        var session = new TestAgentSession();
+        var options = new AgentRunOptions();
+
+        var agentMock = new Mock<AIAgent> { CallBase = true };
+        agentMock
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns((IEnumerable<ChatMessage> _, AgentSession? _, AgentRunOptions? _, CancellationToken _) =>
+            {
+                capturedContext = AIAgent.CurrentRunContext;
+                return Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "Response")));
+            });
+
+        // Act
+        switch (overload)
+        {
+            case "NoMessage":
+                await agentMock.Object.RunAsync(session, options);
+                break;
+            case "StringMessage":
+                await agentMock.Object.RunAsync("Hello", session, options);
+                break;
+            case "ChatMessage":
+                await agentMock.Object.RunAsync(new ChatMessage(ChatRole.User, "Hello"), session, options);
+                break;
+            case "MessagesCollection":
+                await agentMock.Object.RunAsync([new ChatMessage(ChatRole.User, "Hello")], session, options);
+                break;
+        }
+
+        // Assert
+        Assert.NotNull(capturedContext);
+        Assert.Same(agentMock.Object, capturedContext!.Agent);
+        Assert.Same(session, capturedContext.Session);
+        Assert.Same(options, capturedContext.RunOptions);
+
+        if (overload == "NoMessage")
+        {
+            Assert.Empty(capturedContext.RequestMessages);
+        }
+        else
+        {
+            Assert.Single(capturedContext.RequestMessages);
+        }
+    }
+
+    /// <summary>
+    /// Verifies that CurrentRunContext is properly set and accessible from RunCoreStreamingAsync for all RunStreamingAsync overloads.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(RunAsyncOverloads))]
+    public async Task RunStreamingAsync_SetsCurrentRunContext_AccessibleFromRunCoreStreamingAsync(string overload)
+    {
+        // Arrange
+        AgentRunContext? capturedContext = null;
+        var session = new TestAgentSession();
+        var options = new AgentRunOptions();
+
+        var agentMock = new Mock<AIAgent> { CallBase = true };
+        agentMock
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns((IEnumerable<ChatMessage> _, AgentSession? _, AgentRunOptions? _, CancellationToken _) =>
+            {
+                capturedContext = AIAgent.CurrentRunContext;
+                return ToAsyncEnumerableAsync([new AgentResponseUpdate(ChatRole.Assistant, "Response")]);
+            });
+
+        // Act
+        IAsyncEnumerable<AgentResponseUpdate> stream = overload switch
+        {
+            "NoMessage" => agentMock.Object.RunStreamingAsync(session, options),
+            "StringMessage" => agentMock.Object.RunStreamingAsync("Hello", session, options),
+            "ChatMessage" => agentMock.Object.RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"), session, options),
+            "MessagesCollection" => agentMock.Object.RunStreamingAsync(new[] { new ChatMessage(ChatRole.User, "Hello") }, session, options),
+            _ => throw new InvalidOperationException($"Unknown overload: {overload}")
+        };
+
+        await foreach (AgentResponseUpdate _ in stream)
+        {
+            // Consume the stream
+        }
+
+        // Assert
+        Assert.NotNull(capturedContext);
+        Assert.Same(agentMock.Object, capturedContext!.Agent);
+        Assert.Same(session, capturedContext.Session);
+        Assert.Same(options, capturedContext.RunOptions);
+
+        if (overload == "NoMessage")
+        {
+            Assert.Empty(capturedContext.RequestMessages);
+        }
+        else
+        {
+            Assert.Single(capturedContext.RequestMessages);
+        }
+    }
+
     [Fact]
     public void ValidateAgentIDIsIdempotent()
     {
@@ -364,10 +491,78 @@ public class AIAgentTests
 
     #endregion
 
+    #region Name and Description Property Tests
+
     /// <summary>
-    /// Typed mock session.
+    /// Verify that Name property returns the value from the derived class.
     /// </summary>
-    public abstract class TestAgentSession : AgentSession;
+    [Fact]
+    public void Name_ReturnsValueFromDerivedClass()
+    {
+        // Arrange
+        var agent = new MockAgentWithName("TestAgentName", "TestAgentDescription");
+
+        // Act
+        string? name = agent.Name;
+
+        // Assert
+        Assert.Equal("TestAgentName", name);
+    }
+
+    /// <summary>
+    /// Verify that Description property returns the value from the derived class.
+    /// </summary>
+    [Fact]
+    public void Description_ReturnsValueFromDerivedClass()
+    {
+        // Arrange
+        var agent = new MockAgentWithName("TestAgentName", "TestAgentDescription");
+
+        // Act
+        string? description = agent.Description;
+
+        // Assert
+        Assert.Equal("TestAgentDescription", description);
+    }
+
+    /// <summary>
+    /// Verify that Name property returns null when not overridden.
+    /// </summary>
+    [Fact]
+    public void Name_ReturnsNullByDefault()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act
+        string? name = agent.Name;
+
+        // Assert
+        Assert.Null(name);
+    }
+
+    /// <summary>
+    /// Verify that Description property returns null when not overridden.
+    /// </summary>
+    [Fact]
+    public void Description_ReturnsNullByDefault()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act
+        string? description = agent.Description;
+
+        // Assert
+        Assert.Null(description);
+    }
+
+    #endregion
+
+    /// <summary>
+    /// Typed mock session for testing purposes.
+    /// </summary>
+    private sealed class TestAgentSession : AgentSession;
 
     private sealed class MockAgent : AIAgent
     {
@@ -378,10 +573,51 @@ public class AIAgentTests
 
         protected override string? IdCore { get; }
 
-        public override async ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public override async ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        protected override Task<AgentResponse> RunCoreAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+
+        protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+    }
+
+    private sealed class MockAgentWithName : AIAgent
+    {
+        private readonly string? _name;
+        private readonly string? _description;
+
+        public MockAgentWithName(string? name, string? description)
+        {
+            this._name = name;
+            this._description = description;
+        }
+
+        public override string? Name => this._name;
+        public override string? Description => this._description;
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
         protected override Task<AgentResponse> RunCoreAsync(

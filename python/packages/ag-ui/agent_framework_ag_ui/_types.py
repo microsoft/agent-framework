@@ -6,7 +6,7 @@ import sys
 from typing import Any, Generic
 
 from agent_framework import ChatOptions
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -18,8 +18,8 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 
-TAGUIChatOptions = TypeVar("TAGUIChatOptions", bound=TypedDict, default="AGUIChatOptions", covariant=True)  # type: ignore[valid-type]
-TResponseModel = TypeVar("TResponseModel", bound=BaseModel | None, default=None)
+AGUIChatOptionsT = TypeVar("AGUIChatOptionsT", bound=TypedDict, default="AGUIChatOptions", covariant=True)  # type: ignore[valid-type]
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
 class PredictStateConfig(TypedDict):
@@ -53,10 +53,12 @@ class AGUIRequest(BaseModel):
     )
     run_id: str | None = Field(
         None,
+        validation_alias=AliasChoices("run_id", "runId"),
         description="Optional run identifier for tracking",
     )
     thread_id: str | None = Field(
         None,
+        validation_alias=AliasChoices("thread_id", "threadId"),
         description="Optional thread identifier for conversation context",
     )
     state: dict[str, Any] | None = Field(
@@ -73,18 +75,29 @@ class AGUIRequest(BaseModel):
     )
     forwarded_props: dict[str, Any] | None = Field(
         None,
+        validation_alias=AliasChoices("forwarded_props", "forwardedProps"),
         description="Additional properties forwarded to the agent",
     )
     parent_run_id: str | None = Field(
         None,
+        validation_alias=AliasChoices("parent_run_id", "parentRunId"),
         description="ID of the run that spawned this run",
+    )
+    available_interrupts: list[dict[str, Any]] | None = Field(
+        None,
+        validation_alias=AliasChoices("availableInterrupts", "available_interrupts"),
+        description="List of interrupts that can be resumed by the server",
+    )
+    resume: dict[str, Any] | None = Field(
+        None,
+        description="Resume payload containing interrupt responses",
     )
 
 
 # region AG-UI Chat Options TypedDict
 
 
-class AGUIChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], total=False):
+class AGUIChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """AG-UI protocol-specific chat options dict.
 
     Extends base ChatOptions for the AG-UI (Agent-UI) protocol.
@@ -102,7 +115,7 @@ class AGUIChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], tota
         stop: Stop sequences.
         tools: List of tools - sent to server so LLM knows about client tools.
             Server executes its own tools; client tools execute locally via
-            @use_function_invocation middleware.
+            function invocation middleware.
         tool_choice: How the model should use tools.
         metadata: Metadata dict containing thread_id for conversation continuity.
 
@@ -139,6 +152,12 @@ class AGUIChatOptions(ChatOptions[TResponseModel], Generic[TResponseModel], tota
 
     context: dict[str, Any]
     """Shared context/state to send to the server."""
+
+    available_interrupts: list[dict[str, Any]]
+    """Interrupt descriptors available for resumption."""
+
+    resume: dict[str, Any]
+    """Interrupt resume payload to continue a paused run."""
 
     # ChatOptions fields not applicable for AG-UI
     store: None  # type: ignore[misc]

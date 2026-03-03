@@ -10,6 +10,8 @@ These functions can be used as fallbacks when PowerFx is not available,
 or registered with the PowerFx engine when it is available.
 """
 
+from __future__ import annotations
+
 from typing import Any, cast
 
 

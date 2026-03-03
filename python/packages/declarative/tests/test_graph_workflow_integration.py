@@ -9,13 +9,27 @@ These tests verify:
 - Pause/resume capabilities
 """
 
+import sys
+
 import pytest
 
-from agent_framework_declarative._workflows import (
+try:
+    import powerfx  # noqa: F401
+
+    _powerfx_available = True
+except (ImportError, RuntimeError):
+    _powerfx_available = False
+
+pytestmark = pytest.mark.skipif(
+    not _powerfx_available or sys.version_info >= (3, 14),
+    reason="PowerFx engine not available (requires dotnet runtime)",
+)
+
+from agent_framework_declarative._workflows import (  # noqa: E402
     ActionTrigger,
     DeclarativeWorkflowBuilder,
 )
-from agent_framework_declarative._workflows._factory import WorkflowFactory
+from agent_framework_declarative._workflows._factory import WorkflowFactory  # noqa: E402
 
 
 class TestGraphBasedWorkflowExecution:
@@ -223,11 +237,11 @@ class TestGraphWorkflowCheckpointing:
         builder = DeclarativeWorkflowBuilder(yaml_def)
         _workflow = builder.build()  # noqa: F841
 
-        # Verify multiple executors were created
+        # Verify multiple executors were created (+ _workflow_entry node)
         assert "step1" in builder._executors
         assert "step2" in builder._executors
         assert "step3" in builder._executors
-        assert len(builder._executors) == 3
+        assert len(builder._executors) == 4
 
     def test_workflow_executor_connectivity(self):
         """Test that executors are properly connected in sequence."""
@@ -243,8 +257,8 @@ class TestGraphWorkflowCheckpointing:
         builder = DeclarativeWorkflowBuilder(yaml_def)
         workflow = builder.build()
 
-        # Verify all executors exist
-        assert len(builder._executors) == 3
+        # Verify all executors exist (+ _workflow_entry node)
+        assert len(builder._executors) == 4
 
         # Verify the workflow can be inspected
         assert workflow is not None

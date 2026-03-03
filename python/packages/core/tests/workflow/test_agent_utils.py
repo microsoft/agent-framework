@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterable
 from typing import Any
 
-from agent_framework import AgentResponse, AgentResponseUpdate, AgentThread, ChatMessage
+from agent_framework import AgentResponse, AgentResponseUpdate, AgentSession, Message
 from agent_framework._workflows._agent_utils import resolve_agent_id
 
 
@@ -32,24 +32,17 @@ class MockAgent:
         """Returns the description of the agent."""
         ...
 
-    async def run(
+    def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: str | Message | list[str] | list[Message] | None = None,
         *,
-        thread: AgentThread | None = None,
+        stream: bool = False,
+        session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> AgentResponse: ...
+    ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]: ...
 
-    def run_stream(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]: ...
-
-    def get_new_thread(self, **kwargs: Any) -> AgentThread:
-        """Creates a new conversation thread for the agent."""
+    def create_session(self, **kwargs: Any) -> AgentSession:
+        """Creates a new conversation session for the agent."""
         ...
 
 

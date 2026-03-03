@@ -16,20 +16,11 @@ public sealed class SetTextVariableExecutorTest(ITestOutputHelper output) : Work
     [Fact]
     public async Task SetLiteralValueAsync()
     {
-        // Arrange
-        SetTextVariable model =
-            this.CreateModel(
+        // Arrange, Act & Assert
+        await this.ExecuteTestAsync(
                 this.FormatDisplayName(nameof(SetLiteralValueAsync)),
-                FormatVariablePath("TextVar"),
-                "Text variable value");
-
-        // Act
-        SetTextVariableExecutor action = new(model, this.State);
-        await this.ExecuteAsync(action);
-
-        // Assert
-        VerifyModel(model, action);
-        this.VerifyState("TextVar", FormulaValue.New("Text variable value"));
+                "TextVar",
+                "New value");
     }
 
     [Fact]
@@ -38,11 +29,24 @@ public sealed class SetTextVariableExecutorTest(ITestOutputHelper output) : Work
         // Arrange
         this.State.Set("TextVar", FormulaValue.New("Old value"));
 
+        // Act & Assert
+        await this.ExecuteTestAsync(
+                this.FormatDisplayName(nameof(UpdateExistingValueAsync)),
+                "TextVar",
+                "New value");
+    }
+
+    private async Task ExecuteTestAsync(
+        string displayName,
+        string variableName,
+        string textValue)
+    {
+        // Arrange
         SetTextVariable model =
             this.CreateModel(
-                this.FormatDisplayName(nameof(UpdateExistingValueAsync)),
-                FormatVariablePath("TextVar"),
-                "New value");
+                displayName,
+                variableName,
+                textValue);
 
         // Act
         SetTextVariableExecutor action = new(model, this.State);
@@ -50,7 +54,7 @@ public sealed class SetTextVariableExecutorTest(ITestOutputHelper output) : Work
 
         // Assert
         VerifyModel(model, action);
-        this.VerifyState("TextVar", FormulaValue.New("New value"));
+        this.VerifyState(variableName, FormulaValue.New(textValue));
     }
 
     private SetTextVariable CreateModel(string displayName, string variablePath, string textValue)
@@ -60,7 +64,7 @@ public sealed class SetTextVariableExecutorTest(ITestOutputHelper output) : Work
             {
                 Id = this.CreateActionId(),
                 DisplayName = this.FormatDisplayName(displayName),
-                Variable = InitializablePropertyPath.Create(variablePath),
+                Variable = PropertyPath.Create(FormatVariablePath(variablePath)),
                 Value = TemplateLine.Parse(textValue),
             };
 

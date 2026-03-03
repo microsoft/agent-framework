@@ -18,8 +18,6 @@ namespace AzureAI.IntegrationTests;
 
 public class AIProjectClientFixture : IChatClientAgentFixture
 {
-    private static readonly AzureAIConfiguration s_config = TestConfiguration.LoadSection<AzureAIConfiguration>();
-
     private ChatClientAgent _agent = null!;
     private AIProjectClient _client = null!;
 
@@ -33,7 +31,7 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         return response.Value.Id;
     }
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentSession session)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
         var chatClientSession = (ChatClientAgentSession)session;
 
@@ -48,12 +46,14 @@ public class AIProjectClientFixture : IChatClientAgentFixture
             return await this.GetChatHistoryFromResponsesChainAsync(chatClientSession.ConversationId);
         }
 
-        if (chatClientSession.ChatHistoryProvider is null)
+        var chatHistoryProvider = agent.GetService<ChatHistoryProvider>();
+
+        if (chatHistoryProvider is null)
         {
             return [];
         }
 
-        return (await chatClientSession.ChatHistoryProvider.InvokingAsync(new([]))).ToList();
+        return (await chatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     private async Task<List<ChatMessage>> GetChatHistoryFromResponsesChainAsync(string conversationId)
@@ -116,7 +116,14 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-        return await this._client.CreateAIAgentAsync(GenerateUniqueAgentName(name), model: s_config.DeploymentName, instructions: instructions, tools: aiTools);
+        return await this._client.CreateAIAgentAsync(GenerateUniqueAgentName(name), model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), instructions: instructions, tools: aiTools);
+    }
+
+    public async Task<ChatClientAgent> CreateChatClientAgentAsync(ChatClientAgentOptions options)
+    {
+        options.Name ??= GenerateUniqueAgentName("HelpfulAssistant");
+
+        return await this._client.CreateAIAgentAsync(model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), options);
     }
 
     public static string GenerateUniqueAgentName(string baseName) =>
@@ -159,9 +166,15 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         return Task.CompletedTask;
     }
 
-    public async Task InitializeAsync()
+    public virtual async Task InitializeAsync()
     {
-        this._client = new(new Uri(s_config.Endpoint), new AzureCliCredential());
+        this._client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), new AzureCliCredential());
         this._agent = await this.CreateChatClientAgentAsync();
+    }
+
+    public async Task InitializeAsync(ChatClientAgentOptions options)
+    {
+        this._client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), new AzureCliCredential());
+        this._agent = await this.CreateChatClientAgentAsync(options);
     }
 }

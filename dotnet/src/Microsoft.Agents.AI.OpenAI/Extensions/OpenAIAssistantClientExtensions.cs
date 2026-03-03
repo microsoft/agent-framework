@@ -1,9 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ClientModel;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace OpenAI.Assistants;
@@ -18,6 +20,7 @@ namespace OpenAI.Assistants;
 /// The methods handle the conversion from OpenAI clients to <see cref="IChatClient"/> instances and then wrap them
 /// in <see cref="ChatClientAgent"/> objects that implement the <see cref="AIAgent"/> interface.
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIAssistants)]
 public static class OpenAIAssistantClientExtensions
 {
     /// <summary>
@@ -204,8 +207,8 @@ public static class OpenAIAssistantClientExtensions
             Name = options.Name ?? assistantMetadata.Name,
             Description = options.Description ?? assistantMetadata.Description,
             ChatOptions = options.ChatOptions,
-            AIContextProviderFactory = options.AIContextProviderFactory,
-            ChatHistoryProviderFactory = options.ChatHistoryProviderFactory,
+            AIContextProviders = options.AIContextProviders,
+            ChatHistoryProvider = options.ChatHistoryProvider,
             UseProvidedChatClientAsIs = options.UseProvidedChatClientAsIs
         };
 

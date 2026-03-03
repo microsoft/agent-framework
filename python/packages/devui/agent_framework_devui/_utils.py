@@ -9,7 +9,7 @@ from dataclasses import fields, is_dataclass
 from types import UnionType
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
         elif hasattr(chat_opts, "instructions"):
             metadata["instructions"] = chat_opts.instructions
 
-    # Try to get model - check both default_options and chat_client
+    # Try to get model - check both default_options and client
     if hasattr(entity_object, "default_options"):
         chat_opts = entity_object.default_options
         if isinstance(chat_opts, dict):
@@ -53,16 +53,12 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
                 metadata["model"] = chat_opts.get("model_id")
         elif hasattr(chat_opts, "model_id") and chat_opts.model_id:
             metadata["model"] = chat_opts.model_id
-    if (
-        metadata["model"] is None
-        and hasattr(entity_object, "chat_client")
-        and hasattr(entity_object.chat_client, "model_id")
-    ):
-        metadata["model"] = entity_object.chat_client.model_id
+    if metadata["model"] is None and hasattr(entity_object, "client") and hasattr(entity_object.client, "model_id"):
+        metadata["model"] = entity_object.client.model_id
 
     # Try to get chat client type
-    if hasattr(entity_object, "chat_client"):
-        metadata["chat_client_type"] = entity_object.chat_client.__class__.__name__
+    if hasattr(entity_object, "client"):
+        metadata["chat_client_type"] = entity_object.client.__class__.__name__
 
     # Try to get context providers
     if (
@@ -124,8 +120,8 @@ def extract_executor_message_types(executor: Any) -> list[Any]:
 
 
 def _contains_chat_message(type_hint: Any) -> bool:
-    """Check whether the provided type hint directly or indirectly references ChatMessage."""
-    if type_hint is ChatMessage:
+    """Check whether the provided type hint directly or indirectly references Message."""
+    if type_hint is Message:
         return True
 
     origin = get_origin(type_hint)
@@ -141,7 +137,7 @@ def _contains_chat_message(type_hint: Any) -> bool:
 def select_primary_input_type(message_types: list[Any]) -> Any | None:
     """Choose the most user-friendly input type for workflow inputs.
 
-    Prefers ChatMessage (or containers thereof) and then falls back to primitives.
+    Prefers Message (or containers thereof) and then falls back to primitives.
 
     Args:
         message_types: List of possible message types
@@ -154,7 +150,7 @@ def select_primary_input_type(message_types: list[Any]) -> Any | None:
 
     for message_type in message_types:
         if _contains_chat_message(message_type):
-            return ChatMessage
+            return Message
 
     preferred = (str, dict)
 
@@ -427,7 +423,7 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
     if hasattr(input_type, "model_json_schema"):
         return input_type.model_json_schema()  # type: ignore
 
-    # 3. SerializationMixin classes (ChatMessage, etc.)
+    # 3. SerializationMixin classes (Message, etc.)
     if is_serialization_mixin(input_type):
         return generate_schema_from_serialization_mixin(input_type)
 
@@ -521,7 +517,7 @@ def _parse_string_input(input_str: str, target_type: type) -> Any:
         except Exception as e:
             logger.debug(f"Failed to parse string as Pydantic model: {e}")
 
-    # SerializationMixin (like ChatMessage)
+    # SerializationMixin (like Message)
     if is_serialization_mixin(target_type):
         try:
             # Try parsing as JSON dict first
@@ -531,7 +527,7 @@ def _parse_string_input(input_str: str, target_type: type) -> Any:
                     return target_type.from_dict(data)  # type: ignore
                 return target_type(**data)  # type: ignore
 
-            # For ChatMessage specifically: create from text
+            # For Message specifically: create from text
             # Try common field patterns
             common_fields = ["text", "message", "content"]
             sig = inspect.signature(target_type)

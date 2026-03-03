@@ -14,7 +14,6 @@ namespace OpenAIChatCompletion.IntegrationTests;
 
 public class OpenAIChatCompletionFixture : IChatClientAgentFixture
 {
-    private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
     private readonly bool _useReasoningModel;
 
     private ChatClientAgent _agent = null!;
@@ -28,16 +27,16 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentSession session)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
-        var typedSession = (ChatClientAgentSession)session;
+        var chatHistoryProvider = agent.GetService<ChatHistoryProvider>();
 
-        if (typedSession.ChatHistoryProvider is null)
+        if (chatHistoryProvider is null)
         {
             return [];
         }
 
-        return (await typedSession.ChatHistoryProvider.InvokingAsync(new([]))).ToList();
+        return (await chatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(
@@ -45,8 +44,8 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-        var chatClient = new OpenAIClient(s_config.ApiKey)
-            .GetChatClient(this._useReasoningModel ? s_config.ChatReasoningModelId : s_config.ChatModelId)
+        var chatClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey))
+            .GetChatClient(this._useReasoningModel ? TestConfiguration.GetRequiredValue(TestSettings.OpenAIReasoningModelName) : TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName))
             .AsIChatClient();
 
         return Task.FromResult(new ChatClientAgent(chatClient, options: new()

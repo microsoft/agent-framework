@@ -12,24 +12,24 @@ from a2a.types import (
     DataPart,
     FilePart,
     FileWithUri,
-    Message,
     Part,
     Task,
     TaskState,
     TaskStatus,
     TextPart,
 )
+from a2a.types import Message as A2AMessage
 from a2a.types import Role as A2ARole
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    ChatMessage,
     Content,
-    Role,
+    Message,
 )
 from agent_framework.a2a import A2AAgent
 from pytest import fixture, raises
 
+from agent_framework_a2a import A2AContinuationToken
 from agent_framework_a2a._agent import _get_uri_data  # type: ignore
 
 
@@ -39,6 +39,8 @@ class MockA2AClient:
     def __init__(self) -> None:
         self.call_count: int = 0
         self.responses: list[Any] = []
+        self.resubscribe_responses: list[Any] = []
+        self.get_task_response: Task | None = None
 
     def add_message_response(self, message_id: str, text: str, role: str = "agent") -> None:
         """Add a mock Message response."""
@@ -47,7 +49,7 @@ class MockA2AClient:
         text_part = Part(root=TextPart(text=text))
 
         # Create actual Message instance
-        message = Message(
+        message = A2AMessage(
             message_id=message_id, role=A2ARole.agent if role == "agent" else A2ARole.user, parts=[text_part]
         )
         self.responses.append(message)
@@ -81,6 +83,18 @@ class MockA2AClient:
         client_event = (task, update_event)
         self.responses.append(client_event)
 
+    def add_in_progress_task_response(
+        self,
+        task_id: str,
+        context_id: str = "test-context",
+        state: TaskState = TaskState.working,
+    ) -> None:
+        """Add a mock in-progress Task response (non-terminal)."""
+        status = TaskStatus(state=state, message=None)
+        task = Task(id=task_id, context_id=context_id, status=status)
+        client_event = (task, None)
+        self.responses.append(client_event)
+
     async def send_message(self, message: Any) -> AsyncIterator[Any]:
         """Mock send_message method that yields responses."""
         self.call_count += 1
@@ -88,6 +102,22 @@ class MockA2AClient:
         if self.responses:
             response = self.responses.pop(0)
             yield response
+
+    async def resubscribe(self, request: Any) -> AsyncIterator[Any]:
+        """Mock resubscribe method that yields responses."""
+        self.call_count += 1
+
+        for response in self.resubscribe_responses:
+            yield response
+        self.resubscribe_responses.clear()
+
+    async def get_task(self, request: Any) -> Task:
+        """Mock get_task method that returns a task."""
+        self.call_count += 1
+        if self.get_task_response is not None:
+            return self.get_task_response
+        msg = "No get_task response configured"
+        raise ValueError(msg)
 
 
 @fixture
@@ -129,7 +159,7 @@ async def test_run_with_message_response(a2a_agent: A2AAgent, mock_a2a_client: M
 
     assert isinstance(response, AgentResponse)
     assert len(response.messages) == 1
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].text == "Hello from agent!"
     assert response.response_id == "msg-123"
     assert mock_a2a_client.call_count == 1
@@ -144,7 +174,7 @@ async def test_run_with_task_response_single_artifact(a2a_agent: A2AAgent, mock_
 
     assert isinstance(response, AgentResponse)
     assert len(response.messages) == 1
-    assert response.messages[0].role == Role.ASSISTANT
+    assert response.messages[0].role == "assistant"
     assert response.messages[0].text == "Generated report content"
     assert response.response_id == "task-456"
     assert mock_a2a_client.call_count == 1
@@ -170,7 +200,7 @@ async def test_run_with_task_response_multiple_artifacts(a2a_agent: A2AAgent, mo
 
     # All should be assistant messages
     for message in response.messages:
-        assert message.role == Role.ASSISTANT
+        assert message.role == "assistant"
 
     assert response.response_id == "task-789"
 
@@ -233,7 +263,7 @@ def test_parse_messages_from_task_with_artifacts(a2a_agent: A2AAgent) -> None:
     assert len(result) == 2
     assert result[0].text == "Content 1"
     assert result[1].text == "Content 2"
-    assert all(msg.role == Role.ASSISTANT for msg in result)
+    assert all(msg.role == "assistant" for msg in result)
 
 
 def test_parse_message_from_artifact(a2a_agent: A2AAgent) -> None:
@@ -251,8 +281,8 @@ def test_parse_message_from_artifact(a2a_agent: A2AAgent) -> None:
 
     result = a2a_agent._parse_message_from_artifact(artifact)
 
-    assert isinstance(result, ChatMessage)
-    assert result.role == Role.ASSISTANT
+    assert isinstance(result, Message)
+    assert result.role == "assistant"
     assert result.text == "Artifact content"
     assert result.raw_representation == artifact
 
@@ -294,9 +324,9 @@ def test_parse_contents_from_a2a_conversion(a2a_agent: A2AAgent) -> None:
 def test_prepare_message_for_a2a_with_error_content(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with ErrorContent."""
 
-    # Create ChatMessage with ErrorContent
+    # Create Message with ErrorContent
     error_content = Content.from_error(message="Test error message")
-    message = ChatMessage(role=Role.USER, contents=[error_content])
+    message = Message(role="user", contents=[error_content])
 
     # Convert to A2A message
     a2a_message = a2a_agent._prepare_message_for_a2a(message)
@@ -309,9 +339,9 @@ def test_prepare_message_for_a2a_with_error_content(a2a_agent: A2AAgent) -> None
 def test_prepare_message_for_a2a_with_uri_content(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with UriContent."""
 
-    # Create ChatMessage with UriContent
+    # Create Message with UriContent
     uri_content = Content.from_uri(uri="http://example.com/file.pdf", media_type="application/pdf")
-    message = ChatMessage(role=Role.USER, contents=[uri_content])
+    message = Message(role="user", contents=[uri_content])
 
     # Convert to A2A message
     a2a_message = a2a_agent._prepare_message_for_a2a(message)
@@ -325,9 +355,9 @@ def test_prepare_message_for_a2a_with_uri_content(a2a_agent: A2AAgent) -> None:
 def test_prepare_message_for_a2a_with_data_content(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with DataContent."""
 
-    # Create ChatMessage with DataContent (base64 data URI)
+    # Create Message with DataContent (base64 data URI)
     data_content = Content.from_uri(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
-    message = ChatMessage(role=Role.USER, contents=[data_content])
+    message = Message(role="user", contents=[data_content])
 
     # Convert to A2A message
     a2a_message = a2a_agent._prepare_message_for_a2a(message)
@@ -340,27 +370,27 @@ def test_prepare_message_for_a2a_with_data_content(a2a_agent: A2AAgent) -> None:
 
 def test_prepare_message_for_a2a_empty_contents_raises_error(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with empty contents raises ValueError."""
-    # Create ChatMessage with no contents
-    message = ChatMessage(role=Role.USER, contents=[])
+    # Create Message with no contents
+    message = Message(role="user", contents=[])
 
     # Should raise ValueError for empty contents
-    with raises(ValueError, match="ChatMessage.contents is empty"):
+    with raises(ValueError, match="Message.contents is empty"):
         a2a_agent._prepare_message_for_a2a(message)
 
 
-async def test_run_stream_with_message_response(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
-    """Test run_stream() method with immediate Message response."""
+async def test_run_streaming_with_message_response(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Test run(stream=True) method with immediate Message response."""
     mock_a2a_client.add_message_response("msg-stream-123", "Streaming response from agent!", "agent")
 
     # Collect streaming updates
     updates: list[AgentResponseUpdate] = []
-    async for update in a2a_agent.run_stream("Hello agent"):
+    async for update in a2a_agent.run("Hello agent", stream=True):
         updates.append(update)
 
     # Verify streaming response
     assert len(updates) == 1
     assert isinstance(updates[0], AgentResponseUpdate)
-    assert updates[0].role == Role.ASSISTANT
+    assert updates[0].role == "assistant"
     assert len(updates[0].contents) == 1
 
     content = updates[0].contents[0]
@@ -402,13 +432,13 @@ async def test_context_manager_no_cleanup_when_no_http_client() -> None:
 
 
 def test_prepare_message_for_a2a_with_multiple_contents() -> None:
-    """Test conversion of ChatMessage with multiple contents."""
+    """Test conversion of Message with multiple contents."""
 
     agent = A2AAgent(client=MagicMock(), _http_client=None)
 
     # Create message with multiple content types
-    message = ChatMessage(
-        role=Role.USER,
+    message = Message(
+        role="user",
         contents=[
             Content.from_text(text="Here's the analysis:"),
             Content.from_data(data=b"binary data", media_type="application/octet-stream"),
@@ -459,13 +489,13 @@ def test_parse_contents_from_a2a_unknown_part_kind() -> None:
 
 
 def test_prepare_message_for_a2a_with_hosted_file() -> None:
-    """Test conversion of ChatMessage with HostedFileContent to A2A message."""
+    """Test conversion of Message with HostedFileContent to A2A message."""
 
     agent = A2AAgent(client=MagicMock(), _http_client=None)
 
     # Create message with hosted file content
-    message = ChatMessage(
-        role=Role.USER,
+    message = Message(
+        role="user",
         contents=[Content.from_hosted_file(file_id="hosted://storage/document.pdf")],
     )
 
@@ -599,3 +629,158 @@ def test_a2a_agent_initialization_with_timeout_parameter() -> None:
 
         # Verify it's an httpx.Timeout object with our custom timeout applied to all components
         assert isinstance(timeout_arg, httpx.Timeout)
+
+
+# region Continuation Token Tests
+
+
+async def test_working_task_emits_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Test that a working (non-terminal) task yields an update with a continuation token when background=True."""
+    mock_a2a_client.add_in_progress_task_response("task-wip", context_id="ctx-1", state=TaskState.working)
+
+    response = await a2a_agent.run("Start long task", background=True)
+
+    assert isinstance(response, AgentResponse)
+    assert response.continuation_token is not None
+    assert response.continuation_token["task_id"] == "task-wip"
+    assert response.continuation_token["context_id"] == "ctx-1"
+
+
+async def test_submitted_task_emits_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Test that a submitted task yields a continuation token when background=True."""
+    mock_a2a_client.add_in_progress_task_response("task-sub", state=TaskState.submitted)
+
+    response = await a2a_agent.run("Submit task", background=True)
+
+    assert response.continuation_token is not None
+    assert response.continuation_token["task_id"] == "task-sub"
+
+
+async def test_input_required_task_emits_continuation_token(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that an input_required task yields a continuation token when background=True."""
+    mock_a2a_client.add_in_progress_task_response("task-input", state=TaskState.input_required)
+
+    response = await a2a_agent.run("Need input", background=True)
+
+    assert response.continuation_token is not None
+    assert response.continuation_token["task_id"] == "task-input"
+
+
+async def test_working_task_no_token_without_background(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Test that background=False (default) does not emit continuation tokens for in-progress tasks."""
+    mock_a2a_client.add_in_progress_task_response("task-fg", context_id="ctx-fg", state=TaskState.working)
+
+    response = await a2a_agent.run("Foreground task")
+
+    assert response.continuation_token is None
+
+
+async def test_completed_task_has_no_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Test that a completed task does not set a continuation token."""
+    mock_a2a_client.add_task_response("task-done", [{"id": "art-1", "content": "Result"}])
+
+    response = await a2a_agent.run("Quick task")
+
+    assert response.continuation_token is None
+    assert len(response.messages) == 1
+    assert response.messages[0].text == "Result"
+
+
+async def test_streaming_emits_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Test that streaming with background=True yields updates with continuation tokens."""
+    mock_a2a_client.add_in_progress_task_response("task-stream", context_id="ctx-s", state=TaskState.working)
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Stream task", stream=True, background=True):
+        updates.append(update)
+
+    assert len(updates) == 1
+    assert updates[0].continuation_token is not None
+    assert updates[0].continuation_token["task_id"] == "task-stream"
+    assert updates[0].continuation_token["context_id"] == "ctx-s"
+
+
+async def test_resume_via_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Test that run() with continuation_token uses resubscribe instead of send_message."""
+    # Set up the resubscribe response (completed task)
+    status = TaskStatus(state=TaskState.completed, message=None)
+    artifact = Artifact(
+        artifact_id="art-resume",
+        name="result",
+        parts=[Part(root=TextPart(text="Resumed result"))],
+    )
+    task = Task(id="task-resume", context_id="ctx-r", status=status, artifacts=[artifact])
+    mock_a2a_client.resubscribe_responses.append((task, None))
+
+    token = A2AContinuationToken(task_id="task-resume", context_id="ctx-r")
+    response = await a2a_agent.run(continuation_token=token)
+
+    assert isinstance(response, AgentResponse)
+    assert len(response.messages) == 1
+    assert response.messages[0].text == "Resumed result"
+    assert response.continuation_token is None
+
+
+async def test_resume_streaming_via_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Test that streaming run() with continuation_token and background=True uses resubscribe."""
+    # Still working
+    status_wip = TaskStatus(state=TaskState.working, message=None)
+    task_wip = Task(id="task-rs", context_id="ctx-rs", status=status_wip)
+    # Then completed
+    status_done = TaskStatus(state=TaskState.completed, message=None)
+    artifact = Artifact(
+        artifact_id="art-rs",
+        name="result",
+        parts=[Part(root=TextPart(text="Stream resumed"))],
+    )
+    task_done = Task(id="task-rs", context_id="ctx-rs", status=status_done, artifacts=[artifact])
+    mock_a2a_client.resubscribe_responses.extend([(task_wip, None), (task_done, None)])
+
+    token = A2AContinuationToken(task_id="task-rs", context_id="ctx-rs")
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run(stream=True, continuation_token=token, background=True):
+        updates.append(update)
+
+    # First update: in-progress with token, second: completed with content
+    assert len(updates) == 2
+    assert updates[0].continuation_token is not None
+    assert updates[0].continuation_token["task_id"] == "task-rs"
+    assert updates[1].continuation_token is None
+    assert updates[1].contents[0].text == "Stream resumed"
+
+
+async def test_poll_task_in_progress(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Test poll_task returns continuation token when task is still in progress."""
+    status = TaskStatus(state=TaskState.working, message=None)
+    mock_a2a_client.get_task_response = Task(id="task-poll", context_id="ctx-p", status=status)
+
+    token = A2AContinuationToken(task_id="task-poll", context_id="ctx-p")
+    response = await a2a_agent.poll_task(token)
+
+    assert response.continuation_token is not None
+    assert response.continuation_token["task_id"] == "task-poll"
+
+
+async def test_poll_task_completed(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Test poll_task returns result with no continuation token when task is complete."""
+    status = TaskStatus(state=TaskState.completed, message=None)
+    artifact = Artifact(
+        artifact_id="art-poll",
+        name="result",
+        parts=[Part(root=TextPart(text="Poll result"))],
+    )
+    mock_a2a_client.get_task_response = Task(
+        id="task-poll-done", context_id="ctx-pd", status=status, artifacts=[artifact]
+    )
+
+    token = A2AContinuationToken(task_id="task-poll-done", context_id="ctx-pd")
+    response = await a2a_agent.poll_task(token)
+
+    assert response.continuation_token is None
+    assert len(response.messages) == 1
+    assert response.messages[0].text == "Poll result"
+
+
+# endregion

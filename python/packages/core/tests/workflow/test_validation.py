@@ -69,9 +69,8 @@ def test_valid_workflow_passes_validation():
 
     # Create a valid workflow
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=executor1)
         .add_edge(executor1, executor2)
-        .set_start_executor(executor1)
         .build()  # This should not raise any exceptions
     )
 
@@ -83,7 +82,7 @@ def test_duplicate_executor_ids_fail_validation():
     executor2 = IntExecutor(id="dup")
 
     with pytest.raises(ValueError) as exc_info:
-        (WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build())
+        (WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build())
 
     assert str(exc_info.value) == "Duplicate executor ID 'dup' detected in workflow."
 
@@ -93,9 +92,7 @@ def test_edge_duplication_validation_fails():
     executor2 = StringExecutor(id="executor2")
 
     with pytest.raises(EdgeDuplicationError) as exc_info:
-        WorkflowBuilder().add_edge(executor1, executor2).add_edge(executor1, executor2).set_start_executor(
-            executor1
-        ).build()
+        WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).add_edge(executor1, executor2).build()
 
     assert "executor1->executor2" in str(exc_info.value)
     assert exc_info.value.validation_type == ValidationTypeEnum.EDGE_DUPLICATION
@@ -106,7 +103,7 @@ def test_type_compatibility_validation_fails():
     int_executor = IntExecutor(id="int_executor")
 
     with pytest.raises(TypeCompatibilityError) as exc_info:
-        WorkflowBuilder().add_edge(string_executor, int_executor).set_start_executor(string_executor).build()
+        WorkflowBuilder(start_executor=string_executor).add_edge(string_executor, int_executor).build()
 
     error = exc_info.value
     assert error.source_executor_id == "string_executor"
@@ -119,7 +116,7 @@ def test_type_compatibility_with_any_type_passes():
     any_executor = AnyExecutor(id="any_executor")
 
     # This should not raise an exception
-    workflow = WorkflowBuilder().add_edge(string_executor, any_executor).set_start_executor(string_executor).build()
+    workflow = WorkflowBuilder(start_executor=string_executor).add_edge(string_executor, any_executor).build()
 
     assert workflow is not None
 
@@ -129,9 +126,7 @@ def test_type_compatibility_with_no_output_types():
     string_executor = StringExecutor(id="string_executor")
 
     # This should pass validation since no output types are specified
-    workflow = (
-        WorkflowBuilder().add_edge(no_output_executor, string_executor).set_start_executor(no_output_executor).build()
-    )
+    workflow = WorkflowBuilder(start_executor=no_output_executor).add_edge(no_output_executor, string_executor).build()
 
     assert workflow is not None
 
@@ -141,9 +136,7 @@ def test_multi_type_executor_compatibility():
     multi_type_executor = MultiTypeExecutor(id="multi_type")
 
     # String executor outputs strings, multi-type can handle strings
-    workflow = (
-        WorkflowBuilder().add_edge(string_executor, multi_type_executor).set_start_executor(string_executor).build()
-    )
+    workflow = WorkflowBuilder(start_executor=string_executor).add_edge(string_executor, multi_type_executor).build()
 
     assert workflow is not None
 
@@ -154,9 +147,7 @@ def test_graph_connectivity_unreachable_executors():
     executor3 = StringExecutor(id="executor3")  # This will be unreachable
 
     with pytest.raises(GraphConnectivityError) as exc_info:
-        WorkflowBuilder().add_edge(executor1, executor2).add_edge(executor3, executor2).set_start_executor(
-            executor1
-        ).build()
+        WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).add_edge(executor3, executor2).build()
 
     assert "unreachable" in str(exc_info.value).lower()
     assert "executor3" in str(exc_info.value)
@@ -177,7 +168,7 @@ def test_graph_connectivity_isolated_executors():
     executors: dict[str, Executor] = {executor1.id: executor1, executor2.id: executor2, executor3.id: executor3}
 
     with pytest.raises(GraphConnectivityError) as exc_info:
-        validate_workflow_graph(edge_groups, executors, executor1)
+        validate_workflow_graph(edge_groups, executors, executor1, [])
 
     assert "unreachable" in str(exc_info.value).lower()
     assert "executor3" in str(exc_info.value)
@@ -189,19 +180,14 @@ def test_disconnected_start_executor_not_in_graph():
     executor3 = StringExecutor(id="executor3")  # Not in graph
 
     with pytest.raises(GraphConnectivityError) as exc_info:
-        WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor3).build()
+        WorkflowBuilder(start_executor=executor3).add_edge(executor1, executor2).build()
 
     assert "The following executors are unreachable from the start executor 'executor3'" in str(exc_info.value)
 
 
 def test_missing_start_executor():
-    executor1 = StringExecutor(id="executor1")
-    executor2 = StringExecutor(id="executor2")
-
-    with pytest.raises(ValueError) as exc_info:
-        WorkflowBuilder().add_edge(executor1, executor2).build()
-
-    assert "Starting executor must be set" in str(exc_info.value)
+    with pytest.raises(TypeError):
+        WorkflowBuilder()  # type: ignore[call-arg]
 
 
 def test_workflow_validation_error_base_class():
@@ -219,12 +205,11 @@ def test_complex_workflow_validation():
     executor4 = AnyExecutor(id="executor4")
 
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=executor1)
         .add_edge(executor1, executor2)  # str -> MultiType (compatible)
         .add_edge(executor2, executor3)  # MultiType -> str (compatible)
         .add_edge(executor2, executor4)  # MultiType -> Any (compatible)
         .add_edge(executor3, executor4)  # str -> Any (compatible)
-        .set_start_executor(executor1)
         .build()
     )
 
@@ -246,7 +231,7 @@ def test_type_compatibility_inheritance():
     derived_executor = DerivedExecutor(id="derived")
 
     # This should pass since both handle str
-    workflow = WorkflowBuilder().add_edge(base_executor, derived_executor).set_start_executor(base_executor).build()
+    workflow = WorkflowBuilder(start_executor=base_executor).add_edge(base_executor, derived_executor).build()
 
     assert workflow is not None
 
@@ -258,12 +243,12 @@ def test_direct_validation_function():
     executors: dict[str, Executor] = {executor1.id: executor1, executor2.id: executor2}
 
     # This should not raise any exceptions
-    validate_workflow_graph(edge_groups, executors, executor1)
+    validate_workflow_graph(edge_groups, executors, executor1, [])
 
     # Test with invalid start executor
     executor3 = StringExecutor(id="executor3")
     with pytest.raises(GraphConnectivityError):
-        validate_workflow_graph(edge_groups, executors, executor3)
+        validate_workflow_graph(edge_groups, executors, executor3, [])
 
 
 def test_fan_out_validation():
@@ -271,7 +256,7 @@ def test_fan_out_validation():
     target1 = StringExecutor(id="target1")
     target2 = AnyExecutor(id="target2")
 
-    workflow = WorkflowBuilder().add_fan_out_edges(source, [target1, target2]).set_start_executor(source).build()
+    workflow = WorkflowBuilder(start_executor=source).add_fan_out_edges(source, [target1, target2]).build()
 
     assert workflow is not None
 
@@ -284,11 +269,10 @@ def test_fan_in_validation():
 
     # Create a proper fan-in by having a start executor that connects to both sources
     workflow = (
-        WorkflowBuilder()
+        WorkflowBuilder(start_executor=start_executor)
         .add_edge(start_executor, source1)  # Start connects to source1
         .add_edge(start_executor, source2)  # Start connects to source2
         .add_fan_in_edges([source1, source2], target)  # Both sources fan-in to target
-        .set_start_executor(start_executor)
         .build()
     )
 
@@ -300,7 +284,7 @@ def test_chain_validation():
     executor2 = StringExecutor(id="executor2")
     executor3 = AnyExecutor(id="executor3")
 
-    workflow = WorkflowBuilder().add_chain([executor1, executor2, executor3]).set_start_executor(executor1).build()
+    workflow = WorkflowBuilder(start_executor=executor1).add_chain([executor1, executor2, executor3]).build()
 
     assert workflow is not None
 
@@ -313,9 +297,7 @@ def test_logging_for_missing_output_types(caplog: Any) -> None:
     string_executor = StringExecutor(id="string_executor")
 
     # This should trigger a warning log
-    workflow = (
-        WorkflowBuilder().add_edge(no_output_executor, string_executor).set_start_executor(no_output_executor).build()
-    )
+    workflow = WorkflowBuilder(start_executor=no_output_executor).add_edge(no_output_executor, string_executor).build()
 
     assert workflow is not None
     assert "has no output type annotations" in caplog.text
@@ -338,9 +320,7 @@ def test_logging_for_missing_input_types(caplog: Any) -> None:
     no_input_executor = NoInputTypesExecutor(id="no_input")
 
     # This should pass since NoInputTypesExecutor has no proper input types
-    workflow = (
-        WorkflowBuilder().add_edge(string_executor, no_input_executor).set_start_executor(string_executor).build()
-    )
+    workflow = WorkflowBuilder(start_executor=string_executor).add_edge(string_executor, no_input_executor).build()
 
     assert workflow is not None
 
@@ -351,7 +331,7 @@ def test_self_loop_detection_warning(caplog: Any) -> None:
     executor = StringExecutor(id="self_loop_executor")
 
     # Create a self-loop
-    workflow = WorkflowBuilder().add_edge(executor, executor).set_start_executor(executor).build()
+    workflow = WorkflowBuilder(start_executor=executor).add_edge(executor, executor).build()
 
     assert workflow is not None
     assert "Self-loop detected" in caplog.text
@@ -365,7 +345,7 @@ def test_handler_validation_basic(caplog: Any) -> None:
     start_executor = StringExecutor(id="start")
     target_executor = StringExecutor(id="target")
 
-    workflow = WorkflowBuilder().add_edge(start_executor, target_executor).set_start_executor(start_executor).build()
+    workflow = WorkflowBuilder(start_executor=start_executor).add_edge(start_executor, target_executor).build()
 
     assert workflow is not None
     # Just ensure the validation runs without errors
@@ -377,7 +357,7 @@ def test_dead_end_detection(caplog: Any) -> None:
     executor1 = StringExecutor(id="executor1")
     executor2 = StringExecutor(id="executor2")  # This will be a dead end
 
-    workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+    workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 
     assert workflow is not None
     assert "Dead-end executors detected" in caplog.text
@@ -391,7 +371,7 @@ def test_successful_type_compatibility_logging(caplog: Any) -> None:
     executor1 = StringExecutor(id="executor1")
     executor2 = StringExecutor(id="executor2")
 
-    workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+    workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 
     assert workflow is not None
     assert "Type compatibility validated for edge" in caplog.text
@@ -406,11 +386,7 @@ def test_multiple_dead_ends_detection(caplog: Any) -> None:
     executor3 = StringExecutor(id="executor3")  # Dead end
 
     workflow = (
-        WorkflowBuilder()
-        .add_edge(executor1, executor2)
-        .add_edge(executor1, executor3)
-        .set_start_executor(executor1)
-        .build()
+        WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).add_edge(executor1, executor3).build()
     )
 
     assert workflow is not None
@@ -426,7 +402,7 @@ def test_single_executor_workflow(caplog: Any) -> None:
     executor2 = StringExecutor(id="executor2")
 
     # Create a simple two-executor workflow to avoid graph validation issues
-    workflow = WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build()
+    workflow = WorkflowBuilder(start_executor=executor1).add_edge(executor1, executor2).build()
 
     assert workflow is not None
     # Should detect executor2 as dead end
@@ -438,7 +414,7 @@ def test_enhanced_type_compatibility_error_details():
     int_executor = IntExecutor(id="int_executor")
 
     with pytest.raises(TypeCompatibilityError) as exc_info:
-        WorkflowBuilder().add_edge(string_executor, int_executor).set_start_executor(string_executor).build()
+        WorkflowBuilder(start_executor=string_executor).add_edge(string_executor, int_executor).build()
 
     error = exc_info.value
     # Verify enhanced error contains detailed type information
@@ -463,7 +439,7 @@ def test_union_type_compatibility_validation() -> None:
     union_input = UnionInputExecutor(id="union_input")
 
     # This should pass validation due to type compatibility (str)
-    workflow = WorkflowBuilder().add_edge(union_output, union_input).set_start_executor(union_output).build()
+    workflow = WorkflowBuilder(start_executor=union_output).add_edge(union_output, union_input).build()
 
     assert workflow is not None
 
@@ -483,7 +459,7 @@ def test_generic_type_compatibility() -> None:
     list_input = ListInputExecutor(id="list_input")
 
     # This should pass validation for generic type compatibility
-    workflow = WorkflowBuilder().add_edge(list_output, list_input).set_start_executor(list_output).build()
+    workflow = WorkflowBuilder(start_executor=list_output).add_edge(list_output, list_input).build()
 
     assert workflow is not None
 
@@ -539,7 +515,7 @@ def test_handler_ctx_none_is_allowed() -> None:
     none_exec = NoneExecutor(id="n")
 
     # Should build successfully
-    wf = WorkflowBuilder().add_edge(start, none_exec).set_start_executor(start).build()
+    wf = WorkflowBuilder(start_executor=start).add_edge(start, none_exec).build()
     assert wf is not None
 
 
@@ -555,5 +531,147 @@ def test_handler_ctx_any_is_allowed_but_skips_type_checks(caplog: Any) -> None:
     any_out = AnyOutExecutor(id="a")
 
     # Builds; later edges from this executor will skip type compatibility when outputs are unspecified
-    wf = WorkflowBuilder().add_edge(start, any_out).set_start_executor(start).build()
+    wf = WorkflowBuilder(start_executor=start).add_edge(start, any_out).build()
     assert wf is not None
+
+
+# region Output Validation Tests
+
+
+class OutputExecutor(Executor):
+    @handler
+    async def handle_string(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+        pass
+
+
+def test_output_validation_with_valid_output_executors():
+    """Test that output validation passes when output executors exist and have output types."""
+    executor1 = OutputExecutor(id="executor1")
+    executor2 = OutputExecutor(id="executor2")
+
+    # Build workflow with valid output executors
+    workflow = (
+        WorkflowBuilder(start_executor=executor1, output_executors=[executor2]).add_edge(executor1, executor2).build()
+    )
+
+    assert workflow is not None
+    assert workflow._output_executors == ["executor2"]
+
+
+def test_output_validation_with_multiple_valid_output_executors():
+    """Test that output validation passes with multiple valid output executors."""
+    executor1 = OutputExecutor(id="executor1")
+    executor2 = OutputExecutor(id="executor2")
+    executor3 = OutputExecutor(id="executor3")
+
+    workflow = (
+        WorkflowBuilder(start_executor=executor1, output_executors=[executor1, executor3])
+        .add_edge(executor1, executor2)
+        .add_edge(executor2, executor3)
+        .build()
+    )
+
+    assert workflow is not None
+    assert set(workflow._output_executors) == {"executor1", "executor3"}
+
+
+def test_output_validation_fails_for_nonexistent_executor():
+    """Test that output validation fails when an output executor doesn't exist in the graph."""
+    executor1 = OutputExecutor(id="executor1")
+    executor2 = OutputExecutor(id="executor2")
+    edge_groups = [SingleEdgeGroup(executor1.id, executor2.id)]
+    executors: dict[str, Executor] = {executor1.id: executor1, executor2.id: executor2}
+
+    # Directly test validation with a nonexistent output executor
+    with pytest.raises(WorkflowValidationError) as exc_info:
+        validate_workflow_graph(edge_groups, executors, executor1, ["nonexistent_executor"])
+
+    assert "not present in the workflow graph" in str(exc_info.value)
+    assert "nonexistent_executor" in str(exc_info.value)
+    assert exc_info.value.validation_type == ValidationTypeEnum.OUTPUT_VALIDATION
+
+
+def test_output_validation_fails_for_executor_without_output_types():
+    """Test that output validation fails when an output executor has no output type annotations."""
+    executor1 = OutputExecutor(id="executor1")
+    no_output_executor = NoOutputTypesExecutor(id="no_output")
+
+    with pytest.raises(WorkflowValidationError) as exc_info:
+        (
+            WorkflowBuilder(start_executor=executor1, output_executors=[no_output_executor])
+            .add_edge(executor1, no_output_executor)
+            .build()
+        )
+
+    assert "must have output type annotations defined" in str(exc_info.value)
+    assert "no_output" in str(exc_info.value)
+    assert exc_info.value.validation_type == ValidationTypeEnum.OUTPUT_VALIDATION
+
+
+def test_output_validation_empty_list_passes():
+    """Test that output validation passes with an empty output executors list."""
+    executor1 = OutputExecutor(id="executor1")
+    executor2 = OutputExecutor(id="executor2")
+
+    workflow = WorkflowBuilder(start_executor=executor1, output_executors=[]).add_edge(executor1, executor2).build()
+
+    assert workflow is not None
+    # All executors are outputs
+    assert workflow._output_executors == ["executor1", "executor2"]  # type: ignore
+
+
+def test_output_validation_with_direct_validate_workflow_graph():
+    """Test _output_validation directly via validate_workflow_graph function."""
+    executor1 = OutputExecutor(id="executor1")
+    executor2 = OutputExecutor(id="executor2")
+    edge_groups = [SingleEdgeGroup(executor1.id, executor2.id)]
+    executors: dict[str, Executor] = {executor1.id: executor1, executor2.id: executor2}
+
+    # Valid output executors
+    validate_workflow_graph(edge_groups, executors, executor1, ["executor2"])
+
+    # Invalid output executor (doesn't exist)
+    with pytest.raises(WorkflowValidationError) as exc_info:
+        validate_workflow_graph(edge_groups, executors, executor1, ["nonexistent"])
+
+    assert "not present in the workflow graph" in str(exc_info.value)
+    assert exc_info.value.validation_type == ValidationTypeEnum.OUTPUT_VALIDATION
+
+
+def test_output_validation_with_no_output_types_via_direct_validation():
+    """Test _output_validation fails for executors without output types via direct validation."""
+    executor1 = OutputExecutor(id="executor1")
+    no_output_executor = NoOutputTypesExecutor(id="no_output")
+    edge_groups = [SingleEdgeGroup(executor1.id, no_output_executor.id)]
+    executors: dict[str, Executor] = {executor1.id: executor1, no_output_executor.id: no_output_executor}
+
+    # Should fail because no_output_executor has no output types
+    with pytest.raises(WorkflowValidationError) as exc_info:
+        validate_workflow_graph(edge_groups, executors, executor1, ["no_output"])
+
+    assert "must have output type annotations defined" in str(exc_info.value)
+    assert exc_info.value.validation_type == ValidationTypeEnum.OUTPUT_VALIDATION
+
+
+def test_output_validation_partial_invalid_list():
+    """Test that output validation fails if any executor in the list is invalid."""
+    executor1 = OutputExecutor(id="executor1")
+    executor2 = OutputExecutor(id="executor2")
+    edge_groups = [SingleEdgeGroup(executor1.id, executor2.id)]
+    executors: dict[str, Executor] = {executor1.id: executor1, executor2.id: executor2}
+
+    # First executor is valid, second doesn't exist - validation should fail
+    with pytest.raises(WorkflowValidationError) as exc_info:
+        validate_workflow_graph(edge_groups, executors, executor1, ["executor2", "nonexistent"])
+
+    assert "not present in the workflow graph" in str(exc_info.value)
+    assert "nonexistent" in str(exc_info.value)
+
+
+def test_output_validation_type_enum_value():
+    """Test that OUTPUT_VALIDATION is properly defined in ValidationTypeEnum."""
+    assert hasattr(ValidationTypeEnum, "OUTPUT_VALIDATION")
+    assert ValidationTypeEnum.OUTPUT_VALIDATION.value == "OUTPUT_VALIDATION"
+
+
+# endregion

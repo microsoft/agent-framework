@@ -1,15 +1,24 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "semantic-kernel",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/semantic-kernel-migration/orchestrations/magentic.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 """Side-by-side Magentic orchestrations for Agent Framework and Semantic Kernel."""
 
 import asyncio
 from collections.abc import Sequence
-from typing import cast
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool, MagenticBuilder, WorkflowOutputEvent
+from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+from agent_framework.orchestrations import MagenticBuilder
+from dotenv import load_dotenv
 from semantic_kernel.agents import (
-    Agent,
     ChatCompletionAgent,
     MagenticOrchestration,
     OpenAIAssistantAgent,
@@ -18,6 +27,9 @@ from semantic_kernel.agents import (
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion, OpenAISettings
 from semantic_kernel.contents import ChatMessageContent
+
+# Load environment variables from .env file
+load_dotenv()
 
 PROMPT = (
     "I am preparing a report on the energy efficiency of different machine learning model architectures. "
@@ -34,7 +46,7 @@ PROMPT = (
 ######################################################################
 
 
-async def build_semantic_kernel_agents() -> list[Agent]:
+async def build_semantic_kernel_agents() -> list:
     research_agent = ChatCompletionAgent(
         name="ResearchAgent",
         description="A helpful assistant with access to web search. Ask it to perform web searches.",
@@ -119,37 +131,49 @@ def _print_semantic_kernel_outputs(outputs: Sequence[ChatMessageContent]) -> Non
 
 
 async def run_agent_framework_example(prompt: str) -> str | None:
-    researcher = ChatAgent(
+    researcher = Agent(
         name="ResearcherAgent",
         description="Specialist in research and information gathering",
         instructions=(
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
-        chat_client=OpenAIChatClient(ai_model_id="gpt-4o-search-preview"),
+        client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
     )
 
-    coder = ChatAgent(
+    # Create code interpreter tool using static method
+    coder_client = OpenAIResponsesClient()
+    code_interpreter_tool = OpenAIResponsesClient.get_code_interpreter_tool()
+
+    coder = Agent(
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
-        chat_client=OpenAIResponsesClient(),
-        tools=HostedCodeInterpreterTool(),
+        client=coder_client,
+        tools=[code_interpreter_tool],
     )
 
     # Create a manager agent for orchestration
-    manager_agent = ChatAgent(
+    manager_agent = Agent(
         name="MagenticManager",
         description="Orchestrator that coordinates the research and coding workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",
-        chat_client=OpenAIChatClient(),
+        client=OpenAIChatClient(),
     )
 
-    workflow = MagenticBuilder().participants([researcher, coder]).with_manager(agent=manager_agent).build()
+    workflow = MagenticBuilder(participants=[researcher, coder], manager_agent=manager_agent).build()
 
     final_text: str | None = None
-    async for event in workflow.run_stream(prompt):
-        if isinstance(event, WorkflowOutputEvent):
-            final_text = cast(str, event.data)
+    async for event in workflow.run(prompt, stream=True):
+        if event.type == "output":
+            data = event.data
+            if isinstance(data, str):
+                final_text = data
+            elif isinstance(data, list):
+                # Extract text from the last assistant message
+                for msg in reversed(data):
+                    if hasattr(msg, "text") and msg.text:
+                        final_text = msg.text
+                        break
 
     return final_text
 

@@ -332,4 +332,91 @@ public class ChatClientAgentRunOptionsTests
     }
 
     #endregion
+
+    #region Clone Tests
+
+    /// <summary>
+    /// Verify that Clone returns a new instance with the same property values.
+    /// </summary>
+    [Fact]
+    public void CloneReturnsNewInstanceWithSameValues()
+    {
+        // Arrange
+        var chatOptions = new ChatOptions { MaxOutputTokens = 100, Temperature = 0.7f };
+        Func<IChatClient, IChatClient> factory = c => c;
+        var runOptions = new ChatClientAgentRunOptions(chatOptions)
+        {
+            ChatClientFactory = factory,
+            AllowBackgroundResponses = true,
+            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                ["key1"] = "value1"
+            }
+        };
+
+        // Act
+        AgentRunOptions cloneAsBase = runOptions.Clone();
+
+        // Assert
+        Assert.NotNull(cloneAsBase);
+        Assert.IsType<ChatClientAgentRunOptions>(cloneAsBase);
+        ChatClientAgentRunOptions clone = (ChatClientAgentRunOptions)cloneAsBase;
+        Assert.NotSame(runOptions, clone);
+        Assert.NotNull(clone.ChatOptions);
+        Assert.NotSame(runOptions.ChatOptions, clone.ChatOptions);
+        Assert.Equal(100, clone.ChatOptions!.MaxOutputTokens);
+        Assert.Equal(0.7f, clone.ChatOptions.Temperature);
+        Assert.Same(factory, clone.ChatClientFactory);
+        Assert.Equal(runOptions.AllowBackgroundResponses, clone.AllowBackgroundResponses);
+        Assert.Same(runOptions.ContinuationToken, clone.ContinuationToken);
+        Assert.NotNull(clone.AdditionalProperties);
+        Assert.NotSame(runOptions.AdditionalProperties, clone.AdditionalProperties);
+        Assert.Equal("value1", clone.AdditionalProperties["key1"]);
+    }
+
+    /// <summary>
+    /// Verify that modifying the cloned ChatOptions does not affect the original.
+    /// </summary>
+    [Fact]
+    public void CloneCreatesIndependentChatOptions()
+    {
+        // Arrange
+        var chatOptions = new ChatOptions { MaxOutputTokens = 100 };
+        var runOptions = new ChatClientAgentRunOptions(chatOptions);
+
+        // Act
+        ChatClientAgentRunOptions clone = (ChatClientAgentRunOptions)runOptions.Clone();
+        clone.ChatOptions!.MaxOutputTokens = 200;
+
+        // Assert
+        Assert.Equal(100, runOptions.ChatOptions!.MaxOutputTokens);
+        Assert.Equal(200, clone.ChatOptions.MaxOutputTokens);
+    }
+
+    /// <summary>
+    /// Verify that modifying the cloned AdditionalProperties does not affect the original.
+    /// </summary>
+    [Fact]
+    public void CloneCreatesIndependentAdditionalPropertiesDictionary()
+    {
+        // Arrange
+        var runOptions = new ChatClientAgentRunOptions
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                ["key1"] = "value1"
+            }
+        };
+
+        // Act
+        ChatClientAgentRunOptions clone = (ChatClientAgentRunOptions)runOptions.Clone();
+        clone.AdditionalProperties!["key2"] = "value2";
+
+        // Assert
+        Assert.True(clone.AdditionalProperties.ContainsKey("key2"));
+        Assert.False(runOptions.AdditionalProperties.ContainsKey("key2"));
+    }
+
+    #endregion
 }

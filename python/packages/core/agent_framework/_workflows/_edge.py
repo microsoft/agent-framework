@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import inspect
 import logging
 import uuid
@@ -16,6 +18,9 @@ logger = logging.getLogger(__name__)
 # Type alias for edge condition functions.
 # Conditions receive the message data and return bool (sync or async).
 EdgeCondition: TypeAlias = Callable[[Any], bool | Awaitable[bool]]
+
+# TypeVar for EdgeGroup subclasses used in class methods
+EdgeGroupT = TypeVar("EdgeGroupT", bound="EdgeGroup")
 
 
 def _extract_function_name(func: Callable[..., Any]) -> str:
@@ -211,7 +216,7 @@ class Edge(DictConvertible):
         return payload
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Edge":
+    def from_dict(cls, data: dict[str, Any]) -> Edge:
         """Reconstruct an `Edge` from its serialised dictionary form.
 
         The deserialised edge will lack the executable predicate because we do
@@ -308,9 +313,7 @@ class EdgeGroup(DictConvertible):
 
     from builtins import type as builtin_type
 
-    _T_EdgeGroup = TypeVar("_T_EdgeGroup", bound="EdgeGroup")
-
-    _TYPE_REGISTRY: ClassVar[dict[str, builtin_type["EdgeGroup"]]] = {}
+    _TYPE_REGISTRY: ClassVar[dict[str, builtin_type[EdgeGroup]]] = {}
 
     def __init__(
         self,
@@ -392,7 +395,7 @@ class EdgeGroup(DictConvertible):
         }
 
     @classmethod
-    def register(cls, subclass: builtin_type[_T_EdgeGroup]) -> builtin_type[_T_EdgeGroup]:
+    def register(cls, subclass: builtin_type[EdgeGroupT]) -> builtin_type[EdgeGroupT]:
         """Register a subclass so deserialisation can recover the right type.
 
         Registration is typically performed via the decorator syntax applied to
@@ -414,7 +417,7 @@ class EdgeGroup(DictConvertible):
         return subclass
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "EdgeGroup":
+    def from_dict(cls, data: dict[str, Any]) -> EdgeGroup:
         """Hydrate the correct `EdgeGroup` subclass from serialised state.
 
         The method inspects the `type` field, allocates the corresponding class
@@ -734,7 +737,7 @@ class SwitchCaseEdgeGroupCase(DictConvertible):
         return payload
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SwitchCaseEdgeGroupCase":
+    def from_dict(cls, data: dict[str, Any]) -> SwitchCaseEdgeGroupCase:
         """Instantiate a case from its serialised dictionary payload.
 
         Examples:
@@ -788,7 +791,7 @@ class SwitchCaseEdgeGroupDefault(DictConvertible):
         return {"target_id": self.target_id, "type": self.type}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SwitchCaseEdgeGroupDefault":
+    def from_dict(cls, data: dict[str, Any]) -> SwitchCaseEdgeGroupDefault:
         """Recreate the default branch from its persisted form.
 
         Examples:

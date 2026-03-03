@@ -63,7 +63,7 @@ public sealed class ResetVariableExecutorTest(ITestOutputHelper output) : Workfl
             {
                 Id = this.CreateActionId(),
                 DisplayName = this.FormatDisplayName(displayName),
-                Variable = InitializablePropertyPath.Create(variablePath),
+                Variable = PropertyPath.Create(variablePath),
             };
 
         return AssignParent<ResetVariable>(actionBuilder);

@@ -26,13 +26,13 @@ Example:
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from agent_framework import ChatAgent, HostedCodeInterpreterTool, HostedWebSearchTool
+from agent_framework import Agent
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
 
 @asynccontextmanager
-async def create_gaia_agent() -> AsyncIterator[ChatAgent]:
+async def create_gaia_agent() -> AsyncIterator[Agent]:
     """Create an Azure AI agent configured for GAIA benchmark tasks.
 
     The agent is configured with:
@@ -40,7 +40,7 @@ async def create_gaia_agent() -> AsyncIterator[ChatAgent]:
     - Code Interpreter tool for calculations and data analysis
 
     Yields:
-        ChatAgent: A configured agent ready to run GAIA tasks.
+        Agent: A configured agent ready to run GAIA tasks.
 
     Example:
         async with create_gaia_agent() as agent:
@@ -54,11 +54,8 @@ async def create_gaia_agent() -> AsyncIterator[ChatAgent]:
             instructions="Solve tasks to your best ability. Use Bing Search to find "
             "information and Code Interpreter to perform calculations and data analysis.",
             tools=[
-                HostedWebSearchTool(
-                    name="Bing Grounding Search",
-                    description="Search the web for current information using Bing",
-                ),
-                HostedCodeInterpreterTool(),
+                AzureAIAgentClient.get_web_search_tool(),
+                AzureAIAgentClient.get_code_interpreter_tool(),
             ],
         ) as agent,
     ):

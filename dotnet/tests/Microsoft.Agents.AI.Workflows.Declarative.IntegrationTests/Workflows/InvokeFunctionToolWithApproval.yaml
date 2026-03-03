@@ -1,0 +1,33 @@
+#
+# This workflow tests invoking function tools with approval requirement.
+# Uses the MenuPlugin function: GetItemPrice with requireApproval: true
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_invoke_function_tool_approval_test
+  actions:
+
+    # Set the item name we want to look up
+    - kind: SetVariable
+      id: set_item_name
+      variable: Local.ItemName
+      value: Clam Chowder
+
+    # Invoke GetItemPrice function with approval requirement
+    - kind: InvokeFunctionTool
+      id: invoke_get_item_price
+      functionName: GetItemPrice
+      conversationId: =System.ConversationId
+      requireApproval: true
+      arguments:
+        name: =Local.ItemName
+      output:
+        autoSend: false
+        result: Local.ItemPrice
+
+    # Send the result as an activity
+    - kind: SendMessage
+      id: show_price_result
+      message: "The price of {Local.ItemName} is ${Text(Local.ItemPrice)}"

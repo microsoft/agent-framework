@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import copy
 import inspect
 import logging
@@ -9,36 +11,30 @@ from typing import TYPE_CHECKING, Any, Generic, Union, cast, get_args, get_origi
 
 from opentelemetry.propagate import inject
 from opentelemetry.trace import SpanKind
-from typing_extensions import Never, TypeVar, deprecated
+from typing_extensions import Never, TypeVar
 
 from ..observability import OtelAttr, create_workflow_span
-from ._const import EXECUTOR_STATE_KEY
 from ._events import (
-    RequestInfoEvent,
     WorkflowEvent,
     WorkflowEventSource,
-    WorkflowFailedEvent,
-    WorkflowLifecycleEvent,
-    WorkflowOutputEvent,
-    WorkflowStartedEvent,
-    WorkflowStatusEvent,
-    WorkflowWarningEvent,
     _framework_event_origin,  # type: ignore
 )
-from ._runner_context import Message, RunnerContext
-from ._shared_state import SharedState
+from ._runner_context import RunnerContext, WorkflowMessage
+from ._state import State
 
 if TYPE_CHECKING:
     from ._executor import Executor
 
-T_Out = TypeVar("T_Out", default=Never)
-T_W_Out = TypeVar("T_W_Out", default=Never)
+OutT = TypeVar("OutT", default=Never)
+W_OutT = TypeVar("W_OutT", default=Never)
 
 
 logger = logging.getLogger(__name__)
 
 
-def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[type[Any]], list[type[Any]]]:
+def infer_output_types_from_ctx_annotation(
+    ctx_annotation: Any,
+) -> tuple[list[type[Any] | UnionType], list[type[Any] | UnionType]]:
     """Infer message types and workflow output types from the WorkflowContext generic parameters.
 
     Examples:
@@ -65,7 +61,7 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
     if origin is None:
         return [], []
 
-    # Expecting WorkflowContext[T_Out, T_W_Out]
+    # Expecting WorkflowContext[OutT, W_OutT]
     if origin is not WorkflowContext:
         return [], []
 
@@ -73,7 +69,7 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
     if not args:
         return [], []
 
-    # WorkflowContext[T_Out] -> message_types from T_Out, no workflow output types
+    # WorkflowContext[OutT] -> message_types from OutT, no workflow output types
     if len(args) == 1:
         t = args[0]
         t_origin = get_origin(t)
@@ -81,18 +77,18 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
             return [cast(type[Any], Any)], []
 
         if t_origin in (Union, UnionType):
-            message_types = [arg for arg in get_args(t) if arg is not Any and arg is not Never]
-            return message_types, []
+            msg_types: list[type[Any] | UnionType] = [arg for arg in get_args(t) if arg is not Any and arg is not Never]
+            return msg_types, []
 
         if t is Never:
             return [], []
         return [t], []
 
-    # WorkflowContext[T_Out, T_W_Out] -> message_types from T_Out, workflow_output_types from T_W_Out
+    # WorkflowContext[OutT, W_OutT] -> message_types from OutT, workflow_output_types from W_OutT
     t_out, t_w_out = args[:2]  # Take first two args in case there are more
 
-    # Process T_Out for message_types
-    message_types = []
+    # Process OutT for message_types
+    message_types: list[type[Any] | UnionType] = []
     t_out_origin = get_origin(t_out)
     if t_out is Any:
         message_types = [cast(type[Any], Any)]
@@ -102,8 +98,8 @@ def infer_output_types_from_ctx_annotation(ctx_annotation: Any) -> tuple[list[ty
         else:
             message_types = [t_out]
 
-    # Process T_W_Out for workflow_output_types
-    workflow_output_types = []
+    # Process W_OutT for workflow_output_types
+    workflow_output_types: list[type[Any] | UnionType] = []
     t_w_out_origin = get_origin(t_w_out)
     if t_w_out is Any:
         workflow_output_types = [cast(type[Any], Any)]
@@ -129,7 +125,7 @@ def validate_workflow_context_annotation(
     annotation: Any,
     parameter_name: str,
     context_description: str,
-) -> tuple[list[type[Any]], list[type[Any]]]:
+) -> tuple[list[type[Any] | UnionType], list[type[Any] | UnionType]]:
     """Validate a WorkflowContext annotation and return inferred types.
 
     Args:
@@ -174,7 +170,7 @@ def validate_workflow_context_annotation(
             return isinstance(x, type) or get_origin(x) is not None or x is Never
 
         for i, type_arg in enumerate(type_args):
-            param_description = "T_Out" if i == 0 else "T_W_Out"
+            param_description = "OutT" if i == 0 else "W_OutT"
 
             # Allow Any explicitly
             if type_arg is Any:
@@ -203,18 +199,11 @@ def validate_workflow_context_annotation(
     return infer_output_types_from_ctx_annotation(annotation)
 
 
-_FRAMEWORK_LIFECYCLE_EVENT_TYPES: tuple[type[WorkflowEvent], ...] = cast(
-    tuple[type[WorkflowEvent], ...],
-    tuple(get_args(WorkflowLifecycleEvent))
-    or (
-        WorkflowStartedEvent,
-        WorkflowStatusEvent,
-        WorkflowFailedEvent,
-    ),
-)
+# Event types reserved for framework lifecycle (not allowed from user code)
+_FRAMEWORK_LIFECYCLE_EVENT_TYPES: frozenset[str] = frozenset({"started", "status", "failed"})
 
 
-class WorkflowContext(Generic[T_Out, T_W_Out]):
+class WorkflowContext(Generic[OutT, W_OutT]):
     """Execution context that enables executors to interact with workflows and other executors.
 
     ## Overview
@@ -233,8 +222,8 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         async def log_handler(message: str, ctx: WorkflowContext) -> None:
             print(f"Received: {message}")  # Only side effects
 
-    ### WorkflowContext[T_Out]
-    Enables sending messages of type T_Out to other executors:
+    ### WorkflowContext[OutT]
+    Enables sending messages of type OutT to other executors:
 
     .. code-block:: python
 
@@ -242,8 +231,8 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             result = len(message)
             await ctx.send_message(result)  # Send int to downstream executors
 
-    ### WorkflowContext[T_Out, T_W_Out]
-    Enables both sending messages (T_Out) and yielding workflow outputs (T_W_Out):
+    ### WorkflowContext[OutT, W_OutT]
+    Enables both sending messages (OutT) and yielding workflow outputs (W_OutT):
 
     .. code-block:: python
 
@@ -263,9 +252,9 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
 
     def __init__(
         self,
-        executor: "Executor",
+        executor: Executor,
         source_executor_ids: list[str],
-        shared_state: SharedState,
+        state: State,
         runner_context: RunnerContext,
         trace_contexts: list[dict[str, str]] | None = None,
         source_span_ids: list[str] | None = None,
@@ -278,7 +267,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             source_executor_ids: The IDs of the source executors that sent messages to this executor.
                 This is a list to support fan_in scenarios where multiple sources send aggregated
                 messages to the same executor.
-            shared_state: The shared state for the workflow.
+            state: The workflow state.
             runner_context: The runner context that provides methods to send messages and events.
             trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
             source_span_ids: Optional source span IDs from multiple sources for linking (not for nesting).
@@ -288,12 +277,12 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         self._executor_id = executor.id
         self._source_executor_ids = source_executor_ids
         self._runner_context = runner_context
-        self._shared_state = shared_state
+        self._state = state
 
-        # Track messages sent via send_message() for ExecutorCompletedEvent
+        # Track messages sent via send_message() for executor_completed event (type='executor_completed')
         self._sent_messages: list[Any] = []
 
-        # Track outputs yielded via yield_output() for ExecutorCompletedEvent
+        # Track outputs yielded via yield_output() for executor_completed event (type='executor_completed')
         self._yielded_outputs: list[Any] = []
 
         # Store trace contexts and source span IDs for linking (supporting multiple sources)
@@ -315,7 +304,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         """
         return self._request_id
 
-    async def send_message(self, message: T_Out, target_id: str | None = None) -> None:
+    async def send_message(self, message: OutT, target_id: str | None = None) -> None:
         """Send a message to the workflow context.
 
         Args:
@@ -332,9 +321,9 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             attributes[OtelAttr.MESSAGE_DESTINATION_EXECUTOR_ID] = target_id
         with create_workflow_span(OtelAttr.MESSAGE_SEND_SPAN, attributes, kind=SpanKind.PRODUCER) as span:
             # Create Message wrapper
-            msg = Message(data=message, source_id=self._executor_id, target_id=target_id)
+            msg = WorkflowMessage(data=message, source_id=self._executor_id, target_id=target_id)
 
-            # Track sent message for ExecutorCompletedEvent
+            # Track sent message for executor_completed event (type='executor_completed')
             self._sent_messages.append(message)
 
             # Inject current trace context if tracing enabled
@@ -347,38 +336,38 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
 
             await self._runner_context.send_message(msg)
 
-    async def yield_output(self, output: T_W_Out) -> None:
+    async def yield_output(self, output: W_OutT) -> None:
         """Set the output of the workflow.
 
         Args:
             output: The output to yield. This must conform to the workflow output type(s)
                     declared on this context.
         """
-        # Track yielded output for ExecutorCompletedEvent (deepcopy to capture state at yield time)
+        # Track yielded output for executor_completed event (type='executor_completed')
+        # (deepcopy to capture state at yield time)
         self._yielded_outputs.append(copy.deepcopy(output))
 
         with _framework_event_origin():
-            event = WorkflowOutputEvent(data=output, executor_id=self._executor_id)
+            event = WorkflowEvent.output(self._executor_id, output)
         await self._runner_context.add_event(event)
 
-    async def add_event(self, event: WorkflowEvent) -> None:
+    async def add_event(self, event: WorkflowEvent[Any]) -> None:
         """Add an event to the workflow context."""
-        if event.origin == WorkflowEventSource.EXECUTOR and isinstance(event, _FRAMEWORK_LIFECYCLE_EVENT_TYPES):
-            event_name = event.__class__.__name__
+        if event.origin == WorkflowEventSource.EXECUTOR and event.type in _FRAMEWORK_LIFECYCLE_EVENT_TYPES:
             warning_msg = (
-                f"Executor '{self._executor_id}' attempted to emit {event_name}, "
+                f"Executor '{self._executor_id}' attempted to emit a '{event.type}' event, "
                 "which is reserved for framework lifecycle notifications. The "
                 "event was ignored."
             )
             logger.warning(warning_msg)
-            await self._runner_context.add_event(WorkflowWarningEvent(warning_msg))
+            await self._runner_context.add_event(WorkflowEvent.warning(warning_msg))
             return
         await self._runner_context.add_event(event)
 
     async def request_info(self, request_data: object, response_type: type, *, request_id: str | None = None) -> None:
         """Request information from outside of the workflow.
 
-        Calling this method will cause the workflow to emit a RequestInfoEvent, carrying the
+        Calling this method will cause the workflow to emit a request_info event (type='request_info'), carrying the
         provided request_data and request_type. External systems listening for such events
         can then process the request and respond accordingly.
 
@@ -400,7 +389,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
                 "not be processed. Please define a response handler using the @response_handler decorator."
             )
 
-        request_info_event = RequestInfoEvent(
+        request_info_event = WorkflowEvent.request_info(
             request_id=request_id or str(uuid.uuid4()),
             source_executor_id=self._executor_id,
             request_data=request_data,
@@ -408,13 +397,13 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         )
         await self._runner_context.add_request_info_event(request_info_event)
 
-    async def get_shared_state(self, key: str) -> Any:
-        """Get a value from the shared state."""
-        return await self._shared_state.get(key)
+    def get_state(self, key: str, default: Any = None) -> Any:
+        """Get a value from the workflow state."""
+        return self._state.get(key, default)
 
-    async def set_shared_state(self, key: str, value: Any) -> None:
-        """Set a value in the shared state."""
-        await self._shared_state.set(key, value)
+    def set_state(self, key: str, value: Any) -> None:
+        """Set a value in the workflow state."""
+        self._state.set(key, value)
 
     def get_source_executor_id(self) -> str:
         """Get the ID of the source executor that sent the message to this executor.
@@ -435,9 +424,9 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         return self._source_executor_ids
 
     @property
-    def shared_state(self) -> SharedState:
-        """Get the shared state."""
-        return self._shared_state
+    def state(self) -> State:
+        """Get the workflow state."""
+        return self._state
 
     def get_sent_messages(self) -> list[Any]:
         """Get all messages sent via send_message() during this handler execution.
@@ -455,50 +444,10 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         """
         return self._yielded_outputs.copy()
 
-    @deprecated(
-        "Override `on_checkpoint_save()` methods instead. "
-        "For cross-executor state sharing, use set_shared_state() instead. "
-        "This API will be removed after 12/01/2025."
-    )
-    async def set_executor_state(self, state: dict[str, Any]) -> None:
-        """Store executor state in shared state under a reserved key.
-
-        Executors call this with a JSON-serializable dict capturing the minimal
-        state needed to resume. It replaces any previously stored state.
-        """
-        has_existing_states = await self._shared_state.has(EXECUTOR_STATE_KEY)
-        if has_existing_states:
-            existing_states = await self._shared_state.get(EXECUTOR_STATE_KEY)
-        else:
-            existing_states = {}
-
-        if not isinstance(existing_states, dict):
-            raise ValueError("Existing executor states in shared state is not a dictionary.")
-
-        existing_states[self._executor_id] = state
-        await self._shared_state.set(EXECUTOR_STATE_KEY, existing_states)
-
-    @deprecated(
-        "Override `on_checkpoint_restore()` methods instead. "
-        "For cross-executor state sharing, use get_shared_state() instead. "
-        "This API will be removed after 12/01/2025."
-    )
-    async def get_executor_state(self) -> dict[str, Any] | None:
-        """Retrieve previously persisted state for this executor, if any."""
-        has_existing_states = await self._shared_state.has(EXECUTOR_STATE_KEY)
-        if not has_existing_states:
-            return None
-
-        existing_states = await self._shared_state.get(EXECUTOR_STATE_KEY)
-        if not isinstance(existing_states, dict):
-            raise ValueError("Existing executor states in shared state is not a dictionary.")
-
-        return existing_states.get(self._executor_id)  # type: ignore
-
     def is_streaming(self) -> bool:
         """Check if the workflow is running in streaming mode.
 
         Returns:
-            True if the workflow was started with run_stream(), False if started with run().
+            True if the workflow was started with stream=True, False otherwise.
         """
         return self._runner_context.is_streaming()

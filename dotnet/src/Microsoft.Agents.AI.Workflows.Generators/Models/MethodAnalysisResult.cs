@@ -22,7 +22,7 @@ internal sealed record MethodAnalysisResult(
     string? GenericParameters,
     bool IsNested,
     string ContainingTypeChain,
-    bool BaseHasConfigureRoutes,
+    bool BaseHasConfigureProtocol,
     ImmutableEquatableArray<string> ClassSendTypes,
     ImmutableEquatableArray<string> ClassYieldTypes,
 

@@ -13,7 +13,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
-internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages model, WorkflowAgentProvider agentProvider, WorkflowFormulaState state) :
+internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages model, ResponseAgentProvider agentProvider, WorkflowFormulaState state) :
     DeclarativeActionExecutor<CopyConversationMessages>(model, state)
 {
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
@@ -42,14 +42,11 @@ internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages 
 
     private IEnumerable<ChatMessage>? GetInputMessages()
     {
-        DataValue? messages = null;
+        Throw.IfNull(this.Model.Messages, $"{nameof(this.Model)}.{nameof(this.Model.Messages)}");
 
-        if (this.Model.Messages is not null)
-        {
-            EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.Model.Messages);
-            messages = expressionResult.Value;
-        }
+        EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.Model.Messages);
+        DataValue messages = expressionResult.Value;
 
-        return messages?.ToChatMessages();
+        return messages.ToChatMessages();
     }
 }

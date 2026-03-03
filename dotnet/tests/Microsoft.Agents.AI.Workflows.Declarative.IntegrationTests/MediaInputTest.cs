@@ -2,7 +2,6 @@
 
 using System;
 using System.IO;
-using System.Net.Http;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
 using Azure.Identity;
@@ -21,42 +20,69 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
 {
     private const string WorkflowWithConversationFileName = "MediaInputConversation.yaml";
     private const string WorkflowWithAutoSendFileName = "MediaInputAutoSend.yaml";
-    private const string PdfReference = "https://sample-files.com/downloads/documents/pdf/basic-text.pdf";
-    private const string ImageReference = "https://sample-files.com/downloads/images/jpg/web_optimized_1200x800_97kb.jpg";
+    private const string ImageReferenceUrl = "https://sample-files.com/downloads/images/jpg/web_optimized_1200x800_97kb.jpg";
+    private const string PdfLocalFile = "TestFiles/basic-text.pdf";
+    private const string ImageLocalFile = "TestFiles/test-image.jpg";
 
     [Theory]
-    [InlineData(ImageReference, "image/jpeg", true, Skip = "Failing due to agent service bug.")]
-    [InlineData(ImageReference, "image/jpeg", false, Skip = "Failing due to agent service bug.")]
+    [InlineData(ImageReferenceUrl, "image/jpeg", true)]
+    [InlineData(ImageReferenceUrl, "image/jpeg", false)]
     public async Task ValidateFileUrlAsync(string fileSource, string mediaType, bool useConversation)
     {
-        this.Output.WriteLine($"File: {ImageReference}");
+        // Arrange
+        this.Output.WriteLine($"File: {fileSource}");
+
+        // Act & Assert
         await this.ValidateFileAsync(new UriContent(fileSource, mediaType), useConversation);
     }
 
+    // Temporarily disabled
     [Theory]
-    [InlineData(ImageReference, "image/jpeg", true)]
-    [InlineData(ImageReference, "image/jpeg", false, Skip = "Failing due to agent service bug.")]
-    [InlineData(PdfReference, "application/pdf", true)]
-    [InlineData(PdfReference, "application/pdf", false)]
-    public async Task ValidateFileDataAsync(string fileSource, string mediaType, bool useConversation)
+    [Trait("Category", "IntegrationDisabled")]
+    [InlineData(ImageLocalFile, "image/jpeg", true)]
+    [InlineData(ImageLocalFile, "image/jpeg", false)]
+    public async Task ValidateImageFileDataAsync(string fileSource, string mediaType, bool useConversation)
     {
-        byte[] fileData = await DownloadFileAsync(fileSource);
+        // Arrange
+        byte[] fileData = ReadLocalFile(fileSource);
         string encodedData = Convert.ToBase64String(fileData);
         string fileUrl = $"data:{mediaType};base64,{encodedData}";
-        this.Output.WriteLine($"Content: {fileUrl.Substring(0, 112)}...");
+        this.Output.WriteLine($"Content: {fileUrl.Substring(0, Math.Min(112, fileUrl.Length))}...");
+
+        // Act & Assert
         await this.ValidateFileAsync(new DataContent(fileUrl), useConversation);
     }
 
     [Theory]
-    [InlineData(PdfReference, "doc.pdf", true, Skip = "Failing due to agent service bug.")]
-    [InlineData(PdfReference, "doc.pdf", false, Skip = "Failing due to agent service bug.")]
+    [InlineData(PdfLocalFile, "application/pdf", true)]
+    [InlineData(PdfLocalFile, "application/pdf", false)]
+    public async Task ValidateFileDataAsync(string fileSource, string mediaType, bool useConversation)
+    {
+        // Arrange
+        byte[] fileData = ReadLocalFile(fileSource);
+        string encodedData = Convert.ToBase64String(fileData);
+        string fileUrl = $"data:{mediaType};base64,{encodedData}";
+        this.Output.WriteLine($"Content: {fileUrl.Substring(0, Math.Min(112, fileUrl.Length))}...");
+
+        // Act & Assert
+        await this.ValidateFileAsync(new DataContent(fileUrl), useConversation);
+    }
+
+    // Temporarily disabled
+    [Theory]
+    [Trait("Category", "IntegrationDisabled")]
+    [InlineData(PdfLocalFile, "doc.pdf", true)]
+    [InlineData(PdfLocalFile, "doc.pdf", false)]
     public async Task ValidateFileUploadAsync(string fileSource, string documentName, bool useConversation)
     {
-        byte[] fileData = await DownloadFileAsync(fileSource);
+        // Arrange
+        byte[] fileData = ReadLocalFile(fileSource);
         AIProjectClient client = new(this.TestEndpoint, new AzureCliCredential());
         using MemoryStream contentStream = new(fileData);
         OpenAIFileClient fileClient = client.GetProjectOpenAIClient().GetOpenAIFileClient();
         OpenAIFile fileInfo = await fileClient.UploadFileAsync(contentStream, documentName, FileUploadPurpose.Assistants);
+
+        // Act & Assert
         try
         {
             this.Output.WriteLine($"File: {fileInfo.Id}");
@@ -68,15 +94,15 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
         }
     }
 
-    private static async Task<byte[]> DownloadFileAsync(string uri)
+    private static byte[] ReadLocalFile(string relativePath)
     {
-        using HttpClient client = new();
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/110.0");
-        return await client.GetByteArrayAsync(new Uri(uri));
+        string fullPath = Path.Combine(AppContext.BaseDirectory, relativePath);
+        return File.ReadAllBytes(fullPath);
     }
 
     private async Task ValidateFileAsync(AIContent fileContent, bool useConversation)
     {
+        // Act
         AgentProvider agentProvider = AgentProvider.Create(this.Configuration, AgentProvider.Names.Vision);
         await agentProvider.CreateAgentsAsync().ConfigureAwait(false);
 
@@ -93,6 +119,8 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
 
         WorkflowHarness harness = new(workflow, runId: Path.GetFileNameWithoutExtension(workflowFileName));
         WorkflowEvents workflowEvents = await harness.RunWorkflowAsync(inputMessage).ConfigureAwait(false);
+
+        // Assert
         Assert.Equal(useConversation ? 1 : 2, workflowEvents.ConversationEvents.Count);
         this.Output.WriteLine("CONVERSATION: " + workflowEvents.ConversationEvents[0].ConversationId);
         AgentResponseEvent agentResponseEvent = Assert.Single(workflowEvents.AgentResponseEvents);

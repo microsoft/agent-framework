@@ -30,7 +30,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "Response")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatClientAgentRunOptions options = new();
 
         // Act
@@ -59,7 +59,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "Response")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatClientAgentRunOptions options = new();
 
         // Act
@@ -88,7 +88,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "Response")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage message = new(ChatRole.User, "Test message");
         ChatClientAgentRunOptions options = new();
 
@@ -118,7 +118,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "Response")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         IEnumerable<ChatMessage> messages = [new(ChatRole.User, "Message 1"), new(ChatRole.User, "Message 2")];
         ChatClientAgentRunOptions options = new();
 
@@ -179,7 +179,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).Returns(GetAsyncUpdatesAsync());
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatClientAgentRunOptions options = new();
 
         // Act
@@ -211,7 +211,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).Returns(GetAsyncUpdatesAsync());
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatClientAgentRunOptions options = new();
 
         // Act
@@ -243,7 +243,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).Returns(GetAsyncUpdatesAsync());
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage message = new(ChatRole.User, "Test message");
         ChatClientAgentRunOptions options = new();
 
@@ -276,7 +276,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).Returns(GetAsyncUpdatesAsync());
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         IEnumerable<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Message 1"), new ChatMessage(ChatRole.User, "Message 2")];
         ChatClientAgentRunOptions options = new();
 
@@ -324,7 +324,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, """{"id":2, "fullName":"Tigger", "species":"Tiger"}""")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatClientAgentRunOptions options = new();
 
         // Act
@@ -354,7 +354,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, """{"id":2, "fullName":"Tigger", "species":"Tiger"}""")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatClientAgentRunOptions options = new();
 
         // Act
@@ -384,7 +384,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, """{"id":2, "fullName":"Tigger", "species":"Tiger"}""")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         ChatMessage message = new(ChatRole.User, "Test message");
         ChatClientAgentRunOptions options = new();
 
@@ -415,7 +415,7 @@ public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, """{"id":2, "fullName":"Tigger", "species":"Tiger"}""")]));
 
         ChatClientAgent agent = new(mockChatClient.Object);
-        AgentSession session = await agent.GetNewSessionAsync();
+        AgentSession session = await agent.CreateSessionAsync();
         IEnumerable<ChatMessage> messages = [new(ChatRole.User, "Message 1"), new(ChatRole.User, "Message 2")];
         ChatClientAgentRunOptions options = new();
 

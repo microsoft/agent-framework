@@ -134,7 +134,7 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
             }
         }
 
-        public static async ValueTask MessagesAsync(string? conversationId, Testcase testcase, WorkflowAgentProvider agentProvider)
+        public static async ValueTask MessagesAsync(string? conversationId, Testcase testcase, ResponseAgentProvider agentProvider)
         {
             int minExpectedCount = testcase.Validation.MinMessageCount ?? testcase.Validation.MinResponseCount;
             int maxExpectedCount = testcase.Validation.MaxMessageCount ?? testcase.Validation.MaxResponseCount ?? minExpectedCount;

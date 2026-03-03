@@ -6,9 +6,10 @@ These executors handle simple actions like SetValue, SendActivity, etc.
 Each action becomes a node in the workflow graph.
 """
 
+import uuid
 from typing import Any
 
-from agent_framework._workflows import (
+from agent_framework import (
     WorkflowContext,
     handler,
 )
@@ -52,8 +53,8 @@ class SetValueExecutor(DeclarativeActionExecutor):
 
         if path:
             # Evaluate value if it's an expression
-            evaluated_value = await state.eval_if_expression(value)
-            await state.set(path, evaluated_value)
+            evaluated_value = state.eval_if_expression(value)
+            state.set(path, evaluated_value)
 
         await ctx.send_message(ActionComplete())
 
@@ -74,8 +75,43 @@ class SetVariableExecutor(DeclarativeActionExecutor):
         value = self._action_def.get("value")
 
         if path:
-            evaluated_value = await state.eval_if_expression(value)
-            await state.set(path, evaluated_value)
+            evaluated_value = state.eval_if_expression(value)
+            state.set(path, evaluated_value)
+
+        await ctx.send_message(ActionComplete())
+
+
+class CreateConversationExecutor(DeclarativeActionExecutor):
+    """Executor for the CreateConversation action.
+
+    Generates a unique conversation ID and initialises a conversation entry
+    in ``System.conversations``.  The generated ID is stored at the state
+    path specified by the ``conversationId`` parameter (if provided).
+    """
+
+    @handler
+    async def handle_action(
+        self,
+        trigger: Any,
+        ctx: WorkflowContext[ActionComplete],
+    ) -> None:
+        """Handle the CreateConversation action."""
+        state = await self._ensure_state_initialized(ctx, trigger)
+
+        generated_id = str(uuid.uuid4())
+
+        # Store the generated ID at the requested path (e.g. "Local.myConvId")
+        conversation_id_path = _get_variable_path(self._action_def, "conversationId")
+        if conversation_id_path:
+            state.set(conversation_id_path, generated_id)
+
+        # Initialise the conversation entry in System.conversations
+        conversations: dict[str, Any] = state.get("System.conversations") or {}
+        conversations[generated_id] = {
+            "id": generated_id,
+            "messages": [],
+        }
+        state.set("System.conversations", conversations)
 
         await ctx.send_message(ActionComplete())
 
@@ -96,8 +132,8 @@ class SetTextVariableExecutor(DeclarativeActionExecutor):
         text = self._action_def.get("text", "")
 
         if path:
-            evaluated_text = await state.eval_if_expression(text)
-            await state.set(path, str(evaluated_text) if evaluated_text is not None else "")
+            evaluated_text = state.eval_if_expression(text)
+            state.set(path, str(evaluated_text) if evaluated_text is not None else "")
 
         await ctx.send_message(ActionComplete())
 
@@ -126,8 +162,8 @@ class SetMultipleVariablesExecutor(DeclarativeActionExecutor):
                 path = assignment.get("path")
             value = assignment.get("value")
             if path:
-                evaluated_value = await state.eval_if_expression(value)
-                await state.set(path, evaluated_value)
+                evaluated_value = state.eval_if_expression(value)
+                state.set(path, evaluated_value)
 
         await ctx.send_message(ActionComplete())
 
@@ -148,8 +184,8 @@ class AppendValueExecutor(DeclarativeActionExecutor):
         value = self._action_def.get("value")
 
         if path:
-            evaluated_value = await state.eval_if_expression(value)
-            await state.append(path, evaluated_value)
+            evaluated_value = state.eval_if_expression(value)
+            state.append(path, evaluated_value)
 
         await ctx.send_message(ActionComplete())
 
@@ -170,7 +206,7 @@ class ResetVariableExecutor(DeclarativeActionExecutor):
 
         if path:
             # Reset to None/empty
-            await state.set(path, None)
+            state.set(path, None)
 
         await ctx.send_message(ActionComplete())
 
@@ -188,9 +224,9 @@ class ClearAllVariablesExecutor(DeclarativeActionExecutor):
         state = await self._ensure_state_initialized(ctx, trigger)
 
         # Get state data and clear Local variables
-        state_data = await state.get_state_data()
+        state_data = state.get_state_data()
         state_data["Local"] = {}
-        await state.set_state_data(state_data)
+        state.set_state_data(state_data)
 
         await ctx.send_message(ActionComplete())
 
@@ -217,10 +253,10 @@ class SendActivityExecutor(DeclarativeActionExecutor):
 
         if isinstance(text, str):
             # First evaluate any =expression syntax
-            text = await state.eval_if_expression(text)
+            text = state.eval_if_expression(text)
             # Then interpolate any {Variable.Path} template syntax
             if isinstance(text, str):
-                text = await state.interpolate_string(text)
+                text = state.interpolate_string(text)
 
         # Yield the text as workflow output
         if text:
@@ -258,8 +294,8 @@ class EmitEventExecutor(DeclarativeActionExecutor):
             event_value = event_def.get("data")
 
         if event_name:
-            evaluated_name = await state.eval_if_expression(event_name)
-            evaluated_value = await state.eval_if_expression(event_value)
+            evaluated_name = state.eval_if_expression(event_name)
+            evaluated_value = state.eval_if_expression(event_value)
 
             event_data = {
                 "eventName": evaluated_name,
@@ -300,16 +336,16 @@ class EditTableExecutor(DeclarativeActionExecutor):
 
         if table_path:
             # Get current table value
-            current_table = await state.get(table_path)
+            current_table = state.get(table_path)
             if current_table is None:
                 current_table = []
             elif not isinstance(current_table, list):
                 current_table = [current_table]
 
             if operation == "add" or operation == "insert":
-                evaluated_value = await state.eval_if_expression(value)
+                evaluated_value = state.eval_if_expression(value)
                 if index is not None:
-                    evaluated_index = await state.eval_if_expression(index)
+                    evaluated_index = state.eval_if_expression(index)
                     idx = int(evaluated_index) if evaluated_index is not None else len(current_table)
                     current_table.insert(idx, evaluated_value)
                 else:
@@ -318,12 +354,12 @@ class EditTableExecutor(DeclarativeActionExecutor):
             elif operation == "remove":
                 if value is not None:
                     # Remove by value
-                    evaluated_value = await state.eval_if_expression(value)
+                    evaluated_value = state.eval_if_expression(value)
                     if evaluated_value in current_table:
                         current_table.remove(evaluated_value)
                 elif index is not None:
                     # Remove by index
-                    evaluated_index = await state.eval_if_expression(index)
+                    evaluated_index = state.eval_if_expression(index)
                     idx = int(evaluated_index) if evaluated_index is not None else -1
                     if 0 <= idx < len(current_table):
                         current_table.pop(idx)
@@ -334,13 +370,13 @@ class EditTableExecutor(DeclarativeActionExecutor):
             elif operation == "set" or operation == "update":
                 # Update item at index
                 if index is not None:
-                    evaluated_value = await state.eval_if_expression(value)
-                    evaluated_index = await state.eval_if_expression(index)
+                    evaluated_value = state.eval_if_expression(value)
+                    evaluated_index = state.eval_if_expression(index)
                     idx = int(evaluated_index) if evaluated_index is not None else 0
                     if 0 <= idx < len(current_table):
                         current_table[idx] = evaluated_value
 
-            await state.set(table_path, current_table)
+            state.set(table_path, current_table)
 
         await ctx.send_message(ActionComplete())
 
@@ -377,16 +413,16 @@ class EditTableV2Executor(DeclarativeActionExecutor):
 
         if table_path:
             # Get current table value
-            current_table = await state.get(table_path)
+            current_table = state.get(table_path)
             if current_table is None:
                 current_table = []
             elif not isinstance(current_table, list):
                 current_table = [current_table]
 
             if operation == "add":
-                evaluated_item = await state.eval_if_expression(item)
+                evaluated_item = state.eval_if_expression(item)
                 if index is not None:
-                    evaluated_index = await state.eval_if_expression(index)
+                    evaluated_index = state.eval_if_expression(index)
                     idx = int(evaluated_index) if evaluated_index is not None else len(current_table)
                     current_table.insert(idx, evaluated_item)
                 else:
@@ -394,7 +430,7 @@ class EditTableV2Executor(DeclarativeActionExecutor):
 
             elif operation == "remove":
                 if item is not None:
-                    evaluated_item = await state.eval_if_expression(item)
+                    evaluated_item = state.eval_if_expression(item)
                     if key_field and isinstance(evaluated_item, dict):
                         # Remove by key match
                         key_value = evaluated_item.get(key_field)
@@ -404,7 +440,7 @@ class EditTableV2Executor(DeclarativeActionExecutor):
                     elif evaluated_item in current_table:
                         current_table.remove(evaluated_item)
                 elif index is not None:
-                    evaluated_index = await state.eval_if_expression(index)
+                    evaluated_index = state.eval_if_expression(index)
                     idx = int(evaluated_index) if evaluated_index is not None else -1
                     if 0 <= idx < len(current_table):
                         current_table.pop(idx)
@@ -413,7 +449,7 @@ class EditTableV2Executor(DeclarativeActionExecutor):
                 current_table = []
 
             elif operation == "addorupdate":
-                evaluated_item = await state.eval_if_expression(item)
+                evaluated_item = state.eval_if_expression(item)
                 if key_field and isinstance(evaluated_item, dict):
                     key_value = evaluated_item.get(key_field)
                     # Find existing item with same key
@@ -433,9 +469,9 @@ class EditTableV2Executor(DeclarativeActionExecutor):
                     current_table.append(evaluated_item)
 
             elif operation == "update":
-                evaluated_item = await state.eval_if_expression(item)
+                evaluated_item = state.eval_if_expression(item)
                 if index is not None:
-                    evaluated_index = await state.eval_if_expression(index)
+                    evaluated_index = state.eval_if_expression(index)
                     idx = int(evaluated_index) if evaluated_index is not None else 0
                     if 0 <= idx < len(current_table):
                         current_table[idx] = evaluated_item
@@ -446,7 +482,7 @@ class EditTableV2Executor(DeclarativeActionExecutor):
                             current_table[i] = evaluated_item
                             break
 
-            await state.set(table_path, current_table)
+            state.set(table_path, current_table)
 
         await ctx.send_message(ActionComplete())
 
@@ -479,13 +515,13 @@ class ParseValueExecutor(DeclarativeActionExecutor):
 
         if path and value is not None:
             # Evaluate the value expression
-            evaluated_value = await state.eval_if_expression(value)
+            evaluated_value = state.eval_if_expression(value)
 
             # Convert to target type if specified
             if value_type:
                 evaluated_value = self._convert_to_type(evaluated_value, value_type)
 
-            await state.set(path, evaluated_value)
+            state.set(path, evaluated_value)
 
         await ctx.send_message(ActionComplete())
 
@@ -560,6 +596,7 @@ class ParseValueExecutor(DeclarativeActionExecutor):
 
 # Mapping of action kinds to executor classes
 BASIC_ACTION_EXECUTORS: dict[str, type[DeclarativeActionExecutor]] = {
+    "CreateConversation": CreateConversationExecutor,
     "SetValue": SetValueExecutor,
     "SetVariable": SetVariableExecutor,
     "SetTextVariable": SetTextVariableExecutor,

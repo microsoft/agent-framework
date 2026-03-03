@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.ObjectModel;
@@ -32,7 +33,6 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
         // Arrange
         this.State.Set("SourceNumber", FormulaValue.New(10));
         this.State.Set("SourceText", FormulaValue.New("Hello"));
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -50,7 +50,6 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
         // Arrange
         this.State.Set("Source1", FormulaValue.New(123));
         this.State.Set("Source2", FormulaValue.New("Reference"));
-        this.State.Bind();
 
         // Act, Assert
         await this.ExecuteTestAsync(
@@ -70,6 +69,19 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
             assignments: [
                 new AssignmentCase("NullVar1", null, FormulaValue.NewBlank()),
                 new AssignmentCase("NormalVar", new StringDataValue("NotNull"), FormulaValue.New("NotNull")),
+                new AssignmentCase("NullVar2", null, FormulaValue.NewBlank())
+            ]);
+    }
+
+    [Fact]
+    public async Task SetMultipleVariablesWithNullVariableAsync()
+    {
+        // Arrange, Act, Assert
+        await this.ExecuteTestAsync(
+            displayName: nameof(SetMultipleVariablesWithNullVariableAsync),
+            assignments: [
+                new AssignmentCase("NullVar1", null, FormulaValue.NewBlank()),
+                new AssignmentCase(null, new StringDataValue("NotNull"), FormulaValue.New("NotNull")),
                 new AssignmentCase("NullVar2", null, FormulaValue.NewBlank())
             ]);
     }
@@ -116,9 +128,9 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
 
         // Assert
         VerifyModel(model, action);
-        foreach (AssignmentCase assignment in assignments)
+        foreach (AssignmentCase assignment in assignments.Where(a => a.VariableName != null))
         {
-            this.VerifyState(assignment.VariableName, assignment.ExpectedValue);
+            this.VerifyState(assignment.VariableName!, assignment.ExpectedValue);
         }
     }
 
@@ -140,9 +152,15 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
                 _ => throw new System.ArgumentException($"Unsupported value type: {assignment.ValueExpression?.GetType().Name}")
             };
 
+            InitializablePropertyPath? variablePath = null;
+            if (assignment.VariableName != null)
+            {
+                variablePath = PropertyPath.Create(FormatVariablePath(assignment.VariableName));
+            }
+
             actionBuilder.Assignments.Add(new VariableAssignment.Builder()
             {
-                Variable = PropertyPath.Create(FormatVariablePath(assignment.VariableName)),
+                Variable = variablePath,
                 Value = valueExpressionBuilder,
             });
         }
@@ -150,5 +168,5 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
         return AssignParent<SetMultipleVariables>(actionBuilder);
     }
 
-    private sealed record AssignmentCase(string VariableName, object? ValueExpression, FormulaValue ExpectedValue);
+    private sealed record AssignmentCase(string? VariableName, object? ValueExpression, FormulaValue ExpectedValue);
 }
