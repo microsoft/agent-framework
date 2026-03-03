@@ -756,12 +756,7 @@ async def test_chat_agent_with_local_mcp_tools(client: SupportsChatGetResponse) 
 
 
 async def test_mcp_tools_not_duplicated_when_passed_as_runtime_tools(chat_client_base: Any) -> None:
-    """Test that MCP tool functions from self.mcp_tools are not duplicated when already present in runtime tools.
-
-    Reproduces https://github.com/microsoft/agent-framework/issues/4381 where AG-UI's
-    collect_server_tools pre-expands MCP functions on turn 2 (when server is connected),
-    and _prepare_run_context unconditionally appends them again from self.mcp_tools.
-    """
+    """Test that MCP tool functions from self.mcp_tools are not duplicated when already present in runtime tools."""
     captured_options: list[dict[str, Any]] = []
 
     original_inner = chat_client_base._inner_get_response
