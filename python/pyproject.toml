@@ -182,8 +182,8 @@ omit = [
 ]
 
 [tool.pyright]
-include = ["agent_framework*"]
-exclude = ["**/tests/**", "**/.venv/**", "packages/devui/frontend/**"]
+include = ["packages/agent_framework*"]
+exclude = ["**/tests/**", "**/.venv/**", "packages/devui/frontend/**", "samples/**", "scripts/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false

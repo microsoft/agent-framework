@@ -32,6 +32,7 @@ from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
 from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from agent_framework.azure._shared import (
+    _normalize_hosted_ids,
     create_bing_tool,
     create_a2a_tool,
     create_azure_ai_search_tool,
@@ -838,49 +839,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
     # region Hosted Tool Factory Methods (Azure-specific overrides)
 
     @staticmethod
-    def _normalize_hosted_ids(
-        value: str | Content | Sequence[str | Content] | None,
-        *,
-        expected_content_type: Literal["hosted_file", "hosted_vector_store"],
-        content_id_field: Literal["file_id", "vector_store_id"],
-        parameter_name: Literal["file_ids", "vector_store_ids"],
-    ) -> list[str] | None:
-        """Normalize string/Content id inputs with strict hosted content validation."""
-        if value is None:
-            return None
-
-        items: list[str | Content]
-        if isinstance(value, (str, Content)):
-            items = [value]
-        else:
-            items = list(value)
-
-        normalized_ids: list[str] = []
-        for item in items:
-            if isinstance(item, str):
-                normalized_ids.append(item)
-                continue
-
-            if isinstance(item, Content):
-                if item.type != expected_content_type:
-                    raise TypeError(
-                        f"{parameter_name} accepts string IDs or Content of type {expected_content_type}."
-                    )
-                content_id = getattr(item, content_id_field)
-                if not content_id:
-                    raise ValueError(
-                        f"{parameter_name} Content items must include '{content_id_field}'."
-                    )
-                normalized_ids.append(content_id)
-                continue
-
-            raise TypeError(
-                f"{parameter_name} accepts string IDs or Content of type {expected_content_type}."
-            )
-
-        return normalized_ids
-
-    @staticmethod
     def get_code_interpreter_tool(  # type: ignore[override]
         *,
         file_ids: str | Content | Sequence[str | Content] | None = None,
@@ -912,7 +870,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         if file_ids is None and isinstance(container, dict):
             file_ids = cast("str | Content | Sequence[str | Content] | None", container.get("file_ids"))
 
-        normalized_file_ids = RawAzureAIClient._normalize_hosted_ids(
+        normalized_file_ids = _normalize_hosted_ids(
             file_ids,
             expected_content_type="hosted_file",
             content_id_field="file_id",
@@ -956,7 +914,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 )
                 agent = ChatAgent(client, tools=[tool])
         """
-        normalized_vector_store_ids = RawAzureAIClient._normalize_hosted_ids(
+        normalized_vector_store_ids = _normalize_hosted_ids(
             vector_store_ids,
             expected_content_type="hosted_vector_store",
             content_id_field="vector_store_id",
