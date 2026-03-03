@@ -53,7 +53,7 @@ async def main() -> None:
 
             # 2. Create a file search tool
             client = AzureAIClient(project_client=project_client)
-            file_search_tool = client.get_file_search_tool(vector_store_ids=[vector_store.id])
+            file_search_tool = client.get_file_search_tool(vector_store_ids=vector_store.id)
 
             # 3. Create an agent with file search capabilities using the provider
             agent = await provider.create_agent(

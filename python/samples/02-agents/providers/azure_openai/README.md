@@ -23,6 +23,7 @@ This folder contains examples demonstrating different ways to create and use age
 | [`azure_responses_client_with_explicit_settings.py`](azure_responses_client_with_explicit_settings.py) | Shows how to initialize an agent with a specific responses client, configuring settings explicitly including endpoint and deployment name. |
 | [`azure_responses_client_with_file_search.py`](azure_responses_client_with_file_search.py) | Demonstrates using `AzureOpenAIResponsesClient.get_file_search_tool()` with Azure OpenAI Responses Client for direct document-based question answering and information retrieval from vector stores. |
 | [`azure_responses_client_with_foundry.py`](azure_responses_client_with_foundry.py) | Shows how to create an agent using an Azure AI Foundry project endpoint instead of a direct Azure OpenAI endpoint. Requires the `azure-ai-projects` package. |
+| [`azure_responses_client_with_foundry_tools.py`](azure_responses_client_with_foundry_tools.py) | Shows a single `Agent` in explicit Foundry project mode, configured with one combined inline tools list built directly via `client.get_..._tool(...)` helpers. The sample is intentionally non-defensive and instructs you to comment out tools you have not configured. |
 | [`azure_responses_client_with_function_tools.py`](azure_responses_client_with_function_tools.py) | Demonstrates how to use function tools with agents. Shows both agent-level tools (defined when creating the agent) and query-level tools (provided with specific queries). |
 | [`azure_responses_client_with_hosted_mcp.py`](azure_responses_client_with_hosted_mcp.py) | Shows how to integrate Azure OpenAI Responses Client with hosted Model Context Protocol (MCP) servers using `AzureOpenAIResponsesClient.get_mcp_tool()` for extended functionality. |
 | [`azure_responses_client_with_local_mcp.py`](azure_responses_client_with_local_mcp.py) | Shows how to integrate Azure OpenAI Responses Client with local Model Context Protocol (MCP) servers using MCPStreamableHTTPTool for extended functionality. |
@@ -38,6 +39,14 @@ Make sure to set the following environment variables before running the examples
 
 For the Foundry project sample (`azure_responses_client_with_foundry.py`), also set:
 - `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+
+For the Foundry tools sample (`azure_responses_client_with_foundry_tools.py`), set:
+- `AZURE_AI_PROJECT_ENDPOINT`
+- `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`
+- Tool-specific connection variables as needed (for example `FABRIC_PROJECT_CONNECTION_ID`, `BING_PROJECT_CONNECTION_ID`).
+
+For memory capabilities, prefer `FoundryMemoryProvider` in the Azure AI context provider sample:
+[`../../context_providers/azure_ai_foundry_memory.py`](../../context_providers/azure_ai_foundry_memory.py).
 
 Optionally, you can set:
 - `AZURE_OPENAI_API_VERSION`: The API version to use (default is `2024-02-15-preview`)

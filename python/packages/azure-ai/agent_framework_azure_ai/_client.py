@@ -4,39 +4,43 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import sys
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from typing import Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Agent,
-    Annotation,
     BaseContextProvider,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
-    ChatResponse,
-    ChatResponseUpdate,
     Content,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
     Message,
     MiddlewareTypes,
-    ResponseStream,
-    TextSpanRegion,
 )
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
 from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
+from agent_framework.azure._responses_client import RawAzureOpenAIResponsesClient
+from agent_framework.azure._shared import (
+    _normalize_hosted_ids,
+    create_a2a_tool,
+    create_azure_ai_search_tool,
+    create_bing_tool,
+    create_browser_automation_tool,
+    create_fabric_data_agent_tool,
+    create_openapi_tool,
+    create_sharepoint_grounding_tool,
+    create_web_search_tool,
+)
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIResponsesOptions
-from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
-    ApproximateLocation,
     CodeInterpreterTool,
     CodeInterpreterToolAuto,
     ImageGenTool,
@@ -86,10 +90,9 @@ AzureAIClientOptionsT = TypeVar(
     covariant=True,
 )
 
-_DOC_INDEX_PATTERN = re.compile(r"doc_(\d+)")
-
-
-class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[AzureAIClientOptionsT]):
+class RawAzureAIClient(
+    RawAzureOpenAIResponsesClient[AzureAIClientOptionsT], Generic[AzureAIClientOptionsT]
+):
     """Raw Azure AI client without middleware, telemetry, or function invocation layers.
 
     Warning:
@@ -307,7 +310,11 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 "Install it with: pip install azure-monitor-opentelemetry"
             ) from exc
 
-        from agent_framework.observability import create_metric_views, create_resource, enable_instrumentation
+        from agent_framework.observability import (
+            create_metric_views,
+            create_resource,
+            enable_instrumentation,
+        )
 
         # Create resource if not provided in kwargs
         if "resource" not in kwargs:
@@ -625,219 +632,20 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         if description and not self.agent_description:
             self.agent_description = description
 
-    # region Azure AI Search Citation Enhancement
-
-    def _extract_azure_search_urls(self, output_items: Any) -> list[str]:
-        """Extract document URLs from azure_ai_search_call_output items.
-
-        Args:
-            output_items: The response output items to scan.
-
-        Returns:
-            A flat list of get_urls from all azure_ai_search_call_output items.
-        """
-        get_urls: list[str] = []
-        for item in output_items:
-            if item.type != "azure_ai_search_call_output":
-                continue
-            output = item.output
-            if isinstance(output, str):
-                try:
-                    output = json.loads(output)
-                except (json.JSONDecodeError, TypeError):
-                    continue
-            if isinstance(output, list):
-                # Streaming "added" events send output as an empty list; skip.
-                continue
-            if output is not None:
-                urls = output.get("get_urls") if isinstance(output, dict) else output.get_urls
-                if urls and isinstance(urls, list):
-                    get_urls.extend(urls)
-        return get_urls
-
-    def _get_search_doc_url(self, citation_title: str | None, get_urls: list[str]) -> str | None:
-        """Map a citation title like 'doc_0' to its corresponding get_url.
-
-        Args:
-            citation_title: The annotation title (e.g., "doc_0").
-            get_urls: The list of document URLs from azure_ai_search_call_output.
-
-        Returns:
-            The matching document URL if found, otherwise None.
-        """
-        if not citation_title or not get_urls:
-            return None
-        match = _DOC_INDEX_PATTERN.search(citation_title)
-        if not match:
-            return None
-        doc_index = int(match.group(1))
-        if 0 <= doc_index < len(get_urls):
-            return str(get_urls[doc_index])
-        return None
-
-    def _enrich_annotations_with_search_urls(self, contents: list[Content], get_urls: list[str]) -> None:
-        """Enrich citation annotations in contents with real document URLs from Azure AI Search.
-
-        Looks for annotations with ``type == "citation"`` and a ``title`` matching ``doc_N``,
-        then adds the corresponding document URL from *get_urls* to ``additional_properties["get_url"]``.
-
-        Args:
-            contents: The parsed content list from a ChatResponse or ChatResponseUpdate.
-            get_urls: Document URLs extracted from azure_ai_search_call_output.
-        """
-        if not get_urls:
-            return
-        for content in contents:
-            if not content.annotations:
-                continue
-            for annotation in content.annotations:
-                if not isinstance(annotation, dict):
-                    continue
-                if annotation.get("type") != "citation":
-                    continue
-                title = annotation.get("title")
-                doc_url = self._get_search_doc_url(title, get_urls)
-                if doc_url:
-                    annotation.setdefault("additional_properties", {})["get_url"] = doc_url
-
-    def _build_url_citation_content(
-        self, annotation_data: dict[str, Any], get_urls: list[str], raw_event: Any
-    ) -> Content:
-        """Build a Content with a citation Annotation from a url_citation streaming event.
-
-        The base class does not handle ``url_citation`` annotations in streaming, so this
-        method creates the appropriate framework content for them.
-
-        Args:
-            annotation_data: The raw annotation dict from the streaming event.
-            get_urls: Captured document URLs for enrichment.
-            raw_event: The raw streaming event for raw_representation.
-
-        Returns:
-            A Content object containing the citation annotation.
-        """
-        ann_title = str(annotation_data.get("title") or "")
-        ann_url = str(annotation_data.get("url") or "")
-        ann_start = annotation_data.get("start_index")
-        ann_end = annotation_data.get("end_index")
-
-        additional_props: dict[str, Any] = {
-            "annotation_index": raw_event.annotation_index,
-        }
-        doc_url = self._get_search_doc_url(ann_title, get_urls)
-        if doc_url:
-            additional_props["get_url"] = doc_url
-
-        annotation_obj = Annotation(
-            type="citation",
-            title=ann_title,
-            url=ann_url,
-            additional_properties=additional_props,
-            raw_representation=annotation_data,
-        )
-        if ann_start is not None and ann_end is not None:
-            annotation_obj["annotated_regions"] = [
-                TextSpanRegion(type="text_span", start_index=ann_start, end_index=ann_end)
-            ]
-
-        return Content.from_text(text="", annotations=[annotation_obj], raw_representation=raw_event)
-
-    @override
-    def _inner_get_response(
-        self,
-        *,
-        messages: Sequence[Message],
-        options: Mapping[str, Any],
-        stream: bool = False,
-        **kwargs: Any,
-    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-        """Wrap base response to enrich Azure AI Search citation annotations.
-
-        For non-streaming responses, the ``ChatResponse.raw_representation`` carries the
-        full response including ``azure_ai_search_call_output`` items.  After the base class
-        parses the response, ``url_citation`` annotations are enriched with per-document URLs.
-
-        For streaming responses, a transform hook is registered on the ``ResponseStream`` to
-        capture ``get_urls`` from search output events and enrich ``url_citation`` annotations
-        as they arrive.  The captured URL state is local to the stream closure, so concurrent
-        streams do not interfere.
-        """
-        if not stream:
-
-            async def _enrich_response() -> ChatResponse:
-                response = await super(RawAzureAIClient, self)._inner_get_response(
-                    messages=messages, options=options, stream=False, **kwargs
-                )
-                get_urls = self._extract_azure_search_urls(response.raw_representation.output)  # type: ignore[union-attr]
-                if get_urls:
-                    for msg in response.messages:
-                        self._enrich_annotations_with_search_urls(list(msg.contents or []), get_urls)
-                return response
-
-            return _enrich_response()
-
-        # Streaming: use a closure-local list so concurrent streams don't interfere
-        stream_result = super()._inner_get_response(  # type: ignore[assignment]
-            messages=messages, options=options, stream=True, **kwargs
-        )
-        search_get_urls: list[str] = []
-
-        def _enrich_update(update: ChatResponseUpdate) -> ChatResponseUpdate:
-            raw = update.raw_representation
-            if raw is None:
-                return update
-            event_type = raw.type
-
-            # Capture get_urls from azure_ai_search_call_output items.
-            # Check both "added" and "done" events because the output data (including
-            # get_urls) may only be fully populated in the "done" event.
-            if event_type in ("response.output_item.added", "response.output_item.done"):
-                urls = self._extract_azure_search_urls([raw.item])
-                if urls:
-                    search_get_urls.extend(urls)
-
-            # Handle url_citation annotations (not handled by the base class in streaming)
-            if event_type == "response.output_text.annotation.added":
-                ann = raw.annotation
-                if ann.get("type") == "url_citation":
-                    citation_content = self._build_url_citation_content(ann, search_get_urls, raw)
-                    contents_list = list(update.contents or [])
-                    contents_list.append(citation_content)
-                    return ChatResponseUpdate(
-                        contents=contents_list,
-                        conversation_id=update.conversation_id,
-                        response_id=update.response_id,
-                        role=update.role,
-                        model_id=update.model_id,
-                        continuation_token=update.continuation_token,
-                        additional_properties=update.additional_properties,
-                        raw_representation=update.raw_representation,
-                    )
-
-            # Enrich any citation annotations already parsed by the base class
-            if update.contents and search_get_urls:
-                self._enrich_annotations_with_search_urls(list(update.contents), search_get_urls)
-
-            return update
-
-        stream_result.with_transform_hook(_enrich_update)  # type: ignore[union-attr]
-        return stream_result
-
-    # endregion
-
     # region Hosted Tool Factory Methods (Azure-specific overrides)
 
     @staticmethod
     def get_code_interpreter_tool(  # type: ignore[override]
         *,
-        file_ids: list[str] | None = None,
+        file_ids: str | Content | Sequence[str | Content] | None = None,
         container: Literal["auto"] | dict[str, Any] = "auto",
         **kwargs: Any,
     ) -> CodeInterpreterTool:
         """Create a code interpreter tool configuration for Azure AI Projects.
 
         Keyword Args:
-            file_ids: Optional list of file IDs to make available to the code interpreter.
+            file_ids: File IDs for the code interpreter. Accepts a string ID, hosted_file Content,
+                or a sequence containing either form.
             container: Container configuration. Use "auto" for automatic container management.
                 Note: Custom container settings from this parameter are not used by Azure AI Projects;
                 use file_ids instead.
@@ -856,14 +664,21 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """
         # Extract file_ids from container if provided as dict and file_ids not explicitly set
         if file_ids is None and isinstance(container, dict):
-            file_ids = container.get("file_ids")
-        tool_container = CodeInterpreterToolAuto(file_ids=file_ids if file_ids else None)
+            file_ids = cast("str | Content | Sequence[str | Content] | None", container.get("file_ids"))
+
+        normalized_file_ids = _normalize_hosted_ids(
+            file_ids,
+            expected_content_type="hosted_file",
+            content_id_field="file_id",
+            parameter_name="file_ids",
+        )
+        tool_container = CodeInterpreterToolAuto(file_ids=normalized_file_ids if normalized_file_ids else None)
         return CodeInterpreterTool(container=tool_container, **kwargs)
 
     @staticmethod
     def get_file_search_tool(
         *,
-        vector_store_ids: list[str],
+        vector_store_ids: str | Content | Sequence[str | Content],
         max_num_results: int | None = None,
         ranking_options: dict[str, Any] | None = None,
         filters: dict[str, Any] | None = None,
@@ -872,7 +687,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """Create a file search tool configuration for Azure AI Projects.
 
         Keyword Args:
-            vector_store_ids: List of vector store IDs to search.
+            vector_store_ids: Vector store IDs to search. Accepts a string ID,
+                hosted_vector_store Content, or a sequence containing either form.
             max_num_results: Maximum number of results to return (1-50).
             ranking_options: Ranking options for search results.
             filters: A filter to apply (ComparisonFilter or CompoundFilter).
@@ -894,10 +710,16 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 )
                 agent = ChatAgent(client, tools=[tool])
         """
-        if not vector_store_ids:
+        normalized_vector_store_ids = _normalize_hosted_ids(
+            vector_store_ids,
+            expected_content_type="hosted_vector_store",
+            content_id_field="vector_store_id",
+            parameter_name="vector_store_ids",
+        )
+        if not normalized_vector_store_ids:
             raise ValueError("File search tool requires 'vector_store_ids' to be specified.")
         return ProjectsFileSearchTool(
-            vector_store_ids=vector_store_ids,
+            vector_store_ids=normalized_vector_store_ids,
             max_num_results=max_num_results,
             ranking_options=ranking_options,  # type: ignore[arg-type]
             filters=filters,  # type: ignore[arg-type]
@@ -911,7 +733,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         search_context_size: Literal["low", "medium", "high"] | None = None,
         **kwargs: Any,
     ) -> WebSearchPreviewTool:
-        """Create a web search preview tool configuration for Azure AI Projects.
+        """Create a generic web search preview tool configuration for Azure AI Projects.
 
         Keyword Args:
             user_location: Location context for search results. Dict with keys like
@@ -937,17 +759,55 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                     search_context_size="high",
                 )
         """
-        ws_tool = WebSearchPreviewTool(search_context_size=search_context_size, **kwargs)
+        return create_web_search_tool(
+            user_location=user_location,
+            search_context_size=search_context_size,
+            **kwargs,
+        )
 
-        if user_location:
-            ws_tool.user_location = ApproximateLocation(
-                city=user_location.get("city"),
-                country=user_location.get("country"),
-                region=user_location.get("region"),
-                timezone=user_location.get("timezone"),
-            )
+    @staticmethod
+    def get_bing_tool(
+        *,
+        variant: Literal[
+            "grounding",
+            "custom_search",
+        ] = "grounding",
+        project_connection_id: str | None = None,
+        instance_name: str | None = None,
+        count: int | None = None,
+        market: str | None = None,
+        set_lang: str | None = None,
+        freshness: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Create a Bing grounding/custom search tool configuration for Azure AI Projects.
 
-        return ws_tool
+        Keyword Args:
+            variant: Bing tool variant to create.
+            project_connection_id: Optional Foundry connection id for Bing variants.
+            instance_name: Optional Bing custom search instance name for custom variants.
+            count: Optional result count for Bing variants.
+            market: Optional market code for Bing variants.
+            set_lang: Optional language code for Bing variants.
+            freshness: Optional freshness filter for Bing variants.
+            **kwargs: Additional arguments for the selected Bing payload.
+
+        Returns:
+            A Bing tool payload ready to pass to ChatAgent.
+
+        Notes:
+            ``custom_search`` emits the ``bing_custom_search_preview`` payload schema.
+        """
+        return create_bing_tool(
+            variant=variant,
+            project_connection_id=project_connection_id,
+            instance_name=instance_name,
+            count=count,
+            market=market,
+            set_lang=set_lang,
+            freshness=freshness,
+            **kwargs,
+        )
 
     @staticmethod
     def get_image_generation_tool(  # type: ignore[override]
@@ -1079,6 +939,80 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                     mcp["require_approval"] = {"never": {"tool_names": never_require}}
 
         return mcp
+
+    @staticmethod
+    def get_fabric_data_agent_tool(*, project_connection_id: str | None = None) -> dict[str, Any]:
+        """Create a Fabric Data Agent tool configuration for Azure AI Projects."""
+        return create_fabric_data_agent_tool(project_connection_id=project_connection_id)
+
+    @staticmethod
+    def get_sharepoint_grounding_tool(*, project_connection_id: str | None = None) -> dict[str, Any]:
+        """Create a SharePoint grounding tool configuration for Azure AI Projects."""
+        return create_sharepoint_grounding_tool(project_connection_id=project_connection_id)
+
+    @staticmethod
+    def get_azure_ai_search_tool(
+        *,
+        project_connection_id: str | None = None,
+        index_name: str | None = None,
+        query_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Create an Azure AI Search tool configuration for Azure AI Projects."""
+        return create_azure_ai_search_tool(
+            project_connection_id=project_connection_id,
+            index_name=index_name,
+            query_type=query_type,
+        )
+
+    @staticmethod
+    def get_browser_automation_tool(*, project_connection_id: str | None = None) -> dict[str, Any]:
+        """Create a browser automation tool configuration for Azure AI Projects."""
+        return create_browser_automation_tool(project_connection_id=project_connection_id)
+
+    @staticmethod
+    def get_openapi_tool(
+        *,
+        name: str,
+        spec: dict[str, Any],
+        description: str | None = None,
+        auth: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create an OpenAPI tool configuration for Azure AI Projects."""
+        return create_openapi_tool(name=name, spec=spec, description=description, auth=auth)
+
+    @staticmethod
+    def get_a2a_tool(
+        *,
+        project_connection_id: str | None = None,
+        base_url: str | None = None,
+    ) -> dict[str, Any]:
+        """Create an A2A tool configuration for Azure AI Projects."""
+        return create_a2a_tool(project_connection_id=project_connection_id, base_url=base_url)
+
+    @staticmethod
+    def get_memory_search_tool(
+        *,
+        memory_store_name: str,
+        scope: str,
+        update_delay: int | None = None,
+    ) -> dict[str, Any]:
+        """Create a memory search tool configuration for Azure AI Projects.
+
+        Note:
+            Prefer ``FoundryMemoryProvider`` for agents that will primarily run locally.
+        """
+        if not memory_store_name:
+            raise ValueError("'memory_store_name' is required.")
+        if not scope:
+            raise ValueError("'scope' is required.")
+        result: dict[str, Any] = {
+            "type": "memory_search",
+            "memory_store_name": memory_store_name,
+            "scope": scope,
+        }
+        if update_delay is not None:
+            result["update_delay"] = update_delay
+        return result
 
     # endregion
 
