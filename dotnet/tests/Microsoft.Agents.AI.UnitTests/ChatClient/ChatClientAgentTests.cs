@@ -105,8 +105,8 @@ public partial class ChatClientAgentTests
                 ChatHistoryProvider = historyProvider
             }));
 
-        Assert.Contains("SharedKey", ex.Message);
-        Assert.Contains(nameof(ChatHistoryProvider), ex.Message);
+        Assert.Contains("ChatHistoryProvider", ex.Message);
+        Assert.Contains("state key 'SharedKey'", ex.Message);
     }
 
     /// <summary>
@@ -159,11 +159,11 @@ public partial class ChatClientAgentTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             agent.RunAsync([new(ChatRole.User, "test")], session, options: new AgentRunOptions { AdditionalProperties = additionalProperties }));
 
-        Assert.Contains("SharedKey", ex.Message);
+        Assert.Contains("state key 'SharedKey'", ex.Message);
     }
 
     /// <summary>
-    /// Verify that RunAsync succeeds when an override ChatHistoryProvider uses the same StateKey as the default ChatHistoryProvider.
+    /// Verify that RunAsync succeeds when an override ChatHistoryProvider uses the same StateKeys as the default ChatHistoryProvider.
     /// </summary>
     [Fact]
     public async Task RunAsync_SucceedsWhenOverrideChatHistoryProviderSharesKeyWithDefaultAsync()
@@ -190,6 +190,102 @@ public partial class ChatClientAgentTests
         additionalProperties.Add<ChatHistoryProvider>(overrideHistoryProvider);
 
         await agent.RunAsync([new(ChatRole.User, "test")], session, options: new AgentRunOptions { AdditionalProperties = additionalProperties });
+    }
+
+    /// <summary>
+    /// Verify that the constructor throws when two multi-key AIContextProviders have an overlapping key.
+    /// </summary>
+    [Fact]
+    public void Constructor_ThrowsWhenMultiKeyAIContextProvidersOverlap()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var provider1 = new MultiKeyTestAIContextProvider("Key1", "SharedKey");
+        var provider2 = new MultiKeyTestAIContextProvider("Key2", "SharedKey");
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new ChatClientAgent(chatClient, options: new()
+            {
+                AIContextProviders = [provider1, provider2]
+            }));
+
+        Assert.Contains("state key 'SharedKey'", ex.Message);
+    }
+
+    /// <summary>
+    /// Verify that the constructor throws when a multi-key ChatHistoryProvider has an overlapping key with an AIContextProvider.
+    /// </summary>
+    [Fact]
+    public void Constructor_ThrowsWhenMultiKeyChatHistoryProviderOverlapsWithAIContextProvider()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var contextProvider = new MultiKeyTestAIContextProvider("Key1", "SharedKey");
+        var historyProvider = new MultiKeyTestChatHistoryProvider("Key2", "SharedKey");
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new ChatClientAgent(chatClient, options: new()
+            {
+                AIContextProviders = [contextProvider],
+                ChatHistoryProvider = historyProvider
+            }));
+
+        Assert.Contains("state key 'SharedKey'", ex.Message);
+    }
+
+    /// <summary>
+    /// Verify that the constructor succeeds when multi-key providers have no overlapping keys.
+    /// </summary>
+    [Fact]
+    public void Constructor_SucceedsWithMultiKeyProvidersWithUniqueKeys()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var contextProvider1 = new MultiKeyTestAIContextProvider("Key1", "Key2");
+        var contextProvider2 = new MultiKeyTestAIContextProvider("Key3", "Key4");
+        var historyProvider = new MultiKeyTestChatHistoryProvider("Key5", "Key6");
+
+        // Act & Assert - should not throw
+        _ = new ChatClientAgent(chatClient, options: new()
+        {
+            AIContextProviders = [contextProvider1, contextProvider2],
+            ChatHistoryProvider = historyProvider
+        });
+    }
+
+    /// <summary>
+    /// Verify that RunAsync throws when a multi-key override ChatHistoryProvider has an overlapping key with an AIContextProvider.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ThrowsWhenMultiKeyOverrideChatHistoryProviderClashesWithAIContextProviderAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        var contextProvider = new MultiKeyTestAIContextProvider("Key1", "SharedKey");
+        var overrideHistoryProvider = new MultiKeyTestChatHistoryProvider("Key2", "SharedKey");
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            AIContextProviders = [contextProvider]
+        });
+
+        // Act & Assert
+        ChatClientAgentSession? session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        AdditionalPropertiesDictionary additionalProperties = new();
+        additionalProperties.Add<ChatHistoryProvider>(overrideHistoryProvider);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            agent.RunAsync([new(ChatRole.User, "test")], session, options: new AgentRunOptions { AdditionalProperties = additionalProperties }));
+
+        Assert.Contains("state key 'SharedKey'", ex.Message);
     }
 
     #endregion
@@ -489,6 +585,7 @@ public partial class ChatClientAgentTests
             .ReturnsAsync(new ChatResponse(responseMessages));
 
         var mockProvider = new Mock<AIContextProvider>(null, null, null);
+        mockProvider.SetupGet(p => p.StateKeys).Returns(["TestProvider"]);
         mockProvider
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -560,6 +657,7 @@ public partial class ChatClientAgentTests
             .Throws(new InvalidOperationException("downstream failure"));
 
         var mockProvider = new Mock<AIContextProvider>(null, null, null);
+        mockProvider.SetupGet(p => p.StateKeys).Returns(["TestProvider"]);
         mockProvider
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -618,6 +716,7 @@ public partial class ChatClientAgentTests
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
         var mockProvider = new Mock<AIContextProvider>(null, null, null);
+        mockProvider.SetupGet(p => p.StateKeys).Returns(["TestProvider"]);
         mockProvider
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -678,7 +777,7 @@ public partial class ChatClientAgentTests
 
         // Provider 1: adds a system message and a tool
         var mockProvider1 = new Mock<AIContextProvider>(null, null, null);
-        mockProvider1.SetupGet(p => p.StateKey).Returns("Provider1");
+        mockProvider1.SetupGet(p => p.StateKeys).Returns(["Provider1"]);
         mockProvider1
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -697,7 +796,7 @@ public partial class ChatClientAgentTests
         // Provider 2: adds another system message and verifies it receives accumulated context from provider 1
         AIContext? provider2ReceivedContext = null;
         var mockProvider2 = new Mock<AIContextProvider>(null, null, null);
-        mockProvider2.SetupGet(p => p.StateKey).Returns("Provider2");
+        mockProvider2.SetupGet(p => p.StateKeys).Returns(["Provider2"]);
         mockProvider2
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -785,7 +884,7 @@ public partial class ChatClientAgentTests
             .ThrowsAsync(new InvalidOperationException("downstream failure"));
 
         var mockProvider1 = new Mock<AIContextProvider>(null, null, null);
-        mockProvider1.SetupGet(p => p.StateKey).Returns("Provider1");
+        mockProvider1.SetupGet(p => p.StateKeys).Returns(["Provider1"]);
         mockProvider1
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -802,7 +901,7 @@ public partial class ChatClientAgentTests
             .Returns(new ValueTask());
 
         var mockProvider2 = new Mock<AIContextProvider>(null, null, null);
-        mockProvider2.SetupGet(p => p.StateKey).Returns("Provider2");
+        mockProvider2.SetupGet(p => p.StateKeys).Returns(["Provider2"]);
         mockProvider2
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -870,7 +969,7 @@ public partial class ChatClientAgentTests
             .Returns(ToAsyncEnumerableAsync(responseUpdates));
 
         var mockProvider1 = new Mock<AIContextProvider>(null, null, null);
-        mockProvider1.SetupGet(p => p.StateKey).Returns("Provider1");
+        mockProvider1.SetupGet(p => p.StateKeys).Returns(["Provider1"]);
         mockProvider1
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -887,7 +986,7 @@ public partial class ChatClientAgentTests
             .Returns(new ValueTask());
 
         var mockProvider2 = new Mock<AIContextProvider>(null, null, null);
-        mockProvider2.SetupGet(p => p.StateKey).Returns("Provider2");
+        mockProvider2.SetupGet(p => p.StateKeys).Returns(["Provider2"]);
         mockProvider2
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -1829,6 +1928,7 @@ public partial class ChatClientAgentTests
             .Returns(ToAsyncEnumerableAsync(responseUpdates));
 
         var mockProvider = new Mock<AIContextProvider>(null, null, null);
+        mockProvider.SetupGet(p => p.StateKeys).Returns(["TestProvider"]);
         mockProvider
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -1908,6 +2008,7 @@ public partial class ChatClientAgentTests
             .Throws(new InvalidOperationException("downstream failure"));
 
         var mockProvider = new Mock<AIContextProvider>(null, null, null);
+        mockProvider.SetupGet(p => p.StateKeys).Returns(["TestProvider"]);
         mockProvider
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -1965,7 +2066,17 @@ public partial class ChatClientAgentTests
 
     private sealed class TestAIContextProvider(string stateKey) : AIContextProvider
     {
-        public override string StateKey => stateKey;
+        private readonly IReadOnlyList<string> _stateKeys = [stateKey];
+
+        public override IReadOnlyList<string> StateKeys => this._stateKeys;
+
+        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+            => new(context.AIContext);
+    }
+
+    private sealed class MultiKeyTestAIContextProvider(params string[] stateKeys) : AIContextProvider
+    {
+        public override IReadOnlyList<string> StateKeys => stateKeys;
 
         protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
             => new(context.AIContext);
@@ -1973,7 +2084,20 @@ public partial class ChatClientAgentTests
 
     private sealed class TestChatHistoryProvider(string stateKey) : ChatHistoryProvider
     {
-        public override string StateKey => stateKey;
+        private readonly IReadOnlyList<string> _stateKeys = [stateKey];
+
+        public override IReadOnlyList<string> StateKeys => this._stateKeys;
+
+        protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+            => new(context.RequestMessages);
+
+        protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+            => default;
+    }
+
+    private sealed class MultiKeyTestChatHistoryProvider(params string[] stateKeys) : ChatHistoryProvider
+    {
+        public override IReadOnlyList<string> StateKeys => stateKeys;
 
         protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
             => new(context.RequestMessages);

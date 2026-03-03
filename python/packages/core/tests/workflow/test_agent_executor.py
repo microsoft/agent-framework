@@ -286,9 +286,7 @@ async def test_agent_executor_run_streaming_with_stream_kwarg_does_not_raise() -
 
 
 @pytest.mark.parametrize("reserved_kwarg", ["session", "stream", "messages"])
-async def test_prepare_agent_run_args_strips_reserved_kwargs(
-    reserved_kwarg: str, caplog: "LogCaptureFixture"
-) -> None:
+async def test_prepare_agent_run_args_strips_reserved_kwargs(reserved_kwarg: str, caplog: "LogCaptureFixture") -> None:
     """_prepare_agent_run_args must remove reserved kwargs and log a warning."""
     raw = {reserved_kwarg: "should-be-stripped", "custom_key": "keep-me"}
 

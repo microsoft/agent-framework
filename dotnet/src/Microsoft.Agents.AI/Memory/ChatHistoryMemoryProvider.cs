@@ -54,6 +54,7 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
     private const string ContentEmbeddingField = "ContentEmbedding";
 
     private readonly ProviderSessionState<State> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
 
 #pragma warning disable CA2213 // VectorStore is not owned by this class - caller is responsible for disposal
     private readonly VectorStore _vectorStore;
@@ -128,7 +129,7 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._sessionState.StateKey;
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(AIContextProvider.InvokingContext context, CancellationToken cancellationToken = default)

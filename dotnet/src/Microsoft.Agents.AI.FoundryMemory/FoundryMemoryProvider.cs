@@ -32,6 +32,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
 
     private readonly ProviderSessionState<State> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
     private readonly string _contextPrompt;
     private readonly string _memoryStoreName;
     private readonly int _maxMemories;
@@ -82,7 +83,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._sessionState.StateKey;
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     private static Func<AgentSession?, State> ValidateStateInitializer(Func<AgentSession?, State> stateInitializer) =>
         session =>

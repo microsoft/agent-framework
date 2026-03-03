@@ -12,6 +12,7 @@ namespace Microsoft.Agents.AI.Workflows;
 internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
 {
     private readonly ProviderSessionState<StoreState> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="WorkflowChatHistoryProvider"/> class.
@@ -30,7 +31,7 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._sessionState.StateKey;
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     internal sealed class StoreState
     {

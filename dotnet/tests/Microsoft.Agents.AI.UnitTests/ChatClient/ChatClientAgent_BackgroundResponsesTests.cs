@@ -339,7 +339,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         // Create a mock chat history provider that would normally provide messages
         var mockChatHistoryProvider = new Mock<ChatHistoryProvider>(null, null, null);
-        mockChatHistoryProvider.SetupGet(p => p.StateKey).Returns("ChatHistoryProvider");
+        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["ChatHistoryProvider"]);
         mockChatHistoryProvider
             .Protected()
             .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -347,7 +347,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         // Create a mock AI context provider that would normally provide context
         var mockContextProvider = new Mock<AIContextProvider>(null, null, null);
-        mockContextProvider.SetupGet(p => p.StateKey).Returns("Provider1");
+        mockContextProvider.SetupGet(p => p.StateKeys).Returns(["Provider1"]);
         mockContextProvider
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -408,7 +408,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         // Create a mock chat history provider that would normally provide messages
         var mockChatHistoryProvider = new Mock<ChatHistoryProvider>(null, null, null);
-        mockChatHistoryProvider.SetupGet(p => p.StateKey).Returns("ChatHistoryProvider");
+        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["ChatHistoryProvider"]);
         mockChatHistoryProvider
             .Protected()
             .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -416,7 +416,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         // Create a mock AI context provider that would normally provide context
         var mockContextProvider = new Mock<AIContextProvider>(null, null, null);
-        mockContextProvider.SetupGet(p => p.StateKey).Returns("Provider1");
+        mockContextProvider.SetupGet(p => p.StateKeys).Returns(["Provider1"]);
         mockContextProvider
             .Protected()
             .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -639,7 +639,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         List<ChatMessage> capturedMessagesAddedToProvider = [];
         var mockChatHistoryProvider = new Mock<ChatHistoryProvider>(null, null, null);
-        mockChatHistoryProvider.SetupGet(p => p.StateKey).Returns("ChatHistoryProvider");
+        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["ChatHistoryProvider"]);
         mockChatHistoryProvider
             .Protected()
             .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
@@ -648,7 +648,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         AIContextProvider.InvokedContext? capturedInvokedContext = null;
         var mockContextProvider = new Mock<AIContextProvider>(null, null, null);
-        mockContextProvider.SetupGet(p => p.StateKey).Returns("Provider1");
+        mockContextProvider.SetupGet(p => p.StateKeys).Returns(["Provider1"]);
         mockContextProvider
             .Protected()
             .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<AIContextProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
@@ -703,7 +703,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         List<ChatMessage> capturedMessagesAddedToProvider = [];
         var mockChatHistoryProvider = new Mock<ChatHistoryProvider>(null, null, null);
-        mockChatHistoryProvider.SetupGet(p => p.StateKey).Returns("ChatHistoryProvider");
+        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["ChatHistoryProvider"]);
         mockChatHistoryProvider
             .Protected()
             .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
@@ -712,7 +712,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         AIContextProvider.InvokedContext? capturedInvokedContext = null;
         var mockContextProvider = new Mock<AIContextProvider>(null, null, null);
-        mockContextProvider.SetupGet(p => p.StateKey).Returns("Provider1");
+        mockContextProvider.SetupGet(p => p.StateKeys).Returns(["Provider1"]);
         mockContextProvider
             .Protected()
             .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<AIContextProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
