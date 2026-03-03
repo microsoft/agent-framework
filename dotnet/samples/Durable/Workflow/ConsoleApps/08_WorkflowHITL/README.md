@@ -62,7 +62,7 @@ await foreach (WorkflowEvent evt in run.WatchStreamAsync())
 
 ## Environment Setup
 
-See the [README.md](../README.md) file in the parent directory for information on configuring the environment, including how to install and run the Durable Task Scheduler.
+See the [README.md](../../README.md) file in the parent directory for information on configuring the environment, including how to install and run the Durable Task Scheduler.
 
 ## Running the Sample
 

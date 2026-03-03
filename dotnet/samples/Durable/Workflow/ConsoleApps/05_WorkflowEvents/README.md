@@ -70,7 +70,7 @@ Each executor emits custom events during execution:
 
 ## Prerequisites
 
-- [Durable Task Scheduler](https://learn.microsoft.com/azure/azure-functions/durable/durable-task-scheduler) running locally or in Azure
+- [Durable Task Scheduler](https://learn.microsoft.com/en-us/azure/azure-functions/durable/durable-task-scheduler/durable-task-scheduler) running locally or in Azure
 - Set the `DURABLE_TASK_SCHEDULER_CONNECTION_STRING` environment variable (defaults to local emulator)
 
 ## Environment Setup

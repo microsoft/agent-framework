@@ -49,7 +49,7 @@ This pattern is useful for:
 
 ## Environment Setup
 
-See the [README.md](../README.md) file in the parent directory for information on configuring the environment.
+See the [README.md](../../README.md) file in the parent directory for information on configuring the environment.
 
 ### Required Environment Variables
 
