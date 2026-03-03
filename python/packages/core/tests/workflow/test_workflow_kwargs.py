@@ -499,9 +499,7 @@ async def test_kwargs_preserved_on_response_continuation() -> None:
 
     # Continue with responses only — no new kwargs
     approval = request_events[0]
-    await workflow.run(
-        responses={approval.request_id: approval.data.to_function_approval_response(True)}
-    )
+    await workflow.run(responses={approval.request_id: approval.data.to_function_approval_response(True)})
 
     # Both calls should have received the original kwargs
     assert len(agent.captured_kwargs) == 2

@@ -56,7 +56,7 @@ public class ChatHistoryMemoryProviderTests
     }
 
     [Fact]
-    public void StateKey_ReturnsDefaultKey_WhenNoOptionsProvided()
+    public void StateKeys_ReturnsDefaultKey_WhenNoOptionsProvided()
     {
         // Arrange & Act
         var provider = new ChatHistoryMemoryProvider(
@@ -66,11 +66,12 @@ public class ChatHistoryMemoryProviderTests
             _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }));
 
         // Assert
-        Assert.Equal("ChatHistoryMemoryProvider", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("ChatHistoryMemoryProvider", provider.StateKeys);
     }
 
     [Fact]
-    public void StateKey_ReturnsCustomKey_WhenSetViaOptions()
+    public void StateKeys_ReturnsCustomKey_WhenSetViaOptions()
     {
         // Arrange & Act
         var provider = new ChatHistoryMemoryProvider(
@@ -81,7 +82,8 @@ public class ChatHistoryMemoryProviderTests
             new ChatHistoryMemoryProviderOptions { StateKey = "custom-key" });
 
         // Assert
-        Assert.Equal("custom-key", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("custom-key", provider.StateKeys);
     }
 
     [Fact]
@@ -687,7 +689,7 @@ public class ChatHistoryMemoryProviderTests
             _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
             options: new ChatHistoryMemoryProviderOptions
             {
-                StorageInputMessageFilter = messages => messages // No filtering - store everything
+                StorageInputRequestMessageFilter = messages => messages // No filtering - store everything
             });
 
         var requestMessages = new List<ChatMessage>

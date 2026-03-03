@@ -380,7 +380,7 @@ public class AIContextProviderChatClientTests
     /// </summary>
     private sealed class TestAIContextProvider : AIContextProvider
     {
-        private readonly string _stateKey;
+        private readonly IReadOnlyList<string> _stateKeys;
         private readonly IEnumerable<ChatMessage> _provideMessages;
         private readonly string? _provideInstructions;
         private readonly IEnumerable<AITool>? _provideTools;
@@ -389,7 +389,7 @@ public class AIContextProviderChatClientTests
 
         public InvokedContext? LastInvokedContext { get; private set; }
 
-        public override string StateKey => this._stateKey;
+        public override IReadOnlyList<string> StateKeys => this._stateKeys;
 
         public TestAIContextProvider(
             string stateKey,
@@ -397,7 +397,7 @@ public class AIContextProviderChatClientTests
             string? provideInstructions = null,
             IEnumerable<AITool>? provideTools = null)
         {
-            this._stateKey = stateKey;
+            this._stateKeys = [stateKey];
             this._provideMessages = provideMessages ?? [];
             this._provideInstructions = provideInstructions;
             this._provideTools = provideTools;

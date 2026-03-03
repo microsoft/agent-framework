@@ -191,7 +191,7 @@ public static partial class AzureAIProjectChatClientExtensions
         AgentRecord agentRecord = await GetAgentRecordByNameAsync(aiProjectClient, options.Name, cancellationToken).ConfigureAwait(false);
         var agentVersion = agentRecord.Versions.Latest;
 
-        var agentOptions = CreateChatClientAgentOptions(agentVersion, options, requireInvocableTools: true);
+        var agentOptions = CreateChatClientAgentOptions(agentVersion, options, requireInvocableTools: !options.UseProvidedChatClientAsIs);
 
         return AsChatClientAgent(
             aiProjectClient,
@@ -522,21 +522,23 @@ public static partial class AzureAIProjectChatClientExtensions
             // Check function tools
             foreach (ResponseTool responseTool in definitionTools)
             {
-                if (requireInvocableTools && responseTool is FunctionTool functionTool)
+                if (responseTool is FunctionTool functionTool)
                 {
                     // Check if a tool with the same type and name exists in the provided tools.
-                    // When invocable tools are required, match only AIFunction.
+                    // Always prefer matching AIFunction when available, regardless of requireInvocableTools.
                     var matchingTool = chatOptions?.Tools?.FirstOrDefault(t => t is AIFunction tf && functionTool.FunctionName == tf.Name);
 
-                    if (matchingTool is null)
-                    {
-                        (missingTools ??= []).Add($"Function tool: {functionTool.FunctionName}");
-                    }
-                    else
+                    if (matchingTool is not null)
                     {
                         (agentTools ??= []).Add(matchingTool!);
+                        continue;
                     }
-                    continue;
+
+                    if (requireInvocableTools)
+                    {
+                        (missingTools ??= []).Add($"Function tool: {functionTool.FunctionName}");
+                        continue;
+                    }
                 }
 
                 (agentTools ??= []).Add(responseTool.AsAITool());

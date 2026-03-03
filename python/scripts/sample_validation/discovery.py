@@ -6,8 +6,9 @@ import ast
 import os
 from pathlib import Path
 
-from _sample_validation.models import DiscoveryResult, SampleInfo, ValidationConfig
 from agent_framework import Executor, WorkflowContext, handler
+
+from sample_validation.models import DiscoveryResult, SampleInfo, ValidationConfig
 
 
 def _is_main_entrypoint_guard(test: ast.expr) -> bool:
@@ -45,7 +46,10 @@ def _has_main_entrypoint_guard(path: Path) -> bool:
     except Exception:
         return False
 
-    return any(isinstance(node, ast.If) and _is_main_entrypoint_guard(node.test) for node in tree.body)
+    return any(
+        isinstance(node, ast.If) and _is_main_entrypoint_guard(node.test)
+        for node in tree.body
+    )
 
 
 def discover_samples(samples_dir: Path, subdir: str | None = None) -> list[SampleInfo]:
