@@ -234,11 +234,12 @@ public static class ServiceCollectionExtensions
         HashSet<string> registeredActivities = [];
         HashSet<string> registeredOrchestrations = [];
 
-        foreach (Workflow workflow in durableOptions.Workflows.Workflows.Values.ToList())
+        DurableWorkflowOptions workflowOptions = durableOptions.Workflows;
+        foreach (Workflow workflow in workflowOptions.Workflows.Values.ToList())
         {
             BuildWorkflowRegistrationRecursive(
                 workflow,
-                durableOptions.Workflows,
+                workflowOptions,
                 registrations,
                 registeredActivities,
                 registeredOrchestrations);

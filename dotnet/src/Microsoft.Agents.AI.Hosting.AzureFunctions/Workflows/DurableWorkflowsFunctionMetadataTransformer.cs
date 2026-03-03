@@ -53,7 +53,8 @@ internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMet
         // Track registered function names to avoid duplicates when workflows share executors.
         HashSet<string> registeredFunctions = [];
 
-        foreach (var workflow in this._options.Workflows.Workflows)
+        DurableWorkflowOptions workflowOptions = this._options.Workflows;
+        foreach (var workflow in workflowOptions.Workflows)
         {
             string httpFunctionName = $"{BuiltInFunctions.HttpPrefix}{workflow.Key}";
 
