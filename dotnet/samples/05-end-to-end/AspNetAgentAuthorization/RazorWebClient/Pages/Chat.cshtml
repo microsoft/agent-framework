@@ -1,0 +1,35 @@
+@page
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize]
+@model AspNetAgentAuthorization.RazorWebClient.Pages.ChatModel
+@{
+    Layout = "_Layout";
+}
+
+<h1>Chat with the Agent</h1>
+
+<form method="post">
+    <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+        <input type="text" name="message" value="@Model.Message" placeholder="Type your message..."
+               style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;" />
+        <button type="submit"
+                style="padding: 10px 20px; background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">
+            Send
+        </button>
+    </div>
+</form>
+
+@if (Model.Error is not null)
+{
+    <div style="background: #fee; border: 1px solid #fcc; border-radius: 4px; padding: 12px; margin-bottom: 12px; color: #c00;">
+        <strong>Error:</strong> @Model.Error
+    </div>
+}
+
+@if (Model.Reply is not null)
+{
+    <div style="background: #f0f7ff; border: 1px solid #cce0ff; border-radius: 4px; padding: 12px; margin-bottom: 12px;">
+        <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Agent (responding to @Model.ReplyUser):</div>
+        <div>@Model.Reply</div>
+    </div>
+}

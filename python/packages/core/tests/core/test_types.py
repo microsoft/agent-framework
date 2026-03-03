@@ -332,6 +332,120 @@ def test_mcp_server_tool_call_and_result():
     assert call2.call_id == ""
 
 
+# region: Shell tool content
+
+
+def test_shell_tool_call_content_creation():
+    call = Content.from_shell_tool_call(
+        call_id="shell-1",
+        commands=["ls -la", "pwd"],
+        timeout_ms=60000,
+        max_output_length=4096,
+        status="completed",
+    )
+
+    assert call.type == "shell_tool_call"
+    assert call.call_id == "shell-1"
+    assert call.commands == ["ls -la", "pwd"]
+    assert call.timeout_ms == 60000
+    assert call.max_output_length == 4096
+    assert call.status == "completed"
+
+
+def test_shell_tool_call_content_minimal():
+    call = Content.from_shell_tool_call(call_id="shell-2")
+
+    assert call.type == "shell_tool_call"
+    assert call.call_id == "shell-2"
+    assert call.commands is None
+    assert call.timeout_ms is None
+    assert call.max_output_length is None
+    assert call.status is None
+
+
+def test_shell_tool_result_content_creation():
+    result = Content.from_shell_tool_result(
+        call_id="shell-1",
+        outputs=[
+            Content.from_shell_command_output(stdout="hello world\n", stderr=None, exit_code=0, timed_out=False),
+            Content.from_shell_command_output(stderr="error msg", exit_code=1, timed_out=False),
+        ],
+        max_output_length=4096,
+    )
+
+    assert result.type == "shell_tool_result"
+    assert result.call_id == "shell-1"
+    assert result.outputs is not None
+    assert len(result.outputs) == 2
+    assert result.outputs[0].type == "shell_command_output"
+    assert result.outputs[0].stdout == "hello world\n"
+    assert result.outputs[0].exit_code == 0
+    assert result.outputs[0].timed_out is False
+    assert result.outputs[1].type == "shell_command_output"
+    assert result.outputs[1].stderr == "error msg"
+    assert result.outputs[1].exit_code == 1
+    assert result.max_output_length == 4096
+
+
+def test_shell_tool_result_with_timeout():
+    result = Content.from_shell_tool_result(
+        call_id="shell-t",
+        outputs=[Content.from_shell_command_output(stdout="partial", timed_out=True)],
+    )
+
+    assert result.type == "shell_tool_result"
+    assert result.outputs is not None
+    assert result.outputs[0].timed_out is True
+    assert result.outputs[0].exit_code is None
+
+
+def test_shell_command_output_content_creation():
+    output = Content.from_shell_command_output(
+        stdout="hello\n",
+        stderr="warn\n",
+        exit_code=0,
+        timed_out=False,
+    )
+
+    assert output.type == "shell_command_output"
+    assert output.stdout == "hello\n"
+    assert output.stderr == "warn\n"
+    assert output.exit_code == 0
+    assert output.timed_out is False
+
+
+def test_shell_content_serialization_roundtrip():
+    call = Content.from_shell_tool_call(
+        call_id="shell-r",
+        commands=["echo hello"],
+        timeout_ms=30000,
+        status="completed",
+    )
+    call_dict = call.to_dict()
+    restored_call = Content.from_dict(call_dict)
+    assert restored_call.type == "shell_tool_call"
+    assert restored_call.call_id == "shell-r"
+    assert restored_call.commands == ["echo hello"]
+    assert restored_call.timeout_ms == 30000
+    assert restored_call.status == "completed"
+
+    result = Content.from_shell_tool_result(
+        call_id="shell-r",
+        outputs=[Content.from_shell_command_output(stdout="hello\n", exit_code=0, timed_out=False)],
+        max_output_length=4096,
+    )
+    result_dict = result.to_dict()
+    restored_result = Content.from_dict(result_dict)
+    assert restored_result.type == "shell_tool_result"
+    assert restored_result.call_id == "shell-r"
+    assert restored_result.outputs is not None
+    assert len(restored_result.outputs) == 1
+    assert restored_result.outputs[0].type == "shell_command_output"
+    assert restored_result.outputs[0].stdout == "hello\n"
+    assert restored_result.outputs[0].exit_code == 0
+    assert restored_result.max_output_length == 4096
+
+
 # region: HostedVectorStoreContent
 
 

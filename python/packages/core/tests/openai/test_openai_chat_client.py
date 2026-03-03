@@ -6,6 +6,12 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from openai import BadRequestError
+from openai.types.chat.chat_completion import ChatCompletion, Choice
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
+from pydantic import BaseModel
+from pytest import param
+
 from agent_framework import (
     ChatResponse,
     Content,
@@ -16,11 +22,6 @@ from agent_framework import (
 from agent_framework.exceptions import ChatClientException
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
-from openai import BadRequestError
-from openai.types.chat.chat_completion import ChatCompletion, Choice
-from openai.types.chat.chat_completion_message import ChatCompletionMessage
-from pydantic import BaseModel
-from pytest import param
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
@@ -32,9 +33,7 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
     open_ai_chat_completion = OpenAIChatClient()
 
-    assert (
-        open_ai_chat_completion.model_id == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
-    )
+    assert open_ai_chat_completion.model_id == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
     assert isinstance(open_ai_chat_completion, SupportsChatGetResponse)
 
 
@@ -61,9 +60,7 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
         default_headers=default_headers,
     )
 
-    assert (
-        open_ai_chat_completion.model_id == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
-    )
+    assert open_ai_chat_completion.model_id == openai_unit_test_env["OPENAI_CHAT_MODEL_ID"]
     assert isinstance(open_ai_chat_completion, SupportsChatGetResponse)
 
     # Assert that the default header we added is present in the client's default headers
@@ -278,9 +275,7 @@ def test_chat_response_content_order_text_before_tool_calls(
                         ChatCompletionMessageToolCall(
                             id="call-123",
                             type="function",
-                            function=Function(
-                                name="calculate", arguments='{"x": 5, "y": 3}'
-                            ),
+                            function=Function(name="calculate", arguments='{"x": 5, "y": 3}'),
                         )
                     ],
                 ),
@@ -397,9 +392,7 @@ def test_prepare_content_for_openai_data_content_image(
     assert result["image_url"]["url"] == image_data_content.uri
 
     # Test DataContent with non-image media type should use default model_dump
-    text_data_content = Content.from_uri(
-        uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain"
-    )
+    text_data_content = Content.from_uri(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
 
     result = client._prepare_content_for_openai(text_data_content)  # type: ignore
 
@@ -419,10 +412,7 @@ def test_prepare_content_for_openai_data_content_image(
     # Should convert to OpenAI input_audio format
     assert result["type"] == "input_audio"
     # Data should contain just the base64 part, not the full data URI
-    assert (
-        result["input_audio"]["data"]
-        == "UklGRjBEAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQwEAAAAAAAAAAAA"
-    )
+    assert result["input_audio"]["data"] == "UklGRjBEAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQwEAAAAAAAAAAAA"
     assert result["input_audio"]["format"] == "wav"
 
     # Test DataContent with MP3 audio
@@ -456,9 +446,7 @@ def test_prepare_content_for_openai_document_file_mapping(
 
     # Should convert to OpenAI file format without filename
     assert result["type"] == "file"
-    assert (
-        "filename" not in result["file"]
-    )  # No filename provided, so none should be set
+    assert "filename" not in result["file"]  # No filename provided, so none should be set
     assert "file_data" in result["file"]
     # Base64 data should be the full data URI (OpenAI requirement)
     assert result["file"]["file_data"].startswith("data:application/pdf;base64,")
@@ -508,9 +496,7 @@ def test_prepare_content_for_openai_document_file_mapping(
 
         # All application/* types should now be mapped to file format
         assert result["type"] == "file"
-        assert (
-            "filename" not in result["file"]
-        )  # Should omit filename when not provided
+        assert "filename" not in result["file"]  # Should omit filename when not provided
         assert result["file"]["file_data"] == doc_content.uri
 
         # Test with filename - should now use file format with filename
@@ -665,9 +651,7 @@ def test_prepare_message_with_text_reasoning_content(
         "summary": "Quick analysis",
     }
 
-    reasoning_content = Content.from_text_reasoning(
-        text=None, protected_data=json.dumps(mock_reasoning_data)
-    )
+    reasoning_content = Content.from_text_reasoning(text=None, protected_data=json.dumps(mock_reasoning_data))
 
     # Message must have other content first for reasoning to attach to
     message = Message(
@@ -686,6 +670,116 @@ def test_prepare_message_with_text_reasoning_content(
     assert prepared[0]["reasoning_details"] == mock_reasoning_data
     # Should also have the text content (flattened to string for text-only)
     assert prepared[0]["content"] == "The answer is 42."
+
+
+def test_prepare_message_with_only_text_reasoning_content(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that a message with only text_reasoning content does not raise IndexError.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/4384
+    Reasoning models (e.g. gpt-5-mini) may produce reasoning_details without text content,
+    which previously caused an IndexError when preparing messages.
+    """
+    client = OpenAIChatClient()
+
+    mock_reasoning_data = {
+        "effort": "high",
+        "summary": "Deep analysis of the problem",
+    }
+
+    reasoning_content = Content.from_text_reasoning(text=None, protected_data=json.dumps(mock_reasoning_data))
+
+    # Message with only reasoning content and no text
+    message = Message(
+        role="assistant",
+        contents=[reasoning_content],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    # Should have one message with reasoning_details
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "assistant"
+    assert "reasoning_details" in prepared[0]
+    assert prepared[0]["reasoning_details"] == mock_reasoning_data
+    # Message should also include a content field to be a valid Chat Completions payload
+    assert "content" in prepared[0]
+    assert prepared[0]["content"] == ""
+
+
+def test_prepare_message_with_text_reasoning_before_text(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that text_reasoning content appearing before text content is handled correctly.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/4384
+    """
+    client = OpenAIChatClient()
+
+    mock_reasoning_data = {
+        "effort": "medium",
+        "summary": "Quick analysis",
+    }
+
+    reasoning_content = Content.from_text_reasoning(text=None, protected_data=json.dumps(mock_reasoning_data))
+
+    # Reasoning appears before text content
+    message = Message(
+        role="assistant",
+        contents=[
+            reasoning_content,
+            Content.from_text(text="The answer is 42."),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    # Should produce exactly one message without raising IndexError
+    assert len(prepared) == 1
+
+    # Reasoning details should be present on the message
+    assert "reasoning_details" in prepared[0]
+    assert prepared[0]["reasoning_details"] == mock_reasoning_data
+    assert prepared[0]["content"] == "The answer is 42."
+
+
+def test_prepare_message_with_text_reasoning_before_function_call(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that text_reasoning content appearing before a function call is handled correctly.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/4384
+    """
+    client = OpenAIChatClient()
+
+    mock_reasoning_data = {
+        "effort": "medium",
+        "summary": "Deciding to call a function",
+    }
+
+    reasoning_content = Content.from_text_reasoning(text=None, protected_data=json.dumps(mock_reasoning_data))
+
+    # Reasoning appears before function call content
+    message = Message(
+        role="assistant",
+        contents=[
+            reasoning_content,
+            Content.from_function_call(call_id="call_abc", name="get_weather", arguments='{"city": "Seattle"}'),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    # Should produce exactly one message
+    assert len(prepared) == 1
+
+    # The message should carry the reasoning details and tool_calls
+    assert "reasoning_details" in prepared[0]
+    assert prepared[0]["reasoning_details"] == mock_reasoning_data
+    assert "tool_calls" in prepared[0]
+    assert prepared[0]["tool_calls"][0]["function"]["name"] == "get_weather"
+    assert prepared[0]["role"] == "assistant"
 
 
 def test_function_approval_content_is_skipped_in_preparation(
@@ -810,9 +904,7 @@ def test_streaming_chunk_with_usage_and_text(
 
     # Should have BOTH text and usage content
     content_types = [c.type for c in update.contents]
-    assert "text" in content_types, (
-        "Text content should not be lost when usage is present"
-    )
+    assert "text" in content_types, "Text content should not be lost when usage is present"
     assert "usage" in content_types, "Usage content should still be present"
 
     text_content = next(c for c in update.contents if c.type == "text")
@@ -872,9 +964,7 @@ def test_prepare_options_without_messages(openai_unit_test_env: dict[str, str]) 
 
     client = OpenAIChatClient()
 
-    with pytest.raises(
-        ChatClientInvalidRequestException, match="Messages are required"
-    ):
+    with pytest.raises(ChatClientInvalidRequestException, match="Messages are required"):
         client._prepare_options([], {})
 
 
@@ -958,9 +1048,7 @@ def test_prepare_system_message_content_is_string(
     """
     client = OpenAIChatClient()
 
-    message = Message(
-        role="system", contents=[Content.from_text(text="You are a helpful assistant.")]
-    )
+    message = Message(role="system", contents=[Content.from_text(text="You are a helpful assistant.")])
 
     prepared = client._prepare_message_for_openai(message)
 
@@ -976,9 +1064,7 @@ def test_prepare_developer_message_content_is_string(
     """Test that developer message content is a plain string, not a list."""
     client = OpenAIChatClient()
 
-    message = Message(
-        role="developer", contents=[Content.from_text(text="Follow these rules.")]
-    )
+    message = Message(role="developer", contents=[Content.from_text(text="Follow these rules.")])
 
     prepared = client._prepare_message_for_openai(message)
 
@@ -1040,9 +1126,7 @@ def test_prepare_user_message_multimodal_content_remains_list(
         role="user",
         contents=[
             Content.from_text(text="What's in this image?"),
-            Content.from_uri(
-                uri="https://example.com/image.png", media_type="image/png"
-            ),
+            Content.from_uri(uri="https://example.com/image.png", media_type="image/png"),
         ],
     )
 
@@ -1059,9 +1143,7 @@ def test_prepare_assistant_message_text_content_is_string(
     """Test that text-only assistant message content is flattened to a plain string."""
     client = OpenAIChatClient()
 
-    message = Message(
-        role="assistant", contents=[Content.from_text(text="Sure, I can help.")]
-    )
+    message = Message(role="assistant", contents=[Content.from_text(text="Sure, I can help.")])
 
     prepared = client._prepare_message_for_openai(message)
 
@@ -1118,12 +1200,8 @@ def test_multiple_function_calls_in_single_message(
     message = Message(
         role="assistant",
         contents=[
-            Content.from_function_call(
-                call_id="call_1", name="func_1", arguments='{"a": 1}'
-            ),
-            Content.from_function_call(
-                call_id="call_2", name="func_2", arguments='{"b": 2}'
-            ),
+            Content.from_function_call(call_id="call_1", name="func_1", arguments='{"a": 1}'),
+            Content.from_function_call(call_id="call_2", name="func_2", arguments='{"b": 2}'),
         ],
     )
 
@@ -1166,9 +1244,7 @@ async def test_streaming_exception_handling(
         patch.object(client.client.chat.completions, "create", side_effect=mock_error),
         pytest.raises(ChatClientException),
     ):
-        async for _ in client._inner_get_response(
-            messages=messages, stream=True, options={}
-        ):  # type: ignore
+        async for _ in client._inner_get_response(messages=messages, stream=True, options={}):  # type: ignore
             pass
 
 
@@ -1272,9 +1348,7 @@ async def test_integration_options(
         elif option_name.startswith("response_format"):
             # Use prompt that works well with structured output
             messages = [Message(role="user", text="The weather in Seattle is sunny")]
-            messages.append(
-                Message(role="user", text="What is the weather in Seattle?")
-            )
+            messages.append(Message(role="user", text="What is the weather in Seattle?"))
         else:
             # Generic prompt for simple options
             messages = [Message(role="user", text="Say 'Hello World' briefly.")]
@@ -1307,14 +1381,9 @@ async def test_integration_options(
         assert response.messages is not None
         if not option_name.startswith("tool_choice") and (
             (isinstance(option_value, str) and option_value != "required")
-            or (
-                isinstance(option_value, dict)
-                and option_value.get("mode") != "required"
-            )
+            or (isinstance(option_value, dict) and option_value.get("mode") != "required")
         ):
-            assert response.text is not None, (
-                f"No text in response for option '{option_name}'"
-            )
+            assert response.text is not None, f"No text in response for option '{option_name}'"
             assert len(response.text) > 0, f"Empty response for option '{option_name}'"
 
         # Validate based on option type
@@ -1322,9 +1391,7 @@ async def test_integration_options(
             if option_name.startswith("tools") or option_name.startswith("tool_choice"):
                 # Should have called the weather function
                 text = response.text.lower()
-                assert "sunny" in text or "seattle" in text, (
-                    f"Tool not invoked for {option_name}"
-                )
+                assert "sunny" in text or "seattle" in text, f"Tool not invoked for {option_name}"
             elif option_name.startswith("response_format"):
                 if option_value == OutputStruct:
                     # Should have structured output
@@ -1333,9 +1400,7 @@ async def test_integration_options(
                     assert "seattle" in response.value.location.lower()
                 else:
                     # Runtime JSON schema
-                    assert response.value is None, (
-                        "No structured output, can't parse any json."
-                    )
+                    assert response.value is None, "No structured output, can't parse any json."
                     response_value = json.loads(response.text)
                     assert isinstance(response_value, dict)
                     assert "location" in response_value
@@ -1364,9 +1429,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await client.get_response(
-                stream=True, **content
-            ).get_final_response()
+            response = await client.get_response(stream=True, **content).get_final_response()
         else:
             response = await client.get_response(**content)
 
@@ -1398,9 +1461,7 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await client.get_response(
-                stream=True, **content
-            ).get_final_response()
+            response = await client.get_response(stream=True, **content).get_final_response()
         else:
             response = await client.get_response(**content)
         assert response.text is not None

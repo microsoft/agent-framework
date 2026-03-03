@@ -27,6 +27,7 @@ public sealed class Mem0Provider : MessageAIContextProvider
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
 
     private readonly ProviderSessionState<State> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
     private readonly string _contextPrompt;
     private readonly bool _enableSensitiveTelemetryData;
 
@@ -52,7 +53,7 @@ public sealed class Mem0Provider : MessageAIContextProvider
     /// </code>
     /// </remarks>
     public Mem0Provider(HttpClient httpClient, Func<AgentSession?, State> stateInitializer, Mem0ProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
-        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputRequestMessageFilter, options?.StorageInputResponseMessageFilter)
     {
         this._sessionState = new ProviderSessionState<State>(
             ValidateStateInitializer(Throw.IfNull(stateInitializer)),
@@ -72,7 +73,7 @@ public sealed class Mem0Provider : MessageAIContextProvider
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._sessionState.StateKey;
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     private static Func<AgentSession?, State> ValidateStateInitializer(Func<AgentSession?, State> stateInitializer) =>
         session =>
