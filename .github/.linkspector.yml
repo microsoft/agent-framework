@@ -18,6 +18,7 @@ ignorePatterns:
   - pattern: "0001-madr-architecture-decisions.md"
   - pattern: "https://api.powerplatform.com/.default"
   - pattern: "https://your-resource.openai.azure.com/"
+  - pattern: "https://your-project.services.ai.azure.com"
   - pattern: "http://host.docker.internal"
   - pattern: "https://openai.github.io/openai-agents-js/openai/agents/classes/"
 # excludedDirs:
