@@ -70,11 +70,23 @@ The response will confirm the workflow orchestration has started:
 Workflow orchestration started for ExpenseReimbursement. Orchestration runId: abc123def456
 ```
 
-> **Tip:** You can provide a custom run ID by appending a `runId` query parameter:
+> [!TIP]
+> You can provide a custom run ID by appending a `runId` query parameter:
+>
+> Bash (Linux/macOS/WSL):
 >
 > ```bash
 > curl -X POST "http://localhost:7071/api/workflows/ExpenseReimbursement/run?runId=expense-001" \
 >     -H "Content-Type: text/plain" -d "EXP-2025-001"
+> ```
+>
+> PowerShell:
+>
+> ```powershell
+> Invoke-RestMethod -Method Post `
+>     -Uri "http://localhost:7071/api/workflows/ExpenseReimbursement/run?runId=expense-001" `
+>     -ContentType text/plain `
+>     -Body "EXP-2025-001"
 > ```
 >
 > If not provided, a unique run ID is auto-generated.
@@ -83,8 +95,16 @@ Workflow orchestration started for ExpenseReimbursement. Orchestration runId: ab
 
 The workflow pauses at the `ManagerApproval` RequestPort. Query the status endpoint to see what input it is waiting for:
 
+Bash (Linux/macOS/WSL):
+
 ```bash
 curl http://localhost:7071/api/workflows/ExpenseReimbursement/status/{runId}
+```
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:7071/api/workflows/ExpenseReimbursement/status/{runId}
 ```
 
 ```json
@@ -97,14 +117,26 @@ curl http://localhost:7071/api/workflows/ExpenseReimbursement/status/{runId}
 }
 ```
 
-> **Tip:** You can also verify this in the DTS dashboard at `http://localhost:8082`. Find the orchestration by its `runId` and you will see it is in a "Running" state, paused at a `WaitForExternalEvent` call for the `ManagerApproval` event.
+> [!TIP]
+> You can also verify this in the DTS dashboard at `http://localhost:8082`. Find the orchestration by its `runId` and you will see it is in a "Running" state, paused at a `WaitForExternalEvent` call for the `ManagerApproval` event.
 
 ### Step 3: Send Manager Approval Response
+
+Bash (Linux/macOS/WSL):
 
 ```bash
 curl -X POST http://localhost:7071/api/workflows/ExpenseReimbursement/respond/{runId} \
     -H "Content-Type: application/json" \
     -d '{"eventName": "ManagerApproval", "response": {"Approved": true, "Comments": "Approved by manager."}}'
+```
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod -Method Post `
+    -Uri http://localhost:7071/api/workflows/ExpenseReimbursement/respond/{runId} `
+    -ContentType application/json `
+    -Body '{"eventName": "ManagerApproval", "response": {"Approved": true, "Comments": "Approved by manager."}}'
 ```
 
 ```json
@@ -120,8 +152,16 @@ curl -X POST http://localhost:7071/api/workflows/ExpenseReimbursement/respond/{r
 
 The workflow now pauses at both the `BudgetApproval` and `ComplianceApproval` RequestPorts in parallel:
 
+Bash (Linux/macOS/WSL):
+
 ```bash
 curl http://localhost:7071/api/workflows/ExpenseReimbursement/status/{runId}
+```
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:7071/api/workflows/ExpenseReimbursement/status/{runId}
 ```
 
 ```json
@@ -137,10 +177,21 @@ curl http://localhost:7071/api/workflows/ExpenseReimbursement/status/{runId}
 
 ### Step 5a: Send Budget Approval Response
 
+Bash (Linux/macOS/WSL):
+
 ```bash
 curl -X POST http://localhost:7071/api/workflows/ExpenseReimbursement/respond/{runId} \
     -H "Content-Type: application/json" \
     -d '{"eventName": "BudgetApproval", "response": {"Approved": true, "Comments": "Budget approved."}}'
+```
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod -Method Post `
+    -Uri http://localhost:7071/api/workflows/ExpenseReimbursement/respond/{runId} `
+    -ContentType application/json `
+    -Body '{"eventName": "BudgetApproval", "response": {"Approved": true, "Comments": "Budget approved."}}'
 ```
 
 ```json
@@ -154,10 +205,21 @@ curl -X POST http://localhost:7071/api/workflows/ExpenseReimbursement/respond/{r
 
 ### Step 5b: Send Compliance Approval Response
 
+Bash (Linux/macOS/WSL):
+
 ```bash
 curl -X POST http://localhost:7071/api/workflows/ExpenseReimbursement/respond/{runId} \
     -H "Content-Type: application/json" \
     -d '{"eventName": "ComplianceApproval", "response": {"Approved": true, "Comments": "Compliance approved."}}'
+```
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod -Method Post `
+    -Uri http://localhost:7071/api/workflows/ExpenseReimbursement/respond/{runId} `
+    -ContentType application/json `
+    -Body '{"eventName": "ComplianceApproval", "response": {"Approved": true, "Comments": "Compliance approved."}}'
 ```
 
 ```json
@@ -173,8 +235,16 @@ curl -X POST http://localhost:7071/api/workflows/ExpenseReimbursement/respond/{r
 
 After all approvals, the workflow completes and the expense is reimbursed:
 
+Bash (Linux/macOS/WSL):
+
 ```bash
 curl http://localhost:7071/api/workflows/ExpenseReimbursement/status/{runId}
+```
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:7071/api/workflows/ExpenseReimbursement/status/{runId}
 ```
 
 ```json
