@@ -211,9 +211,8 @@ class CosmosHistoryProvider(BaseHistoryProvider):
         parameters: list[dict[str, object]] = [
             {"name": "@source_id", "value": self.source_id}
         ]
-        items = self._container_proxy.query_items(  # type: ignore[union-attr]
-            query=query, parameters=parameters, enable_cross_partition_query=True
-        )
+        # without a partition key, it is automatically a cross-partition query
+        items = self._container_proxy.query_items(query=query, parameters=parameters)  # type: ignore[union-attr]
 
         session_ids: set[str] = set()
         async for item in items:

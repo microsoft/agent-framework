@@ -9,16 +9,14 @@ from contextlib import suppress
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import agent_framework_azure_cosmos._history_provider as history_provider_module
 import pytest
 from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import SettingNotFoundError
+from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider
 from azure.cosmos.aio import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
-
-import agent_framework_azure_cosmos._history_provider as history_provider_module
-from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider
-
 
 skip_if_cosmos_integration_tests_disabled = pytest.mark.skipif(
     any(
@@ -209,7 +207,6 @@ class TestCosmosHistoryProviderListSessions:
         kwargs = mock_container.query_items.call_args.kwargs
         assert kwargs["query"] == "SELECT DISTINCT VALUE c.session_id FROM c WHERE c.source_id = @source_id"
         assert kwargs["parameters"] == [{"name": "@source_id", "value": "mem"}]
-        assert kwargs["enable_cross_partition_query"] is True
 
 
 class TestCosmosHistoryProviderSaveMessages:
