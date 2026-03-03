@@ -52,7 +52,7 @@ internal sealed partial class FileAgentSkillLoader
     /// </summary>
     /// <param name="logger">The logger instance.</param>
     /// <param name="allowedResourceExtensions">File extensions to recognize as skill resources. When <see langword="null"/>, defaults are used.</param>
-    internal FileAgentSkillLoader(ILogger logger, IReadOnlyList<string>? allowedResourceExtensions = null)
+    internal FileAgentSkillLoader(ILogger logger, IEnumerable<string>? allowedResourceExtensions = null)
     {
         this._logger = logger;
 
@@ -438,7 +438,7 @@ internal sealed partial class FileAgentSkillLoader
         return path;
     }
 
-    private static void ValidateExtensions(IReadOnlyList<string>? extensions)
+    private static void ValidateExtensions(IEnumerable<string>? extensions)
     {
         if (extensions is null)
         {

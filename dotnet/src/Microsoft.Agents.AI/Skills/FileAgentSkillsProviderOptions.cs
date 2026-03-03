@@ -28,5 +28,5 @@ public sealed class FileAgentSkillsProviderOptions
     /// When <see langword="null"/>, a default set of extensions is used
     /// (<c>.md</c>, <c>.json</c>, <c>.yaml</c>, <c>.yml</c>, <c>.csv</c>, <c>.xml</c>, <c>.txt</c>).
     /// </summary>
-    public IReadOnlyList<string>? AllowedResourceExtensions { get; set; }
+    public IEnumerable<string>? AllowedResourceExtensions { get; set; }
 }
