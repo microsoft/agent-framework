@@ -58,7 +58,10 @@ if TYPE_CHECKING:
         PermissionMode,
         SandboxSettings,
         SdkBeta,
+        SdkPluginConfig,
+        SettingSource,
     )
+    from claude_agent_sdk.types import ThinkingConfig
 
 
 logger = logging.getLogger("agent_framework.claude")
@@ -162,6 +165,18 @@ class ClaudeAgentOptions(TypedDict, total=False):
 
     betas: list[SdkBeta]
     """Beta features to enable."""
+
+    plugins: list[SdkPluginConfig]
+    """Plugin configurations for custom commands and capabilities."""
+
+    setting_sources: list[SettingSource]
+    """Which Claude settings files to load ("user", "project", "local")."""
+
+    thinking: ThinkingConfig
+    """Extended thinking configuration. Takes precedence over max_thinking_tokens."""
+
+    effort: Literal["low", "medium", "high", "max"]
+    """Effort level for thinking depth."""
 
 
 OptionsT = TypeVar(
