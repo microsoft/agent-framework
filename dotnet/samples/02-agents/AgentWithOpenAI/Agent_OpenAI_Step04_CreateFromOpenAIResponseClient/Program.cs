@@ -2,6 +2,8 @@
 
 // This sample demonstrates how to create OpenAIResponseClientAgent directly from an ResponsesClient instance.
 
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Responses;
 using OpenAIResponseClientSample;
@@ -10,10 +12,18 @@ var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new I
 var model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt-4o-mini";
 
 // Create a ResponsesClient directly from OpenAIClient
-ResponsesClient responseClient = new OpenAIClient(apiKey).GetResponsesClient(model);
+ResponsesClient responseClient = new OpenAIClient(apiKey).GetResponsesClient();
 
 // Create an agent directly from the ResponsesClient using OpenAIResponseClientAgent
-OpenAIResponseClientAgent agent = new(responseClient, instructions: "You are good at telling jokes.", name: "Joker");
+OpenAIResponseClientAgent agent = new(responseClient, new ChatClientAgentOptions()
+{
+    Name = "Joker",
+    ChatOptions = new ChatOptions()
+    {
+        ModelId = model,
+        Instructions = "You are good at telling jokes."
+    }
+});
 
 ResponseItem userMessage = ResponseItem.CreateUserMessageItem("Tell me a joke about a pirate.");
 

@@ -22,7 +22,16 @@ OpenAIClient openAIClient = new(apiKey);
 ConversationClient conversationClient = openAIClient.GetConversationClient();
 
 // Create an agent directly from the ResponsesClient using OpenAIResponseClientAgent
-ChatClientAgent agent = new(openAIClient.GetResponsesClient(model).AsIChatClient(), instructions: "You are a helpful assistant.", name: "ConversationAgent");
+ChatClientAgent agent = new(openAIClient.GetResponsesClient().AsIChatClient(),
+    new ChatClientAgentOptions()
+    {
+        Name = "ConversationAgent",
+        ChatOptions = new ChatOptions()
+        {
+            ModelId = model,
+            Instructions = "You are a helpful assistant."
+        }
+    });
 
 ClientResult createConversationResult = await conversationClient.CreateConversationAsync(BinaryContent.Create(BinaryData.FromString("{}")));
 

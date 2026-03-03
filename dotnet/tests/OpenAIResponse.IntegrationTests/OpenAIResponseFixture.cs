@@ -16,6 +16,7 @@ namespace ResponseResult.IntegrationTests;
 
 public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 {
+    private string _modelName = null!;
     private ResponsesClient _openAIResponseClient = null!;
     private ChatClientAgent _agent = null!;
 
@@ -80,6 +81,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
                     Name = name,
                     ChatOptions = new ChatOptions
                     {
+                        ModelId = this._modelName,
                         Instructions = instructions,
                         Tools = aiTools,
                         RawRepresentationFactory = new Func<IChatClient, object>(_ => new CreateResponseOptions() { StoredOutputEnabled = store })
@@ -96,8 +98,9 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 
     public async Task InitializeAsync()
     {
+        this._modelName = TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName);
         this._openAIResponseClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey))
-            .GetResponsesClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName));
+            .GetResponsesClient();
 
         this._agent = await this.CreateChatClientAgentAsync();
     }

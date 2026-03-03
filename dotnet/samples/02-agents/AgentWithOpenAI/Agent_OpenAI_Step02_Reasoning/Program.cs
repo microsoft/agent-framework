@@ -10,10 +10,11 @@ var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new I
 var model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt-5";
 
 var client = new OpenAIClient(apiKey)
-        .GetResponsesClient(model)
+        .GetResponsesClient()
         .AsIChatClient().AsBuilder()
         .ConfigureOptions(o =>
         {
+            o.ModelId = model;
             o.Reasoning = new()
             {
                 Effort = ReasoningEffort.Medium,
