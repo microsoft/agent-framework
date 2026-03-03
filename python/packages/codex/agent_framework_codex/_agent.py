@@ -226,7 +226,7 @@ class RawCodexAgent(BaseAgent, Generic[OptionsT]):
                 response = await agent.run("Greet Alice")
     """
 
-    AGENT_PROVIDER_NAME: ClassVar[str] = "openai.codex"
+    AGENT_PROVIDER_NAME: ClassVar[str] = "openai"
 
     def __init__(
         self,
