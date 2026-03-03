@@ -37,12 +37,13 @@ from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
+    CodeInterpreterContainerAuto,
     CodeInterpreterTool,
-    CodeInterpreterToolAuto,
+    FoundryFeaturesOptInKeys,
     ImageGenTool,
     MCPTool,
     PromptAgentDefinition,
-    PromptAgentDefinitionText,
+    PromptAgentDefinitionTextOptions,
     RaiConfig,
     Reasoning,
     WebSearchPreviewTool,
@@ -77,6 +78,9 @@ class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):
 
     reasoning: Reasoning  # type: ignore[misc]
     """Configuration for enabling reasoning capabilities (requires azure.ai.projects.models.Reasoning)."""
+
+    foundry_features: FoundryFeaturesOptInKeys | str
+    """Optional Foundry preview feature opt-in for agent version creation."""
 
 
 AzureAIClientOptionsT = TypeVar(
@@ -392,7 +396,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             # response_format is accessed from chat_options or additional_properties
             # since the base class excludes it from run_options
             if chat_options and (response_format := chat_options.get("response_format")):
-                args["text"] = PromptAgentDefinitionText(format=create_text_format_config(response_format))
+                args["text"] = PromptAgentDefinitionTextOptions(format=create_text_format_config(response_format))
 
             # Combine instructions from messages and options
             # instructions is accessed from chat_options since the base class excludes it from run_options
@@ -404,11 +408,15 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             if combined_instructions:
                 args["instructions"] = "".join(combined_instructions)
 
-            created_agent = await self.project_client.agents.create_version(
-                agent_name=self.agent_name,
-                definition=PromptAgentDefinition(**args),
-                description=self.agent_description,
-            )
+            create_version_kwargs: dict[str, Any] = {
+                "agent_name": self.agent_name,
+                "definition": PromptAgentDefinition(**args),
+                "description": self.agent_description,
+            }
+            if foundry_features := run_options.get("foundry_features"):
+                create_version_kwargs["foundry_features"] = foundry_features
+
+            created_agent = await self.project_client.agents.create_version(**create_version_kwargs)
 
             self.agent_version = created_agent.version
             self.warn_runtime_tools_and_structure_changed = True
@@ -500,6 +508,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             "temperature": ("temperature",),
             "top_p": ("top_p",),
             "reasoning": ("reasoning",),
+            "foundry_features": ("foundry_features",),
         }
 
         for run_keys in agent_level_option_to_run_keys.values():
@@ -526,9 +535,9 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             run_options["input"] = self._transform_input_for_azure_ai(cast(list[dict[str, Any]], run_options["input"]))
 
         if not self._is_application_endpoint:
-            # Application-scoped response APIs do not support "agent" property.
+            # Application-scoped response APIs do not support "agent_reference" property.
             agent_reference = await self._get_agent_reference_or_create(run_options, instructions, options)
-            run_options["extra_body"] = {"agent": agent_reference}
+            run_options["extra_body"] = {"agent_reference": agent_reference}
 
         # Remove only keys that map to this client's declared options TypedDict.
         self._remove_agent_level_run_options(run_options, options)
@@ -857,7 +866,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         # Extract file_ids from container if provided as dict and file_ids not explicitly set
         if file_ids is None and isinstance(container, dict):
             file_ids = container.get("file_ids")
-        tool_container = CodeInterpreterToolAuto(file_ids=file_ids if file_ids else None)
+        tool_container = CodeInterpreterContainerAuto(file_ids=file_ids if file_ids else None)
         return CodeInterpreterTool(container=tool_container, **kwargs)
 
     @staticmethod

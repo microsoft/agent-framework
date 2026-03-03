@@ -28,12 +28,12 @@ from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
+    CodeInterpreterContainerAuto,
     CodeInterpreterTool,
-    CodeInterpreterToolAuto,
     FileSearchTool,
     ImageGenTool,
     MCPTool,
-    ResponseTextFormatConfigurationJsonSchema,
+    TextResponseFormatJsonSchema,
     WebSearchPreviewTool,
 )
 from azure.core.exceptions import ResourceNotFoundError
@@ -427,7 +427,7 @@ async def test_prepare_options_basic(mock_project_client: MagicMock) -> None:
         run_options = await client._prepare_options(messages, {})
 
         assert "extra_body" in run_options
-        assert run_options["extra_body"]["agent"]["name"] == "test-agent"
+        assert run_options["extra_body"]["agent_reference"]["name"] == "test-agent"
 
 
 @pytest.mark.parametrize(
@@ -465,7 +465,7 @@ async def test_prepare_options_with_application_endpoint(
 
     if expects_agent:
         assert "extra_body" in run_options
-        assert run_options["extra_body"]["agent"]["name"] == "test-agent"
+        assert run_options["extra_body"]["agent_reference"]["name"] == "test-agent"
     else:
         assert "extra_body" not in run_options
 
@@ -507,7 +507,7 @@ async def test_prepare_options_with_application_project_client(
 
     if expects_agent:
         assert "extra_body" in run_options
-        assert run_options["extra_body"]["agent"]["name"] == "test-agent"
+        assert run_options["extra_body"]["agent_reference"]["name"] == "test-agent"
     else:
         assert "extra_body" not in run_options
 
@@ -979,10 +979,10 @@ async def test_agent_creation_with_response_format(
     assert hasattr(created_definition, "text")
     assert created_definition.text is not None
 
-    # Check that the format is a ResponseTextFormatConfigurationJsonSchema
+    # Check that the format is a TextResponseFormatJsonSchema
     assert hasattr(created_definition.text, "format")
     format_config = created_definition.text.format
-    assert isinstance(format_config, ResponseTextFormatConfigurationJsonSchema)
+    assert isinstance(format_config, TextResponseFormatJsonSchema)
 
     # Check the schema name matches the model class name
     assert format_config.name == "ResponseFormatModel"
@@ -1040,7 +1040,7 @@ async def test_agent_creation_with_mapping_response_format(
     assert hasattr(created_definition, "text")
     assert created_definition.text is not None
     format_config = created_definition.text.format
-    assert isinstance(format_config, ResponseTextFormatConfigurationJsonSchema)
+    assert isinstance(format_config, TextResponseFormatJsonSchema)
     assert format_config.name == runtime_schema["title"]
     assert format_config.schema == runtime_schema
     assert format_config.strict is True
@@ -1110,7 +1110,7 @@ async def test_prepare_options_excludes_response_format(
         assert "text_format" not in run_options
         # But extra_body should contain agent reference
         assert "extra_body" in run_options
-        assert run_options["extra_body"]["agent"]["name"] == "test-agent"
+        assert run_options["extra_body"]["agent_reference"]["name"] == "test-agent"
 
 
 async def test_prepare_options_keeps_values_for_unsupported_option_keys(
@@ -1254,7 +1254,7 @@ def test_from_azure_ai_tools_mcp() -> None:
 
 def test_from_azure_ai_tools_code_interpreter() -> None:
     """Test from_azure_ai_tools with Code Interpreter tool."""
-    ci_tool = CodeInterpreterTool(container=CodeInterpreterToolAuto(file_ids=["file-1"]))
+    ci_tool = CodeInterpreterTool(container=CodeInterpreterContainerAuto(file_ids=["file-1"]))
     parsed_tools = from_azure_ai_tools([ci_tool])
     assert len(parsed_tools) == 1
     assert parsed_tools[0]["type"] == "code_interpreter"

@@ -18,9 +18,9 @@ from azure.ai.agents.models import (
 from azure.ai.projects.models import (
     CodeInterpreterTool,
     MCPTool,
-    ResponseTextFormatConfigurationJsonObject,
-    ResponseTextFormatConfigurationJsonSchema,
-    ResponseTextFormatConfigurationText,
+    TextResponseFormatConfigurationResponseFormatJsonObject,
+    TextResponseFormatConfigurationResponseFormatText,
+    TextResponseFormatJsonSchema,
     Tool,
     WebSearchPreviewTool,
 )
@@ -421,9 +421,9 @@ def _prepare_mcp_tool_dict_for_azure_ai(tool_dict: dict[str, Any]) -> MCPTool:
 def create_text_format_config(
     response_format: type[BaseModel] | Mapping[str, Any],
 ) -> (
-    ResponseTextFormatConfigurationJsonSchema
-    | ResponseTextFormatConfigurationJsonObject
-    | ResponseTextFormatConfigurationText
+    TextResponseFormatJsonSchema
+    | TextResponseFormatConfigurationResponseFormatJsonObject
+    | TextResponseFormatConfigurationResponseFormatText
 ):
     """Convert response_format into Azure text format configuration."""
     if isinstance(response_format, type) and issubclass(response_format, BaseModel):
@@ -431,7 +431,7 @@ def create_text_format_config(
         # Ensure additionalProperties is explicitly false to satisfy Azure validation
         if isinstance(schema, dict):
             schema.setdefault("additionalProperties", False)
-        return ResponseTextFormatConfigurationJsonSchema(
+        return TextResponseFormatJsonSchema(
             name=response_format.__name__,
             schema=schema,
             strict=True,
@@ -452,11 +452,11 @@ def create_text_format_config(
                 config_kwargs["strict"] = format_config["strict"]
             if "description" in format_config:
                 config_kwargs["description"] = format_config["description"]
-            return ResponseTextFormatConfigurationJsonSchema(**config_kwargs)
+            return TextResponseFormatJsonSchema(**config_kwargs)
         if format_type == "json_object":
-            return ResponseTextFormatConfigurationJsonObject()
+            return TextResponseFormatConfigurationResponseFormatJsonObject()
         if format_type == "text":
-            return ResponseTextFormatConfigurationText()
+            return TextResponseFormatConfigurationResponseFormatText()
 
     raise IntegrationInvalidRequestException("response_format must be a Pydantic model or mapping.")
 
