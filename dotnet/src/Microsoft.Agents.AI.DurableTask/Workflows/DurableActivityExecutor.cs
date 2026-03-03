@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Agents.AI.Workflows.Observability;
 
 namespace Microsoft.Agents.AI.DurableTask.Workflows;
 
@@ -45,10 +46,11 @@ internal static class DurableActivityExecutor
         object typedInput = DeserializeInput(executorInput, inputType);
 
         DurableWorkflowContext workflowContext = new(sharedState, executor);
-        object? result = await executor.ExecuteAsync(
+        object? result = await executor.ExecuteCoreAsync(
             typedInput,
             new TypeId(inputType),
             workflowContext,
+            WorkflowTelemetryContext.Disabled,
             cancellationToken).ConfigureAwait(false);
 
         return SerializeActivityOutput(result, workflowContext);

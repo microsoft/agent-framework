@@ -151,7 +151,7 @@ internal static class DurableExecutorDispatcher
             return $"Agent '{agentName}' not found";
         }
 
-        AgentSession session = await agent.GetNewSessionAsync().ConfigureAwait(true);
+        AgentSession session = await agent.CreateSessionAsync().ConfigureAwait(true);
         AgentResponse response = await agent.RunAsync(input, session).ConfigureAwait(true);
 
         return response.Text;

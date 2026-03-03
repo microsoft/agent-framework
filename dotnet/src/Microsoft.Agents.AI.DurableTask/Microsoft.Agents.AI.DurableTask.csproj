@@ -17,7 +17,6 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <InjectSharedThrow>true</InjectSharedThrow>
     <InjectSharedStructuredOutput>true</InjectSharedStructuredOutput>
   </PropertyGroup>
   
