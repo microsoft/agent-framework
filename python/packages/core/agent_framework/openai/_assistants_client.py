@@ -649,17 +649,13 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                                         and completed_annotation.file_citation.file_id
                                     ):
                                         ann["file_id"] = completed_annotation.file_citation.file_id
-                                    if (
-                                        completed_annotation.start_index is not None
-                                        and completed_annotation.end_index is not None
-                                    ):
-                                        ann["annotated_regions"] = [
-                                            TextSpanRegion(
-                                                type="text_span",
-                                                start_index=completed_annotation.start_index,
-                                                end_index=completed_annotation.end_index,
-                                            )
-                                        ]
+                                    ann["annotated_regions"] = [
+                                        TextSpanRegion(
+                                            type="text_span",
+                                            start_index=completed_annotation.start_index,
+                                            end_index=completed_annotation.end_index,
+                                        )
+                                    ]
                                     text_content.annotations.append(ann)
                                 elif isinstance(completed_annotation, FilePathAnnotation):
                                     ann = Annotation(
@@ -671,17 +667,13 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                                     )
                                     if completed_annotation.file_path and completed_annotation.file_path.file_id:
                                         ann["file_id"] = completed_annotation.file_path.file_id
-                                    if (
-                                        completed_annotation.start_index is not None
-                                        and completed_annotation.end_index is not None
-                                    ):
-                                        ann["annotated_regions"] = [
-                                            TextSpanRegion(
-                                                type="text_span",
-                                                start_index=completed_annotation.start_index,
-                                                end_index=completed_annotation.end_index,
-                                            )
-                                        ]
+                                    ann["annotated_regions"] = [
+                                        TextSpanRegion(
+                                            type="text_span",
+                                            start_index=completed_annotation.start_index,
+                                            end_index=completed_annotation.end_index,
+                                        )
+                                    ]
                                     text_content.annotations.append(ann)
                                 else:
                                     logger.debug("Unparsed annotation type: %s", completed_annotation.type)

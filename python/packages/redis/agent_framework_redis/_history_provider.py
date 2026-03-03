@@ -121,8 +121,8 @@ class RedisHistoryProvider(BaseHistoryProvider):
         redis_messages: list[str] = await self._redis_client.lrange(key, 0, -1)  # type: ignore[misc]
         messages: list[Message] = []
         if redis_messages:
-            for serialized in redis_messages:
-                messages.append(Message.from_dict(self._deserialize_json(serialized)))
+            for serialized in redis_messages:  # type: ignore[union-attr]
+                messages.append(Message.from_dict(self._deserialize_json(serialized)))  # type: ignore[union-attr]
         return messages
 
     async def save_messages(self, session_id: str | None, messages: Sequence[Message], **kwargs: Any) -> None:
