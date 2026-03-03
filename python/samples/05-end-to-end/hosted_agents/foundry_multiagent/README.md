@@ -114,22 +114,6 @@ The required packages are:
 
 ### Running the Sample
 
-### Option 1: Press F5 (Recommended)
-
-Press **F5** in VS Code to start debugging. Alternatively, you can use the VS Code debug menu:
-
-1. Open the **Run and Debug** view (Ctrl+Shift+D / Cmd+Shift+D)
-2. Select **"Debug Local Workflow HTTP Server"** from the dropdown
-3. Click the green **Start Debugging** button (or press F5)
-
-This will:
-
-1. Start the HTTP server with debugging enabled
-2. Open the AI Toolkit Agent Inspector for interactive testing
-3. Allow you to set breakpoints and inspect the workflow
-
-### Option 2: Run in Terminal
-
 Run as HTTP server (default):
 
 ```bash

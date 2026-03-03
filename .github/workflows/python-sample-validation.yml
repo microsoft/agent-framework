@@ -43,14 +43,14 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd samples && uv run python -m _sample_validation --subdir 01-get-started --save-report --report-name 01-get-started
+          cd scripts && uv run python -m sample_validation --subdir 01-get-started --save-report --report-name 01-get-started
 
       - name: Upload validation report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: validation-report-01-get-started
-          path: python/samples/_sample_validation/reports/
+          path: python/scripts/sample_validation/reports/
 
   validate-02-agents:
     name: Validate 02-agents
@@ -65,9 +65,9 @@ jobs:
       AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
       AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # OpenAI configuration
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
-      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
       # Observability
       ENABLE_INSTRUMENTATION: "true"
     defaults:
@@ -86,14 +86,14 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd samples && uv run python -m _sample_validation --subdir 02-agents --save-report --report-name 02-agents
+          cd scripts && uv run python -m sample_validation --subdir 02-agents --save-report --report-name 02-agents
 
       - name: Upload validation report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: validation-report-02-agents
-          path: python/samples/_sample_validation/reports/
+          path: python/scripts/sample_validation/reports/
 
   validate-03-workflows:
     name: Validate 03-workflows
@@ -123,14 +123,14 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd samples && uv run python -m _sample_validation --subdir 03-workflows --save-report --report-name 03-workflows
+          cd scripts && uv run python -m sample_validation --subdir 03-workflows --save-report --report-name 03-workflows
 
       - name: Upload validation report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: validation-report-03-workflows
-          path: python/samples/_sample_validation/reports/
+          path: python/scripts/sample_validation/reports/
 
   validate-04-hosting:
     name: Validate 04-hosting
@@ -162,14 +162,14 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd samples && uv run python -m _sample_validation --subdir 04-hosting --save-report --report-name 04-hosting
+          cd scripts && uv run python -m sample_validation --subdir 04-hosting --save-report --report-name 04-hosting
 
       - name: Upload validation report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: validation-report-04-hosting
-          path: python/samples/_sample_validation/reports/
+          path: python/scripts/sample_validation/reports/
 
   validate-05-end-to-end:
     name: Validate 05-end-to-end
@@ -206,14 +206,14 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd samples && uv run python -m _sample_validation --subdir 05-end-to-end --save-report --report-name 05-end-to-end
+          cd scripts && uv run python -m sample_validation --subdir 05-end-to-end --save-report --report-name 05-end-to-end
 
       - name: Upload validation report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: validation-report-05-end-to-end
-          path: python/samples/_sample_validation/reports/
+          path: python/scripts/sample_validation/reports/
 
   validate-autogen-migration:
     name: Validate autogen-migration
@@ -227,9 +227,9 @@ jobs:
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
       # OpenAI configuration
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
-      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
     defaults:
       run:
         working-directory: python
@@ -246,14 +246,14 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd samples && uv run python -m _sample_validation --subdir autogen-migration --save-report --report-name autogen-migration
+          cd scripts && uv run python -m sample_validation --subdir autogen-migration --save-report --report-name autogen-migration
 
       - name: Upload validation report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: validation-report-autogen-migration
-          path: python/samples/_sample_validation/reports/
+          path: python/scripts/sample_validation/reports/
 
   validate-semantic-kernel-migration:
     name: Validate semantic-kernel-migration
@@ -268,9 +268,9 @@ jobs:
       AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
       AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # OpenAI configuration
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI_CHAT_MODEL_ID }}
-      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI_RESPONSES_MODEL_ID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
       # Copilot Studio
       COPILOTSTUDIOAGENT__ENVIRONMENTID: ${{ secrets.COPILOTSTUDIOAGENT__ENVIRONMENTID }}
       COPILOTSTUDIOAGENT__SCHEMANAME: ${{ secrets.COPILOTSTUDIOAGENT__SCHEMANAME }}
@@ -292,11 +292,11 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd samples && uv run python -m _sample_validation --subdir semantic-kernel-migration --save-report --report-name semantic-kernel-migration
+          cd scripts && uv run python -m sample_validation --subdir semantic-kernel-migration --save-report --report-name semantic-kernel-migration
 
       - name: Upload validation report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: validation-report-semantic-kernel-migration
-          path: python/samples/_sample_validation/reports/
+          path: python/scripts/sample_validation/reports/

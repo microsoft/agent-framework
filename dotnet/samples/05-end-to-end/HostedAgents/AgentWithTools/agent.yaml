@@ -1,0 +1,31 @@
+name: AgentWithTools
+displayName: "Agent with Tools"
+description: >
+  An AI agent that uses Foundry tools (MCP and code interpreter) with Azure OpenAI.
+  The agent can fetch Microsoft Learn documentation and run code when needed.
+metadata:
+  authors:
+    - Microsoft Agent Framework Team
+  tags:
+    - Azure AI AgentServer
+    - Microsoft Agent Framework
+    - Tools
+    - MCP
+    - Code Interpreter
+template:
+  kind: hosted
+  name: AgentWithTools
+  protocols:
+    - protocol: responses
+      version: v1
+  environment_variables:
+    - name: AZURE_OPENAI_ENDPOINT
+      value: ${AZURE_OPENAI_ENDPOINT}
+    - name: AZURE_OPENAI_DEPLOYMENT_NAME
+      value: gpt-4o-mini
+    - name: MCP_TOOL_CONNECTION_ID
+      value: ${MCP_TOOL_CONNECTION_ID}
+resources:
+  - name: "gpt-4o-mini"
+    kind: model
+    id: gpt-4o-mini
