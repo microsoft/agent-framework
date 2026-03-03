@@ -192,45 +192,13 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         .. code-block:: python
 
-            from agent_framework_claude import RawClaudeAgent
+            from agent_framework.anthropic import RawClaudeAgent
 
             async with RawClaudeAgent(
                 instructions="You are a helpful assistant.",
             ) as agent:
                 response = await agent.run("Hello!")
                 print(response.text)
-
-        With streaming:
-
-        .. code-block:: python
-
-            async with RawClaudeAgent() as agent:
-                async for update in agent.run("Write a poem"):
-                    print(update.text, end="", flush=True)
-
-        With session management:
-
-        .. code-block:: python
-
-            async with RawClaudeAgent() as agent:
-                session = agent.create_session()
-                await agent.run("Remember my name is Alice", session=session)
-                response = await agent.run("What's my name?", session=session)
-                # Claude will remember "Alice" from the same session
-
-        With Agent Framework tools:
-
-        .. code-block:: python
-
-            from agent_framework import tool
-
-            @tool
-            def greet(name: str) -> str:
-                \"\"\"Greet someone by name.\"\"\"
-                return f"Hello, {name}!"
-
-            async with RawClaudeAgent(tools=[greet]) as agent:
-                response = await agent.run("Greet Alice")
     """
 
     AGENT_PROVIDER_NAME: ClassVar[str] = "anthropic.claude"
@@ -752,7 +720,7 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
 
         .. code-block:: python
 
-            from agent_framework_claude import ClaudeAgent
+            from agent_framework.anthropic import ClaudeAgent
 
             async with ClaudeAgent(
                 instructions="You are a helpful assistant.",
