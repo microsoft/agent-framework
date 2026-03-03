@@ -467,7 +467,7 @@ public sealed class TextSearchProviderTests
         {
             RecentMessageMemoryLimit = 10,
             RecentMessageRolesIncluded = [ChatRole.User, ChatRole.System],
-            StorageInputMessageFilter = messages => messages // No filtering - store everything
+            StorageInputRequestMessageFilter = messages => messages // No filtering - store everything
         };
         string? capturedInput = null;
         Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)

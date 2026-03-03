@@ -418,7 +418,7 @@ public class InMemoryChatHistoryProviderTests
         var session = CreateMockSession();
         var provider = new InMemoryChatHistoryProvider(new InMemoryChatHistoryProviderOptions
         {
-            StorageInputMessageFilter = messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External)
+            StorageInputRequestMessageFilter = messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External)
         });
         var requestMessages = new List<ChatMessage>
         {

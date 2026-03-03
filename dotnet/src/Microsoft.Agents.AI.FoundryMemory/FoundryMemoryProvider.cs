@@ -59,7 +59,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         Func<AgentSession?, State> stateInitializer,
         FoundryMemoryProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputRequestMessageFilter, options?.StorageInputResponseMessageFilter)
     {
         Throw.IfNull(client);
         Throw.IfNullOrWhitespace(memoryStoreName);

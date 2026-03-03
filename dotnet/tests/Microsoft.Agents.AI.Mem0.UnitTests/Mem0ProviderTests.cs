@@ -530,7 +530,7 @@ public sealed class Mem0ProviderTests : IDisposable
         var mockSession = new TestAgentSession();
         var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope), options: new Mem0ProviderOptions
         {
-            StorageInputMessageFilter = messages => messages // No filtering - store everything
+            StorageInputRequestMessageFilter = messages => messages // No filtering - store everything
         });
 
         var requestMessages = new List<ChatMessage>

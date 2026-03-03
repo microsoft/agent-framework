@@ -687,7 +687,7 @@ public class ChatHistoryMemoryProviderTests
             _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
             options: new ChatHistoryMemoryProviderOptions
             {
-                StorageInputMessageFilter = messages => messages // No filtering - store everything
+                StorageInputRequestMessageFilter = messages => messages // No filtering - store everything
             });
 
         var requestMessages = new List<ChatMessage>
