@@ -2191,7 +2191,6 @@ async def test_anthropic_client_integration_tool_rich_content_image() -> None:
         options={"tools": [get_test_image], "tool_choice": "auto", "max_tokens": 200},
     )
 
-    print("Model response:", response.text)
     assert response is not None
     assert response.text is not None
     assert len(response.text) > 0

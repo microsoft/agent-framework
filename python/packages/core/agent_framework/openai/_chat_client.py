@@ -576,8 +576,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     args["content"] = content.result if content.result is not None else ""
                     if content.items:
                         logger.warning(
-                            "OpenAI Chat Completions API does not support rich content (images, audio) in tool results. "
-                            "Rich content items will be omitted. Use the Responses API client for rich tool results."
+                            "OpenAI Chat Completions API does not support rich content (images, audio) "
+                            "in tool results. Rich content items will be omitted. "
+                            "Use the Responses API client for rich tool results."
                         )
                     if args:
                         all_messages.append(args)
