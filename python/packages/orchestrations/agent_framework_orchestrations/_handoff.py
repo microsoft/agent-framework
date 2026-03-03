@@ -37,7 +37,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import Agent, ChatOptions, SupportsAgentRun
+from agent_framework import Agent, SupportsAgentRun
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware
 from agent_framework._sessions import AgentSession
 from agent_framework._tools import FunctionTool, tool
@@ -364,43 +364,28 @@ class HandoffAgentExecutor(AgentExecutor):
         metadata = options.get("metadata")
 
         # Disable parallel tool calls to prevent the agent from invoking multiple handoff tools at once.
-        cloned_options: ChatOptions[None] = {
+        cloned_options: dict[str, Any] = {
             "allow_multiple_tool_calls": False,
             # Handoff workflows already manage full conversation context explicitly
             # across executors. Keep provider-side conversation storage disabled to
             # avoid stale tool-call state (Responses API previous_response chains).
             "store": False,
         }
-        if (frequency_penalty := options.get("frequency_penalty")) is not None:
-            cloned_options["frequency_penalty"] = frequency_penalty
-        if (instructions := options.get("instructions")) is not None:
-            cloned_options["instructions"] = instructions
-        if logit_bias:
-            cloned_options["logit_bias"] = dict(logit_bias)
-        if (max_tokens := options.get("max_tokens")) is not None:
-            cloned_options["max_tokens"] = max_tokens
-        if metadata:
-            cloned_options["metadata"] = dict(metadata)
-        if (model_id := options.get("model_id")) is not None:
-            cloned_options["model_id"] = model_id
-        if (presence_penalty := options.get("presence_penalty")) is not None:
-            cloned_options["presence_penalty"] = presence_penalty
-        if (response_format := options.get("response_format")) is not None:
-            cloned_options["response_format"] = response_format
-        if (seed := options.get("seed")) is not None:
-            cloned_options["seed"] = seed
-        if (stop := options.get("stop")) is not None:
-            cloned_options["stop"] = stop
-        if (temperature := options.get("temperature")) is not None:
-            cloned_options["temperature"] = temperature
-        if (tool_choice := options.get("tool_choice")) is not None:
-            cloned_options["tool_choice"] = tool_choice
-        if all_tools:
-            cloned_options["tools"] = all_tools
-        if (top_p := options.get("top_p")) is not None:
-            cloned_options["top_p"] = top_p
-        if (user := options.get("user")) is not None:
-            cloned_options["user"] = user
+        cloned_options["frequency_penalty"] = options.get("frequency_penalty")
+        cloned_options["instructions"] = options.get("instructions")
+        cloned_options["logit_bias"] = dict(logit_bias) if logit_bias else None
+        cloned_options["max_tokens"] = options.get("max_tokens")
+        cloned_options["metadata"] = dict(metadata) if metadata else None
+        cloned_options["model_id"] = options.get("model_id")
+        cloned_options["presence_penalty"] = options.get("presence_penalty")
+        cloned_options["response_format"] = options.get("response_format")
+        cloned_options["seed"] = options.get("seed")
+        cloned_options["stop"] = options.get("stop")
+        cloned_options["temperature"] = options.get("temperature")
+        cloned_options["tool_choice"] = options.get("tool_choice")
+        cloned_options["tools"] = all_tools if all_tools else None
+        cloned_options["top_p"] = options.get("top_p")
+        cloned_options["user"] = options.get("user")
 
         return Agent(
             client=agent.client,
@@ -409,7 +394,7 @@ class HandoffAgentExecutor(AgentExecutor):
             description=agent.description,
             context_providers=agent.context_providers,
             middleware=middleware,
-            default_options=cloned_options,
+            default_options=cloned_options,  # type: ignore[arg-type]
         )
 
     def _apply_auto_tools(self, agent: Agent, targets: Sequence[HandoffConfiguration]) -> None:
