@@ -145,7 +145,7 @@ internal sealed class WorkflowSession : AgentSession
         return update;
     }
 
-    private async ValueTask<StreamingRun> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
+    private async ValueTask<ResumeRunResult> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
         // The workflow is validated to be a ChatProtocol workflow by the WorkflowHostAgent before creating the session,
         // and does not need to be checked again here.
@@ -159,46 +159,38 @@ internal sealed class WorkflowSession : AgentSession
                             .ConfigureAwait(false);
 
             // Process messages: convert response content to ExternalResponse, send regular messages as-is
-            await this.SendMessagesWithResponseConversionAsync(run, messages).ConfigureAwait(false);
-            return run;
+            bool hasMatchedExternalResponses = await this.SendMessagesWithResponseConversionAsync(run, messages).ConfigureAwait(false);
+            return new ResumeRunResult(run, hasMatchedExternalResponses: hasMatchedExternalResponses);
         }
 
-        return await this._executionEnvironment
+        StreamingRun newRun = await this._executionEnvironment
                             .RunStreamingAsync(this._workflow,
                                          messages,
                                          this.SessionId,
                                          cancellationToken)
                             .ConfigureAwait(false);
+        return new ResumeRunResult(newRun);
     }
 
     /// <summary>
     /// Sends messages to the run, converting FunctionResultContent and UserInputResponseContent
     /// to ExternalResponse when there's a matching pending request.
     /// </summary>
-    private async ValueTask SendMessagesWithResponseConversionAsync(StreamingRun run, List<ChatMessage> messages)
+    /// <returns>
+    /// <see langword="true"/> if any external responses were sent; otherwise, <see langword="false"/>.
+    /// </returns>
+    private async ValueTask<bool> SendMessagesWithResponseConversionAsync(StreamingRun run, List<ChatMessage> messages)
     {
         List<ChatMessage> regularMessages = [];
+        // Responses are deferred until after regular messages are queued so response handlers
+        // can merge buffered regular content in the same continuation turn.
+        List<(ExternalResponse Response, string? ContentId)> externalResponses = [];
+        bool hasMatchedExternalResponses = false;
 
         foreach (ChatMessage message in messages)
         {
             List<AIContent> regularContents = [];
-
-            foreach (AIContent content in message.Contents)
-            {
-                if (this.TryCreateExternalResponse(content) is ExternalResponse response)
-                {
-                    await run.SendResponseAsync(response).ConfigureAwait(false);
-
-                    if (GetResponseContentId(content) is string contentId)
-                    {
-                        this.RemovePendingRequest(contentId);
-                    }
-                }
-                else
-                {
-                    regularContents.Add(content);
-                }
-            }
+            PartitionMessageContents(message, regularContents);
 
             if (regularContents.Count > 0)
             {
@@ -208,10 +200,40 @@ internal sealed class WorkflowSession : AgentSession
             }
         }
 
-        // Send any remaining regular messages
+        // Send regular messages first so response handlers can merge them with responses.
         if (regularMessages.Count > 0)
         {
             await run.TrySendMessageAsync(regularMessages).ConfigureAwait(false);
+        }
+
+        // Send external responses after regular messages.
+        foreach ((ExternalResponse response, string? contentId) in externalResponses)
+        {
+            await run.SendResponseAsync(response).ConfigureAwait(false);
+            hasMatchedExternalResponses = true;
+
+            if (contentId is string id)
+            {
+                this.RemovePendingRequest(id);
+            }
+        }
+
+        return hasMatchedExternalResponses;
+
+        void PartitionMessageContents(ChatMessage message, List<AIContent> regularContents)
+        {
+            foreach (AIContent content in message.Contents)
+            {
+                string? contentId = GetResponseContentId(content);
+                if (this.TryCreateExternalResponse(content) is ExternalResponse response)
+                {
+                    externalResponses.Add((response, contentId));
+                }
+                else
+                {
+                    regularContents.Add(content);
+                }
+            }
         }
     }
 
@@ -233,21 +255,8 @@ internal sealed class WorkflowSession : AgentSession
             return null;
         }
 
-        // Create the response data based on content type
-        object? responseData = content switch
-        {
-            FunctionResultContent functionResultContent => functionResultContent,
-            UserInputResponseContent userInputResponseContent => userInputResponseContent,
-            _ => null
-        };
-
-        if (responseData == null)
-        {
-            return null;
-        }
-
-        // Create ExternalResponse using the pending request's port info
-        return new ExternalResponse(pendingRequest.PortInfo, pendingRequest.RequestId, new PortableValue(responseData));
+        // Create ExternalResponse via the pending request to ensure proper validation and wrapping
+        return pendingRequest.CreateResponse(content);
     }
 
     /// <summary>
@@ -287,12 +296,19 @@ internal sealed class WorkflowSession : AgentSession
             this.LastResponseId = Guid.NewGuid().ToString("N");
             List<ChatMessage> messages = this.ChatHistoryProvider.GetFromBookmark(this).ToList();
 
-#pragma warning disable CA2007 // Analyzer misfiring and not seeing .ConfigureAwait(false) below.
-            await using StreamingRun run =
+            ResumeRunResult resumeResult =
                 await this.CreateOrResumeRunAsync(messages, cancellationToken).ConfigureAwait(false);
+#pragma warning disable CA2007 // Analyzer misfiring.
+            await using StreamingRun run = resumeResult.Run;
 #pragma warning restore CA2007
 
-            await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
+            // Send a TurnToken only when no external responses were delivered.
+            // External response handlers already drive continuation turns and can merge
+            // buffered regular messages, so an extra TurnToken would cause a redundant turn.
+            if (!resumeResult.HasMatchedExternalResponses)
+            {
+                await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
+            }
             await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken)
                                                .ConfigureAwait(false)
                                                .WithCancellation(cancellationToken))
@@ -390,6 +406,25 @@ internal sealed class WorkflowSession : AgentSession
 
     /// <inheritdoc/>
     public WorkflowChatHistoryProvider ChatHistoryProvider { get; }
+
+    /// <summary>
+    /// Captures the outcome of creating or resuming a workflow run,
+    /// indicating what types of messages were sent during resume.
+    /// </summary>
+    private readonly struct ResumeRunResult
+    {
+        /// <summary>The streaming run that was created or resumed.</summary>
+        public StreamingRun Run { get; }
+
+        /// <summary>Whether any external responses (e.g., <see cref="FunctionResultContent"/>) were delivered.</summary>
+        public bool HasMatchedExternalResponses { get; }
+
+        public ResumeRunResult(StreamingRun run, bool hasMatchedExternalResponses = false)
+        {
+            this.Run = Throw.IfNull(run);
+            this.HasMatchedExternalResponses = hasMatchedExternalResponses;
+        }
+    }
 
     internal sealed class SessionState(
         string sessionId,
