@@ -34,8 +34,8 @@ class TestExecutorFutureAnnotations:
                 pass
 
         exec_instance = MyExecutor(id="test")
-        assert str in exec_instance._handlers
-        spec = exec_instance._handler_specs[0]
+        assert str in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
+        spec = exec_instance._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["message_type"] is str
         assert spec["output_types"] == [MyTypeA]
         assert spec["workflow_output_types"] == [MyTypeB]
@@ -49,8 +49,8 @@ class TestExecutorFutureAnnotations:
                 pass
 
         exec_instance = MyExecutor(id="test")
-        assert int in exec_instance._handlers
-        spec = exec_instance._handler_specs[0]
+        assert int in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
+        spec = exec_instance._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["message_type"] is int
         assert spec["output_types"] == [MyTypeA]
 
@@ -63,7 +63,7 @@ class TestExecutorFutureAnnotations:
                 pass
 
         exec_instance = MyExecutor(id="test")
-        spec = exec_instance._handler_specs[0]
+        spec = exec_instance._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["message_type"] == dict[str, Any]
         assert spec["output_types"] == [list[str]]
 
@@ -76,8 +76,8 @@ class TestExecutorFutureAnnotations:
                 pass
 
         exec_instance = MyExecutor(id="test")
-        assert str in exec_instance._handlers
-        spec = exec_instance._handler_specs[0]
+        assert str in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
+        spec = exec_instance._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["output_types"] == []
         assert spec["workflow_output_types"] == []
 
@@ -86,12 +86,12 @@ class TestExecutorFutureAnnotations:
 
         class MyExecutor(Executor):
             @handler(input=str, output=MyTypeA)
-            async def example(self, input, ctx) -> None:
+            async def example(self, input, ctx) -> None:  # type: ignore[no-untyped-def]
                 pass
 
         exec_instance = MyExecutor(id="test")
-        assert str in exec_instance._handlers
-        spec = exec_instance._handler_specs[0]
+        assert str in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
+        spec = exec_instance._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["message_type"] is str
         assert spec["output_types"] == [MyTypeA]
 
@@ -104,8 +104,8 @@ class TestExecutorFutureAnnotations:
                 pass
 
         exec_instance = MyExecutor(id="test")
-        assert str in exec_instance._handlers
-        spec = exec_instance._handler_specs[0]
+        assert str in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
+        spec = exec_instance._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["output_types"] == [MyTypeA, MyTypeB]
         assert spec["workflow_output_types"] == [MyTypeC]
 
@@ -118,7 +118,7 @@ class TestExecutorFutureAnnotations:
         """
         with pytest.raises(ValueError):
 
-            class Bad(Executor):
-                @handler
-                async def example(self, input: NonExistentType, ctx: WorkflowContext[MyTypeA, MyTypeB]) -> None:  # noqa: F821
+            class Bad(Executor):  # pyright: ignore[reportUnusedClass]
+                @handler  # pyright: ignore[reportUnknownArgumentType]
+                async def example(self, input: NonExistentType, ctx: WorkflowContext[MyTypeA, MyTypeB]) -> None:  # noqa: F821  # type: ignore[name-defined]
                     pass

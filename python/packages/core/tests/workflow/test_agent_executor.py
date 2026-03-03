@@ -2,19 +2,20 @@
 
 import logging
 from collections.abc import AsyncIterable, Awaitable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import pytest
-
 from agent_framework import (
     AgentExecutor,
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     AgentSession,
     BaseAgent,
     Content,
     Message,
     ResponseStream,
+    WorkflowEvent,
     WorkflowRunState,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
@@ -32,26 +33,56 @@ class _CountingAgent(BaseAgent):
         super().__init__(**kwargs)
         self.call_count = 0
 
+    @overload
     def run(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+    ) -> (
+        Awaitable[AgentResponse[Any]]
+        | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]
+    ):
         self.call_count += 1
         if stream:
 
             async def _stream() -> AsyncIterable[AgentResponseUpdate]:
                 yield AgentResponseUpdate(
-                    contents=[Content.from_text(text=f"Response #{self.call_count}: {self.name}")]
+                    contents=[
+                        Content.from_text(
+                            text=f"Response #{self.call_count}: {self.name}"
+                        )
+                    ]
                 )
 
             return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
 
         async def _run() -> AgentResponse:
-            return AgentResponse(messages=[Message("assistant", [f"Response #{self.call_count}: {self.name}"])])
+            return AgentResponse(
+                messages=[
+                    Message("assistant", [f"Response #{self.call_count}: {self.name}"])
+                ]
+            )
 
         return _run()
 
@@ -63,13 +94,36 @@ class _StreamingHookAgent(BaseAgent):
         super().__init__(**kwargs)
         self.result_hook_called = False
 
+    @overload
     def run(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
+        session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+    ) -> (
+        Awaitable[AgentResponse[Any]]
+        | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]
+    ):
         if stream:
 
             async def _stream() -> AsyncIterable[AgentResponseUpdate]:
@@ -78,13 +132,15 @@ class _StreamingHookAgent(BaseAgent):
                     role="assistant",
                 )
 
-            async def _mark_result_hook_called(response: AgentResponse) -> AgentResponse:
+            async def _mark_result_hook_called(
+                response: AgentResponse,
+            ) -> AgentResponse:
                 self.result_hook_called = True
                 return response
 
-            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates).with_result_hook(
-                _mark_result_hook_called
-            )
+            return ResponseStream(
+                _stream(), finalizer=AgentResponse.from_updates
+            ).with_result_hook(_mark_result_hook_called)
 
         async def _run() -> AgentResponse:
             return AgentResponse(messages=[Message("assistant", ["hook test"])])
@@ -92,7 +148,9 @@ class _StreamingHookAgent(BaseAgent):
         return _run()
 
 
-async def test_agent_executor_streaming_finalizes_stream_and_runs_result_hooks() -> None:
+async def test_agent_executor_streaming_finalizes_stream_and_runs_result_hooks() -> (
+    None
+):
     """AgentExecutor should call get_final_response() so stream result hooks execute."""
     agent = _StreamingHookAgent(id="hook_agent", name="HookAgent")
     executor = AgentExecutor(agent, id="hook_exec")
@@ -159,7 +217,9 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
 
     executor_state = executor_states[executor.id]  # type: ignore[index]
     assert "cache" in executor_state, "Checkpoint should store executor cache state"
-    assert "agent_session" in executor_state, "Checkpoint should store executor session state"
+    assert "agent_session" in executor_state, (
+        "Checkpoint should store executor session state"
+    )
 
     # Verify session state structure
     session_state = executor_state["agent_session"]  # type: ignore[index]
@@ -180,11 +240,15 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
     assert restored_agent.call_count == 0
 
     # Build new workflow with the restored executor
-    wf_resume = SequentialBuilder(participants=[restored_executor], checkpoint_storage=storage).build()
+    wf_resume = SequentialBuilder(
+        participants=[restored_executor], checkpoint_storage=storage
+    ).build()
 
     # Resume from checkpoint
     resumed_output: AgentExecutorResponse | None = None
-    async for ev in wf_resume.run(checkpoint_id=restore_checkpoint.checkpoint_id, stream=True):
+    async for ev in wf_resume.run(
+        checkpoint_id=restore_checkpoint.checkpoint_id, stream=True
+    ):
         if ev.type == "output":
             resumed_output = ev.data  # type: ignore[assignment]
         if ev.type == "status" and ev.state in (
@@ -278,7 +342,7 @@ async def test_agent_executor_run_streaming_with_stream_kwarg_does_not_raise() -
     workflow = SequentialBuilder(participants=[executor]).build()
 
     # stream=True at workflow level triggers streaming mode (returns async iterable)
-    events = []
+    events: list[WorkflowEvent] = []
     async for event in workflow.run("hello", stream=True):
         events.append(event)
     assert len(events) > 0
@@ -288,10 +352,13 @@ async def test_agent_executor_run_streaming_with_stream_kwarg_does_not_raise() -
 @pytest.mark.parametrize("reserved_kwarg", ["session", "stream", "messages"])
 async def test_prepare_agent_run_args_strips_reserved_kwargs(reserved_kwarg: str, caplog: "LogCaptureFixture") -> None:
     """_prepare_agent_run_args must remove reserved kwargs and log a warning."""
-    raw = {reserved_kwarg: "should-be-stripped", "custom_key": "keep-me"}
+    raw: dict[str, Any] = {
+        reserved_kwarg: "should-be-stripped",
+        "custom_key": "keep-me",
+    }
 
     with caplog.at_level(logging.WARNING):
-        run_kwargs, options = AgentExecutor._prepare_agent_run_args(raw)
+        run_kwargs, options = AgentExecutor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
 
     assert reserved_kwarg not in run_kwargs
     assert "custom_key" in run_kwargs
@@ -302,8 +369,8 @@ async def test_prepare_agent_run_args_strips_reserved_kwargs(reserved_kwarg: str
 
 async def test_prepare_agent_run_args_preserves_non_reserved_kwargs() -> None:
     """Non-reserved workflow kwargs should pass through unchanged."""
-    raw = {"custom_param": "value", "another": 42}
-    run_kwargs, options = AgentExecutor._prepare_agent_run_args(raw)
+    raw: dict[str, Any] = {"custom_param": "value", "another": 42}
+    run_kwargs, _options = AgentExecutor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
     assert run_kwargs["custom_param"] == "value"
     assert run_kwargs["another"] == 42
 
@@ -312,10 +379,10 @@ async def test_prepare_agent_run_args_strips_all_reserved_kwargs_at_once(
     caplog: "LogCaptureFixture",
 ) -> None:
     """All reserved kwargs should be stripped when supplied together, each emitting a warning."""
-    raw = {"session": "x", "stream": True, "messages": [], "custom": 1}
+    raw: dict[str, Any] = {"session": "x", "stream": True, "messages": [], "custom": 1}
 
     with caplog.at_level(logging.WARNING):
-        run_kwargs, options = AgentExecutor._prepare_agent_run_args(raw)
+        run_kwargs, options = AgentExecutor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
 
     assert "session" not in run_kwargs
     assert "stream" not in run_kwargs
@@ -324,7 +391,11 @@ async def test_prepare_agent_run_args_strips_all_reserved_kwargs_at_once(
     assert options is not None
     assert options["additional_function_arguments"]["custom"] == 1
 
-    warned_keys = {r.message.split("'")[1] for r in caplog.records if "reserved" in r.message.lower()}
+    warned_keys = {
+        r.message.split("'")[1]
+        for r in caplog.records
+        if "reserved" in r.message.lower()
+    }
     assert warned_keys == {"session", "stream", "messages"}
 
 

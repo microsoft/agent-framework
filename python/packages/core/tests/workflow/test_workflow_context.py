@@ -84,7 +84,7 @@ async def test_executor_emits_normal_event() -> None:
 
 class _TestEvent(WorkflowEvent):
     def __init__(self, data: Any = None) -> None:
-        super().__init__("test_event", data=data)
+        super().__init__("test_event", data=data)  # type: ignore[arg-type]
 
 
 async def test_workflow_context_type_annotations_no_parameter() -> None:
@@ -244,8 +244,8 @@ async def test_workflow_context_missing_annotation_error() -> None:
     # Test class-based executor with missing ctx annotation
     with pytest.raises(ValueError, match="must have a WorkflowContext"):
 
-        class _BadExecutor(Executor):
-            @handler
+        class _BadExecutor(Executor):  # pyright: ignore[reportUnusedClass]
+            @handler  # pyright: ignore[reportUnknownArgumentType]
             async def bad_handler(self, text: str, ctx) -> None:  # type: ignore[no-untyped-def]
                 pass
 
@@ -264,8 +264,8 @@ async def test_workflow_context_invalid_type_parameter_error() -> None:
     # Test class-based executor with invalid type parameter
     with pytest.raises(ValueError, match="invalid type entry"):
 
-        class _BadExecutor(Executor):
-            @handler
+        class _BadExecutor(Executor):  # pyright: ignore[reportUnusedClass]
+            @handler  # pyright: ignore[reportUnknownArgumentType]
             async def bad_handler(self, text: str, ctx: WorkflowContext[456]) -> None:  # type: ignore[valid-type]
                 pass
 
