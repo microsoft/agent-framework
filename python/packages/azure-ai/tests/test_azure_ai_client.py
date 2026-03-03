@@ -51,22 +51,6 @@ skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
     or os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "") == "",
     reason="No real AZURE_AI_PROJECT_ENDPOINT or AZURE_AI_MODEL_DEPLOYMENT_NAME provided; skipping integration tests.",
 )
-skip_if_azure_ai_foundry_helper_integration_tests_disabled = pytest.mark.skipif(
-    any(
-        os.getenv(name, "") == ""
-        for name in (
-            "FABRIC_PROJECT_CONNECTION_ID",
-            "SHAREPOINT_PROJECT_CONNECTION_ID",
-            "BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID",
-            "BING_CUSTOM_SEARCH_INSTANCE_NAME",
-            "AI_SEARCH_PROJECT_CONNECTION_ID",
-            "AI_SEARCH_INDEX_NAME",
-            "BROWSER_AUTOMATION_PROJECT_CONNECTION_ID",
-            "A2A_PROJECT_CONNECTION_ID",
-        )
-    ),
-    reason="Required Foundry helper tool settings are missing; skipping integration smoke tests.",
-)
 
 
 @pytest.fixture
@@ -1602,7 +1586,6 @@ async def test_integration_web_search() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
-@skip_if_azure_ai_foundry_helper_integration_tests_disabled
 @pytest.mark.parametrize(
     "tool_name",
     [
@@ -1618,6 +1601,18 @@ async def test_integration_web_search() -> None:
 )
 async def test_integration_foundry_helper_tools_smoke(tool_name: str, client: AzureAIClient) -> None:
     """Smoke test Foundry helper tools can be passed to Azure AI responses."""
+    required_env_vars: dict[str, tuple[str, ...]] = {
+        "fabric_data_agent": ("FABRIC_PROJECT_CONNECTION_ID",),
+        "sharepoint_grounding": ("SHAREPOINT_PROJECT_CONNECTION_ID",),
+        "bing_custom_search": ("BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID", "BING_CUSTOM_SEARCH_INSTANCE_NAME"),
+        "azure_ai_search": ("AI_SEARCH_PROJECT_CONNECTION_ID", "AI_SEARCH_INDEX_NAME"),
+        "browser_automation": ("BROWSER_AUTOMATION_PROJECT_CONNECTION_ID",),
+        "a2a": ("A2A_PROJECT_CONNECTION_ID",),
+    }
+    missing_env_vars = [name for name in required_env_vars.get(tool_name, ()) if os.getenv(name, "") == ""]
+    if missing_env_vars:
+        pytest.skip(f"Missing required env vars for {tool_name}: {', '.join(missing_env_vars)}")
+
     if tool_name == "fabric_data_agent":
         tool = client.get_fabric_data_agent_tool()
     elif tool_name == "sharepoint_grounding":

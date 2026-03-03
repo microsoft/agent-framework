@@ -26,19 +26,6 @@ skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
     reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests.",
 )
-skip_if_azure_project_bing_custom_search_integration_tests_disabled = pytest.mark.skipif(
-    (
-        os.getenv("FOUNDRY_PROJECT_ENDPOINT", "") == ""
-        and os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") == ""
-    )
-    or (
-        os.getenv("FOUNDRY_MODEL_DEPLOYMENT_NAME", "") == ""
-        and os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME", "") == ""
-    )
-    or os.getenv("BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID", "") == ""
-    or os.getenv("BING_CUSTOM_SEARCH_INSTANCE_NAME", "") == "",
-    reason="Missing Foundry project or Bing Custom Search settings; skipping project-mode integration test.",
-)
 
 logger = logging.getLogger(__name__)
 
@@ -505,12 +492,20 @@ async def test_integration_web_search() -> None:
 
 @pytest.mark.flaky
 @pytest.mark.integration
-@skip_if_azure_project_bing_custom_search_integration_tests_disabled
 async def test_integration_project_mode_web_search_bing_custom_search() -> None:
     project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT") or os.getenv("AZURE_AI_PROJECT_ENDPOINT")
     deployment_name = os.getenv("FOUNDRY_MODEL_DEPLOYMENT_NAME") or os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME")
-    assert project_endpoint is not None
-    assert deployment_name is not None
+    missing_env_vars: list[str] = []
+    if not project_endpoint:
+        missing_env_vars.append("FOUNDRY_PROJECT_ENDPOINT or AZURE_AI_PROJECT_ENDPOINT")
+    if not deployment_name:
+        missing_env_vars.append("FOUNDRY_MODEL_DEPLOYMENT_NAME or AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME")
+    if os.getenv("BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID", "") == "":
+        missing_env_vars.append("BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID")
+    if os.getenv("BING_CUSTOM_SEARCH_INSTANCE_NAME", "") == "":
+        missing_env_vars.append("BING_CUSTOM_SEARCH_INSTANCE_NAME")
+    if missing_env_vars:
+        pytest.skip(f"Missing required env vars: {', '.join(missing_env_vars)}")
 
     client = AzureOpenAIResponsesClient(
         project_endpoint=project_endpoint,
