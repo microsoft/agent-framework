@@ -972,7 +972,10 @@ def _build_pydantic_model_from_json_schema(
 
                     # Recursively build field definitions for the nested model
                     nested_field_definitions: dict[str, Any] = {}
-                    for nested_prop_name, nested_prop_details in nested_properties.items():
+                    for (
+                        nested_prop_name,
+                        nested_prop_details,
+                    ) in nested_properties.items():
                         nested_prop_details = (
                             json.loads(nested_prop_details)
                             if isinstance(nested_prop_details, str)
@@ -2100,7 +2103,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_errors: int = self.function_invocation_configuration["max_consecutive_errors_per_request"]  # type: ignore[assignment]
         additional_function_arguments: dict[str, Any] = {}
         if options and (additional_opts := options.get("additional_function_arguments")):  # type: ignore[attr-defined]
-            additional_function_arguments = dict(additional_opts)  # type: ignore[call-overload]  # defensive copy
+            additional_function_arguments = additional_opts  # type: ignore[assignment]
         execute_function_calls = partial(
             _execute_function_calls,
             custom_args=additional_function_arguments,
