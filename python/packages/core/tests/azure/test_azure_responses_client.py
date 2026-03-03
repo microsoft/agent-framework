@@ -26,6 +26,19 @@ skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
     reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests.",
 )
+skip_if_azure_project_bing_custom_search_integration_tests_disabled = pytest.mark.skipif(
+    (
+        os.getenv("FOUNDRY_PROJECT_ENDPOINT", "") == ""
+        and os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") == ""
+    )
+    or (
+        os.getenv("FOUNDRY_MODEL_DEPLOYMENT_NAME", "") == ""
+        and os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME", "") == ""
+    )
+    or os.getenv("BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID", "") == ""
+    or os.getenv("BING_CUSTOM_SEARCH_INSTANCE_NAME", "") == "",
+    reason="Missing Foundry project or Bing Custom Search settings; skipping project-mode integration test.",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +118,58 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
     for key, value in default_headers.items():
         assert key in azure_responses_client.client.default_headers
         assert azure_responses_client.client.default_headers[key] == value
+
+
+def test_get_code_interpreter_tool_accepts_string_and_hosted_file_content_scalars() -> None:
+    """Test AzureOpenAIResponsesClient code interpreter accepts scalar file_ids inputs."""
+    string_tool = AzureOpenAIResponsesClient.get_code_interpreter_tool(file_ids="file-123")
+    assert string_tool["container"]["file_ids"] == ["file-123"]
+
+    content_tool = AzureOpenAIResponsesClient.get_code_interpreter_tool(
+        file_ids=Content.from_hosted_file(file_id="file-234")
+    )
+    assert content_tool["container"]["file_ids"] == ["file-234"]
+
+
+def test_get_code_interpreter_tool_accepts_hosted_file_content_and_string_id() -> None:
+    """Test AzureOpenAIResponsesClient code interpreter tool accepts hosted file Content and string ids."""
+    tool = AzureOpenAIResponsesClient.get_code_interpreter_tool(
+        file_ids=[Content.from_hosted_file(file_id="file-123"), "file-456"]
+    )
+
+    assert tool["container"]["file_ids"] == ["file-123", "file-456"]
+
+
+def test_get_code_interpreter_tool_rejects_non_hosted_file_content() -> None:
+    """Test AzureOpenAIResponsesClient code interpreter tool rejects unsupported Content types."""
+    with pytest.raises(TypeError, match="hosted_file"):
+        AzureOpenAIResponsesClient.get_code_interpreter_tool(file_ids=Content.from_text("not-a-file"))
+
+
+def test_get_file_search_tool_accepts_string_and_hosted_vector_store_content_scalars() -> None:
+    """Test AzureOpenAIResponsesClient file search accepts scalar vector_store_ids inputs."""
+    string_tool = AzureOpenAIResponsesClient.get_file_search_tool(vector_store_ids="vs-123")
+    assert string_tool["vector_store_ids"] == ["vs-123"]
+
+    content_tool = AzureOpenAIResponsesClient.get_file_search_tool(
+        vector_store_ids=Content.from_hosted_vector_store(vector_store_id="vs-234")
+    )
+    assert content_tool["vector_store_ids"] == ["vs-234"]
+
+
+def test_get_file_search_tool_accepts_hosted_vector_store_content_and_string_id() -> None:
+    """Test AzureOpenAIResponsesClient file search tool accepts hosted vector store Content and string ids."""
+    tool = AzureOpenAIResponsesClient.get_file_search_tool(
+        vector_store_ids=[Content.from_hosted_vector_store(vector_store_id="vs-123"), "vs-456"]
+    )
+
+    assert tool["vector_store_ids"] == ["vs-123", "vs-456"]
+
+
+def test_get_file_search_tool_rejects_non_hosted_vector_store_content() -> None:
+    """Test AzureOpenAIResponsesClient file search tool rejects unsupported Content types."""
+    with pytest.raises(TypeError, match="hosted_vector_store"):
+        AzureOpenAIResponsesClient.get_file_search_tool(vector_store_ids=Content.from_hosted_file(file_id="file-123"))
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]], indirect=True)
@@ -436,6 +501,41 @@ async def test_integration_web_search() -> None:
         else:
             response = await client.get_response(**content)
         assert response.text is not None
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_azure_project_bing_custom_search_integration_tests_disabled
+async def test_integration_project_mode_web_search_bing_custom_search() -> None:
+    project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT") or os.getenv("AZURE_AI_PROJECT_ENDPOINT")
+    deployment_name = os.getenv("FOUNDRY_MODEL_DEPLOYMENT_NAME") or os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME")
+    assert project_endpoint is not None
+    assert deployment_name is not None
+
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=project_endpoint,
+        deployment_name=deployment_name,
+        credential=AzureCliCredential(),
+    )
+
+    for streaming in [False, True]:
+        content = {
+            "messages": [Message(role="user", text="What is GitHub Copilot? Use web search to answer briefly.")],
+            "options": {
+                "tool_choice": "none",
+                "tools": [client.get_bing_tool(variant="custom_search")],
+            },
+            "stream": streaming,
+        }
+        if streaming:
+            response = await client.get_response(**content).get_final_response()
+        else:
+            response = await client.get_response(**content)
+
+        assert response is not None
+        assert isinstance(response, ChatResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
 
 
 @pytest.mark.flaky

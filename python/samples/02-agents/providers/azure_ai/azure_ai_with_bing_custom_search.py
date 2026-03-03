@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
-import os
 
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -31,17 +30,7 @@ async def main() -> None:
             name="MyCustomSearchAgent",
             instructions="""You are a helpful agent that can use Bing Custom Search tools to assist users.
             Use the available Bing Custom Search tools to answer questions and perform tasks.""",
-            tools={
-                "type": "bing_custom_search_preview",
-                "bing_custom_search_preview": {
-                    "search_configurations": [
-                        {
-                            "project_connection_id": os.environ["BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID"],
-                            "instance_name": os.environ["BING_CUSTOM_SEARCH_INSTANCE_NAME"],
-                        }
-                    ]
-                },
-            },
+            tools=AzureAIClient.get_bing_tool(variant="custom_search"),
         )
 
         query = "Tell me more about foundry agent service"

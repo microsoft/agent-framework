@@ -31,12 +31,22 @@ from agent_framework import (
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
 from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
+from agent_framework.azure._shared import (
+    create_bing_tool,
+    create_a2a_tool,
+    create_azure_ai_search_tool,
+    create_browser_automation_tool,
+    create_fabric_data_agent_tool,
+    create_memory_search_tool,
+    create_openapi_tool,
+    create_sharepoint_grounding_tool,
+    create_web_search_tool,
+)
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIResponsesOptions
 from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
-    ApproximateLocation,
     CodeInterpreterTool,
     CodeInterpreterToolAuto,
     ImageGenTool,
@@ -828,16 +838,60 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
     # region Hosted Tool Factory Methods (Azure-specific overrides)
 
     @staticmethod
+    def _normalize_hosted_ids(
+        value: str | Content | Sequence[str | Content] | None,
+        *,
+        expected_content_type: Literal["hosted_file", "hosted_vector_store"],
+        content_id_field: Literal["file_id", "vector_store_id"],
+        parameter_name: Literal["file_ids", "vector_store_ids"],
+    ) -> list[str] | None:
+        """Normalize string/Content id inputs with strict hosted content validation."""
+        if value is None:
+            return None
+
+        items: list[str | Content]
+        if isinstance(value, (str, Content)):
+            items = [value]
+        else:
+            items = list(value)
+
+        normalized_ids: list[str] = []
+        for item in items:
+            if isinstance(item, str):
+                normalized_ids.append(item)
+                continue
+
+            if isinstance(item, Content):
+                if item.type != expected_content_type:
+                    raise TypeError(
+                        f"{parameter_name} accepts string IDs or Content of type {expected_content_type}."
+                    )
+                content_id = getattr(item, content_id_field)
+                if not content_id:
+                    raise ValueError(
+                        f"{parameter_name} Content items must include '{content_id_field}'."
+                    )
+                normalized_ids.append(content_id)
+                continue
+
+            raise TypeError(
+                f"{parameter_name} accepts string IDs or Content of type {expected_content_type}."
+            )
+
+        return normalized_ids
+
+    @staticmethod
     def get_code_interpreter_tool(  # type: ignore[override]
         *,
-        file_ids: list[str] | None = None,
+        file_ids: str | Content | Sequence[str | Content] | None = None,
         container: Literal["auto"] | dict[str, Any] = "auto",
         **kwargs: Any,
     ) -> CodeInterpreterTool:
         """Create a code interpreter tool configuration for Azure AI Projects.
 
         Keyword Args:
-            file_ids: Optional list of file IDs to make available to the code interpreter.
+            file_ids: File IDs for the code interpreter. Accepts a string ID, hosted_file Content,
+                or a sequence containing either form.
             container: Container configuration. Use "auto" for automatic container management.
                 Note: Custom container settings from this parameter are not used by Azure AI Projects;
                 use file_ids instead.
@@ -856,14 +910,21 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """
         # Extract file_ids from container if provided as dict and file_ids not explicitly set
         if file_ids is None and isinstance(container, dict):
-            file_ids = container.get("file_ids")
-        tool_container = CodeInterpreterToolAuto(file_ids=file_ids if file_ids else None)
+            file_ids = cast("str | Content | Sequence[str | Content] | None", container.get("file_ids"))
+
+        normalized_file_ids = RawAzureAIClient._normalize_hosted_ids(
+            file_ids,
+            expected_content_type="hosted_file",
+            content_id_field="file_id",
+            parameter_name="file_ids",
+        )
+        tool_container = CodeInterpreterToolAuto(file_ids=normalized_file_ids if normalized_file_ids else None)
         return CodeInterpreterTool(container=tool_container, **kwargs)
 
     @staticmethod
     def get_file_search_tool(
         *,
-        vector_store_ids: list[str],
+        vector_store_ids: str | Content | Sequence[str | Content],
         max_num_results: int | None = None,
         ranking_options: dict[str, Any] | None = None,
         filters: dict[str, Any] | None = None,
@@ -872,7 +933,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """Create a file search tool configuration for Azure AI Projects.
 
         Keyword Args:
-            vector_store_ids: List of vector store IDs to search.
+            vector_store_ids: Vector store IDs to search. Accepts a string ID,
+                hosted_vector_store Content, or a sequence containing either form.
             max_num_results: Maximum number of results to return (1-50).
             ranking_options: Ranking options for search results.
             filters: A filter to apply (ComparisonFilter or CompoundFilter).
@@ -894,10 +956,16 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 )
                 agent = ChatAgent(client, tools=[tool])
         """
-        if not vector_store_ids:
+        normalized_vector_store_ids = RawAzureAIClient._normalize_hosted_ids(
+            vector_store_ids,
+            expected_content_type="hosted_vector_store",
+            content_id_field="vector_store_id",
+            parameter_name="vector_store_ids",
+        )
+        if not normalized_vector_store_ids:
             raise ValueError("File search tool requires 'vector_store_ids' to be specified.")
         return ProjectsFileSearchTool(
-            vector_store_ids=vector_store_ids,
+            vector_store_ids=normalized_vector_store_ids,
             max_num_results=max_num_results,
             ranking_options=ranking_options,  # type: ignore[arg-type]
             filters=filters,  # type: ignore[arg-type]
@@ -911,7 +979,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         search_context_size: Literal["low", "medium", "high"] | None = None,
         **kwargs: Any,
     ) -> WebSearchPreviewTool:
-        """Create a web search preview tool configuration for Azure AI Projects.
+        """Create a generic web search preview tool configuration for Azure AI Projects.
 
         Keyword Args:
             user_location: Location context for search results. Dict with keys like
@@ -937,17 +1005,55 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                     search_context_size="high",
                 )
         """
-        ws_tool = WebSearchPreviewTool(search_context_size=search_context_size, **kwargs)
+        return create_web_search_tool(
+            user_location=user_location,
+            search_context_size=search_context_size,
+            **kwargs,
+        )
 
-        if user_location:
-            ws_tool.user_location = ApproximateLocation(
-                city=user_location.get("city"),
-                country=user_location.get("country"),
-                region=user_location.get("region"),
-                timezone=user_location.get("timezone"),
-            )
+    @staticmethod
+    def get_bing_tool(
+        *,
+        variant: Literal[
+            "grounding",
+            "custom_search",
+        ] = "grounding",
+        project_connection_id: str | None = None,
+        instance_name: str | None = None,
+        count: int | None = None,
+        market: str | None = None,
+        set_lang: str | None = None,
+        freshness: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Create a Bing grounding/custom search tool configuration for Azure AI Projects.
 
-        return ws_tool
+        Keyword Args:
+            variant: Bing tool variant to create.
+            project_connection_id: Optional Foundry connection id for Bing variants.
+            instance_name: Optional Bing custom search instance name for custom variants.
+            count: Optional result count for Bing variants.
+            market: Optional market code for Bing variants.
+            set_lang: Optional language code for Bing variants.
+            freshness: Optional freshness filter for Bing variants.
+            **kwargs: Additional arguments for the selected Bing payload.
+
+        Returns:
+            A Bing tool payload ready to pass to ChatAgent.
+
+        Notes:
+            ``custom_search`` emits the ``bing_custom_search_preview`` payload schema.
+        """
+        return create_bing_tool(
+            variant=variant,
+            project_connection_id=project_connection_id,
+            instance_name=instance_name,
+            count=count,
+            market=market,
+            set_lang=set_lang,
+            freshness=freshness,
+            **kwargs,
+        )
 
     @staticmethod
     def get_image_generation_tool(  # type: ignore[override]
@@ -1079,6 +1185,65 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                     mcp["require_approval"] = {"never": {"tool_names": never_require}}
 
         return mcp
+
+    @staticmethod
+    def get_fabric_data_agent_tool(*, project_connection_id: str | None = None) -> dict[str, Any]:
+        """Create a Fabric Data Agent tool configuration for Azure AI Projects."""
+        return create_fabric_data_agent_tool(project_connection_id=project_connection_id)
+
+    @staticmethod
+    def get_sharepoint_grounding_tool(*, project_connection_id: str | None = None) -> dict[str, Any]:
+        """Create a SharePoint grounding tool configuration for Azure AI Projects."""
+        return create_sharepoint_grounding_tool(project_connection_id=project_connection_id)
+
+    @staticmethod
+    def get_azure_ai_search_tool(
+        *,
+        project_connection_id: str | None = None,
+        index_name: str | None = None,
+        query_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Create an Azure AI Search tool configuration for Azure AI Projects."""
+        return create_azure_ai_search_tool(
+            project_connection_id=project_connection_id,
+            index_name=index_name,
+            query_type=query_type,
+        )
+
+    @staticmethod
+    def get_browser_automation_tool(*, project_connection_id: str | None = None) -> dict[str, Any]:
+        """Create a browser automation tool configuration for Azure AI Projects."""
+        return create_browser_automation_tool(project_connection_id=project_connection_id)
+
+    @staticmethod
+    def get_openapi_tool(
+        *,
+        name: str,
+        spec: dict[str, Any],
+        description: str | None = None,
+        auth: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create an OpenAPI tool configuration for Azure AI Projects."""
+        return create_openapi_tool(name=name, spec=spec, description=description, auth=auth)
+
+    @staticmethod
+    def get_a2a_tool(
+        *,
+        project_connection_id: str | None = None,
+        base_url: str | None = None,
+    ) -> dict[str, Any]:
+        """Create an A2A tool configuration for Azure AI Projects."""
+        return create_a2a_tool(project_connection_id=project_connection_id, base_url=base_url)
+
+    @staticmethod
+    def get_memory_search_tool(
+        *,
+        memory_store_name: str,
+        scope: str,
+        update_delay: int | None = None,
+    ) -> dict[str, Any]:
+        """Create a memory search tool configuration for Azure AI Projects."""
+        return create_memory_search_tool(memory_store_name=memory_store_name, scope=scope, update_delay=update_delay)
 
     # endregion
 

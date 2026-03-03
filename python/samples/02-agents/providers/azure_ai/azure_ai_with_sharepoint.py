@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
-import os
 
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -31,16 +30,7 @@ async def main() -> None:
             name="MySharePointAgent",
             instructions="""You are a helpful agent that can use SharePoint tools to assist users.
             Use the available SharePoint tools to answer questions and perform tasks.""",
-            tools={
-                "type": "sharepoint_grounding_preview",
-                "sharepoint_grounding_preview": {
-                    "project_connections": [
-                        {
-                            "project_connection_id": os.environ["SHAREPOINT_PROJECT_CONNECTION_ID"],
-                        }
-                    ]
-                },
-            },
+            tools=AzureAIClient.get_sharepoint_grounding_tool(),
         )
 
         query = "What is Contoso whistleblower policy?"

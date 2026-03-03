@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
-import os
 
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -30,16 +29,7 @@ async def main() -> None:
         agent = await provider.create_agent(
             name="MyFabricAgent",
             instructions="You are a helpful assistant.",
-            tools={
-                "type": "fabric_dataagent_preview",
-                "fabric_dataagent_preview": {
-                    "project_connections": [
-                        {
-                            "project_connection_id": os.environ["FABRIC_PROJECT_CONNECTION_ID"],
-                        }
-                    ]
-                },
-            },
+            tools=AzureAIClient.get_fabric_data_agent_tool(),
         )
 
         query = "Tell me about sales records"

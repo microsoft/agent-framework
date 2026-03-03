@@ -51,6 +51,22 @@ skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
     or os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "") == "",
     reason="No real AZURE_AI_PROJECT_ENDPOINT or AZURE_AI_MODEL_DEPLOYMENT_NAME provided; skipping integration tests.",
 )
+skip_if_azure_ai_foundry_helper_integration_tests_disabled = pytest.mark.skipif(
+    any(
+        os.getenv(name, "") == ""
+        for name in (
+            "FABRIC_PROJECT_CONNECTION_ID",
+            "SHAREPOINT_PROJECT_CONNECTION_ID",
+            "BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID",
+            "BING_CUSTOM_SEARCH_INSTANCE_NAME",
+            "AI_SEARCH_PROJECT_CONNECTION_ID",
+            "AI_SEARCH_INDEX_NAME",
+            "BROWSER_AUTOMATION_PROJECT_CONNECTION_ID",
+            "A2A_PROJECT_CONNECTION_ID",
+        )
+    ),
+    reason="Required Foundry helper tool settings are missing; skipping integration smoke tests.",
+)
 
 
 @pytest.fixture
@@ -1586,6 +1602,76 @@ async def test_integration_web_search() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
+@skip_if_azure_ai_foundry_helper_integration_tests_disabled
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        param("fabric_data_agent", id="fabric_data_agent"),
+        param("sharepoint_grounding", id="sharepoint_grounding"),
+        param("bing_custom_search", id="bing_custom_search"),
+        param("azure_ai_search", id="azure_ai_search"),
+        param("browser_automation", id="browser_automation"),
+        param("openapi", id="openapi"),
+        param("a2a", id="a2a"),
+        param("memory_search", id="memory_search"),
+    ],
+)
+async def test_integration_foundry_helper_tools_smoke(tool_name: str, client: AzureAIClient) -> None:
+    """Smoke test Foundry helper tools can be passed to Azure AI responses."""
+    if tool_name == "fabric_data_agent":
+        tool = client.get_fabric_data_agent_tool()
+    elif tool_name == "sharepoint_grounding":
+        tool = client.get_sharepoint_grounding_tool()
+    elif tool_name == "bing_custom_search":
+        tool = client.get_bing_tool(variant="custom_search")
+    elif tool_name == "azure_ai_search":
+        tool = client.get_azure_ai_search_tool(query_type="simple")
+    elif tool_name == "browser_automation":
+        tool = client.get_browser_automation_tool()
+    elif tool_name == "openapi":
+        tool = client.get_openapi_tool(
+            name="status_api",
+            spec={
+                "openapi": "3.0.0",
+                "info": {"title": "Status API", "version": "1.0.0"},
+                "paths": {
+                    "/status": {
+                        "get": {
+                            "operationId": "getStatus",
+                            "responses": {"200": {"description": "OK"}},
+                        }
+                    }
+                },
+            },
+            auth={"type": "anonymous"},
+        )
+    elif tool_name == "a2a":
+        tool = client.get_a2a_tool(base_url=os.getenv("A2A_ENDPOINT", "https://example.com"))
+    else:
+        tool = client.get_memory_search_tool(memory_store_name="agent-framework-memory-store", scope="test-scope")
+
+    for streaming in [False, True]:
+        content = {
+            "messages": [Message(role="user", text="Say 'Hello World' briefly.")],
+            "options": {
+                "tool_choice": "none",
+                "tools": [tool],
+            },
+        }
+        if streaming:
+            response = await client.get_response(stream=True, **content).get_final_response()
+        else:
+            response = await client.get_response(**content)
+
+        assert response is not None
+        assert isinstance(response, ChatResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_azure_ai_integration_tests_disabled
 async def test_integration_agent_hosted_mcp_tool() -> None:
     """Integration test for MCP tool with Azure Response Agent using Microsoft Learn MCP."""
     async with temporary_chat_client(agent_name="af-int-test-mcp") as client:
@@ -1678,6 +1764,17 @@ def test_get_code_interpreter_tool_basic() -> None:
     assert isinstance(tool, CodeInterpreterTool)
 
 
+def test_get_code_interpreter_tool_with_scalar_file_ids_inputs() -> None:
+    """Test get_code_interpreter_tool accepts scalar string and hosted file Content."""
+    string_tool = AzureAIClient.get_code_interpreter_tool(file_ids="file-123")
+    assert isinstance(string_tool, CodeInterpreterTool)
+    assert string_tool["container"]["file_ids"] == ["file-123"]
+
+    content_tool = AzureAIClient.get_code_interpreter_tool(file_ids=Content.from_hosted_file(file_id="file-234"))
+    assert isinstance(content_tool, CodeInterpreterTool)
+    assert content_tool["container"]["file_ids"] == ["file-234"]
+
+
 def test_get_code_interpreter_tool_with_file_ids() -> None:
     """Test get_code_interpreter_tool with file_ids."""
     tool = AzureAIClient.get_code_interpreter_tool(file_ids=["file-123", "file-456"])
@@ -1685,11 +1782,54 @@ def test_get_code_interpreter_tool_with_file_ids() -> None:
     assert tool["container"]["file_ids"] == ["file-123", "file-456"]
 
 
+def test_get_code_interpreter_tool_with_file_content_and_string_id() -> None:
+    """Test get_code_interpreter_tool accepts hosted file Content and string ids."""
+    tool = AzureAIClient.get_code_interpreter_tool(
+        file_ids=[Content.from_hosted_file(file_id="file-123"), "file-456"],
+    )
+    assert isinstance(tool, CodeInterpreterTool)
+    assert tool["container"]["file_ids"] == ["file-123", "file-456"]
+
+
+def test_get_code_interpreter_tool_rejects_non_hosted_file_content() -> None:
+    """Test get_code_interpreter_tool rejects unsupported Content types."""
+    with pytest.raises(TypeError, match="hosted_file"):
+        AzureAIClient.get_code_interpreter_tool(file_ids=Content.from_text("not-a-file"))
+
+
 def test_get_file_search_tool_basic() -> None:
     """Test get_file_search_tool returns FileSearchTool."""
     tool = AzureAIClient.get_file_search_tool(vector_store_ids=["vs-123"])
     assert isinstance(tool, FileSearchTool)
     assert tool["vector_store_ids"] == ["vs-123"]
+
+
+def test_get_file_search_tool_with_scalar_vector_store_ids_inputs() -> None:
+    """Test get_file_search_tool accepts scalar string and hosted vector store Content."""
+    string_tool = AzureAIClient.get_file_search_tool(vector_store_ids="vs-123")
+    assert isinstance(string_tool, FileSearchTool)
+    assert string_tool["vector_store_ids"] == ["vs-123"]
+
+    content_tool = AzureAIClient.get_file_search_tool(
+        vector_store_ids=Content.from_hosted_vector_store(vector_store_id="vs-234"),
+    )
+    assert isinstance(content_tool, FileSearchTool)
+    assert content_tool["vector_store_ids"] == ["vs-234"]
+
+
+def test_get_file_search_tool_with_vector_store_content_and_string_id() -> None:
+    """Test get_file_search_tool accepts hosted vector store Content and string ids."""
+    tool = AzureAIClient.get_file_search_tool(
+        vector_store_ids=[Content.from_hosted_vector_store(vector_store_id="vs-123"), "vs-456"],
+    )
+    assert isinstance(tool, FileSearchTool)
+    assert tool["vector_store_ids"] == ["vs-123", "vs-456"]
+
+
+def test_get_file_search_tool_rejects_non_hosted_vector_store_content() -> None:
+    """Test get_file_search_tool rejects unsupported Content types."""
+    with pytest.raises(TypeError, match="hosted_vector_store"):
+        AzureAIClient.get_file_search_tool(vector_store_ids=Content.from_hosted_file(file_id="file-123"))
 
 
 def test_get_file_search_tool_with_options() -> None:
@@ -1730,6 +1870,24 @@ def test_get_web_search_tool_with_search_context_size() -> None:
     tool = AzureAIClient.get_web_search_tool(search_context_size="high")
     assert isinstance(tool, WebSearchPreviewTool)
     assert tool.search_context_size == "high"
+
+
+def test_get_bing_tool_grounding_variant() -> None:
+    """Test get_bing_tool with Bing grounding variant."""
+    tool = AzureAIClient.get_bing_tool(variant="grounding", project_connection_id="conn-123")
+    assert tool["type"] == "bing_grounding"
+    assert tool["bing_grounding"]["search_configurations"][0]["project_connection_id"] == "conn-123"
+
+
+def test_get_bing_tool_custom_search_variant() -> None:
+    """Test get_bing_tool with Bing custom search variant."""
+    custom_tool = AzureAIClient.get_bing_tool(
+        variant="custom_search",
+        project_connection_id="conn-123",
+        instance_name="instance-1",
+    )
+    assert custom_tool["type"] == "bing_custom_search_preview"
+    assert custom_tool["bing_custom_search_preview"]["search_configurations"][0]["instance_name"] == "instance-1"
 
 
 def test_get_mcp_tool_basic() -> None:

@@ -465,15 +465,59 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
     # region Hosted Tool Factory Methods
 
     @staticmethod
+    def _normalize_hosted_ids(
+        value: str | Content | Sequence[str | Content] | None,
+        *,
+        expected_content_type: Literal["hosted_file", "hosted_vector_store"],
+        content_id_field: Literal["file_id", "vector_store_id"],
+        parameter_name: Literal["file_ids", "vector_store_ids"],
+    ) -> list[str] | None:
+        """Normalize string/Content id inputs with strict hosted content validation."""
+        if value is None:
+            return None
+
+        items: list[str | Content]
+        if isinstance(value, (str, Content)):
+            items = [value]
+        else:
+            items = list(value)
+
+        normalized_ids: list[str] = []
+        for item in items:
+            if isinstance(item, str):
+                normalized_ids.append(item)
+                continue
+
+            if isinstance(item, Content):
+                if item.type != expected_content_type:
+                    raise TypeError(
+                        f"{parameter_name} accepts string IDs or Content of type {expected_content_type}."
+                    )
+                content_id = getattr(item, content_id_field)
+                if not content_id:
+                    raise ValueError(
+                        f"{parameter_name} Content items must include '{content_id_field}'."
+                    )
+                normalized_ids.append(content_id)
+                continue
+
+            raise TypeError(
+                f"{parameter_name} accepts string IDs or Content of type {expected_content_type}."
+            )
+
+        return normalized_ids
+
+    @staticmethod
     def get_code_interpreter_tool(
         *,
-        file_ids: list[str] | None = None,
+        file_ids: str | Content | Sequence[str | Content] | None = None,
         container: Literal["auto"] | CodeInterpreterContainerCodeInterpreterToolAuto = "auto",
     ) -> Any:
         """Create a code interpreter tool configuration for the Responses API.
 
         Keyword Args:
-            file_ids: List of file IDs to make available to the code interpreter.
+            file_ids: File IDs for the code interpreter. Accepts a string ID, hosted_file Content,
+                or a sequence containing either form.
             container: Container configuration. Use "auto" for automatic container management,
                 or provide a TypedDict with custom container settings.
 
@@ -495,11 +539,24 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 agent = ChatAgent(client, tools=[tool])
         """
         container_config: CodeInterpreterContainerCodeInterpreterToolAuto = (
-            container if isinstance(container, dict) else {"type": "auto"}
+            dict(container) if isinstance(container, dict) else {"type": "auto"}
         )
 
-        if file_ids:
-            container_config["file_ids"] = file_ids
+        if file_ids is None and isinstance(container_config, dict):
+            file_ids = cast("str | Content | Sequence[str | Content] | None", container_config.get("file_ids"))
+
+        normalized_file_ids = OpenAIResponsesClient._normalize_hosted_ids(
+            file_ids,
+            expected_content_type="hosted_file",
+            content_id_field="file_id",
+            parameter_name="file_ids",
+        )
+
+        if normalized_file_ids is not None:
+            if normalized_file_ids:
+                container_config["file_ids"] = normalized_file_ids
+            else:
+                container_config.pop("file_ids", None)
 
         return CodeInterpreter(type="code_interpreter", container=container_config)
 
@@ -716,13 +773,14 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
     @staticmethod
     def get_file_search_tool(
         *,
-        vector_store_ids: list[str],
+        vector_store_ids: str | Content | Sequence[str | Content],
         max_num_results: int | None = None,
     ) -> Any:
         """Create a file search tool configuration for the Responses API.
 
         Keyword Args:
-            vector_store_ids: List of vector store IDs to search within.
+            vector_store_ids: Vector store IDs to search. Accepts a string ID,
+                hosted_vector_store Content, or a sequence containing either form.
             max_num_results: Maximum number of results to return. Defaults to 50 if not specified.
 
         Returns:
@@ -746,9 +804,19 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
                 agent = ChatAgent(client, tools=[tool])
         """
+        normalized_vector_store_ids = OpenAIResponsesClient._normalize_hosted_ids(
+            vector_store_ids,
+            expected_content_type="hosted_vector_store",
+            content_id_field="vector_store_id",
+            parameter_name="vector_store_ids",
+        )
+
+        if not normalized_vector_store_ids:
+            raise ValueError("File search tool requires 'vector_store_ids' to be specified.")
+
         tool = FileSearchToolParam(
             type="file_search",
-            vector_store_ids=vector_store_ids,
+            vector_store_ids=normalized_vector_store_ids,
         )
 
         if max_num_results is not None:

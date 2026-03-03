@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
-import os
 
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -32,14 +31,7 @@ async def main() -> None:
             instructions="""You are an Agent helping with browser automation tasks.
             You can answer questions, provide information, and assist with various tasks
             related to web browsing using the Browser Automation tool available to you.""",
-            tools={
-                "type": "browser_automation_preview",
-                "browser_automation_preview": {
-                    "connection": {
-                        "project_connection_id": os.environ["BROWSER_AUTOMATION_PROJECT_CONNECTION_ID"],
-                    }
-                },
-            },
+            tools=AzureAIClient.get_browser_automation_tool(),
         )
 
         query = """Your goal is to report the percent of Microsoft year-to-date stock price change.

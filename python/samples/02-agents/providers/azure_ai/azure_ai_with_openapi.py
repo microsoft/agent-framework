@@ -3,7 +3,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -37,15 +37,12 @@ async def main() -> None:
             name="MyOpenAPIAgent",
             instructions="""You are a helpful assistant that can use country APIs to provide information.
             Use the available OpenAPI tools to answer questions about countries, currencies, and demographics.""",
-            tools={
-                "type": "openapi",
-                "openapi": {
-                    "name": "get_countries",
-                    "spec": openapi_countries,
-                    "description": "Retrieve information about countries by currency code",
-                    "auth": {"type": "anonymous"},
-                },
-            },
+            tools=AzureAIClient.get_openapi_tool(
+                name="get_countries",
+                spec=openapi_countries,
+                description="Retrieve information about countries by currency code",
+                auth={"type": "anonymous"},
+            ),
         )
 
         query = "What is the name and population of the country that uses currency with abbreviation THB?"

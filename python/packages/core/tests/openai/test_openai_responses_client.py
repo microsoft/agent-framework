@@ -244,6 +244,50 @@ async def test_web_search_tool_with_location() -> None:
         )
 
 
+def test_get_code_interpreter_tool_accepts_string_and_hosted_file_content() -> None:
+    """Test OpenAIResponsesClient code interpreter accepts scalar and list file_ids inputs."""
+    scalar_string_tool = OpenAIResponsesClient.get_code_interpreter_tool(file_ids="file-123")
+    assert scalar_string_tool["container"]["file_ids"] == ["file-123"]
+
+    scalar_content_tool = OpenAIResponsesClient.get_code_interpreter_tool(
+        file_ids=Content.from_hosted_file(file_id="file-234")
+    )
+    assert scalar_content_tool["container"]["file_ids"] == ["file-234"]
+
+    mixed_list_tool = OpenAIResponsesClient.get_code_interpreter_tool(
+        file_ids=[Content.from_hosted_file(file_id="file-345"), "file-456"]
+    )
+    assert mixed_list_tool["container"]["file_ids"] == ["file-345", "file-456"]
+
+
+def test_get_code_interpreter_tool_rejects_non_hosted_file_content() -> None:
+    """Test OpenAIResponsesClient code interpreter rejects unsupported Content types."""
+    with pytest.raises(TypeError, match="hosted_file"):
+        OpenAIResponsesClient.get_code_interpreter_tool(file_ids=Content.from_text("not-a-file"))
+
+
+def test_get_file_search_tool_accepts_string_and_hosted_vector_store_content() -> None:
+    """Test OpenAIResponsesClient file search accepts scalar and list vector_store_ids inputs."""
+    scalar_string_tool = OpenAIResponsesClient.get_file_search_tool(vector_store_ids="vs-123")
+    assert scalar_string_tool["vector_store_ids"] == ["vs-123"]
+
+    scalar_content_tool = OpenAIResponsesClient.get_file_search_tool(
+        vector_store_ids=Content.from_hosted_vector_store(vector_store_id="vs-234")
+    )
+    assert scalar_content_tool["vector_store_ids"] == ["vs-234"]
+
+    mixed_list_tool = OpenAIResponsesClient.get_file_search_tool(
+        vector_store_ids=[Content.from_hosted_vector_store(vector_store_id="vs-345"), "vs-456"]
+    )
+    assert mixed_list_tool["vector_store_ids"] == ["vs-345", "vs-456"]
+
+
+def test_get_file_search_tool_rejects_non_hosted_vector_store_content() -> None:
+    """Test OpenAIResponsesClient file search rejects unsupported Content types."""
+    with pytest.raises(TypeError, match="hosted_vector_store"):
+        OpenAIResponsesClient.get_file_search_tool(vector_store_ids=Content.from_hosted_file(file_id="file-123"))
+
+
 async def test_code_interpreter_tool_variations() -> None:
     """Test HostedCodeInterpreterTool with and without file inputs."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")

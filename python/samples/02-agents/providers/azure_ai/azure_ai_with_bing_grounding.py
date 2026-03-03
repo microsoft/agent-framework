@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
-import os
 
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -38,16 +37,7 @@ async def main() -> None:
             instructions="""You are a helpful assistant that can search the web for current information.
             Use the Bing search tool to find up-to-date information and provide accurate, well-sourced answers.
             Always cite your sources when possible.""",
-            tools={
-                "type": "bing_grounding",
-                "bing_grounding": {
-                    "search_configurations": [
-                        {
-                            "project_connection_id": os.environ["BING_PROJECT_CONNECTION_ID"],
-                        }
-                    ]
-                },
-            },
+            tools=AzureAIClient.get_bing_tool(variant="grounding"),
         )
 
         query = "What is today's date and weather in Seattle?"

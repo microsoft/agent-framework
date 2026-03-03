@@ -3,7 +3,7 @@ import asyncio
 import os
 import uuid
 
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import MemoryStoreDefaultDefinition, MemoryStoreDefaultOptions
 from azure.identity.aio import AzureCliCredential
@@ -56,12 +56,11 @@ async def main() -> None:
                 name="MyMemoryAgent",
                 instructions="""You are a helpful assistant that remembers past conversations.
                 Use the memory search tool to recall relevant information from previous interactions.""",
-                tools={
-                    "type": "memory_search",
-                    "memory_store_name": memory_store.name,
-                    "scope": "user_123",
-                    "update_delay": 1,  # Wait 1 second before updating memories (use higher value in production)
-                },
+                tools=AzureAIClient.get_memory_search_tool(
+                    memory_store_name=memory_store.name,
+                    scope="user_123",
+                    update_delay=1,  # Wait 1 second before updating memories (use higher value in production)
+                ),
             )
 
             # First interaction - establish some preferences

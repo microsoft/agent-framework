@@ -35,6 +35,7 @@ from ._tools import (
 from ._types import (
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     EmbeddingGenerationOptions,
     EmbeddingInputT,
     EmbeddingT,
@@ -529,10 +530,16 @@ class SupportsCodeInterpreterTool(Protocol):
     """
 
     @staticmethod
-    def get_code_interpreter_tool(**kwargs: Any) -> Any:
+    def get_code_interpreter_tool(
+        *,
+        file_ids: str | Content | Sequence[str | Content] | None = None,
+        **kwargs: Any,
+    ) -> Any:
         """Create a code interpreter tool configuration.
 
         Keyword Args:
+            file_ids: Optional file IDs to expose to code interpreter tools when supported.
+                Accepts string IDs, hosted_file Content, or a sequence containing either form.
             **kwargs: Provider-specific configuration options.
 
         Returns:
@@ -650,10 +657,16 @@ class SupportsFileSearchTool(Protocol):
     """
 
     @staticmethod
-    def get_file_search_tool(**kwargs: Any) -> Any:
+    def get_file_search_tool(
+        *,
+        vector_store_ids: str | Content | Sequence[str | Content] | None = None,
+        **kwargs: Any,
+    ) -> Any:
         """Create a file search tool configuration.
 
         Keyword Args:
+            vector_store_ids: Optional vector store IDs for file search when supported.
+                Accepts string IDs, hosted_vector_store Content, or a sequence containing either form.
             **kwargs: Provider-specific configuration options.
 
         Returns:

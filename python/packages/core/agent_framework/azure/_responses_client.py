@@ -21,6 +21,19 @@ from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
     _apply_azure_defaults,
+    create_a2a_tool,
+    create_azure_ai_search_tool,
+    create_bing_tool,
+    create_browser_automation_tool,
+    create_code_interpreter_tool,
+    create_fabric_data_agent_tool,
+    create_file_search_tool,
+    create_image_generation_tool,
+    create_mcp_tool,
+    create_memory_search_tool,
+    create_openapi_tool,
+    create_sharepoint_grounding_tool,
+    create_web_search_tool,
 )
 
 if sys.version_info >= (3, 13):
@@ -183,14 +196,6 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         if model_id := kwargs.pop("model_id", None) and not deployment_name:
             deployment_name = str(model_id)
 
-        # Project client path: create OpenAI client from an Azure AI Foundry project
-        if async_client is None and (project_client is not None or project_endpoint is not None):
-            async_client = self._create_client_from_project(
-                project_client=project_client,
-                project_endpoint=project_endpoint,
-                credential=credential,
-            )
-
         azure_openai_settings = load_settings(
             AzureOpenAISettings,
             env_prefix="AZURE_OPENAI_",
@@ -203,6 +208,16 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             env_file_encoding=env_file_encoding,
             token_endpoint=token_endpoint,
         )
+        is_project_mode = project_client is not None or project_endpoint is not None
+
+        # Project client path: create OpenAI client from an Azure AI Foundry project
+        if async_client is None and is_project_mode:
+            async_client = self._create_client_from_project(
+                project_client=project_client,
+                project_endpoint=project_endpoint,
+                credential=credential,
+            )
+
         _apply_azure_defaults(azure_openai_settings, default_api_version="preview")
         # TODO(peterychang): This is a temporary hack to ensure that the base_url is set correctly
         # while this feature is in preview.
@@ -235,6 +250,24 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
         )
+        if is_project_mode:
+            self._attach_project_tool_methods()
+
+    def _attach_project_tool_methods(self) -> None:
+        """Attach project-mode hosted tool methods dynamically."""
+        self.get_code_interpreter_tool = create_code_interpreter_tool
+        self.get_file_search_tool = create_file_search_tool
+        self.get_web_search_tool = create_web_search_tool
+        self.get_bing_tool = create_bing_tool
+        self.get_image_generation_tool = create_image_generation_tool
+        self.get_mcp_tool = create_mcp_tool
+        self.get_fabric_data_agent_tool = create_fabric_data_agent_tool
+        self.get_sharepoint_grounding_tool = create_sharepoint_grounding_tool
+        self.get_azure_ai_search_tool = create_azure_ai_search_tool
+        self.get_browser_automation_tool = create_browser_automation_tool
+        self.get_openapi_tool = create_openapi_tool
+        self.get_a2a_tool = create_a2a_tool
+        self.get_memory_search_tool = create_memory_search_tool
 
     @staticmethod
     def _create_client_from_project(

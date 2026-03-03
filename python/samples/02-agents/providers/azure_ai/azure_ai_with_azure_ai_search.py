@@ -1,9 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
-import os
 
 from agent_framework import Annotation
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -37,19 +36,8 @@ async def main() -> None:
                 "You are a helpful agent that searches hotel information using Azure AI Search. "
                 "Always use the search tool and index to find hotel data and provide accurate information."
             ),
-            tools={
-                "type": "azure_ai_search",
-                "azure_ai_search": {
-                    "indexes": [
-                        {
-                            "project_connection_id": os.environ["AI_SEARCH_PROJECT_CONNECTION_ID"],
-                            "index_name": os.environ["AI_SEARCH_INDEX_NAME"],
-                            # For query_type=vector, ensure your index has a field with vectorized data.
-                            "query_type": "simple",
-                        }
-                    ]
-                },
-            },
+            # For query_type=vector, ensure your index has a field with vectorized data.
+            tools=AzureAIClient.get_azure_ai_search_tool(query_type="simple"),
         )
 
         query = (
