@@ -58,13 +58,6 @@ class SkillResource:
     either a static ``content`` string or a ``function`` that produces content
     dynamically (sync or async).  Exactly one must be provided.
 
-    Args:
-        name: Identifier for this resource (e.g. ``"reference"``, ``"get-schema"``).
-        description: Optional human-readable summary shown when advertising the resource.
-        content: Static content string.  Mutually exclusive with *function*.
-        function: Callable (sync or async) that returns content on demand.
-            Mutually exclusive with *content*.
-
     Attributes:
         name: Resource identifier.
         description: Optional human-readable summary, or ``None``.
@@ -93,6 +86,15 @@ class SkillResource:
         content: str | None = None,
         function: Callable[..., Any] | None = None,
     ) -> None:
+        """Initialize a SkillResource.
+
+        Args:
+            name: Identifier for this resource (e.g. ``"reference"``, ``"get-schema"``).
+            description: Optional human-readable summary shown when advertising the resource.
+            content: Static content string.  Mutually exclusive with *function*.
+            function: Callable (sync or async) that returns content on demand.
+                Mutually exclusive with *content*.
+        """
         if not name or not name.strip():
             raise ValueError("Resource name cannot be empty.")
         if content is None and function is None:
@@ -118,14 +120,6 @@ class Skill:
     zero or more :class:`SkillResource` instances.  Resources can be
     supplied at construction time or added later via the :meth:`resource`
     decorator.
-
-    Args:
-        name: Skill name (lowercase letters, numbers, hyphens only).
-        description: Human-readable description of the skill (≤1024 chars).
-        content: The skill instructions body.
-        resources: Pre-built resources to attach to this skill.
-        path: Absolute path to the skill directory on disk.  Set automatically
-            for file-based skills; leave as ``None`` for code-defined skills.
 
     Attributes:
         name: Skill name (lowercase letters, numbers, hyphens only).
@@ -171,6 +165,16 @@ class Skill:
         resources: list[SkillResource] | None = None,
         path: str | None = None,
     ) -> None:
+        """Initialize a Skill.
+
+        Args:
+            name: Skill name (lowercase letters, numbers, hyphens only).
+            description: Human-readable description of the skill (≤1024 chars).
+            content: The skill instructions body.
+            resources: Pre-built resources to attach to this skill.
+            path: Absolute path to the skill directory on disk.  Set automatically
+                for file-based skills; leave as ``None`` for code-defined skills.
+        """
         if not name or not name.strip():
             raise ValueError("Skill name cannot be empty.")
         if not description or not description.strip():
@@ -331,22 +335,6 @@ class SkillsProvider(BaseContextProvider):
     and file-based resource reads are guarded against path traversal and
     symlink escape.  Only use skills from trusted sources.
 
-    Args:
-        skill_paths: One or more directory paths to search for file-based
-            skills.  Each path may point to an individual skill folder
-            (containing ``SKILL.md``) or to a parent that contains skill
-            subdirectories.
-
-    Keyword Args:
-        skills: Code-defined :class:`Skill` instances to register.
-        instruction_template: Custom system-prompt template for
-            advertising skills.  Must contain a ``{skills}`` placeholder for the
-            generated skills list.  Uses a built-in template when ``None``.
-        resource_extensions: File extensions recognized as discoverable
-            resources.  Defaults to ``(".md", ".json", ".yaml", ".yml",
-            ".csv", ".xml", ".txt")``.
-        source_id: Unique identifier for this provider instance.
-
     Examples:
         File-based only:
 
@@ -389,6 +377,24 @@ class SkillsProvider(BaseContextProvider):
         resource_extensions: tuple[str, ...] | None = None,
         source_id: str | None = None,
     ) -> None:
+        """Initialize a SkillsProvider.
+
+        Args:
+            skill_paths: One or more directory paths to search for file-based
+                skills.  Each path may point to an individual skill folder
+                (containing ``SKILL.md``) or to a parent that contains skill
+                subdirectories.
+
+        Keyword Args:
+            skills: Code-defined :class:`Skill` instances to register.
+            instruction_template: Custom system-prompt template for
+                advertising skills.  Must contain a ``{skills}`` placeholder for the
+                generated skills list.  Uses a built-in template when ``None``.
+            resource_extensions: File extensions recognized as discoverable
+                resources.  Defaults to ``DEFAULT_RESOURCE_EXTENSIONS``
+                (``(".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt")``).
+            source_id: Unique identifier for this provider instance.
+        """
         super().__init__(source_id or self.DEFAULT_SOURCE_ID)
 
         self._skills = _load_skills(skill_paths, skills, resource_extensions or DEFAULT_RESOURCE_EXTENSIONS)
