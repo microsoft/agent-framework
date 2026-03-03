@@ -13,6 +13,7 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
+using static Microsoft.Agents.AI.Compaction.ChatHistoryCompactionPipeline;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -39,33 +40,45 @@ static string LookupPrice([Description("The product name to look up.")] string p
     };
 
 // Configure the compaction pipeline with one of each strategy, ordered least to most aggressive.
-const int MaxTokens = 512;
-const int MaxTurns = 4;
+//const int MaxTokens = 512;
+//const int MaxTurns = 4;
 
 ChatHistoryCompactionPipeline compactionPipeline =
-    new(// 1. Gentle: collapse old tool-call groups into short summaries like "[Tool calls: LookupPrice]"
-        new ToolResultCompactionStrategy(MaxTokens, preserveRecentGroups: 2),
+    //new(// 1. Gentle: collapse old tool-call groups into short summaries like "[Tool calls: LookupPrice]"
+    //    new ToolResultCompactionStrategy(MaxTokens, preserveRecentGroups: 2),
 
-        // 2. Moderate: use an LLM to summarize older conversation spans into a concise message
-        new SummarizationCompactionStrategy(summarizerChatClient, MaxTokens, preserveRecentGroups: 2),
+    //    // 2. Moderate: use an LLM to summarize older conversation spans into a concise message
+    //    new SummarizationCompactionStrategy(summarizerChatClient, MaxTokens, preserveRecentGroups: 2),
 
-        // 3. Aggressive: keep only the last N user turns and their responses
-        new SlidingWindowCompactionStrategy(MaxTurns),
+    //    // 3. Aggressive: keep only the last N user turns and their responses
+    //    new SlidingWindowCompactionStrategy(MaxTurns),
 
-        // 4. Emergency: drop oldest groups until under the token budget
-        new TruncationCompactionStrategy(MaxTokens, preserveRecentGroups: 1));
+    //    // 4. Emergency: drop oldest groups until under the token budget
+    //    new TruncationCompactionStrategy(MaxTokens, preserveRecentGroups: 1));
+    Create(
+        Approach.Balanced,
+        Size.Compact,
+        summarizerChatClient);
 
 // Create the agent with an in-memory chat history provider whose reducer is the compaction pipeline.
-AIAgent agent = agentChatClient.AsAIAgent(new ChatClientAgentOptions
-{
-    Name = "ShoppingAssistant",
-    ChatOptions = new()
-    {
-        Instructions = "You are a helpful shopping assistant. Help the user look up prices and compare products.",
-        Tools = [AIFunctionFactory.Create(LookupPrice)],
-    },
-    ChatHistoryProvider = new InMemoryChatHistoryProvider(new() { ChatReducer = compactionPipeline }),
-});
+AIAgent agent =
+    agentChatClient.AsAIAgent(
+        new ChatClientAgentOptions
+        {
+            Name = "ShoppingAssistant",
+            ChatOptions = new()
+            {
+                Instructions =
+                    """
+                    You are a helpful, but long winded, shopping assistant.
+                    Help the user look up prices and compare products.
+                    When responding, Be sure to be extra descriptive and use as
+                    many words as possible without sounding ridiculous.
+                    """,
+                Tools = [AIFunctionFactory.Create(LookupPrice)],
+            },
+            ChatHistoryProvider = new InMemoryChatHistoryProvider(new() { ChatReducer = compactionPipeline }),
+        });
 
 AgentSession session = await agent.CreateSessionAsync();
 
@@ -87,6 +100,7 @@ string[] prompts =
     "Which product is the cheapest?",
     "Can you compare the laptop and the keyboard for me?",
     "What was the first product I asked about?",
+    "Thank you!",
 ];
 
 foreach (string prompt in prompts)

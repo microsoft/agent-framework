@@ -11,13 +11,16 @@ public class CompactionPipelineResultTests
     [Fact]
     public void Properties_AreReadable()
     {
-        CompactionMetric before = new() { MessageCount = 10 };
-        CompactionMetric after = new() { MessageCount = 5 };
+        // Arrange
+        ChatHistoryMetric before = new() { MessageCount = 10 };
+        ChatHistoryMetric after = new() { MessageCount = 5 };
         CompactionResult strategyResult = new("Test", applied: true, before, after);
         List<CompactionResult> results = [strategyResult];
 
+        // Act
         CompactionPipelineResult pipelineResult = new(before, after, results);
 
+        // Assert
         Assert.Same(before, pipelineResult.Before);
         Assert.Same(after, pipelineResult.After);
         Assert.Single(pipelineResult.StrategyResults);
@@ -26,21 +29,29 @@ public class CompactionPipelineResultTests
     [Fact]
     public void AnyApplied_AllFalse_ReturnsFalse()
     {
-        CompactionMetric metrics = new() { MessageCount = 5 };
+        // Arrange
+        ChatHistoryMetric metrics = new() { MessageCount = 5 };
         CompactionResult skipped = CompactionResult.Skipped("Skip", metrics);
+
+        // Act
         CompactionPipelineResult result = new(metrics, metrics, [skipped]);
 
+        // Assert
         Assert.False(result.AnyApplied);
     }
 
     [Fact]
     public void AnyApplied_SomeTrue_ReturnsTrue()
     {
-        CompactionMetric before = new() { MessageCount = 10 };
-        CompactionMetric after = new() { MessageCount = 5 };
+        // Arrange
+        ChatHistoryMetric before = new() { MessageCount = 10 };
+        ChatHistoryMetric after = new() { MessageCount = 5 };
         CompactionResult applied = new("Applied", applied: true, before, after);
+
+        // Act
         CompactionPipelineResult result = new(before, after, [applied]);
 
+        // Assert
         Assert.True(result.AnyApplied);
     }
 }

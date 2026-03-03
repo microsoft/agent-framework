@@ -1,7 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -24,7 +25,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// accepted (e.g., <see cref="InMemoryChatHistoryProviderOptions.ChatReducer"/>).
 /// </para>
 /// </remarks>
-public class ChatHistoryCompactionPipeline : IChatReducer
+public partial class ChatHistoryCompactionPipeline : IChatReducer
 {
     private readonly ChatHistoryCompactionStrategy[] _strategies;
     private readonly IChatHistoryMetricsCalculator _metricsCalculator;
@@ -52,7 +53,7 @@ public class ChatHistoryCompactionPipeline : IChatReducer
         IChatHistoryMetricsCalculator? metricsCalculator,
         params IEnumerable<ChatHistoryCompactionStrategy> strategies)
     {
-        this._strategies = Throw.IfNull(strategies).ToArray();
+        this._strategies = [.. Throw.IfNull(strategies)];
         this._metricsCalculator = metricsCalculator ?? DefaultChatHistoryMetricsCalculator.Instance;
     }
 
@@ -66,9 +67,9 @@ public class ChatHistoryCompactionPipeline : IChatReducer
         IEnumerable<ChatMessage> messages,
         CancellationToken cancellationToken = default)
     {
-        List<ChatMessage> messageList = messages.ToList(); // %%% HAXX
-        await this.CompactAsync(messageList, cancellationToken).ConfigureAwait(false);
-        return messageList;
+        List<ChatMessage> messageBuffer = messages is List<ChatMessage> messageList ? messageList : [.. messages];
+        await this.CompactAsync(messageBuffer, cancellationToken).ConfigureAwait(false);
+        return messageBuffer;
     }
 
     /// <summary>
@@ -77,26 +78,37 @@ public class ChatHistoryCompactionPipeline : IChatReducer
     /// <param name="messages">The mutable message list to compact.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A <see cref="CompactionPipelineResult"/> with aggregate and per-strategy metrics.</returns>
-    public async ValueTask<CompactionPipelineResult> CompactAsync( // %%% SCOPE
-        IList<ChatMessage> messages,
+    public async ValueTask<CompactionPipelineResult> CompactAsync(
+        List<ChatMessage> messages,
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(messages);
 
-        IReadOnlyList<ChatMessage> readOnlyMessages = messages as IReadOnlyList<ChatMessage> ?? [.. messages]; // %%% TYPE CONSISTENCY
-        CompactionMetric overallBefore = this._metricsCalculator.Calculate(readOnlyMessages);
+        ChatHistoryMetric overallBefore = this._metricsCalculator.Calculate(messages);
 
-        List<CompactionResult> results = new(this._strategies.Length);
+        Debug.WriteLine($"COMPACTION: BEGIN x{overallBefore.MessageCount}/#{overallBefore.UserTurnCount} ({overallBefore.TokenCount} tokens)");
 
+        List<CompactionResult> compactionResults = new(this._strategies.Length);
+
+        Stopwatch timer = new();
+        TimeSpan startTime = TimeSpan.Zero;
+        ChatHistoryMetric overallAfter = overallBefore;
+        ChatHistoryMetric currentBefore = overallBefore;
         foreach (ChatHistoryCompactionStrategy strategy in this._strategies)
         {
-            CompactionResult result = await strategy.CompactAsync(messages, this._metricsCalculator, cancellationToken).ConfigureAwait(false);
-            results.Add(result);
+            // %%% VERBOSE - Debug.WriteLine($"COMPACTION: {strategy.Name} START");
+            timer.Start();
+            ChatHistoryCompactionStrategy.s_currentMetrics.Value = currentBefore;
+            CompactionResult strategyResult = await strategy.CompactAsync(messages, this._metricsCalculator, cancellationToken).ConfigureAwait(false);
+            timer.Stop();
+            TimeSpan elapsedTime = timer.Elapsed - startTime;
+            // %%% VERBOSE - Debug.WriteLine($"COMPACTION: {strategy.Name} FINISH [{elapsedTime}]");
+            compactionResults.Add(strategyResult);
+            overallAfter = currentBefore = strategyResult.After;
         }
 
-        readOnlyMessages = messages as IReadOnlyList<ChatMessage> ?? [.. messages];
-        CompactionMetric overallAfter = this._metricsCalculator.Calculate(readOnlyMessages);
+        Debug.WriteLineIf(overallBefore.TokenCount != overallAfter.TokenCount, $"COMPACTION: TOTAL [{timer.Elapsed}] {overallBefore.TokenCount} => {overallAfter.TokenCount} tokens");
 
-        return new(overallBefore, overallAfter, results);
+        return new(overallBefore, overallAfter, compactionResults);
     }
 }

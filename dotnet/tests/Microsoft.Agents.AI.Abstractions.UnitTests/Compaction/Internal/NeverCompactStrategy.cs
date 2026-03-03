@@ -16,7 +16,8 @@ internal sealed class NeverCompactStrategy : ChatHistoryCompactionStrategy
     }
 
     public override string Name => "NeverCompact";
-    public override bool ShouldCompact(CompactionMetric metrics) => false;
+
+    protected override bool ShouldCompact(ChatHistoryMetric metrics) => false;
 
     private sealed class NoOpReducer : IChatReducer
     {

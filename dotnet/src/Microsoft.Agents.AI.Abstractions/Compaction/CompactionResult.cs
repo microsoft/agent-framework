@@ -16,7 +16,7 @@ public sealed class CompactionResult
     /// <param name="applied">Whether the strategy modified the message list.</param>
     /// <param name="before">Metrics before the strategy ran.</param>
     /// <param name="after">Metrics after the strategy ran.</param>
-    public CompactionResult(string strategyName, bool applied, CompactionMetric before, CompactionMetric after)
+    public CompactionResult(string strategyName, bool applied, ChatHistoryMetric before, ChatHistoryMetric after)
     {
         this.StrategyName = Throw.IfNullOrWhitespace(strategyName);
         this.Applied = applied;
@@ -37,12 +37,12 @@ public sealed class CompactionResult
     /// <summary>
     /// Gets the conversation metrics before the strategy executed.
     /// </summary>
-    public CompactionMetric Before { get; }
+    public ChatHistoryMetric Before { get; }
 
     /// <summary>
     /// Gets the conversation metrics after the strategy executed.
     /// </summary>
-    public CompactionMetric After { get; }
+    public ChatHistoryMetric After { get; }
 
     /// <summary>
     /// Creates a <see cref="CompactionResult"/> representing a skipped strategy.
@@ -50,6 +50,6 @@ public sealed class CompactionResult
     /// <param name="strategyName">The name of the skipped strategy.</param>
     /// <param name="metrics">The current conversation metrics.</param>
     /// <returns>A result indicating no compaction was applied.</returns>
-    internal static CompactionResult Skipped(string strategyName, CompactionMetric metrics)
+    internal static CompactionResult Skipped(string strategyName, ChatHistoryMetric metrics)
         => new(strategyName, applied: false, metrics, metrics);
 }

@@ -18,7 +18,7 @@ internal sealed class RemoveFirstMessageStrategy : ChatHistoryCompactionStrategy
 
     public override string Name => "RemoveFirst";
 
-    public override bool ShouldCompact(CompactionMetric metrics) => metrics.MessageCount > 0;
+    protected override bool ShouldCompact(ChatHistoryMetric metrics) => metrics.MessageCount > 0;
 
     private sealed class RemoveFirstReducer : IChatReducer
     {

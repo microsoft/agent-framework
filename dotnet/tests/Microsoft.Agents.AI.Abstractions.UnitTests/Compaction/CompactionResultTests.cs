@@ -9,9 +9,13 @@ public class CompactionResultTests
     [Fact]
     public void Skipped_HasSameBeforeAndAfter()
     {
-        CompactionMetric metrics = new() { MessageCount = 5, TokenCount = 100 };
+        // Arrange
+        ChatHistoryMetric metrics = new() { MessageCount = 5, TokenCount = 100 };
+
+        // Act
         CompactionResult result = CompactionResult.Skipped("Test", metrics);
 
+        // Assert
         Assert.Equal("Test", result.StrategyName);
         Assert.False(result.Applied);
         Assert.Same(metrics, result.Before);

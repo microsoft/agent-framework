@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -44,7 +43,7 @@ public class SlidingWindowCompactionStrategy : ChatHistoryCompactionStrategy
     }
 
     /// <inheritdoc/>
-    public override bool ShouldCompact(CompactionMetric metrics) =>
+    protected override bool ShouldCompact(ChatHistoryMetric metrics) =>
         metrics.UserTurnCount > this._maxTurns;
 
     /// <summary>
@@ -57,25 +56,21 @@ public class SlidingWindowCompactionStrategy : ChatHistoryCompactionStrategy
             IEnumerable<ChatMessage> messages,
             CancellationToken cancellationToken = default)
         {
-            IReadOnlyList<ChatMessage> messageList = [.. messages];
+            IReadOnlyList<ChatMessage> messageList = [.. messages]; // %%% PERFORMANCE
             IReadOnlyList<ChatMessageGroup> groups = CurrentMetrics.Groups;
 
             // Find the group-list indices where each user turn starts
-            //int[] turnGroupIndices = groups.Where(group => group.Kind == ChatMessageGroupKind.UserTurn).Select(group => group.StartIndex).ToArray(); // %%% TODO
-            List<int> turnGroupIndices = [];
-            for (int i = 0; i < groups.Count; i++)
-            {
-                if (groups[i].Kind == ChatMessageGroupKind.UserTurn)
-                {
-                    turnGroupIndices.Add(i);
-                }
-            }
+            int[] turnGroupIndices =
+                [.. CurrentMetrics.Groups
+                    .Select((group, index) => (group, index))
+                    .Where(t => t.group.Kind == ChatMessageGroupKind.UserTurn)
+                    .Select(t => t.index)];
 
             // Keep the last maxTurns user turns and everything after the first kept turn
-            int firstKeptTurnIndex = turnGroupIndices.Count - maxTurns;
+            int firstKeptTurnIndex = turnGroupIndices.Length - maxTurns;
             int firstKeptGroupIndex = turnGroupIndices[firstKeptTurnIndex];
 
-            List<ChatMessage> result = new(messageList.Count);
+            List<ChatMessage> result = new(messageList.Count); // %%% PERFORMANCE
             for (int gi = 0; gi < groups.Count; gi++)
             {
                 ChatMessageGroup group = groups[gi];

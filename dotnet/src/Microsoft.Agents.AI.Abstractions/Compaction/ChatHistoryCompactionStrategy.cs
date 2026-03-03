@@ -2,8 +2,7 @@
 
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
-using System.Linq;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -21,7 +20,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// while the strategy adds:
 /// <list type="bullet">
 /// <item><description>A conditional trigger via <see cref="ShouldCompact"/> that decides whether compaction runs.</description></item>
-/// <item><description>Before/after <see cref="CompactionMetric"/> reporting via <see cref="CompactionResult"/>.</description></item>
+/// <item><description>Before/after <see cref="ChatHistoryMetric"/> reporting via <see cref="CompactionResult"/>.</description></item>
 /// </list>
 /// </para>
 /// <para>
@@ -36,7 +35,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// </remarks>
 public abstract class ChatHistoryCompactionStrategy
 {
-    private static readonly AsyncLocal<CompactionMetric> s_currentMetrics = new();
+    internal static readonly AsyncLocal<ChatHistoryMetric> s_currentMetrics = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatHistoryCompactionStrategy"/> class.
@@ -48,9 +47,9 @@ public abstract class ChatHistoryCompactionStrategy
     }
 
     /// <summary>
-    /// Exposes the current <see cref="CompactionMetric"/> for the executing strategy, allowing <see cref="Reducer"/> to make informed decisions.
+    /// Exposes the current <see cref="ChatHistoryMetric"/> for the executing strategy, allowing <see cref="Reducer"/> to make informed decisions.
     /// </summary>
-    protected static CompactionMetric CurrentMetrics => s_currentMetrics.Value ?? throw new InvalidOperationException($"No active {nameof(ChatHistoryCompactionStrategy)}.");
+    protected static ChatHistoryMetric CurrentMetrics => s_currentMetrics.Value ?? throw new InvalidOperationException($"No active {nameof(ChatHistoryCompactionStrategy)}.");
 
     /// <summary>
     /// Gets the <see cref="IChatReducer"/> that performs the actual message compaction.
@@ -72,48 +71,50 @@ public abstract class ChatHistoryCompactionStrategy
     /// <returns>
     /// <see langword="true"/> to proceed with compaction; <see langword="false"/> to skip.
     /// </returns>
-    public abstract bool ShouldCompact(CompactionMetric metrics);
+    protected abstract bool ShouldCompact(ChatHistoryMetric metrics);
 
     /// <summary>
     /// Execute this strategy: check the trigger, delegate to the <see cref="IChatReducer"/>, and report metrics.
     /// </summary>
-    /// <param name="messages">The mutable message list to compact.</param>
+    /// <param name="history">The mutable message list to compact.</param>
     /// <param name="metricsCalculator">The calculator to use for metric snapshots.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A <see cref="CompactionResult"/> reporting the outcome.</returns>
-    public async ValueTask<CompactionResult> CompactAsync(
-        IList<ChatMessage> messages,
+    internal async ValueTask<CompactionResult> CompactAsync(
+        List<ChatMessage> history,
         IChatHistoryMetricsCalculator metricsCalculator,
         CancellationToken cancellationToken = default)
     {
-        messages = Throw.IfNull(messages);
         Throw.IfNull(metricsCalculator);
+        Throw.IfNull(history);
 
-        List<ChatMessage>? messageList = messages as List<ChatMessage>;
-        ReadOnlyCollection<ChatMessage> snapshot = messageList is not null ? messageList.AsReadOnly() : new(messages);
-        CompactionMetric before = metricsCalculator.Calculate(snapshot);
-        s_currentMetrics.Value = before;
-        if (!this.ShouldCompact(before))
+        ChatHistoryMetric beforeMetrics = CurrentMetrics;
+        if (!this.ShouldCompact(beforeMetrics))
         {
-            return CompactionResult.Skipped(this.Name, before);
+            // %%% VERBOSE - Debug.WriteLine($"COMPACTION: {this.Name} - Skipped");
+            return CompactionResult.Skipped(this.Name, beforeMetrics);
         }
 
-        ChatMessage[] reduced = (await this.Reducer.ReduceAsync(snapshot, cancellationToken).ConfigureAwait(false)).ToArray();
+        Debug.WriteLine($"COMPACTION: {this.Name} - Reducing");
 
-        bool modified = reduced.Length != snapshot.Count;
+        IEnumerable<ChatMessage> reducerResult = await this.Reducer.ReduceAsync(history, cancellationToken).ConfigureAwait(false);
+
+        // Ensure we have a concrete collection to avoid multiple enumerations of the reducer result, which could be costly if it's an iterator.
+        ChatMessage[] reducedCopy = [.. reducerResult];
+
+        bool modified = reducedCopy.Length != history.Count;
         if (modified)
         {
-            messages.Clear();
-            foreach (ChatMessage message in reduced)
-            {
-                messages.Add(message);
-            }
+            history.Clear();
+            history.AddRange(reducedCopy);
         }
 
-        CompactionMetric after = modified
-            ? metricsCalculator.Calculate(reduced)
-            : before;
+        ChatHistoryMetric afterMetrics = modified
+            ? metricsCalculator.Calculate(reducedCopy)
+            : beforeMetrics;
 
-        return new(this.Name, applied: modified, before, after);
+        Debug.WriteLine($"COMPACTION: {this.Name} - Tokens {beforeMetrics.TokenCount} => {afterMetrics.TokenCount}");
+
+        return new(this.Name, applied: modified, beforeMetrics, afterMetrics);
     }
 }

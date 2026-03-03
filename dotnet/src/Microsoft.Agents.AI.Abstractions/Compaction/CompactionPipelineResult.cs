@@ -18,8 +18,8 @@ public sealed class CompactionPipelineResult
     /// <param name="after">Metrics of the conversation after all strategies ran.</param>
     /// <param name="strategyResults">Per-strategy results in execution order.</param>
     internal CompactionPipelineResult(
-        CompactionMetric before,
-        CompactionMetric after,
+        ChatHistoryMetric before,
+        ChatHistoryMetric after,
         IReadOnlyList<CompactionResult> strategyResults)
     {
         this.Before = Throw.IfNull(before);
@@ -30,12 +30,12 @@ public sealed class CompactionPipelineResult
     /// <summary>
     /// Gets the conversation metrics before any compaction strategy ran.
     /// </summary>
-    public CompactionMetric Before { get; }
+    public ChatHistoryMetric Before { get; }
 
     /// <summary>
     /// Gets the conversation metrics after all compaction strategies ran.
     /// </summary>
-    public CompactionMetric After { get; }
+    public ChatHistoryMetric After { get; }
 
     /// <summary>
     /// Gets the per-strategy results in execution order.

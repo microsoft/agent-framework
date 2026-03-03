@@ -29,6 +29,11 @@ namespace Microsoft.Agents.AI.Compaction;
 /// </remarks>
 public class ToolResultCompactionStrategy : ChatHistoryCompactionStrategy
 {
+    /// <summary>
+    /// The default value for `preserveRecentGroups` used when constructing <see cref="ToolResultCompactionStrategy"/>.
+    /// </summary>
+    public const int DefaultPreserveRecentGroups = 2;
+
     private readonly int _maxTokens;
 
     /// <summary>
@@ -39,14 +44,14 @@ public class ToolResultCompactionStrategy : ChatHistoryCompactionStrategy
     /// The number of most-recent non-system message groups to protect from collapsing.
     /// Defaults to 2, ensuring the current turn's tool interactions remain visible.
     /// </param>
-    public ToolResultCompactionStrategy(int maxTokens, int preserveRecentGroups = 2)
+    public ToolResultCompactionStrategy(int maxTokens, int preserveRecentGroups = DefaultPreserveRecentGroups)
         : base(new ToolResultClearingReducer(preserveRecentGroups))
     {
         this._maxTokens = maxTokens;
     }
 
     /// <inheritdoc/>
-    public override bool ShouldCompact(CompactionMetric metrics) =>
+    protected override bool ShouldCompact(ChatHistoryMetric metrics) =>
         metrics.TokenCount > this._maxTokens && metrics.ToolCallCount > 0;
 
     /// <summary>
@@ -62,7 +67,7 @@ public class ToolResultCompactionStrategy : ChatHistoryCompactionStrategy
             IReadOnlyList<ChatMessage> messageList = [.. messages];
             IReadOnlyList<ChatMessageGroup> groups = CurrentMetrics.Groups;
 
-            List<ChatMessageGroup> nonSystemGroups = groups.Where(g => g.Kind != ChatMessageGroupKind.System).ToList();
+            List<ChatMessageGroup> nonSystemGroups = [.. groups.Where(g => g.Kind != ChatMessageGroupKind.System)];
             int protectedFromIndex = Math.Max(0, nonSystemGroups.Count - preserveRecentGroups);
             HashSet<int> protectedGroupStarts = [];
             for (int i = protectedFromIndex; i < nonSystemGroups.Count; i++)

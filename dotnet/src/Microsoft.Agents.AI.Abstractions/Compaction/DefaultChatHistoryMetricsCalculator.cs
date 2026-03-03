@@ -46,7 +46,7 @@ public sealed class DefaultChatHistoryMetricsCalculator : IChatHistoryMetricsCal
     }
 
     /// <inheritdoc/>
-    public CompactionMetric Calculate(IReadOnlyList<ChatMessage> messages)
+    public ChatHistoryMetric Calculate(IReadOnlyList<ChatMessage> messages)
     {
         if (messages is null || messages.Count == 0)
         {

@@ -69,7 +69,7 @@ public class SummarizationCompactionStrategy : ChatHistoryCompactionStrategy
     }
 
     /// <inheritdoc/>
-    public override bool ShouldCompact(CompactionMetric metrics) =>
+    protected override bool ShouldCompact(ChatHistoryMetric metrics) =>
         metrics.TokenCount > this._maxTokens;
 
     /// <summary>
@@ -96,7 +96,7 @@ public class SummarizationCompactionStrategy : ChatHistoryCompactionStrategy
             IReadOnlyList<ChatMessage> messageList = [.. messages];
             IReadOnlyList<ChatMessageGroup> groups = CurrentMetrics.Groups;
 
-            List<ChatMessageGroup> nonSystemGroups = groups.Where(g => g.Kind != ChatMessageGroupKind.System).ToList();
+            List<ChatMessageGroup> nonSystemGroups = [.. groups.Where(g => g.Kind != ChatMessageGroupKind.System)];
             int protectedFromIndex = Math.Max(0, nonSystemGroups.Count - this._preserveRecentGroups);
 
             if (protectedFromIndex == 0)

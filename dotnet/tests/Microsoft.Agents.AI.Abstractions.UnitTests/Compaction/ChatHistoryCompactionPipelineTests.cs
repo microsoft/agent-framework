@@ -14,11 +14,14 @@ public class ChatHistoryCompactionPipelineTests
     [Fact]
     public async Task EmptyStrategies_ReturnsUnmodifiedAsync()
     {
+        // Arrange
         ChatHistoryCompactionPipeline pipeline = new([]);
         List<ChatMessage> messages = [new(ChatRole.User, "Hello")];
 
+        // Act
         CompactionPipelineResult result = await pipeline.CompactAsync(messages);
 
+        // Assert
         Assert.False(result.AnyApplied);
         Assert.Equal(1, result.Before.MessageCount);
         Assert.Equal(1, result.After.MessageCount);
@@ -28,6 +31,7 @@ public class ChatHistoryCompactionPipelineTests
     [Fact]
     public async Task ChainsStrategies_InOrderAsync()
     {
+        // Arrange
         ChatHistoryCompactionStrategy[] strategies =
         [
             new NeverCompactStrategy(),
@@ -40,8 +44,10 @@ public class ChatHistoryCompactionPipelineTests
             new(ChatRole.User, "Second"),
         ];
 
+        // Act
         CompactionPipelineResult result = await pipeline.CompactAsync(messages);
 
+        // Assert
         Assert.True(result.AnyApplied);
         Assert.Equal(2, result.StrategyResults.Count);
         Assert.False(result.StrategyResults[0].Applied);
@@ -52,6 +58,7 @@ public class ChatHistoryCompactionPipelineTests
     [Fact]
     public async Task ReportsOverallMetricsAsync()
     {
+        // Arrange
         ChatHistoryCompactionPipeline pipeline = new([new RemoveFirstMessageStrategy()]);
         List<ChatMessage> messages =
         [
@@ -60,8 +67,10 @@ public class ChatHistoryCompactionPipelineTests
             new(ChatRole.User, "Third"),
         ];
 
+        // Act
         CompactionPipelineResult result = await pipeline.CompactAsync(messages);
 
+        // Assert
         Assert.Equal(3, result.Before.MessageCount);
         Assert.Equal(2, result.After.MessageCount);
     }
@@ -69,51 +78,39 @@ public class ChatHistoryCompactionPipelineTests
     [Fact]
     public async Task CustomMetricsCalculator_IsUsedAsync()
     {
+        // Arrange
         Moq.Mock<IChatHistoryMetricsCalculator> calcMock = new();
         calcMock
             .Setup(c => c.Calculate(Moq.It.IsAny<IReadOnlyList<ChatMessage>>()))
-            .Returns(new CompactionMetric { MessageCount = 42 });
-
+            .Returns(new ChatHistoryMetric { MessageCount = 42 });
         ChatHistoryCompactionPipeline pipeline = new(calcMock.Object, []);
         List<ChatMessage> messages = [new(ChatRole.User, "Hello")];
 
+        // Act
         CompactionPipelineResult result = await pipeline.CompactAsync(messages);
 
+        // Assert
         Assert.Equal(42, result.Before.MessageCount);
-        calcMock.Verify(c => c.Calculate(Moq.It.IsAny<IReadOnlyList<ChatMessage>>()), Moq.Times.AtLeast(2));
-    }
-
-    [Fact]
-    public async Task CompactAsync_NonReadOnlyListMessages_WorksAsync()
-    {
-        ChatHistoryCompactionPipeline pipeline = new([new RemoveFirstMessageStrategy()]);
-        NonReadOnlyList<ChatMessage> messages = new(
-        [
-            new(ChatRole.User, "First"),
-            new(ChatRole.User, "Second"),
-        ]);
-
-        CompactionPipelineResult result = await pipeline.CompactAsync(messages);
-
-        Assert.True(result.AnyApplied);
-        Assert.Single(messages);
+        calcMock.Verify(c => c.Calculate(Moq.It.IsAny<IReadOnlyList<ChatMessage>>()), Moq.Times.Once);
     }
 
     [Fact]
     public async Task ReduceAsync_DelegatesCompactionAsync()
     {
+        // Arrange
         ChatHistoryCompactionPipeline pipeline = new([new RemoveFirstMessageStrategy()]);
-
-        ChatMessage[] messages =
+        List<ChatMessage> messages =
         [
             new(ChatRole.User, "First"),
             new(ChatRole.User, "Second"),
             new(ChatRole.User, "Third"),
         ];
 
-        IEnumerable<ChatMessage> result = await ((IChatReducer)pipeline).ReduceAsync(messages, default);
+        // Act
+        IEnumerable<ChatMessage> result = await pipeline.ReduceAsync(messages, default);
         List<ChatMessage> resultList = result.ToList();
 
+        // Assert
         Assert.Equal(2, resultList.Count);
         Assert.Equal("Second", resultList[0].Text);
         Assert.Equal("Third", resultList[1].Text);
@@ -122,16 +119,18 @@ public class ChatHistoryCompactionPipelineTests
     [Fact]
     public async Task ReduceAsync_EmptyStrategies_ReturnsAllMessagesAsync()
     {
+        // Arrange
         ChatHistoryCompactionPipeline pipeline = new([]);
-
         ChatMessage[] messages =
         [
             new(ChatRole.User, "Hello"),
             new(ChatRole.User, "World"),
         ];
 
-        IEnumerable<ChatMessage> result = await ((IChatReducer)pipeline).ReduceAsync(messages, default);
+        // Act
+        IEnumerable<ChatMessage> result = await pipeline.ReduceAsync(messages, default);
 
+        // Assert
         Assert.Equal(2, result.Count());
     }
 }

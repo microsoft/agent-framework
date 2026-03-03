@@ -9,7 +9,10 @@ public class CompactionMetricTests
     [Fact]
     public void DefaultValues_AreZero()
     {
-        CompactionMetric metrics = new();
+        // Arrange & Act
+        ChatHistoryMetric metrics = new();
+
+        // Assert
         Assert.Equal(0, metrics.TokenCount);
         Assert.Equal(0L, metrics.ByteCount);
         Assert.Equal(0, metrics.MessageCount);
@@ -21,7 +24,8 @@ public class CompactionMetricTests
     [Fact]
     public void InitProperties_SetCorrectly()
     {
-        CompactionMetric metrics = new()
+        // Arrange & Act
+        ChatHistoryMetric metrics = new()
         {
             TokenCount = 100,
             ByteCount = 500,
@@ -30,6 +34,7 @@ public class CompactionMetricTests
             UserTurnCount = 3
         };
 
+        // Assert
         Assert.Equal(100, metrics.TokenCount);
         Assert.Equal(500L, metrics.ByteCount);
         Assert.Equal(5, metrics.MessageCount);

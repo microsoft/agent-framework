@@ -9,44 +9,24 @@ using Moq;
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests.Compaction;
 
-public class SummarizationCompactionStrategyTests
+public class SummarizationCompactionStrategyTests : CompactionStrategyTestBase
 {
-    [Fact]
-    public void ShouldCompact_UnderLimit_ReturnsFalse()
-    {
-        Mock<IChatClient> chatClientMock = new();
-        SummarizationCompactionStrategy strategy = new(chatClientMock.Object, maxTokens: 100000);
-        CompactionMetric metrics = new() { TokenCount = 500 };
-
-        Assert.False(strategy.ShouldCompact(metrics));
-    }
-
-    [Fact]
-    public void ShouldCompact_OverLimit_ReturnsTrue()
-    {
-        Mock<IChatClient> chatClientMock = new();
-        SummarizationCompactionStrategy strategy = new(chatClientMock.Object, maxTokens: 100);
-        CompactionMetric metrics = new() { TokenCount = 500 };
-
-        Assert.True(strategy.ShouldCompact(metrics));
-    }
-
     [Fact]
     public async Task UnderLimit_NoChangeAsync()
     {
-        Mock<IChatClient> chatClientMock = new();
-        SummarizationCompactionStrategy strategy = new(chatClientMock.Object, maxTokens: 100000);
+        // Arrange
         List<ChatMessage> messages =
         [
             new(ChatRole.User, "Hello"),
             new(ChatRole.Assistant, "Hi"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        Mock<IChatClient> chatClientMock = new();
+        SummarizationCompactionStrategy strategy = new(chatClientMock.Object, maxTokens: 100000);
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
+        // Act & Assert
+        await RunCompactionStrategySkippedAsync(strategy, messages);
 
-        Assert.False(result.Applied);
-        Assert.Equal(2, messages.Count);
+        // Assert
         chatClientMock.Verify(
             c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()),
             Times.Never);
@@ -55,13 +35,7 @@ public class SummarizationCompactionStrategyTests
     [Fact]
     public async Task SummarizesOldGroupsAsync()
     {
-        Mock<IChatClient> chatClientMock = new();
-        chatClientMock
-            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "User asked about weather. It was sunny.")));
-
-        // preserveRecentGroups=2 means keep last 2 non-system groups
-        SummarizationCompactionStrategy strategy = new(chatClientMock.Object, maxTokens: 1, preserveRecentGroups: 2);
+        // Arrange
         List<ChatMessage> messages =
         [
             new(ChatRole.User, "What's the weather?"),
@@ -71,14 +45,16 @@ public class SummarizationCompactionStrategyTests
             new(ChatRole.User, "Thanks!"),
             new(ChatRole.Assistant, "You're welcome!"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        Mock<IChatClient> chatClientMock = new();
+        chatClientMock
+            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "User asked about weather. It was sunny.")));
+        SummarizationCompactionStrategy strategy = new(chatClientMock.Object, maxTokens: 1, preserveRecentGroups: 2);
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
+        // Act & Assert
+        await RunCompactionStrategyReducedAsync(strategy, messages, expectedCount: 3);
 
-        Assert.True(result.Applied);
-        // 6 groups (3 user + 3 assistant), protect last 2 → summarize first 4 groups
-        // Result: summary + 2 protected groups = 3 messages
-        Assert.Equal(3, messages.Count);
+        // Assert
         Assert.Contains("[Summary]", messages[0].Text);
         Assert.Contains("sunny", messages[0].Text);
         Assert.Equal("Thanks!", messages[1].Text);
@@ -88,12 +64,7 @@ public class SummarizationCompactionStrategyTests
     [Fact]
     public async Task PreservesSystemMessagesAsync()
     {
-        Mock<IChatClient> chatClientMock = new();
-        chatClientMock
-            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Summary of earlier discussion.")));
-
-        SummarizationCompactionStrategy strategy = new(chatClientMock.Object, maxTokens: 1, preserveRecentGroups: 1);
+        // Arrange
         List<ChatMessage> messages =
         [
             new(ChatRole.System, "You are a helper"),
@@ -102,11 +73,16 @@ public class SummarizationCompactionStrategyTests
             new(ChatRole.User, "Turn 2"),
             new(ChatRole.Assistant, "Reply 2"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        Mock<IChatClient> chatClientMock = new();
+        chatClientMock
+            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Summary of earlier discussion.")));
+        SummarizationCompactionStrategy strategy = new(chatClientMock.Object, maxTokens: 1, preserveRecentGroups: 1);
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
+        // Act & Assert
+        await RunCompactionStrategyReducedAsync(strategy, messages, expectedCount: 3);
 
-        Assert.True(result.Applied);
+        // Assert
         Assert.Equal(ChatRole.System, messages[0].Role);
         Assert.Equal("You are a helper", messages[0].Text);
         Assert.Contains("[Summary]", messages[1].Text);
@@ -115,20 +91,19 @@ public class SummarizationCompactionStrategyTests
     [Fact]
     public async Task AllGroupsProtected_NoChangeAsync()
     {
-        Mock<IChatClient> chatClientMock = new();
-        SummarizationCompactionStrategy strategy = new(chatClientMock.Object, maxTokens: 1, preserveRecentGroups: 10);
+        // Arrange
         List<ChatMessage> messages =
         [
             new(ChatRole.User, "Hello"),
             new(ChatRole.Assistant, "Hi"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        Mock<IChatClient> chatClientMock = new();
+        SummarizationCompactionStrategy strategy = new(chatClientMock.Object, maxTokens: 1, preserveRecentGroups: 10);
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
+        // Act & Assert
+        await RunCompactionStrategySkippedAsync(strategy, messages);
 
-        // All groups protected → nothing to summarize → no change
-        Assert.False(result.Applied);
-        Assert.Equal(2, messages.Count);
+        // Assert
         chatClientMock.Verify(
             c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()),
             Times.Never);
@@ -137,16 +112,8 @@ public class SummarizationCompactionStrategyTests
     [Fact]
     public async Task CustomPrompt_UsedInRequestAsync()
     {
+        // Arrange
         const string CustomPrompt = "Summarize briefly.";
-        List<ChatMessage>? capturedMessages = null;
-
-        Mock<IChatClient> chatClientMock = new();
-        chatClientMock
-            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, _, _) => capturedMessages = [.. msgs])
-            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Brief summary.")));
-
-        SummarizationCompactionStrategy strategy = new(chatClientMock.Object, maxTokens: 1, preserveRecentGroups: 1, summarizationPrompt: CustomPrompt);
         List<ChatMessage> messages =
         [
             new(ChatRole.User, "First"),
@@ -154,12 +121,19 @@ public class SummarizationCompactionStrategyTests
             new(ChatRole.User, "Second"),
             new(ChatRole.Assistant, "Reply 2"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        List<ChatMessage>? capturedMessages = null;
+        Mock<IChatClient> chatClientMock = new();
+        chatClientMock
+            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, _, _) => capturedMessages = [.. msgs])
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Brief summary.")));
+        SummarizationCompactionStrategy strategy = new(chatClientMock.Object, maxTokens: 1, preserveRecentGroups: 1, summarizationPrompt: CustomPrompt);
 
-        await strategy.CompactAsync(messages, calculator);
+        // Act & Assert
+        await RunCompactionStrategyReducedAsync(strategy, messages, expectedCount: 2);
 
+        // Assert
         Assert.NotNull(capturedMessages);
-        // First message in request should be the custom system prompt
         Assert.Equal(ChatRole.System, capturedMessages![0].Role);
         Assert.Equal(CustomPrompt, capturedMessages[0].Text);
     }
@@ -167,12 +141,7 @@ public class SummarizationCompactionStrategyTests
     [Fact]
     public async Task NullResponseText_UsesFallbackAsync()
     {
-        Mock<IChatClient> chatClientMock = new();
-        chatClientMock
-            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, (string?)null)));
-
-        SummarizationCompactionStrategy strategy = new(chatClientMock.Object, maxTokens: 1, preserveRecentGroups: 1);
+        // Arrange
         List<ChatMessage> messages =
         [
             new(ChatRole.User, "First"),
@@ -180,11 +149,16 @@ public class SummarizationCompactionStrategyTests
             new(ChatRole.User, "Second"),
             new(ChatRole.Assistant, "Reply 2"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        Mock<IChatClient> chatClientMock = new();
+        chatClientMock
+            .Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, (string?)null)));
+        SummarizationCompactionStrategy strategy = new(chatClientMock.Object, maxTokens: 1, preserveRecentGroups: 1);
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
+        // Act & Assert
+        await RunCompactionStrategyReducedAsync(strategy, messages, expectedCount: 2);
 
-        Assert.True(result.Applied);
+        // Assert
         Assert.Contains("[Summary unavailable]", messages[0].Text);
     }
 }

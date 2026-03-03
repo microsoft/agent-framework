@@ -41,7 +41,7 @@ public class TruncationCompactionStrategy : ChatHistoryCompactionStrategy
     }
 
     /// <inheritdoc/>
-    public override bool ShouldCompact(CompactionMetric metrics) =>
+    protected override bool ShouldCompact(ChatHistoryMetric metrics) =>
         metrics.TokenCount > this._maxTokens;
 
     /// <summary>
@@ -56,15 +56,15 @@ public class TruncationCompactionStrategy : ChatHistoryCompactionStrategy
         {
             IReadOnlyList<ChatMessage> messageList = [.. messages];
 
-            List<ChatMessageGroup> removableGroups = CurrentMetrics.Groups.Where(g => g.Kind != ChatMessageGroupKind.System).ToList();
+            ChatMessageGroup[] removableGroups = [.. CurrentMetrics.Groups.Where(g => g.Kind != ChatMessageGroupKind.System)];
 
-            if (removableGroups.Count == 0)
+            if (removableGroups.Length == 0)
             {
                 return Task.FromResult<IEnumerable<ChatMessage>>(messageList);
             }
 
             // Remove oldest non-system groups, keeping at least preserveRecentGroups.
-            int maxRemovable = removableGroups.Count - preserveRecentGroups;
+            int maxRemovable = removableGroups.Length - preserveRecentGroups;
 
             if (maxRemovable <= 0)
             {

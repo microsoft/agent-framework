@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -7,47 +7,27 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests.Compaction;
 
-public class SlidingWindowCompactionStrategyTests
+public class SlidingWindowCompactionStrategyTests : CompactionStrategyTestBase
 {
-    [Fact]
-    public void ShouldCompact_UnderLimit_ReturnsFalse()
-    {
-        SlidingWindowCompactionStrategy strategy = new(maxTurns: 10);
-        CompactionMetric metrics = new() { UserTurnCount = 3 };
-
-        Assert.False(strategy.ShouldCompact(metrics));
-    }
-
-    [Fact]
-    public void ShouldCompact_OverLimit_ReturnsTrue()
-    {
-        SlidingWindowCompactionStrategy strategy = new(maxTurns: 2);
-        CompactionMetric metrics = new() { UserTurnCount = 5 };
-
-        Assert.True(strategy.ShouldCompact(metrics));
-    }
-
     [Fact]
     public async Task UnderLimit_NoChangeAsync()
     {
-        SlidingWindowCompactionStrategy strategy = new(maxTurns: 10);
+        // Arrange
         List<ChatMessage> messages =
         [
             new(ChatRole.User, "Hello"),
             new(ChatRole.Assistant, "Hi"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        SlidingWindowCompactionStrategy strategy = new(maxTurns: 10);
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
-
-        Assert.False(result.Applied);
-        Assert.Equal(2, messages.Count);
+        // Act & Assert
+        await RunCompactionStrategySkippedAsync(strategy, messages);
     }
 
     [Fact]
     public async Task KeepsLastNTurnsAsync()
     {
-        SlidingWindowCompactionStrategy strategy = new(maxTurns: 2);
+        // Arrange
         List<ChatMessage> messages =
         [
             new(ChatRole.User, "Turn 1"),
@@ -57,12 +37,12 @@ public class SlidingWindowCompactionStrategyTests
             new(ChatRole.User, "Turn 3"),
             new(ChatRole.Assistant, "Reply 3"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        SlidingWindowCompactionStrategy strategy = new(maxTurns: 2);
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
+        // Act & Assert
+        await RunCompactionStrategyReducedAsync(strategy, messages, expectedCount: 4);
 
-        Assert.True(result.Applied);
-        Assert.Equal(4, messages.Count);
+        // Assert
         Assert.Equal("Turn 2", messages[0].Text);
         Assert.Equal("Reply 2", messages[1].Text);
         Assert.Equal("Turn 3", messages[2].Text);
@@ -72,7 +52,7 @@ public class SlidingWindowCompactionStrategyTests
     [Fact]
     public async Task PreservesSystemMessagesAsync()
     {
-        SlidingWindowCompactionStrategy strategy = new(maxTurns: 1);
+        // Arrange
         List<ChatMessage> messages =
         [
             new(ChatRole.System, "You are a helper"),
@@ -81,12 +61,12 @@ public class SlidingWindowCompactionStrategyTests
             new(ChatRole.User, "Turn 2"),
             new(ChatRole.Assistant, "Reply 2"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        SlidingWindowCompactionStrategy strategy = new(maxTurns: 1);
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
+        // Act & Assert
+        await RunCompactionStrategyReducedAsync(strategy, messages, expectedCount: 3);
 
-        Assert.True(result.Applied);
-        Assert.Equal(3, messages.Count);
+        // Assert
         Assert.Equal(ChatRole.System, messages[0].Role);
         Assert.Equal("You are a helper", messages[0].Text);
         Assert.Equal("Turn 2", messages[1].Text);
@@ -96,7 +76,7 @@ public class SlidingWindowCompactionStrategyTests
     [Fact]
     public async Task PreservesToolGroupsWithinKeptTurnsAsync()
     {
-        SlidingWindowCompactionStrategy strategy = new(maxTurns: 1);
+        // Arrange
         List<ChatMessage> messages =
         [
             new(ChatRole.User, "Turn 1"),
@@ -106,37 +86,34 @@ public class SlidingWindowCompactionStrategyTests
             new ChatMessage(ChatRole.Tool, [new FunctionResultContent("c1", "Sunny")]),
             new(ChatRole.Assistant, "It's sunny!"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        SlidingWindowCompactionStrategy strategy = new(maxTurns: 1);
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
+        // Act & Assert
+        await RunCompactionStrategyReducedAsync(strategy, messages, expectedCount: 4);
 
-        Assert.True(result.Applied);
-        // Turn 1 dropped, Turn 2 kept (user + assistant-tool-group + plain assistant)
-        Assert.Equal(4, messages.Count);
+        // Assert
         Assert.Equal("Get weather", messages[0].Text);
     }
 
     [Fact]
     public async Task SingleTurn_AtLimit_NoChangeAsync()
     {
-        SlidingWindowCompactionStrategy strategy = new(maxTurns: 1);
+        // Arrange
         List<ChatMessage> messages =
         [
             new(ChatRole.User, "Hello"),
             new(ChatRole.Assistant, "Hi"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        SlidingWindowCompactionStrategy strategy = new(maxTurns: 1);
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
-
-        Assert.False(result.Applied);
-        Assert.Equal(2, messages.Count);
+        // Act & Assert
+        await RunCompactionStrategySkippedAsync(strategy, messages);
     }
 
     [Fact]
     public async Task DropsResponseGroupsFromOldTurnsAsync()
     {
-        SlidingWindowCompactionStrategy strategy = new(maxTurns: 1);
+        // Arrange
         List<ChatMessage> messages =
         [
             new(ChatRole.User, "Turn 1"),
@@ -146,12 +123,12 @@ public class SlidingWindowCompactionStrategyTests
             new(ChatRole.User, "Turn 2"),
             new(ChatRole.Assistant, "Reply 2"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        SlidingWindowCompactionStrategy strategy = new(maxTurns: 1);
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
+        // Act & Assert
+        await RunCompactionStrategyReducedAsync(strategy, messages, expectedCount: 2);
 
-        Assert.True(result.Applied);
-        Assert.Equal(2, messages.Count);
+        // Assert
         Assert.Equal("Turn 2", messages[0].Text);
         Assert.Equal("Reply 2", messages[1].Text);
     }

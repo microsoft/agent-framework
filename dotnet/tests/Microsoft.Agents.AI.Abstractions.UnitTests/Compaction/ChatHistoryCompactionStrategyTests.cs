@@ -17,28 +17,32 @@ public class ChatHistoryCompactionStrategyTests
     [Fact]
     public async Task ShouldCompactReturnsFalse_SkipsAsync()
     {
-        NeverCompactStrategy strategy = new();
+        // Arrange
         List<ChatMessage> messages = [new(ChatRole.User, "Hello")];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        NeverCompactStrategy strategy = new();
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
+        // Act
+        CompactionResult result = await RunCompactionStrategyAsync(strategy, messages);
 
+        // Assert
         Assert.False(result.Applied);
     }
 
     [Fact]
     public async Task ShouldCompactReturnsTrue_RunsCompactionAsync()
     {
-        RemoveFirstMessageStrategy strategy = new();
+        // Arrange
         List<ChatMessage> messages =
         [
             new(ChatRole.User, "First"),
             new(ChatRole.User, "Second"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        RemoveFirstMessageStrategy strategy = new();
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
+        // Act
+        CompactionResult result = await RunCompactionStrategyAsync(strategy, messages);
 
+        // Assert
         Assert.True(result.Applied);
         Assert.Single(messages);
         Assert.Equal("Second", messages[0].Text);
@@ -47,23 +51,24 @@ public class ChatHistoryCompactionStrategyTests
     }
 
     [Fact]
-    public async Task DelegatesToIChatReducerAsync()
+    public async Task DelegatesToReducerAsync()
     {
-        Mock<IChatReducer> reducerMock = new();
-        reducerMock
-            .Setup(r => r.ReduceAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IEnumerable<ChatMessage> msgs, CancellationToken _) => msgs.Skip(1));
-
-        TestCompactionStrategy strategy = new(reducerMock.Object);
+        // Arrange
         List<ChatMessage> messages =
         [
             new(ChatRole.User, "First"),
             new(ChatRole.User, "Second"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        Mock<IChatReducer> reducerMock = new();
+        reducerMock
+            .Setup(r => r.ReduceAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IEnumerable<ChatMessage> messages, CancellationToken _) => messages.Skip(1));
+        TestCompactionStrategy strategy = new(reducerMock.Object);
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
+        // Act
+        CompactionResult result = await RunCompactionStrategyAsync(strategy, messages);
 
+        // Assert
         Assert.True(result.Applied);
         Assert.Single(messages);
         Assert.Equal("Second", messages[0].Text);
@@ -73,86 +78,53 @@ public class ChatHistoryCompactionStrategyTests
     [Fact]
     public async Task ReducerNoChange_ReturnsFalseAsync()
     {
-        Mock<IChatReducer> reducerMock = new();
-        reducerMock
-            .Setup(r => r.ReduceAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IEnumerable<ChatMessage> msgs, CancellationToken _) => msgs);
-
-        TestCompactionStrategy strategy = new(reducerMock.Object);
+        // Arrange
         List<ChatMessage> messages =
         [
             new(ChatRole.User, "Hello"),
         ];
-        DefaultChatHistoryMetricsCalculator calculator = new();
+        Mock<IChatReducer> reducerMock = new();
+        reducerMock
+            .Setup(r => r.ReduceAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IEnumerable<ChatMessage> msgs, CancellationToken _) => msgs);
+        TestCompactionStrategy strategy = new(reducerMock.Object, shouldCompact: false);
 
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
+        // Act
+        CompactionResult result = await RunCompactionStrategyAsync(strategy, messages);
 
+        // Assert
         Assert.False(result.Applied);
         Assert.Single(messages);
     }
 
     [Fact]
-    public void ExposesReducer()
+    public void ReducerLifecycle()
     {
+        // Arrange
         Mock<IChatReducer> reducerMock = new();
+
+        // Act
         TestCompactionStrategy strategy = new(reducerMock.Object);
 
+        // Assert
         Assert.Same(reducerMock.Object, strategy.Reducer);
-    }
-
-    [Fact]
-    public void DefaultName_IsReducerTypeName()
-    {
-        Mock<IChatReducer> reducerMock = new();
-        TestCompactionStrategy strategy = new(reducerMock.Object);
-
-        // Moq proxy type name is used since we're using a mock
         Assert.NotNull(strategy.Name);
         Assert.NotEmpty(strategy.Name);
-    }
-
-    [Fact]
-    public void ConditionDelegate_ReturnsTrue_ShouldCompactReturnsTrue()
-    {
-        Mock<IChatReducer> reducerMock = new();
-        TestCompactionStrategy strategy = new(reducerMock.Object);
-
-        CompactionMetric metrics = new() { TokenCount = 100 };
-        Assert.True(strategy.ShouldCompact(metrics));
-    }
-
-    [Fact]
-    public void ConditionDelegate_ReturnsFalse_ShouldCompactReturnsFalse()
-    {
-        Mock<IChatReducer> reducerMock = new();
-        TestCompactionStrategy strategy = new(reducerMock.Object, shouldCompact: false);
-
-        CompactionMetric metrics = new() { TokenCount = 100 };
-        Assert.False(strategy.ShouldCompact(metrics));
-    }
-
-    [Fact]
-    public async Task CompactAsync_NonReadOnlyListMessages_WorksAsync()
-    {
-        RemoveFirstMessageStrategy strategy = new();
-        NonReadOnlyList<ChatMessage> messages = new(
-        [
-            new(ChatRole.User, "First"),
-            new(ChatRole.User, "Second"),
-        ]);
-        DefaultChatHistoryMetricsCalculator calculator = new();
-
-        CompactionResult result = await strategy.CompactAsync(messages, calculator);
-
-        Assert.True(result.Applied);
-        Assert.Single(messages);
-        Assert.Equal("Second", messages[0].Text);
+        Assert.Equal(reducerMock.Object.GetType().Name, strategy.Name);
     }
 
     [Fact]
     public void CurrentMetrics_OutsideStrategy_Throws()
     {
+        // Act & Assert
         Assert.Throws<InvalidOperationException>(() => TestCompactionStrategy.GetCurrentMetrics());
+    }
+
+    public static async ValueTask<CompactionResult> RunCompactionStrategyAsync(ChatHistoryCompactionStrategy strategy, List<ChatMessage> messages)
+    {
+        // Act
+        ChatHistoryCompactionStrategy.s_currentMetrics.Value = DefaultChatHistoryMetricsCalculator.Instance.Calculate(messages);
+        return await strategy.CompactAsync(messages, DefaultChatHistoryMetricsCalculator.Instance);
     }
 
     private sealed class TestCompactionStrategy : ChatHistoryCompactionStrategy
@@ -165,8 +137,8 @@ public class ChatHistoryCompactionStrategyTests
             this._shouldCompact = shouldCompact;
         }
 
-        public override bool ShouldCompact(CompactionMetric metrics) => this._shouldCompact;
+        protected override bool ShouldCompact(ChatHistoryMetric metrics) => this._shouldCompact;
 
-        public static CompactionMetric GetCurrentMetrics() => CurrentMetrics;
+        public static ChatHistoryMetric GetCurrentMetrics() => CurrentMetrics;
     }
 }

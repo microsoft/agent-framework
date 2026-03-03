@@ -7,7 +7,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// <summary>
 /// Immutable snapshot of conversation metrics used for compaction trigger evaluation and reporting.
 /// </summary>
-public sealed class CompactionMetric
+public sealed class ChatHistoryMetric
 {
     /// <summary>
     /// Gets the estimated token count across all messages.
