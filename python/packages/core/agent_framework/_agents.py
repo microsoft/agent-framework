@@ -466,9 +466,11 @@ class BaseAgent(SerializationMixin):
                 If None, defaults to "Task for {tool_name}".
             stream_callback: Optional callback for streaming responses. If provided, uses run(..., stream=True).
             propagate_session: If True, the parent agent's ``AgentSession`` is
-                forwarded to this sub-agent's ``run()`` call, allowing both agents
-                to share session state (history, metadata, session_id). Defaults
-                to False, meaning the sub-agent starts with no session.
+                forwarded to this sub-agent's ``run()`` call, so both agents
+                operate within the same logical session (sharing the same
+                ``session_id`` and provider-managed state, such as any stored
+                conversation history or metadata). Defaults to False, meaning
+                the sub-agent runs with a new, independent session.
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
