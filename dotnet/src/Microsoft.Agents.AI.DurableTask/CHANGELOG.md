@@ -2,12 +2,20 @@
 
 ## [Unreleased]
 
-### Changed
+- Added support for durable workflows ([#4436](https://github.com/microsoft/agent-framework/pull/4436))
+
+## v1.0.0-preview.260127.1
+
+- [BREAKING] Renamed AgentThread to AgentSession ([#3430](https://github.com/microsoft/agent-framework/pull/3430))
+
+## v1.0.0-preview.260108.1
+
+- [BREAKING] Removed AgentThreadMetadata and used AgentSessionId directly instead ([#3067](https://github.com/microsoft/agent-framework/pull/3067))
+
+## v1.0.0-preview.251219.1
 
 - Added TTL configuration for durable agent entities ([#2679](https://github.com/microsoft/agent-framework/pull/2679))
 - Switch to new "Run" method name ([#2843](https://github.com/microsoft/agent-framework/pull/2843))
-- Removed AgentThreadMetadata and used AgentSessionId directly instead ([#3067](https://github.com/microsoft/agent-framework/pull/3067));
-- Renamed AgentThread to AgentSession ([#3430](https://github.com/microsoft/agent-framework/pull/3430))
 
 ## v1.0.0-preview.251204.1
 
