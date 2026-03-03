@@ -28,7 +28,8 @@ from typing import Annotated, Any
 import uvicorn
 
 # Agent Framework imports
-from agent_framework import Agent, AgentResponseUpdate, FunctionResultContent, Message, Role, tool
+#from agent_framework import Agent, AgentResponseUpdate, FunctionResultContent, Message, Role, tool
+from agent_framework import Agent, AgentResponseUpdate, Content, Message, Role, tool
 from agent_framework.azure import AzureOpenAIChatClient
 
 # Agent Framework ChatKit integration
@@ -75,7 +76,11 @@ load_dotenv()
 # Server configuration
 SERVER_HOST = "127.0.0.1"  # Bind to localhost only for security (local dev)
 SERVER_PORT = 8001
-SERVER_BASE_URL = f"http://localhost:{SERVER_PORT}"
+# Use the frontend origin for generated URLs (upload, preview) so that the browser
+# sends them through the Vite dev-server proxy instead of directly to the backend,
+# avoiding cross-origin issues.
+FRONTEND_PORT = 5171
+SERVER_BASE_URL = f"http://localhost:{FRONTEND_PORT}"
 
 # Database configuration
 DATABASE_PATH = "chatkit_demo.db"
@@ -295,7 +300,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
 
             title_prompt = [
                 Message(
-                    role=Role.USER,
+                    role="user",
                     text=(
                         f"Generate a very short, concise title (max 40 characters) for a conversation "
                         f"that starts with:\n\n{conversation_context}\n\n"
@@ -346,8 +351,6 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         runs the agent, converts the response back to ChatKit events using stream_agent_response,
         and creates interactive weather widgets when weather data is queried.
         """
-        from agent_framework import FunctionResultContent
-
         if input_user_message is None:
             logger.debug("Received None user message, skipping")
             return
@@ -389,7 +392,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                     # Check for function results in the update
                     if update.contents:
                         for content in update.contents:
-                            if isinstance(content, FunctionResultContent):
+                            if isinstance(content, Content) and content.type == "function_result":
                                 result = content.result
 
                                 # Check if it's a WeatherResponse (string subclass with weather_data attribute)
@@ -472,7 +475,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             weather_data: WeatherData | None = None
 
             # Create an agent message asking about the weather
-            agent_messages = [Message(role=Role.USER, text=f"What's the weather in {city_label}?")]
+            agent_messages = [Message(role="user", text=f"What's the weather in {city_label}?")]
 
             logger.debug(f"Processing weather query: {agent_messages[0].text}")
 
@@ -486,7 +489,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                     # Check for function results in the update
                     if update.contents:
                         for content in update.contents:
-                            if isinstance(content, FunctionResultContent):
+                            if isinstance(content, Content) and content.type == "function_result":
                                 result = content.result
 
                                 # Check if it's a WeatherResponse (string subclass with weather_data attribute)
@@ -598,8 +601,8 @@ async def upload_file(attachment_id: str, file: UploadFile = File(...)):  # noqa
         # Load the attachment metadata from the data store
         attachment = await data_store.load_attachment(attachment_id, {"user_id": DEFAULT_USER_ID})
 
-        # Clear the upload_url since upload is complete
-        attachment.upload_url = None
+        # Clear the upload_descriptor since upload is complete
+        attachment.upload_descriptor = None
 
         # Save the updated attachment back to the store
         await data_store.save_attachment(attachment, {"user_id": DEFAULT_USER_ID})

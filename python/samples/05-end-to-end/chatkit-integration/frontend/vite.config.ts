@@ -13,6 +13,14 @@ export default defineConfig({
         target: backendTarget,
         changeOrigin: true,
       },
+      "/upload": {
+        target: backendTarget,
+        changeOrigin: true,
+      },
+      "/preview": {
+        target: backendTarget,
+        changeOrigin: true,
+      },
     },
     // For production deployments, you need to add your public domains to this list
     allowedHosts: [
