@@ -611,6 +611,26 @@ def test_get_shell_tool_local_executor_maps_to_shell_tool() -> None:
     assert response_tools[0].environment.type == "local"
 
 
+def test_get_shell_tool_reuses_function_tool_instance() -> None:
+    """Passing a FunctionTool should update and return the same tool instance."""
+
+    @tool(name="run_shell", approval_mode="never_require")
+    def run_shell(command: str) -> str:
+        return command
+
+    shell_tool = OpenAIResponsesClient.get_shell_tool(
+        func=run_shell,
+        description="Run local shell command",
+        approval_mode="always_require",
+    )
+
+    assert shell_tool is run_shell
+    assert shell_tool.kind == "shell"
+    assert shell_tool.description == "Run local shell command"
+    assert shell_tool.approval_mode == "always_require"
+    assert (shell_tool.additional_properties or {}).get("openai.responses.shell.environment") == {"type": "local"}
+
+
 def test_response_content_creation_with_local_shell_call_maps_to_function_call() -> None:
     """Test local_shell_call is translated into function_call for invocation loop."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")

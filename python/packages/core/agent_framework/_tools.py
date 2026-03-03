@@ -79,7 +79,6 @@ logger = logging.getLogger("agent_framework")
 
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
-SHELL_TOOL_KIND_KEY: Final[str] = "agent_framework.tool_kind"
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 # region Helpers
@@ -239,6 +238,7 @@ class FunctionTool(SerializationMixin):
         name: str,
         description: str = "",
         approval_mode: Literal["always_require", "never_require"] | None = None,
+        kind: str | None = None,
         max_invocations: int | None = None,
         max_invocation_exceptions: int | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -254,6 +254,8 @@ class FunctionTool(SerializationMixin):
             description: A description of the function.
             approval_mode: Whether or not approval is required to run this tool.
                 Default is that approval is NOT required (``"never_require"``).
+            kind: Optional provider-agnostic tool classification
+                (for example ``"shell"``).
             max_invocations: The maximum number of times this function can be invoked
                 across the **lifetime of this tool instance**. If None (default),
                 there is no limit. Should be at least 1. If the tool is called multiple
@@ -298,6 +300,7 @@ class FunctionTool(SerializationMixin):
         # Core attributes (formerly from BaseTool)
         self.name = name
         self.description = description
+        self.kind = kind
         self.additional_properties = additional_properties
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -1079,6 +1082,7 @@ def tool(
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
     approval_mode: Literal["always_require", "never_require"] | None = None,
+    kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
@@ -1094,6 +1098,7 @@ def tool(
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
     approval_mode: Literal["always_require", "never_require"] | None = None,
+    kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
@@ -1108,6 +1113,7 @@ def tool(
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
     approval_mode: Literal["always_require", "never_require"] | None = None,
+    kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
@@ -1147,6 +1153,7 @@ def tool(
             function's signature. Defaults to ``None`` (infer from signature).
         approval_mode: Whether or not approval is required to run this tool.
             Default is that approval is NOT required (``"never_require"``).
+        kind: Optional provider-agnostic tool classification.
         max_invocations: The maximum number of times this function can be invoked
             across the **lifetime of this tool instance**. If None (default), there is
             no limit. Should be at least 1. For per-request limits, use
@@ -1247,6 +1254,7 @@ def tool(
                 name=tool_name,
                 description=tool_desc,
                 approval_mode=approval_mode,
+                kind=kind,
                 max_invocations=max_invocations,
                 max_invocation_exceptions=max_invocation_exceptions,
                 additional_properties=additional_properties or {},

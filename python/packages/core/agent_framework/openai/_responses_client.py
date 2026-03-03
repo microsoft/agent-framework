@@ -43,7 +43,6 @@ from .._clients import BaseChatClient
 from .._middleware import ChatMiddlewareLayer
 from .._settings import load_settings
 from .._tools import (
-    SHELL_TOOL_KIND_KEY,
     SHELL_TOOL_KIND_VALUE,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -459,10 +458,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             return []
         response_tools: list[Any] = []
         for tool_item in tools_list:
-            if (
-                isinstance(tool_item, FunctionTool)
-                and (tool_item.additional_properties or {}).get(SHELL_TOOL_KIND_KEY) == SHELL_TOOL_KIND_VALUE
-            ):
+            if isinstance(tool_item, FunctionTool) and tool_item.kind == SHELL_TOOL_KIND_VALUE:
                 shell_env = (tool_item.additional_properties or {}).get(OPENAI_SHELL_ENVIRONMENT_KEY)
                 if isinstance(shell_env, Mapping):
                     response_tools.append(
@@ -497,7 +493,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         for tool_item in normalize_tools(tools):
             if not isinstance(tool_item, FunctionTool):
                 continue
-            if (tool_item.additional_properties or {}).get(SHELL_TOOL_KIND_KEY) != SHELL_TOOL_KIND_VALUE:
+            if tool_item.kind != SHELL_TOOL_KIND_VALUE:
                 continue
             shell_env = (tool_item.additional_properties or {}).get(OPENAI_SHELL_ENVIRONMENT_KEY)
             if isinstance(shell_env, Mapping) and shell_env.get("type") == "local":
@@ -727,6 +723,12 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         base_tool: FunctionTool
         if isinstance(func, FunctionTool):
             base_tool = func
+            if name is not None:
+                base_tool.name = name
+            if description is not None:
+                base_tool.description = description
+            if approval_mode is not None:
+                base_tool.approval_mode = approval_mode
         else:
             base_tool = tool(
                 func=func,
@@ -739,20 +741,10 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             raise ValueError("Shell tool requires an executable function.")
 
         additional_properties = dict(base_tool.additional_properties or {})
-        additional_properties[SHELL_TOOL_KIND_KEY] = SHELL_TOOL_KIND_VALUE
         additional_properties[OPENAI_SHELL_ENVIRONMENT_KEY] = local_env
-
-        return FunctionTool(
-            name=name or base_tool.name,
-            description=description if description is not None else base_tool.description,
-            approval_mode=approval_mode or base_tool.approval_mode,
-            max_invocations=base_tool.max_invocations,
-            max_invocation_exceptions=base_tool.max_invocation_exceptions,
-            additional_properties=additional_properties,
-            func=base_tool.func,
-            input_model=base_tool.parameters() if base_tool._schema_supplied else base_tool.input_model,
-            result_parser=base_tool.result_parser,
-        )
+        base_tool.additional_properties = additional_properties
+        base_tool.kind = SHELL_TOOL_KIND_VALUE
+        return base_tool
 
     @staticmethod
     def get_mcp_tool(

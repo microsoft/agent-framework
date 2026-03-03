@@ -14,7 +14,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework._settings import load_settings
-from agent_framework._tools import SHELL_TOOL_KIND_KEY, SHELL_TOOL_KIND_VALUE
+from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from anthropic.types.beta import (
     BetaMessage,
     BetaTextBlock,
@@ -425,7 +425,7 @@ def test_prepare_tools_for_anthropic_shell_tool(mock_anthropic_client: MagicMock
     """Test converting tool-decorated FunctionTool to Anthropic bash format."""
     client = create_test_anthropic_client(mock_anthropic_client)
 
-    @tool(additional_properties={SHELL_TOOL_KIND_KEY: SHELL_TOOL_KIND_VALUE})
+    @tool(kind=SHELL_TOOL_KIND_VALUE)
     def run_bash(command: str) -> str:
         return _dummy_bash(command)
 
@@ -444,7 +444,7 @@ def test_prepare_tools_for_anthropic_shell_tool_custom_type(mock_anthropic_clien
     """Test shell tool with custom type via additional_properties."""
     client = create_test_anthropic_client(mock_anthropic_client)
 
-    @tool(additional_properties={SHELL_TOOL_KIND_KEY: SHELL_TOOL_KIND_VALUE, "type": "bash_20241022"})
+    @tool(kind=SHELL_TOOL_KIND_VALUE, additional_properties={"type": "bash_20241022"})
     def run_bash(command: str) -> str:
         return _dummy_bash(command)
 
@@ -465,7 +465,7 @@ def test_prepare_tools_for_anthropic_shell_tool_does_not_mutate_name(mock_anthro
     @tool(
         name="run_local_shell",
         approval_mode="never_require",
-        additional_properties={SHELL_TOOL_KIND_KEY: SHELL_TOOL_KIND_VALUE},
+        kind=SHELL_TOOL_KIND_VALUE,
     )
     def run_local_shell(command: str) -> str:
         return command
@@ -476,6 +476,26 @@ def test_prepare_tools_for_anthropic_shell_tool_does_not_mutate_name(mock_anthro
     assert result is not None
     assert result["tools"][0]["name"] == "bash"
     assert run_local_shell.name == "run_local_shell"
+
+
+def test_get_shell_tool_reuses_function_tool_instance(mock_anthropic_client: MagicMock) -> None:
+    """Passing a FunctionTool should update and return the same tool instance."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    @tool(name="run_shell", approval_mode="never_require")
+    def run_shell(command: str) -> str:
+        return command
+
+    shell_tool = client.get_shell_tool(
+        func=run_shell,
+        description="Run local bash",
+        approval_mode="always_require",
+    )
+
+    assert shell_tool is run_shell
+    assert shell_tool.kind == SHELL_TOOL_KIND_VALUE
+    assert shell_tool.description == "Run local bash"
+    assert shell_tool.approval_mode == "always_require"
 
 
 def test_prepare_tools_for_anthropic_mcp_tool(mock_anthropic_client: MagicMock) -> None:

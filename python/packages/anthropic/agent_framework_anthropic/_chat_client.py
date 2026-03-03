@@ -28,7 +28,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework._settings import SecretString, load_settings
-from agent_framework._tools import SHELL_TOOL_KIND_KEY, SHELL_TOOL_KIND_VALUE
+from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropic
@@ -411,6 +411,10 @@ class AnthropicClient(
         base_tool: FunctionTool
         if isinstance(func, FunctionTool):
             base_tool = func
+            if description is not None:
+                base_tool.description = description
+            if approval_mode is not None:
+                base_tool.approval_mode = approval_mode
         else:
             base_tool = tool(
                 func=func,
@@ -419,24 +423,15 @@ class AnthropicClient(
             )
 
         additional_properties: dict[str, Any] = dict(base_tool.additional_properties or {})
-        additional_properties[SHELL_TOOL_KIND_KEY] = SHELL_TOOL_KIND_VALUE
         if type_name:
             additional_properties["type"] = type_name
 
         if base_tool.func is None:
             raise ValueError("Shell tool requires an executable function.")
 
-        return FunctionTool(
-            name=base_tool.name,
-            description=description if description is not None else base_tool.description,
-            approval_mode=approval_mode or base_tool.approval_mode,
-            max_invocations=base_tool.max_invocations,
-            max_invocation_exceptions=base_tool.max_invocation_exceptions,
-            additional_properties=additional_properties,
-            func=base_tool.func,
-            input_model=base_tool.parameters() if base_tool._schema_supplied else base_tool.input_model,
-            result_parser=base_tool.result_parser,
-        )
+        base_tool.additional_properties = additional_properties
+        base_tool.kind = SHELL_TOOL_KIND_VALUE
+        return base_tool
 
     @staticmethod
     def get_mcp_tool(
@@ -776,10 +771,7 @@ class AnthropicClient(
             mcp_server_list: list[Any] = []
             tool_name_aliases: dict[str, str] = {}
             for tool in tools:
-                if (
-                    isinstance(tool, FunctionTool)
-                    and (tool.additional_properties or {}).get(SHELL_TOOL_KIND_KEY) == SHELL_TOOL_KIND_VALUE
-                ):
+                if isinstance(tool, FunctionTool) and tool.kind == SHELL_TOOL_KIND_VALUE:
                     api_type = (tool.additional_properties or {}).get("type", "bash_20250124")
                     tool_name_aliases["bash"] = tool.name
                     tool_list.append({
