@@ -3,8 +3,7 @@
 import asyncio
 import os
 
-from agent_framework import Agent
-from agent_framework.azure import AzureAIClient
+from agent_framework.azure import AzureAIClient, AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -13,6 +12,9 @@ load_dotenv()
 
 """
 Azure AI Client with Foundry Tools Example.
+
+This sample uses ``AzureAIProjectAgentProvider`` for agent setup while sourcing
+all Foundry tool configurations from ``AzureAIClient`` helper methods.
 
 Important:
 - This sample is intentionally non-defensive and includes direct tool wiring.
@@ -47,15 +49,17 @@ No additional environment settings are required for:
 async def main() -> None:
     print("=== Azure AI Client with Foundry Tools Example ===")
 
-    async with AzureCliCredential() as credential:
-        client = AzureAIClient(
+    async with (
+        AzureCliCredential() as credential,
+        AzureAIProjectAgentProvider(
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            model_deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=credential,
-        )
-
-        async with Agent(
-            client=client,
+        ) as provider,
+    ):
+        client = AzureAIClient(credential=credential)
+        agent = await provider.create_agent(
+            name="FoundryToolsAgent",
             instructions="You are a helpful assistant that can use Foundry-hosted tools when useful.",
             tools=[
                 client.get_code_interpreter_tool(),
@@ -97,11 +101,12 @@ async def main() -> None:
                 client.get_browser_automation_tool(),
                 client.get_a2a_tool(),
             ],
-        ) as agent:
-            query = "List the tool categories available to you and when each category is useful."
-            print(f"User: {query}")
-            result = await agent.run(query)
-            print(f"Agent: {result}")
+        )
+
+        query = "List the tool categories available to you and when each category is useful."
+        print(f"User: {query}")
+        result = await agent.run(query)
+        print(f"Agent: {result}")
 
 
 if __name__ == "__main__":
