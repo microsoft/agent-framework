@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import importlib
 import logging
+from collections.abc import Callable
 from dataclasses import is_dataclass
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 
