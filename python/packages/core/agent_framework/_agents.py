@@ -454,6 +454,7 @@ class BaseAgent(SerializationMixin):
         stream_callback: Callable[[AgentResponseUpdate], None]
         | Callable[[AgentResponseUpdate], Awaitable[None]]
         | None = None,
+        propagate_session: bool = False,
     ) -> FunctionTool:
         """Create a FunctionTool that wraps this agent.
 
@@ -464,6 +465,10 @@ class BaseAgent(SerializationMixin):
             arg_description: The description for the function argument.
                 If None, defaults to "Task for {tool_name}".
             stream_callback: Optional callback for streaming responses. If provided, uses run(..., stream=True).
+            propagate_session: If True, the parent agent's ``AgentSession`` is
+                forwarded to this sub-agent's ``run()`` call, allowing both agents
+                to share session state (history, metadata, session_id). Defaults
+                to False, meaning the sub-agent starts with no session.
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
@@ -480,8 +485,11 @@ class BaseAgent(SerializationMixin):
                 # Create an agent
                 agent = Agent(client=client, name="research-agent", description="Performs research tasks")
 
-                # Convert the agent to a tool
+                # Convert the agent to a tool (independent session)
                 research_tool = agent.as_tool()
+
+                # Convert the agent to a tool (shared session with parent)
+                research_tool = agent.as_tool(propagate_session=True)
 
                 # Use the tool with another agent
                 coordinator = Agent(client=client, name="coordinator", tools=research_tool)
@@ -509,16 +517,21 @@ class BaseAgent(SerializationMixin):
             # Extract the input from kwargs using the specified arg_name
             input_text = kwargs.get(arg_name, "")
 
-            # Forward runtime context kwargs, excluding arg_name and conversation_id.
-            forwarded_kwargs = {k: v for k, v in kwargs.items() if k not in (arg_name, "conversation_id", "options")}
+            # Extract parent session when propagate_session is enabled
+            parent_session = kwargs.get("session") if propagate_session else None
+
+            # Forward runtime context kwargs, excluding framework-internal keys.
+            forwarded_kwargs = {
+                k: v for k, v in kwargs.items() if k not in (arg_name, "conversation_id", "options", "session")
+            }
 
             if stream_callback is None:
                 # Use non-streaming mode
-                return (await self.run(input_text, stream=False, **forwarded_kwargs)).text
+                return (await self.run(input_text, stream=False, session=parent_session, **forwarded_kwargs)).text
 
             # Use streaming mode - accumulate updates and create final response
             response_updates: list[AgentResponseUpdate] = []
-            async for update in self.run(input_text, stream=True, **forwarded_kwargs):
+            async for update in self.run(input_text, stream=True, session=parent_session, **forwarded_kwargs):
                 response_updates.append(update)
                 if is_async_callback:
                     await stream_callback(update)  # type: ignore[misc]
@@ -1060,6 +1073,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         # in function middleware context and tool invocation.
         existing_additional_args = opts.pop("additional_function_arguments", None) or {}
         additional_function_arguments = {**kwargs, **existing_additional_args}
+        # Include session so as_tool() wrappers with propagate_session=True can access it.
+        if active_session is not None:
+            additional_function_arguments["session"] = active_session
 
         # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {

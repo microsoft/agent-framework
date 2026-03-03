@@ -707,6 +707,81 @@ async def test_chat_agent_as_tool_name_sanitization(client: SupportsChatGetRespo
         assert tool.name == expected_tool_name, f"Expected {expected_tool_name}, got {tool.name} for input {agent_name}"
 
 
+async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGetResponse) -> None:
+    """Test that propagate_session=True forwards the parent's session to the sub-agent."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+
+    parent_session = AgentSession(session_id="parent-session-123")
+    parent_session.state["shared_key"] = "shared_value"
+
+    # Spy on the agent's run method to capture the session argument
+    original_run = agent.run
+    captured_session = None
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_session
+        captured_session = kwargs.get("session")
+        return original_run(*args, **kwargs)
+
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+
+    await tool.invoke(arguments=tool.input_model(task="Hello"), session=parent_session)
+
+    assert captured_session is parent_session
+    assert captured_session.session_id == "parent-session-123"
+    assert captured_session.state["shared_key"] == "shared_value"
+
+
+async def test_chat_agent_as_tool_propagate_session_false_by_default(client: SupportsChatGetResponse) -> None:
+    """Test that propagate_session defaults to False and does not forward the session."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool()  # default: propagate_session=False
+
+    parent_session = AgentSession(session_id="parent-session-456")
+
+    original_run = agent.run
+    captured_session = None
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_session
+        captured_session = kwargs.get("session")
+        return original_run(*args, **kwargs)
+
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+
+    await tool.invoke(arguments=tool.input_model(task="Hello"), session=parent_session)
+
+    assert captured_session is None
+
+
+async def test_chat_agent_as_tool_propagate_session_shares_state(client: SupportsChatGetResponse) -> None:
+    """Test that shared session allows the sub-agent to read and write parent's state."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+
+    parent_session = AgentSession(session_id="shared-session")
+    parent_session.state["counter"] = 0
+
+    # The sub-agent receives the same session object, so mutations are shared
+    original_run = agent.run
+    captured_session = None
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_session
+        captured_session = kwargs.get("session")
+        if captured_session:
+            captured_session.state["counter"] += 1
+        return original_run(*args, **kwargs)
+
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+
+    await tool.invoke(arguments=tool.input_model(task="Hello"), session=parent_session)
+
+    # The parent's state should reflect the sub-agent's mutation
+    assert parent_session.state["counter"] == 1
+
+
 async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -> None:
     """Test basic as_mcp_server functionality."""
     agent = Agent(client=client, name="TestAgent", description="Test agent for MCP")
