@@ -132,10 +132,15 @@ public class AzureAIAgentsPersistentCreateTests
         }
     }
 
-    [Theory]
-    [InlineData("CreateWithChatClientAgentOptionsAsync")]
-    [InlineData("CreateWithFoundryOptionsAsync")]
-    public async Task CreateAgent_CreatesAgentWithCodeInterpreterAsync(string createMechanism)
+    [Fact]
+    public Task CreateAgent_CreatesAgentWithCodeInterpreter_ChatClientAgentOptionsAsync()
+        => this.CreateAgent_CreatesAgentWithCodeInterpreterAsync("CreateWithChatClientAgentOptionsAsync");
+
+    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
+    public Task CreateAgent_CreatesAgentWithCodeInterpreter_FoundryOptionsAsync()
+        => this.CreateAgent_CreatesAgentWithCodeInterpreterAsync("CreateWithFoundryOptionsAsync");
+
+    private async Task CreateAgent_CreatesAgentWithCodeInterpreterAsync(string createMechanism)
     {
         // Arrange.
         const string AgentInstructions = """
