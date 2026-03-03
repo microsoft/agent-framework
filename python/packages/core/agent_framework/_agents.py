@@ -1051,7 +1051,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             else:
                 final_tools.append(tool)  # type: ignore
 
-        existing_names = {t.name for t in final_tools}
+        existing_names = {name for t in final_tools if (name := _get_tool_name(t)) is not None}
         for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
