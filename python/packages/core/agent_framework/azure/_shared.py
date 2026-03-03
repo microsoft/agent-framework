@@ -687,24 +687,3 @@ def create_a2a_tool(
         result["base_url"] = base_url
     result.update(kwargs)
     return result
-
-
-def create_memory_search_tool(
-    *,
-    memory_store_name: str,
-    scope: str,
-    update_delay: int | None = None,
-    **kwargs: Any,
-) -> dict[str, Any]:
-    """Create a memory search tool payload."""
-    _require_string(memory_store_name, "memory_store_name")
-    _require_string(scope, "scope")
-    result: dict[str, Any] = {
-        "type": "memory_search",
-        "memory_store_name": memory_store_name,
-        "scope": scope,
-    }
-    if update_delay is not None:
-        result["update_delay"] = update_delay
-    result.update(kwargs)
-    return result

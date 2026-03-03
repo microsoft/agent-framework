@@ -10,6 +10,7 @@ Supported classes include:
 - AzureAIAgentClient
 - AzureOpenAIChatClient
 - AzureOpenAIResponsesClient
+- RawAzureOpenAIResponsesClient
 - AzureAISearchContextProvider
 - DurableAIAgent
 """
@@ -40,6 +41,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "AzureOpenAIEmbeddingClient": ("agent_framework.azure._embedding_client", "agent-framework-core"),
     "AzureOpenAIResponsesClient": ("agent_framework.azure._responses_client", "agent-framework-core"),
     "AzureOpenAIResponsesOptions": ("agent_framework.azure._responses_client", "agent-framework-core"),
+    "RawAzureOpenAIResponsesClient": ("agent_framework.azure._responses_client", "agent-framework-core"),
     "AzureOpenAISettings": ("agent_framework.azure._shared", "agent-framework-core"),
     "AzureUserSecurityContext": ("agent_framework.azure._chat_client", "agent-framework-core"),
     "DurableAIAgent": ("agent_framework_durabletask", "agent-framework-durabletask"),

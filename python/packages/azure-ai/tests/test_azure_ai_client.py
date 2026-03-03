@@ -25,6 +25,8 @@ from agent_framework import (
 )
 from agent_framework._settings import load_settings
 from agent_framework.openai._responses_client import RawOpenAIResponsesClient
+from agent_framework_azure_ai import AzureAIClient, AzureAISettings
+from agent_framework_azure_ai._shared import from_azure_ai_tools
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
@@ -42,9 +44,6 @@ from openai.types.responses.parsed_response import ParsedResponse
 from openai.types.responses.response import Response as OpenAIResponse
 from pydantic import BaseModel, ConfigDict, Field
 from pytest import fixture, param
-
-from agent_framework_azure_ai import AzureAIClient, AzureAISettings
-from agent_framework_azure_ai._shared import from_azure_ai_tools
 
 skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/")
@@ -1537,6 +1536,20 @@ async def test_integration_agent_options(
                     assert "seattle" in response_value["location"].lower()
 
 
+def test_get_memory_search_tool_warns_and_returns_payload() -> None:
+    with pytest.warns(UserWarning, match="FoundryMemoryProvider"):
+        tool = AzureAIClient.get_memory_search_tool(
+            memory_store_name="agent-framework-memory-store",
+            scope="test-scope",
+            update_delay=1,
+        )
+
+    assert tool["type"] == "memory_search"
+    assert tool["memory_store_name"] == "agent-framework-memory-store"
+    assert tool["scope"] == "test-scope"
+    assert tool["update_delay"] == 1
+
+
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
@@ -1592,6 +1605,7 @@ async def test_integration_web_search() -> None:
         param("fabric_data_agent", id="fabric_data_agent"),
         param("sharepoint_grounding", id="sharepoint_grounding"),
         param("bing_custom_search", id="bing_custom_search"),
+        param("bing_grounding", id="bing_grounding"),
         param("azure_ai_search", id="azure_ai_search"),
         param("browser_automation", id="browser_automation"),
         param("openapi", id="openapi"),
@@ -1604,7 +1618,14 @@ async def test_integration_foundry_helper_tools_smoke(tool_name: str, client: Az
     required_env_vars: dict[str, tuple[str, ...]] = {
         "fabric_data_agent": ("FABRIC_PROJECT_CONNECTION_ID",),
         "sharepoint_grounding": ("SHAREPOINT_PROJECT_CONNECTION_ID",),
-        "bing_custom_search": ("BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID", "BING_CUSTOM_SEARCH_INSTANCE_NAME"),
+        "bing_custom_search": (
+            "BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID",
+            "BING_CUSTOM_SEARCH_INSTANCE_NAME",
+        ),
+        "bing_grounding": (
+            "BING_GROUNDING_PROJECT_CONNECTION_ID",
+            "BING_GROUNDING_INSTANCE_NAME",
+        ),
         "azure_ai_search": ("AI_SEARCH_PROJECT_CONNECTION_ID", "AI_SEARCH_INDEX_NAME"),
         "browser_automation": ("BROWSER_AUTOMATION_PROJECT_CONNECTION_ID",),
         "a2a": ("A2A_PROJECT_CONNECTION_ID",),
@@ -1619,6 +1640,8 @@ async def test_integration_foundry_helper_tools_smoke(tool_name: str, client: Az
         tool = client.get_sharepoint_grounding_tool()
     elif tool_name == "bing_custom_search":
         tool = client.get_bing_tool(variant="custom_search")
+    elif tool_name == "bing_grounding":
+        tool = client.get_bing_tool(variant="grounding")
     elif tool_name == "azure_ai_search":
         tool = client.get_azure_ai_search_tool(query_type="simple")
     elif tool_name == "browser_automation":

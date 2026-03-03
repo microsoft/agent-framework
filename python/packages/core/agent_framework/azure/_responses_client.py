@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import re
 import sys
-from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast
 from urllib.parse import urljoin, urlparse
 
 from azure.ai.projects.aio import AIProjectClient
@@ -14,6 +16,15 @@ from .._middleware import ChatMiddlewareLayer
 from .._settings import load_settings
 from .._telemetry import AGENT_FRAMEWORK_USER_AGENT
 from .._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
+from .._types import (
+    Annotation,
+    ChatResponse,
+    ChatResponseUpdate,
+    Content,
+    Message,
+    ResponseStream,
+    TextSpanRegion,
+)
 from ..observability import ChatTelemetryLayer
 from ..openai._responses_client import RawOpenAIResponsesClient
 from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
@@ -30,7 +41,6 @@ from ._shared import (
     create_file_search_tool,
     create_image_generation_tool,
     create_mcp_tool,
-    create_memory_search_tool,
     create_openapi_tool,
     create_sharepoint_grounding_tool,
     create_web_search_tool,
@@ -62,12 +72,320 @@ AzureOpenAIResponsesOptionsT = TypeVar(
 )
 
 
+class _AzureAIProjectSettings(TypedDict, total=False):
+    project_endpoint: str | None
+    model_deployment_name: str | None
+
+
+_DOC_INDEX_PATTERN = re.compile(r"doc_(\d+)")
+
+
+class RawAzureOpenAIResponsesClient(
+    RawOpenAIResponsesClient[AzureOpenAIResponsesOptionsT],
+    Generic[AzureOpenAIResponsesOptionsT],
+):
+    """Raw Azure OpenAI responses client with Foundry and Azure AI parse adaptations."""
+
+    @staticmethod
+    def _parse_foundry_tool_output(value: Any) -> Any:
+        """Parse Foundry tool output payloads when represented as JSON strings."""
+        if not isinstance(value, str):
+            return value
+
+        stripped = value.strip()
+        if not stripped:
+            return None
+
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            return value
+
+    def _parse_foundry_preview_item(self, item: Any) -> list[Content]:
+        """Parse Foundry preview tool output items into function call/result content."""
+        item_type = getattr(item, "type", None)
+        if not isinstance(item_type, str):
+            return []
+
+        if item_type.endswith("_preview_call"):
+            call_id = getattr(item, "call_id", None) or getattr(item, "id", None)
+            if not call_id:
+                return []
+
+            tool_name = item_type.removesuffix("_call")
+            additional_properties: dict[str, Any] = {
+                "tool_type": item_type,
+                "tool_name": tool_name,
+                "item_id": getattr(item, "id", None),
+                "status": getattr(item, "status", None),
+            }
+            arguments = getattr(item, "arguments", None)
+            return [
+                Content.from_function_call(
+                    call_id=call_id,
+                    name=tool_name,
+                    arguments=arguments if arguments is not None else "",
+                    additional_properties={
+                        k: v for k, v in additional_properties.items() if v is not None
+                    },
+                    raw_representation=item,
+                )
+            ]
+
+        if item_type.endswith("_preview_call_output"):
+            call_id = getattr(item, "call_id", None) or getattr(item, "id", None)
+            if not call_id:
+                return []
+
+            tool_name = item_type.removesuffix("_call_output")
+            output: Any = getattr(item, "output", None)
+            if output is None:
+                output = getattr(item, "result", None)
+            if output is None:
+                output = getattr(item, "outputs", None)
+
+            additional_properties = {
+                "tool_type": item_type,
+                "tool_name": tool_name,
+                "item_id": getattr(item, "id", None),
+                "status": getattr(item, "status", None),
+            }
+            return [
+                Content.from_function_result(
+                    call_id=call_id,
+                    result=self._parse_foundry_tool_output(output),
+                    additional_properties={
+                        k: v for k, v in additional_properties.items() if v is not None
+                    },
+                    raw_representation=item,
+                )
+            ]
+
+        return []
+
+    @override
+    def _parse_response_from_openai(
+        self, response: Any, options: dict[str, Any]
+    ) -> ChatResponse:
+        parsed_response = super()._parse_response_from_openai(
+            response=response, options=options
+        )
+
+        foundry_contents: list[Content] = []
+        for item in getattr(response, "output", []) or []:
+            foundry_contents.extend(self._parse_foundry_preview_item(item))
+
+        if not foundry_contents:
+            return parsed_response
+
+        if parsed_response.messages:
+            existing_contents = list(parsed_response.messages[0].contents or [])
+            parsed_response.messages[0].contents = [
+                *foundry_contents,
+                *existing_contents,
+            ]
+        else:
+            parsed_response.messages = [
+                Message(role="assistant", contents=foundry_contents)
+            ]
+
+        return parsed_response
+
+    @override
+    def _parse_chunk_from_openai(
+        self,
+        event: Any,
+        options: dict[str, Any],
+        function_call_ids: dict[int, tuple[str, str]],
+    ) -> ChatResponseUpdate:
+        update = super()._parse_chunk_from_openai(
+            event=event,
+            options=options,
+            function_call_ids=function_call_ids,
+        )
+        if getattr(event, "type", None) != "response.output_item.done":
+            return update
+
+        foundry_contents = self._parse_foundry_preview_item(
+            getattr(event, "item", None)
+        )
+        if foundry_contents:
+            update.contents = [*list(update.contents or []), *foundry_contents]
+        return update
+
+    def _extract_azure_search_urls(self, output_items: Any) -> list[str]:
+        """Extract document URLs from azure_ai_search_call_output items."""
+        get_urls: list[str] = []
+        for item in output_items:
+            if item.type != "azure_ai_search_call_output":
+                continue
+            output = item.output
+            if isinstance(output, str):
+                try:
+                    output = json.loads(output)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            if isinstance(output, list):
+                continue
+            if output is not None:
+                urls = (
+                    output.get("get_urls")
+                    if isinstance(output, dict)
+                    else output.get_urls
+                )
+                if urls and isinstance(urls, list):
+                    get_urls.extend(urls)
+        return get_urls
+
+    def _get_search_doc_url(
+        self, citation_title: str | None, get_urls: list[str]
+    ) -> str | None:
+        """Map a citation title like ``doc_0`` to its corresponding get_url."""
+        if not citation_title or not get_urls:
+            return None
+        match = _DOC_INDEX_PATTERN.search(citation_title)
+        if not match:
+            return None
+        doc_index = int(match.group(1))
+        if 0 <= doc_index < len(get_urls):
+            return str(get_urls[doc_index])
+        return None
+
+    def _enrich_annotations_with_search_urls(
+        self, contents: list[Content], get_urls: list[str]
+    ) -> None:
+        """Enrich citation annotations in contents with real document URLs from Azure AI Search."""
+        if not get_urls:
+            return
+        for content in contents:
+            if not content.annotations:
+                continue
+            for annotation in content.annotations:
+                if not isinstance(annotation, dict):
+                    continue
+                if annotation.get("type") != "citation":
+                    continue
+                title = annotation.get("title")
+                doc_url = self._get_search_doc_url(title, get_urls)
+                if doc_url:
+                    annotation.setdefault("additional_properties", {})["get_url"] = (
+                        doc_url
+                    )
+
+    def _build_url_citation_content(
+        self,
+        annotation_data: dict[str, Any],
+        get_urls: list[str],
+        raw_event: Any,
+    ) -> Content:
+        """Build a citation ``Content`` from a ``url_citation`` streaming annotation event."""
+        ann_title = str(annotation_data.get("title") or "")
+        ann_url = str(annotation_data.get("url") or "")
+        ann_start = annotation_data.get("start_index")
+        ann_end = annotation_data.get("end_index")
+
+        additional_props: dict[str, Any] = {
+            "annotation_index": getattr(raw_event, "annotation_index", None),
+        }
+        doc_url = self._get_search_doc_url(ann_title, get_urls)
+        if doc_url:
+            additional_props["get_url"] = doc_url
+
+        annotation_obj = Annotation(
+            type="citation",
+            title=ann_title,
+            url=ann_url,
+            additional_properties={
+                k: v for k, v in additional_props.items() if v is not None
+            },
+            raw_representation=annotation_data,
+        )
+        if ann_start is not None and ann_end is not None:
+            annotation_obj["annotated_regions"] = [
+                TextSpanRegion(
+                    type="text_span", start_index=ann_start, end_index=ann_end
+                )
+            ]
+
+        return Content.from_text(
+            text="", annotations=[annotation_obj], raw_representation=raw_event
+        )
+
+    @override
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
+        stream: bool = False,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        """Wrap base response to enrich Azure AI Search citation annotations."""
+        if not stream:
+
+            async def _enrich_response() -> ChatResponse:
+                response = await super(
+                    RawAzureOpenAIResponsesClient, self
+                )._inner_get_response(
+                    messages=messages, options=options, stream=False, **kwargs
+                )
+                parsed_response = cast("ChatResponse", response)
+                raw_output = getattr(parsed_response.raw_representation, "output", None)
+                if raw_output:
+                    get_urls = self._extract_azure_search_urls(raw_output)
+                    if get_urls:
+                        for msg in parsed_response.messages:
+                            self._enrich_annotations_with_search_urls(
+                                list(msg.contents or []), get_urls
+                            )
+                return parsed_response
+
+            return _enrich_response()
+
+        stream_result = super()._inner_get_response(  # type: ignore[assignment]
+            messages=messages, options=options, stream=True, **kwargs
+        )
+        search_get_urls: list[str] = []
+
+        def _enrich_update(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raw = update.raw_representation
+            if raw is None:
+                return update
+            event_type = raw.type
+
+            if event_type in (
+                "response.output_item.added",
+                "response.output_item.done",
+            ):
+                urls = self._extract_azure_search_urls([raw.item])
+                if urls:
+                    search_get_urls.extend(urls)
+
+            if event_type == "response.output_text.annotation.added":
+                ann = raw.annotation
+                if isinstance(ann, dict) and ann.get("type") == "url_citation":
+                    citation_content = self._build_url_citation_content(
+                        ann, search_get_urls, raw
+                    )
+                    update.contents = [*list(update.contents or []), citation_content]
+
+            if update.contents and search_get_urls:
+                self._enrich_annotations_with_search_urls(
+                    list(update.contents), search_get_urls
+                )
+
+            return update
+
+        stream_result.with_transform_hook(_enrich_update)  # type: ignore[union-attr]
+        return stream_result
+
+
 class AzureOpenAIResponsesClient(  # type: ignore[misc]
     AzureOpenAIConfigMixin,
     ChatMiddlewareLayer[AzureOpenAIResponsesOptionsT],
     FunctionInvocationLayer[AzureOpenAIResponsesOptionsT],
     ChatTelemetryLayer[AzureOpenAIResponsesOptionsT],
-    RawOpenAIResponsesClient[AzureOpenAIResponsesOptionsT],
+    RawAzureOpenAIResponsesClient[AzureOpenAIResponsesOptionsT],
     Generic[AzureOpenAIResponsesOptionsT],
 ):
     """Azure Responses completion class with middleware, telemetry, and function invocation support."""
@@ -86,11 +404,13 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         async_client: AsyncOpenAI | None = None,
         project_client: Any | None = None,
         project_endpoint: str | None = None,
+        backend: Literal["azure_openai", "foundry"] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration
+        | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an Azure OpenAI Responses client.
@@ -109,6 +429,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             deployment_name: The deployment name. If provided, will override the value
                 (responses_deployment_name) in the env vars or .env file.
                 Can also be set via environment variable AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
+                In project mode, AZURE_AI_MODEL_DEPLOYMENT_NAME is also used as a fallback.
             endpoint: The deployment endpoint. If provided will override the value
                 in the env vars or .env file.
                 Can also be set via environment variable AZURE_OPENAI_ENDPOINT.
@@ -133,6 +454,11 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             project_endpoint: The Azure AI Foundry project endpoint URL.
                 When provided with ``credential``, an ``AIProjectClient`` will be created
                 and used to obtain the OpenAI client. Requires the ``azure-ai-projects`` package.
+            backend: Backend mode for settings resolution.
+                Use ``"foundry"`` to load only ``AZURE_AI_*`` settings
+                (for example, ``AZURE_AI_PROJECT_ENDPOINT`` and ``AZURE_AI_MODEL_DEPLOYMENT_NAME``).
+                Use ``"azure_openai"`` to load ``AZURE_OPENAI_*`` settings.
+                When ``project_client`` or ``project_endpoint`` is provided, Foundry mode is inferred.
             env_file_path: Use the environment settings file as a fallback to using env vars.
             env_file_encoding: The encoding of the environment settings file, defaults to 'utf-8'.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
@@ -196,25 +522,55 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         if (model_id := kwargs.pop("model_id", None)) and not deployment_name:
             deployment_name = str(model_id)
 
-        azure_openai_settings = load_settings(
-            AzureOpenAISettings,
-            env_prefix="AZURE_OPENAI_",
-            api_key=api_key,
-            base_url=base_url,
-            endpoint=endpoint,
-            responses_deployment_name=deployment_name,
-            api_version=api_version,
-            env_file_path=env_file_path,
-            env_file_encoding=env_file_encoding,
-            token_endpoint=token_endpoint,
+        is_foundry_backend = (
+            backend == "foundry"
+            or project_client is not None
+            or project_endpoint is not None
         )
-        is_project_mode = project_client is not None or project_endpoint is not None
+        resolved_project_endpoint = project_endpoint
+        azure_openai_settings: AzureOpenAISettings
+        if is_foundry_backend:
+            azure_ai_project_settings = load_settings(
+                _AzureAIProjectSettings,
+                env_prefix="AZURE_AI_",
+                project_endpoint=project_endpoint,
+                model_deployment_name=deployment_name,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+            resolved_project_endpoint = azure_ai_project_settings.get(
+                "project_endpoint"
+            )
+            azure_openai_settings = {
+                "api_key": None,
+                "base_url": base_url,
+                "endpoint": endpoint,
+                "responses_deployment_name": azure_ai_project_settings.get(
+                    "model_deployment_name"
+                ),
+                "api_version": api_version,
+                "token_endpoint": token_endpoint,
+            }
+        else:
+            azure_openai_settings = load_settings(
+                AzureOpenAISettings,
+                env_prefix="AZURE_OPENAI_",
+                api_key=api_key,
+                base_url=base_url,
+                endpoint=endpoint,
+                responses_deployment_name=deployment_name,
+                api_version=api_version,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+                token_endpoint=token_endpoint,
+            )
+
 
         # Project client path: create OpenAI client from an Azure AI Foundry project
-        if async_client is None and is_project_mode:
+        if async_client is None and is_foundry_backend:
             async_client = self._create_client_from_project(
                 project_client=project_client,
-                project_endpoint=project_endpoint,
+                project_endpoint=resolved_project_endpoint,
                 credential=credential,
             )
 
@@ -230,14 +586,20 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         ):
             azure_openai_settings["base_url"] = urljoin(str(azure_openai_settings["endpoint"]), "/openai/v1/")
 
-        if not azure_openai_settings["responses_deployment_name"]:
+        resolved_deployment_name = azure_openai_settings.get("responses_deployment_name")
+        if not resolved_deployment_name:
+            if is_foundry_backend:
+                raise ValueError(
+                    "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
+                    "or 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
+                )
             raise ValueError(
                 "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME' environment variable."
             )
 
         super().__init__(
-            deployment_name=azure_openai_settings["responses_deployment_name"],
+            deployment_name=resolved_deployment_name,
             endpoint=azure_openai_settings["endpoint"],
             base_url=azure_openai_settings["base_url"],
             api_version=azure_openai_settings["api_version"],  # type: ignore
@@ -250,7 +612,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
         )
-        if is_project_mode:
+        if is_foundry_backend:
             self._attach_project_tool_methods()
 
     def _attach_project_tool_methods(self) -> None:
@@ -268,7 +630,6 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             "get_browser_automation_tool": create_browser_automation_tool,
             "get_openapi_tool": create_openapi_tool,
             "get_a2a_tool": create_a2a_tool,
-            "get_memory_search_tool": create_memory_search_tool,
         }
         for method_name, method in tool_methods.items():
             setattr(self, method_name, method)

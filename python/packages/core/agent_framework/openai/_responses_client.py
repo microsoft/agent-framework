@@ -14,7 +14,16 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NoReturn, TypedDict, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    NoReturn,
+    TypedDict,
+    cast,
+)
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.file_search_tool_param import FileSearchToolParam

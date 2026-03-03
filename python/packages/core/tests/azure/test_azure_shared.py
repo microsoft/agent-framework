@@ -15,7 +15,6 @@ from agent_framework.azure._shared import (
     create_file_search_tool,
     create_image_generation_tool,
     create_mcp_tool,
-    create_memory_search_tool,
     create_openapi_tool,
     create_sharepoint_grounding_tool,
     create_web_search_tool,
@@ -166,16 +165,12 @@ def test_create_openapi_tool_with_auth() -> None:
     assert tool["openapi"]["auth"]["type"] == "anonymous"
 
 
-def test_create_a2a_tool_and_memory_search(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_a2a_tool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("A2A_PROJECT_CONNECTION_ID", "a2a-conn")
     monkeypatch.setenv("A2A_ENDPOINT", "https://a2a.example.com")
     a2a_tool = create_a2a_tool()
     assert a2a_tool["project_connection_id"] == "a2a-conn"
     assert a2a_tool["base_url"] == "https://a2a.example.com"
-
-    memory_tool = create_memory_search_tool(memory_store_name="store-1", scope="scope-1", update_delay=5)
-    assert memory_tool["type"] == "memory_search"
-    assert memory_tool["update_delay"] == 5
 
 
 def test_load_foundry_project_settings(monkeypatch: pytest.MonkeyPatch) -> None:

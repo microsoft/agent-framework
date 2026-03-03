@@ -216,6 +216,126 @@ def test_init_with_project_endpoint(azure_openai_unit_test_env: dict[str, str]) 
     assert isinstance(azure_responses_client, SupportsChatGetResponse)
 
 
+def test_project_mode_does_not_attach_memory_search_tool(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test project mode does not expose get_memory_search_tool on AzureOpenAIResponsesClient."""
+    from unittest.mock import patch
+
+    from openai import AsyncOpenAI
+
+    mock_openai_client = MagicMock(spec=AsyncOpenAI)
+    mock_openai_client.default_headers = {}
+
+    with patch(
+        "agent_framework.azure._responses_client.AzureOpenAIResponsesClient._create_client_from_project",
+        return_value=mock_openai_client,
+    ):
+        azure_responses_client = AzureOpenAIResponsesClient(
+            project_endpoint="https://test-project.services.ai.azure.com",
+            deployment_name="gpt-4o",
+            credential=AzureCliCredential(),
+        )
+
+    assert not hasattr(azure_responses_client, "get_memory_search_tool")
+
+
+@pytest.mark.parametrize(
+    "exclude_list,override_env_param_dict",
+    [(["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"], {"AZURE_AI_MODEL_DEPLOYMENT_NAME": "project-test-model"})],
+    indirect=True,
+)
+def test_init_with_project_endpoint_uses_azure_ai_model_deployment_name(
+    azure_openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test project mode fallback to AZURE_AI_MODEL_DEPLOYMENT_NAME."""
+    from unittest.mock import patch
+
+    from openai import AsyncOpenAI
+
+    mock_openai_client = MagicMock(spec=AsyncOpenAI)
+    mock_openai_client.default_headers = {}
+
+    with patch(
+        "agent_framework.azure._responses_client.AzureOpenAIResponsesClient._create_client_from_project",
+        return_value=mock_openai_client,
+    ):
+        azure_responses_client = AzureOpenAIResponsesClient(
+            project_endpoint="https://test-project.services.ai.azure.com",
+            credential=AzureCliCredential(),
+        )
+
+    assert azure_responses_client.model_id == azure_openai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    assert azure_responses_client.client is mock_openai_client
+
+
+@pytest.mark.parametrize(
+    "exclude_list,override_env_param_dict",
+    [(["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"], {"AZURE_AI_MODEL_DEPLOYMENT_NAME": "project-test-model"})],
+    indirect=True,
+)
+def test_init_without_project_mode_ignores_azure_ai_model_deployment_name(
+    azure_openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test AZURE_AI_MODEL_DEPLOYMENT_NAME is only used in project mode."""
+    _ = azure_openai_unit_test_env
+
+    with pytest.raises(ValueError, match="Azure OpenAI deployment name is required"):
+        AzureOpenAIResponsesClient()
+
+
+@pytest.mark.parametrize(
+    "override_env_param_dict",
+    [
+        {
+            "AZURE_AI_PROJECT_ENDPOINT": "https://env-project.services.ai.azure.com",
+            "AZURE_AI_MODEL_DEPLOYMENT_NAME": "env-foundry-model",
+            "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME": "openai-model-ignored",
+        }
+    ],
+    indirect=True,
+)
+def test_init_with_foundry_backend_uses_only_azure_ai_env(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test foundry backend uses AZURE_AI_* env values and ignores AZURE_OPENAI_* deployment."""
+    from unittest.mock import patch
+
+    from openai import AsyncOpenAI
+
+    mock_openai_client = MagicMock(spec=AsyncOpenAI)
+    mock_openai_client.default_headers = {}
+    credential = AzureCliCredential()
+
+    with patch(
+        "agent_framework.azure._responses_client.AzureOpenAIResponsesClient._create_client_from_project",
+        return_value=mock_openai_client,
+    ) as mock_create_client:
+        azure_responses_client = AzureOpenAIResponsesClient(
+            backend="foundry",
+            credential=credential,
+        )
+
+    assert azure_responses_client.model_id == "env-foundry-model"
+    assert azure_responses_client.client is mock_openai_client
+    mock_create_client.assert_called_once_with(
+        project_client=None,
+        project_endpoint=azure_openai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
+        credential=credential,
+    )
+
+
+@pytest.mark.parametrize("override_env_param_dict", [{"AZURE_AI_MODEL_DEPLOYMENT_NAME": ""}], indirect=True)
+def test_init_with_foundry_backend_ignores_azure_openai_deployment_env(
+    azure_openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test foundry backend does not fallback to AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME."""
+    _ = azure_openai_unit_test_env
+    mock_project_client = MagicMock()
+
+    with pytest.raises(ValueError, match="AZURE_AI_MODEL_DEPLOYMENT_NAME"):
+        AzureOpenAIResponsesClient(
+            backend="foundry",
+            project_client=mock_project_client,
+        )
+
+
 def test_create_client_from_project_with_project_client() -> None:
     """Test _create_client_from_project with an existing project client."""
     from openai import AsyncOpenAI
@@ -297,6 +417,91 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
         assert dumped_settings["default_headers"][key] == value
     # Assert that the 'User-Agent' header is not present in the dumped_settings default headers
     assert "User-Agent" not in dumped_settings["default_headers"]
+
+
+def test_parse_response_with_browser_automation_preview_items(azure_openai_unit_test_env: dict[str, str]) -> None:
+    client = AzureOpenAIResponsesClient(
+        deployment_name=azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+    )
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "resp-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+
+    mock_call_item = MagicMock()
+    mock_call_item.type = "browser_automation_preview_call"
+    mock_call_item.id = "fc_123"
+    mock_call_item.call_id = "call_123"
+    mock_call_item.status = "completed"
+    mock_call_item.arguments = '{"query":"Open https://example.com and tell me the page title."}'
+
+    mock_output_item = MagicMock()
+    mock_output_item.type = "browser_automation_preview_call_output"
+    mock_output_item.id = "fco_123"
+    mock_output_item.call_id = "call_123"
+    mock_output_item.status = "completed"
+    mock_output_item.output = '[{"step":"open"}]'
+
+    mock_message_content = MagicMock()
+    mock_message_content.type = "output_text"
+    mock_message_content.text = "The page title is Example Domain."
+    mock_message_content.annotations = []
+    mock_message = MagicMock()
+    mock_message.type = "message"
+    mock_message.content = [mock_message_content]
+
+    mock_response.output = [mock_call_item, mock_output_item, mock_message]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore[arg-type]
+
+    assert [content.type for content in response.messages[0].contents] == ["function_call", "function_result", "text"]
+    assert response.messages[0].contents[0].name == "browser_automation_preview"
+    assert response.messages[0].contents[0].call_id == "call_123"
+    assert response.messages[0].contents[1].call_id == "call_123"
+    assert response.messages[0].contents[1].result == [{"step": "open"}]
+
+
+def test_parse_chunk_with_browser_automation_preview_item_done(azure_openai_unit_test_env: dict[str, str]) -> None:
+    client = AzureOpenAIResponsesClient(
+        deployment_name=azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
+    )
+
+    mock_call_event = MagicMock()
+    mock_call_event.type = "response.output_item.done"
+    mock_call_item = MagicMock()
+    mock_call_item.type = "browser_automation_preview_call"
+    mock_call_item.id = "fc_789"
+    mock_call_item.call_id = "call_789"
+    mock_call_item.status = "completed"
+    mock_call_item.arguments = '{"query":"Open https://example.com and report the page title."}'
+    mock_call_event.item = mock_call_item
+
+    call_update = client._parse_chunk_from_openai(mock_call_event, options={}, function_call_ids={})
+    assert len(call_update.contents) == 1
+    assert call_update.contents[0].type == "function_call"
+    assert call_update.contents[0].name == "browser_automation_preview"
+    assert call_update.contents[0].call_id == "call_789"
+
+    mock_output_event = MagicMock()
+    mock_output_event.type = "response.output_item.done"
+    mock_output_item = MagicMock()
+    mock_output_item.type = "browser_automation_preview_call_output"
+    mock_output_item.id = "fco_789"
+    mock_output_item.call_id = "call_789"
+    mock_output_item.status = "completed"
+    mock_output_item.output = "[]"
+    mock_output_event.item = mock_output_item
+
+    result_update = client._parse_chunk_from_openai(mock_output_event, options={}, function_call_ids={})
+    assert len(result_update.contents) == 1
+    assert result_update.contents[0].type == "function_result"
+    assert result_update.contents[0].call_id == "call_789"
+    assert result_update.contents[0].result == []
 
 
 # region Integration Tests
@@ -494,12 +699,19 @@ async def test_integration_web_search() -> None:
 @pytest.mark.integration
 async def test_integration_project_mode_web_search_bing_custom_search() -> None:
     project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT") or os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-    deployment_name = os.getenv("FOUNDRY_MODEL_DEPLOYMENT_NAME") or os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME")
+    deployment_name = (
+        os.getenv("FOUNDRY_MODEL_DEPLOYMENT_NAME")
+        or os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME")
+        or os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME")
+    )
     missing_env_vars: list[str] = []
     if not project_endpoint:
         missing_env_vars.append("FOUNDRY_PROJECT_ENDPOINT or AZURE_AI_PROJECT_ENDPOINT")
     if not deployment_name:
-        missing_env_vars.append("FOUNDRY_MODEL_DEPLOYMENT_NAME or AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME")
+        missing_env_vars.append(
+            "FOUNDRY_MODEL_DEPLOYMENT_NAME, AZURE_AI_MODEL_DEPLOYMENT_NAME, "
+            "or AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"
+        )
     if os.getenv("BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID", "") == "":
         missing_env_vars.append("BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID")
     if os.getenv("BING_CUSTOM_SEARCH_INSTANCE_NAME", "") == "":
@@ -531,6 +743,67 @@ async def test_integration_project_mode_web_search_bing_custom_search() -> None:
         assert isinstance(response, ChatResponse)
         assert response.text is not None
         assert len(response.text) > 0
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+async def test_integration_project_mode_browser_tool_captures_function_contents() -> None:
+    project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT") or os.getenv("AZURE_AI_PROJECT_ENDPOINT")
+    deployment_name = (
+        os.getenv("FOUNDRY_MODEL_DEPLOYMENT_NAME")
+        or os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME")
+        or os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME")
+    )
+    missing_env_vars: list[str] = []
+    if not project_endpoint:
+        missing_env_vars.append("FOUNDRY_PROJECT_ENDPOINT or AZURE_AI_PROJECT_ENDPOINT")
+    if not deployment_name:
+        missing_env_vars.append(
+            "FOUNDRY_MODEL_DEPLOYMENT_NAME, AZURE_AI_MODEL_DEPLOYMENT_NAME, "
+            "or AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"
+        )
+    if os.getenv("BROWSER_AUTOMATION_PROJECT_CONNECTION_ID", "") == "":
+        missing_env_vars.append("BROWSER_AUTOMATION_PROJECT_CONNECTION_ID")
+    if missing_env_vars:
+        pytest.skip(f"Missing required env vars: {', '.join(missing_env_vars)}")
+
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=project_endpoint,
+        deployment_name=deployment_name,
+        credential=AzureCliCredential(),
+    )
+
+    for streaming in [False, True]:
+        content = {
+            "messages": [
+                Message(
+                    role="user",
+                    text="Use the browser tool to open https://example.com and tell me the page title.",
+                )
+            ],
+            "options": {
+                "tool_choice": "required",
+                "tools": [client.get_browser_automation_tool()],
+            },
+            "stream": streaming,
+        }
+        if streaming:
+            response = await client.get_response(**content).get_final_response()
+        else:
+            response = await client.get_response(**content)
+
+        assert response is not None
+        assert isinstance(response, ChatResponse)
+        assert response.text is not None
+
+        browser_calls = [c for c in response.messages[0].contents if c.type == "function_call"]
+        browser_calls = [c for c in browser_calls if c.name == "browser_automation_preview"]
+        browser_results = [c for c in response.messages[0].contents if c.type == "function_result"]
+        assert browser_calls
+        assert browser_results
+        assert {result.call_id for result in browser_results if result.call_id} & {
+            call.call_id for call in browser_calls if call.call_id
+        }
 
 
 @pytest.mark.flaky

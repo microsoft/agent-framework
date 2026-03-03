@@ -45,6 +45,9 @@ For the Foundry tools sample (`azure_responses_client_with_foundry_tools.py`), s
 - `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`
 - Tool-specific connection variables as needed (for example `FABRIC_PROJECT_CONNECTION_ID`, `BING_PROJECT_CONNECTION_ID`).
 
+For memory capabilities, prefer `FoundryMemoryProvider` in the Azure AI context provider sample:
+[`../../context_providers/azure_ai_foundry_memory.py`](../../context_providers/azure_ai_foundry_memory.py).
+
 Optionally, you can set:
 - `AZURE_OPENAI_API_VERSION`: The API version to use (default is `2024-02-15-preview`)
 - `AZURE_OPENAI_API_KEY`: Your Azure OpenAI API key (if not using `AzureCliCredential`)
