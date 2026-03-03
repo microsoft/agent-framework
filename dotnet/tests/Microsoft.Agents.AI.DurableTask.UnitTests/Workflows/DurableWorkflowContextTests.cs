@@ -8,7 +8,7 @@ namespace Microsoft.Agents.AI.DurableTask.UnitTests.Workflows;
 public sealed class DurableWorkflowContextTests
 {
     private static FunctionExecutor<string> CreateTestExecutor(string id = "test-executor")
-        => new(id, (_, _, _) => default);
+        => new(id, (_, _, _) => default, outputTypes: [typeof(string)]);
 
     #region ReadStateAsync
 

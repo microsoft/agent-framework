@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates a Human-in-the-Loop (HITL) workflow using Durable Tasks.
 //
@@ -43,7 +43,7 @@ Workflow expenseApproval = new WorkflowBuilder(createRequest)
     .AddEdge(createRequest, managerApproval)
     .AddEdge(managerApproval, prepareFinanceReview)
     .AddFanOutEdge(prepareFinanceReview, [budgetApproval, complianceApproval])
-    .AddFanInEdge([budgetApproval, complianceApproval], reimburse)
+    .AddFanInBarrierEdge([budgetApproval, complianceApproval], reimburse)
     .Build();
 
 IHost host = Host.CreateDefaultBuilder(args)

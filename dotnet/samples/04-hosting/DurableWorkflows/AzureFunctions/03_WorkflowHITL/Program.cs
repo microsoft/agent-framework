@@ -40,7 +40,7 @@ Workflow expenseApproval = new WorkflowBuilder(createRequest)
     .AddEdge(createRequest, managerApproval)
     .AddEdge(managerApproval, prepareFinanceReview)
     .AddFanOutEdge(prepareFinanceReview, [budgetApproval, complianceApproval])
-    .AddFanInEdge([budgetApproval, complianceApproval], reimburse)
+    .AddFanInBarrierEdge([budgetApproval, complianceApproval], reimburse)
     .Build();
 
 using IHost app = FunctionsApplication

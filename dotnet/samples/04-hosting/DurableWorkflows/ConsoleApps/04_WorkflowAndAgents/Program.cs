@@ -54,7 +54,7 @@ Workflow physicsWorkflow = new WorkflowBuilder(questionParser)
 Workflow expertTeamWorkflow = new WorkflowBuilder(questionParser)
 .WithName("ExpertTeamReview")
 .AddFanOutEdge(questionParser, [biologist, physicist])
-.AddFanInEdge([biologist, physicist], responseAggregator)
+.AddFanInBarrierEdge([biologist, physicist], responseAggregator)
 .Build();
 
 Workflow chemistryWorkflow = new WorkflowBuilder(questionParser)
@@ -96,12 +96,12 @@ IWorkflowClient workflowClient = services.GetRequiredService<IWorkflowClient>();
 Console.WriteLine("\n═══ DEMO 1: Direct Agent Conversation ═══\n");
 
 AIAgent biologistProxy = services.GetRequiredKeyedService<AIAgent>("Biologist");
-AgentSession session = await biologistProxy.GetNewSessionAsync();
+AgentSession session = await biologistProxy.CreateSessionAsync();
 AgentResponse response = await biologistProxy.RunAsync("What is photosynthesis?", session);
 Console.WriteLine($"🧬 Biologist: {response.Text}\n");
 
 AIAgent chemistProxy = services.GetRequiredKeyedService<AIAgent>("Chemist");
-session = await chemistProxy.GetNewSessionAsync();
+session = await chemistProxy.CreateSessionAsync();
 response = await chemistProxy.RunAsync("What is a chemical bond?", session);
 Console.WriteLine($"🧪 Chemist: {response.Text}\n");
 

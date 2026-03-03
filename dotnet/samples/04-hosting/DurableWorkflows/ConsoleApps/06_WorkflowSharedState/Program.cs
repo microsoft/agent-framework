@@ -93,7 +93,7 @@ while (true)
             switch (evt)
             {
                 case WorkflowOutputEvent e:
-                    Console.WriteLine($"  [Output] {e.SourceId}: {e.Data}");
+                    Console.WriteLine($"  [Output] {e.ExecutorId}: {e.Data}");
                     break;
 
                 case DurableWorkflowCompletedEvent e:

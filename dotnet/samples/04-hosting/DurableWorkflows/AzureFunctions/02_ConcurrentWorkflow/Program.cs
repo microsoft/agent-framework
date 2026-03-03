@@ -34,7 +34,7 @@ AggregatorExecutor aggregator = new();
 Workflow workflow = new WorkflowBuilder(parseQuestion)
     .WithName("ExpertReview")
     .AddFanOutEdge(parseQuestion, [physicist, chemist])
-    .AddFanInEdge([physicist, chemist], aggregator)
+    .AddFanInBarrierEdge([physicist, chemist], aggregator)
     .Build();
 
 using IHost app = FunctionsApplication

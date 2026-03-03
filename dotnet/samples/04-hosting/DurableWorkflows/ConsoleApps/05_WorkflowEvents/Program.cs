@@ -116,7 +116,7 @@ static async Task RunWorkflowWithStreamingAsync(string orderId, Workflow workflo
                 break;
 
             case WorkflowOutputEvent e:
-                WriteColored($"    [Output] {e.SourceId}", ConsoleColor.DarkGray);
+                WriteColored($"    [Output] {e.ExecutorId}", ConsoleColor.DarkGray);
                 break;
 
             // Workflow completion
