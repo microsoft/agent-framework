@@ -1004,7 +1004,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             s_testDatabaseId,
             TestContainerId,
             _ => new CosmosChatHistoryProvider.State(conversationId),
-            storeInputMessageFilter: messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External));
+            storeInputRequestMessageFilter: messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External));
 
         var requestMessages = new[]
         {

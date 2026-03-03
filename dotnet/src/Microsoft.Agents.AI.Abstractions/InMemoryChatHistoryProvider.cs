@@ -38,7 +38,8 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     public InMemoryChatHistoryProvider(InMemoryChatHistoryProviderOptions? options = null)
         : base(
             options?.ProvideOutputMessageFilter,
-            options?.StorageInputMessageFilter)
+            options?.StorageInputRequestMessageFilter,
+            options?.StorageInputResponseMessageFilter)
     {
         this._sessionState = new ProviderSessionState<State>(
             options?.StateInitializer ?? (_ => new State()),

@@ -49,8 +49,8 @@ An AI-powered workflow system for validating Python samples by discovering them,
 ## File Structure
 
 ```
-samples/
-├── _sample_validation/
+scripts/
+├── sample_validation/
 │   ├── __init__.py              # Package exports
 │   ├── README.md                # This file
 │   ├── models.py                # Data classes
@@ -97,19 +97,19 @@ No required environment variables. Optional:
 
 ```bash
 # Validate all samples
-uv run python -m _sample_validation
+uv run python -m sample_validation
 
 # Validate specific subdirectory
-uv run python -m _sample_validation --subdir 03-workflows
+uv run python -m sample_validation --subdir 03-workflows
 
 # Save reports to files
-uv run python -m _sample_validation --save-report --output-dir ./reports
+uv run python -m sample_validation --save-report --output-dir ./reports
 ```
 
 ### Configuration Options
 
 ```bash
-uv run python -m _sample_validation [OPTIONS]
+uv run python -m sample_validation [OPTIONS]
 
 Options:
   --subdir TEXT                Subdirectory to validate (relative to samples/)
@@ -122,13 +122,13 @@ Options:
 
 ```bash
 # Quick validation of a small directory
-uv run python -m _sample_validation --subdir 03-workflows/_start-here
+uv run python -m sample_validation --subdir 03-workflows/_start-here
 
 # Limit parallel workers for large sample sets
-uv run python -m _sample_validation --subdir 02-agents --max-parallel-workers 8
+uv run python -m sample_validation --subdir 02-agents --max-parallel-workers 8
 
 # Save report artifacts
-uv run python -m _sample_validation --save-report
+uv run python -m sample_validation --save-report
 ```
 
 ## How It Works

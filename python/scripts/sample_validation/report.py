@@ -6,9 +6,10 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from _sample_validation.models import ExecutionResult, Report, RunResult, RunStatus
 from agent_framework import Executor, WorkflowContext, handler
 from typing_extensions import Never
+
+from sample_validation.models import ExecutionResult, Report, RunResult, RunStatus
 
 
 def generate_report(results: list[RunResult]) -> Report:
@@ -41,7 +42,9 @@ def generate_report(results: list[RunResult]) -> Report:
     )
 
 
-def save_report(report: Report, output_dir: Path, name: str | None = None) -> tuple[Path, Path]:
+def save_report(
+    report: Report, output_dir: Path, name: str | None = None
+) -> tuple[Path, Path]:
     """
     Save the report to markdown and JSON files.
 
@@ -81,7 +84,11 @@ def print_summary(report: Report) -> None:
     print("SAMPLE VALIDATION SUMMARY")
     print("=" * 80)
 
-    if report.failure_count == 0 and report.timeout_count == 0 and report.error_count == 0:
+    if (
+        report.failure_count == 0
+        and report.timeout_count == 0
+        and report.error_count == 0
+    ):
         print("[PASS] ALL SAMPLES PASSED!")
     else:
         print("[FAIL] SOME SAMPLES FAILED")
@@ -107,7 +114,9 @@ class GenerateReportExecutor(Executor):
         super().__init__(id="generate_report")
 
     @handler
-    async def generate(self, execution: ExecutionResult, ctx: WorkflowContext[Never, Report]) -> None:
+    async def generate(
+        self, execution: ExecutionResult, ctx: WorkflowContext[Never, Report]
+    ) -> None:
         """Generate the validation report from fan-in results."""
         print("\nGenerating report...")
 

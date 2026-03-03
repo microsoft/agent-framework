@@ -22,7 +22,6 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
     /// and source generated serializers are required, or Native AOT / Trimming is required.
     /// </param>
     public WorkflowChatHistoryProvider(JsonSerializerOptions? jsonSerializerOptions = null)
-        : base(provideOutputMessageFilter: null, storeInputMessageFilter: null)
     {
         this._sessionState = new ProviderSessionState<StoreState>(
             _ => new StoreState(),

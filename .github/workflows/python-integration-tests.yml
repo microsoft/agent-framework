@@ -247,6 +247,51 @@ jobs:
         timeout-minutes: 15
         run: uv run --directory packages/azure-ai poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
 
+  # Azure Cosmos integration tests
+  python-tests-cosmos:
+    name: Python Integration Tests - Cosmos
+    runs-on: ubuntu-latest
+    environment: integration
+    timeout-minutes: 60
+    services:
+      cosmosdb:
+        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
+        ports:
+          - 8081:8081
+    env:
+      AZURE_COSMOS_ENDPOINT: "http://localhost:8081/"
+      # Static Azure Cosmos DB emulator key (documented): https://learn.microsoft.com/en-us/azure/cosmos-db/emulator
+      AZURE_COSMOS_KEY: "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
+      AZURE_COSMOS_DATABASE_NAME: "agent-framework-cosmos-it-db"
+      AZURE_COSMOS_CONTAINER_NAME: "agent-framework-cosmos-it-container"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Wait for Cosmos DB emulator
+        run: |
+          for i in {1..60}; do
+            if curl --silent --show-error http://localhost:8081/ > /dev/null; then
+              echo "Cosmos DB emulator is ready."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Cosmos DB emulator did not become ready in time." >&2
+          exit 1
+      - name: Test with pytest (Cosmos integration)
+        run: uv run --directory packages/azure-cosmos poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
+
   python-integration-tests-check:
     if: always()
     runs-on: ubuntu-latest
@@ -257,7 +302,8 @@ jobs:
         python-tests-azure-openai,
         python-tests-misc-integration,
         python-tests-functions,
-        python-tests-azure-ai
+        python-tests-azure-ai,
+        python-tests-cosmos
       ]
     steps:
       - name: Fail workflow if tests failed

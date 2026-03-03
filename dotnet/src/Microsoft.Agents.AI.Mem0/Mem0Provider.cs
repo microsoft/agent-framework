@@ -52,7 +52,7 @@ public sealed class Mem0Provider : MessageAIContextProvider
     /// </code>
     /// </remarks>
     public Mem0Provider(HttpClient httpClient, Func<AgentSession?, State> stateInitializer, Mem0ProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
-        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputRequestMessageFilter, options?.StorageInputResponseMessageFilter)
     {
         this._sessionState = new ProviderSessionState<State>(
             ValidateStateInitializer(Throw.IfNull(stateInitializer)),

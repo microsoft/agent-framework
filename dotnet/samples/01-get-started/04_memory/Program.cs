@@ -92,7 +92,6 @@ namespace SampleApp
         private readonly IChatClient _chatClient;
 
         public UserInfoMemory(IChatClient chatClient, Func<AgentSession?, UserInfo>? stateInitializer = null)
-            : base(null, null)
         {
             this._sessionState = new ProviderSessionState<UserInfo>(
                 stateInitializer ?? (_ => new UserInfo()),

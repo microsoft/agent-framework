@@ -85,7 +85,6 @@ namespace SampleApp
             VectorStore vectorStore,
             Func<AgentSession?, State>? stateInitializer = null,
             string? stateKey = null)
-            : base(provideOutputMessageFilter: null, storeInputMessageFilter: null)
         {
             this._sessionState = new ProviderSessionState<State>(
                 stateInitializer ?? (_ => new State(Guid.NewGuid().ToString("N"))),
