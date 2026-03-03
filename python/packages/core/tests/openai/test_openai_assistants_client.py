@@ -1,12 +1,24 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import logging
 import os
 from typing import Annotated, Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from openai.types.beta.threads import MessageDeltaEvent, Run, TextDeltaBlock
+from openai.types.beta.threads import (
+    FileCitationAnnotation,
+    FilePathAnnotation,
+    MessageDeltaEvent,
+    Run,
+    TextDeltaBlock,
+)
+from openai.types.beta.threads import (
+    Message as ThreadMessage,
+)
+from openai.types.beta.threads.file_citation_delta_annotation import FileCitationDeltaAnnotation
+from openai.types.beta.threads.file_path_delta_annotation import FilePathDeltaAnnotation
 from openai.types.beta.threads.runs import RunStep
 from pydantic import Field
 
@@ -441,6 +453,120 @@ async def test_process_stream_events_message_delta_text(mock_async_openai: Magic
     assert update.role == "assistant"
     assert update.text == "Hello from assistant"
     assert update.raw_representation == mock_message_delta
+
+
+async def test_process_stream_events_message_delta_text_with_file_citation_annotations(
+    mock_async_openai: MagicMock,
+) -> None:
+    """Test _process_stream_events maps file citation annotations from TextDeltaBlock."""
+    client = create_test_openai_assistants_client(mock_async_openai)
+
+    mock_annotation = FileCitationDeltaAnnotation(
+        index=0,
+        type="file_citation",
+        file_citation={"file_id": "file-abc123"},
+        start_index=10,
+        end_index=24,
+        text="【4:0†source】",
+    )
+
+    mock_delta_block = MagicMock(spec=TextDeltaBlock)
+    mock_delta_block.text = MagicMock()
+    mock_delta_block.text.value = "Some text 【4:0†source】 more text"
+    mock_delta_block.text.annotations = [mock_annotation]
+
+    mock_delta = MagicMock()
+    mock_delta.role = "assistant"
+    mock_delta.content = [mock_delta_block]
+
+    mock_message_delta = MagicMock(spec=MessageDeltaEvent)
+    mock_message_delta.delta = mock_delta
+
+    mock_response = MagicMock()
+    mock_response.event = "thread.message.delta"
+    mock_response.data = mock_message_delta
+
+    async def async_iterator() -> Any:
+        yield mock_response
+
+    mock_stream = MagicMock()
+    mock_stream.__aenter__ = AsyncMock(return_value=async_iterator())
+    mock_stream.__aexit__ = AsyncMock(return_value=None)
+
+    thread_id = "thread-789"
+    updates: list[ChatResponseUpdate] = []
+    async for update in client._process_stream_events(mock_stream, thread_id):  # type: ignore
+        updates.append(update)
+
+    assert len(updates) == 1
+    update = updates[0]
+    assert update.text == "Some text 【4:0†source】 more text"
+    assert update.contents is not None
+    content = update.contents[0]
+    assert content.annotations is not None
+    assert len(content.annotations) == 1
+    ann = content.annotations[0]
+    assert ann["type"] == "citation"
+    assert ann["file_id"] == "file-abc123"
+    assert ann["annotated_regions"] is not None
+    assert ann["annotated_regions"][0]["start_index"] == 10
+    assert ann["annotated_regions"][0]["end_index"] == 24
+    assert ann["additional_properties"]["text"] == "【4:0†source】"
+
+
+async def test_process_stream_events_message_delta_text_with_file_path_annotations(
+    mock_async_openai: MagicMock,
+) -> None:
+    """Test _process_stream_events maps file path annotations from TextDeltaBlock."""
+    client = create_test_openai_assistants_client(mock_async_openai)
+
+    mock_annotation = FilePathDeltaAnnotation(
+        index=0,
+        type="file_path",
+        file_path={"file_id": "file-xyz789"},
+        start_index=5,
+        end_index=20,
+        text="sandbox:/path/to/file",
+    )
+
+    mock_delta_block = MagicMock(spec=TextDeltaBlock)
+    mock_delta_block.text = MagicMock()
+    mock_delta_block.text.value = "Here sandbox:/path/to/file is the file"
+    mock_delta_block.text.annotations = [mock_annotation]
+
+    mock_delta = MagicMock()
+    mock_delta.role = "assistant"
+    mock_delta.content = [mock_delta_block]
+
+    mock_message_delta = MagicMock(spec=MessageDeltaEvent)
+    mock_message_delta.delta = mock_delta
+
+    mock_response = MagicMock()
+    mock_response.event = "thread.message.delta"
+    mock_response.data = mock_message_delta
+
+    async def async_iterator() -> Any:
+        yield mock_response
+
+    mock_stream = MagicMock()
+    mock_stream.__aenter__ = AsyncMock(return_value=async_iterator())
+    mock_stream.__aexit__ = AsyncMock(return_value=None)
+
+    thread_id = "thread-annotation"
+    updates: list[ChatResponseUpdate] = []
+    async for update in client._process_stream_events(mock_stream, thread_id):  # type: ignore
+        updates.append(update)
+
+    assert len(updates) == 1
+    content = updates[0].contents[0]
+    assert content.annotations is not None
+    assert len(content.annotations) == 1
+    ann = content.annotations[0]
+    assert ann["type"] == "citation"
+    assert ann["file_id"] == "file-xyz789"
+    assert ann["annotated_regions"] is not None
+    assert ann["annotated_regions"][0]["start_index"] == 5
+    assert ann["annotated_regions"][0]["end_index"] == 20
 
 
 async def test_process_stream_events_requires_action(mock_async_openai: MagicMock) -> None:
@@ -1450,3 +1576,258 @@ def test_with_callable_api_key() -> None:
     assert client.model_id == "gpt-4o"
     # OpenAI SDK now manages callable API keys internally
     assert client.client is not None
+
+
+# region thread.message.completed helpers
+
+
+def _make_stream_event(event: str, data: Any) -> MagicMock:
+    """Create a mock stream event."""
+    mock = MagicMock()
+    mock.event = event
+    mock.data = data
+    return mock
+
+
+def _make_text_block(text_value: str, annotations: list | None = None) -> MagicMock:
+    """Create a mock TextContentBlock with optional annotations."""
+    block = MagicMock()
+    block.type = "text"
+    block.text = MagicMock()
+    block.text.value = text_value
+    block.text.annotations = annotations or []
+    return block
+
+
+def _make_image_block() -> MagicMock:
+    """Create a mock ImageContentBlock (non-text block)."""
+    block = MagicMock()
+    block.type = "image_file"
+    return block
+
+
+def _make_file_citation_annotation(
+    text: str = "【4:0†source】",
+    file_id: str = "file-abc123",
+    start_index: int = 10,
+    end_index: int = 24,
+) -> MagicMock:
+    """Create a mock FileCitationAnnotation."""
+    annotation = MagicMock(spec=FileCitationAnnotation)
+    annotation.text = text
+    annotation.start_index = start_index
+    annotation.end_index = end_index
+    annotation.file_citation = MagicMock()
+    annotation.file_citation.file_id = file_id
+    return annotation
+
+
+def _make_file_path_annotation(
+    text: str = "sandbox:/file.csv",
+    file_id: str = "file-xyz789",
+    start_index: int = 5,
+    end_index: int = 22,
+) -> MagicMock:
+    """Create a mock FilePathAnnotation."""
+    annotation = MagicMock(spec=FilePathAnnotation)
+    annotation.text = text
+    annotation.start_index = start_index
+    annotation.end_index = end_index
+    annotation.file_path = MagicMock()
+    annotation.file_path.file_id = file_id
+    return annotation
+
+
+def _make_unknown_annotation() -> MagicMock:
+    """Create a mock annotation of an unrecognized type."""
+    annotation = MagicMock()
+    annotation.__class__.__name__ = "FutureAnnotationType"
+    return annotation
+
+
+def _make_thread_message(content_blocks: list) -> MagicMock:
+    """Create a mock ThreadMessage."""
+    msg = MagicMock(spec=ThreadMessage)
+    msg.content = content_blocks
+    return msg
+
+
+async def _collect_updates(client, stream_events, thread_id="thread_123"):
+    """Helper to collect ChatResponseUpdate objects from _process_stream_events."""
+
+    class MockAsyncStream:
+        def __init__(self, events):
+            self._events = events
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self._events:
+                raise StopAsyncIteration
+            return self._events.pop(0)
+
+    mock_stream = MockAsyncStream(list(stream_events))
+    results = []
+    async for update in client._process_stream_events(mock_stream, thread_id):
+        results.append(update)
+    return results
+
+
+# endregion
+
+
+class TestMessageCompletedAnnotations:
+    """Tests for thread.message.completed event handling."""
+
+    @pytest.fixture
+    def client(self):
+        """Create a client instance for testing."""
+        with patch.object(OpenAIAssistantsClient, "__init__", lambda self, **kw: None):
+            return object.__new__(OpenAIAssistantsClient)
+
+    @pytest.mark.asyncio
+    async def test_message_completed_with_file_citation(self, client):
+        """Verify file citation annotations are extracted from completed messages."""
+        citation = _make_file_citation_annotation(
+            text="【4:0†source】", file_id="file-abc123", start_index=10, end_index=24
+        )
+        text_block = _make_text_block("Some text with a citation【4:0†source】", [citation])
+        msg = _make_thread_message([text_block])
+
+        events = [_make_stream_event("thread.message.completed", msg)]
+        updates = await _collect_updates(client, events)
+
+        # Should yield exactly one update for the completed message
+        assert len(updates) == 1
+        update = updates[0]
+        assert update.role == "assistant"
+        assert len(update.contents) == 1
+
+        content = update.contents[0]
+        assert content.text == "Some text with a citation【4:0†source】"
+        assert content.annotations is not None
+        assert len(content.annotations) == 1
+
+        ann = content.annotations[0]
+        assert ann["type"] == "citation"
+        assert ann["file_id"] == "file-abc123"
+        assert ann["annotated_regions"][0]["start_index"] == 10
+        assert ann["annotated_regions"][0]["end_index"] == 24
+
+    @pytest.mark.asyncio
+    async def test_message_completed_with_file_path(self, client):
+        """Verify file path annotations are extracted from completed messages."""
+        file_path = _make_file_path_annotation(
+            text="sandbox:/output.csv", file_id="file-xyz789", start_index=0, end_index=19
+        )
+        text_block = _make_text_block("sandbox:/output.csv", [file_path])
+        msg = _make_thread_message([text_block])
+
+        events = [_make_stream_event("thread.message.completed", msg)]
+        updates = await _collect_updates(client, events)
+
+        assert len(updates) == 1
+        content = updates[0].contents[0]
+        assert content.annotations is not None
+        assert len(content.annotations) == 1
+
+        ann = content.annotations[0]
+        assert ann["type"] == "citation"
+        assert ann["file_id"] == "file-xyz789"
+        assert ann["annotated_regions"][0]["start_index"] == 0
+        assert ann["annotated_regions"][0]["end_index"] == 19
+
+    @pytest.mark.asyncio
+    async def test_message_completed_multiple_annotations(self, client):
+        """Verify multiple annotations on a single text block are all captured."""
+        cit1 = _make_file_citation_annotation(text="【1†src】", file_id="file-a", start_index=5, end_index=12)
+        cit2 = _make_file_citation_annotation(text="【2†src】", file_id="file-b", start_index=20, end_index=27)
+        text_block = _make_text_block("Hello【1†src】world【2†src】", [cit1, cit2])
+        msg = _make_thread_message([text_block])
+
+        events = [_make_stream_event("thread.message.completed", msg)]
+        updates = await _collect_updates(client, events)
+
+        assert len(updates) == 1
+        assert len(updates[0].contents[0].annotations) == 2
+        assert updates[0].contents[0].annotations[0]["file_id"] == "file-a"
+        assert updates[0].contents[0].annotations[1]["file_id"] == "file-b"
+
+    @pytest.mark.asyncio
+    async def test_message_completed_no_annotations(self, client):
+        """Verify text-only completed messages produce content without annotations."""
+        text_block = _make_text_block("Plain text response")
+        msg = _make_thread_message([text_block])
+
+        events = [_make_stream_event("thread.message.completed", msg)]
+        updates = await _collect_updates(client, events)
+
+        assert len(updates) == 1
+        content = updates[0].contents[0]
+        assert content.text == "Plain text response"
+        assert content.annotations is None or len(content.annotations) == 0
+
+    @pytest.mark.asyncio
+    async def test_message_completed_skips_non_text_blocks(self, client):
+        """Verify non-text content blocks (e.g., image_file) are skipped."""
+        image_block = _make_image_block()
+        msg = _make_thread_message([image_block])
+
+        events = [_make_stream_event("thread.message.completed", msg)]
+        updates = await _collect_updates(client, events)
+
+        # No text blocks → no update yielded
+        assert len(updates) == 0
+
+    @pytest.mark.asyncio
+    async def test_message_completed_mixed_blocks(self, client):
+        """Verify only text blocks are processed in mixed-content messages."""
+        text_block = _make_text_block("Text content here")
+        image_block = _make_image_block()
+        msg = _make_thread_message([image_block, text_block])
+
+        events = [_make_stream_event("thread.message.completed", msg)]
+        updates = await _collect_updates(client, events)
+
+        assert len(updates) == 1
+        assert len(updates[0].contents) == 1
+        assert updates[0].contents[0].text == "Text content here"
+
+    @pytest.mark.asyncio
+    async def test_message_completed_conversation_id_preserved(self, client):
+        """Verify the thread_id is correctly propagated as conversation_id."""
+        text_block = _make_text_block("Response text")
+        msg = _make_thread_message([text_block])
+
+        events = [_make_stream_event("thread.message.completed", msg)]
+        updates = await _collect_updates(client, events, thread_id="thread_custom_456")
+
+        assert len(updates) == 1
+        assert updates[0].conversation_id == "thread_custom_456"
+
+    @pytest.mark.asyncio
+    async def test_message_completed_unrecognized_annotation_logged(self, client, caplog):
+        """Verify unrecognized annotation types are logged at debug level and skipped."""
+        unknown_ann = _make_unknown_annotation()
+        citation = _make_file_citation_annotation(text="【1†src】", file_id="file-a", start_index=0, end_index=7)
+        text_block = _make_text_block("Text【1†src】", [unknown_ann, citation])
+        msg = _make_thread_message([text_block])
+
+        events = [_make_stream_event("thread.message.completed", msg)]
+        with caplog.at_level(logging.DEBUG, logger="agent_framework.openai"):
+            updates = await _collect_updates(client, events)
+
+        # The known citation should still be processed
+        assert len(updates) == 1
+        assert len(updates[0].contents[0].annotations) == 1
+        assert updates[0].contents[0].annotations[0]["file_id"] == "file-a"
+
+        # The unrecognized annotation should have been logged
+        assert any("Unparsed annotation type" in record.message for record in caplog.records)

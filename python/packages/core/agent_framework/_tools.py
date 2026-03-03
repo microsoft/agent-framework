@@ -79,6 +79,7 @@ logger = logging.getLogger("agent_framework")
 
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
+SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 # region Helpers
 
@@ -237,6 +238,7 @@ class FunctionTool(SerializationMixin):
         name: str,
         description: str = "",
         approval_mode: Literal["always_require", "never_require"] | None = None,
+        kind: str | None = None,
         max_invocations: int | None = None,
         max_invocation_exceptions: int | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -252,6 +254,8 @@ class FunctionTool(SerializationMixin):
             description: A description of the function.
             approval_mode: Whether or not approval is required to run this tool.
                 Default is that approval is NOT required (``"never_require"``).
+            kind: Optional provider-agnostic tool classification
+                (for example ``"shell"``).
             max_invocations: The maximum number of times this function can be invoked
                 across the **lifetime of this tool instance**. If None (default),
                 there is no limit. Should be at least 1. If the tool is called multiple
@@ -296,6 +300,7 @@ class FunctionTool(SerializationMixin):
         # Core attributes (formerly from BaseTool)
         self.name = name
         self.description = description
+        self.kind = kind
         self.additional_properties = additional_properties
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -1077,6 +1082,7 @@ def tool(
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
     approval_mode: Literal["always_require", "never_require"] | None = None,
+    kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
@@ -1092,6 +1098,7 @@ def tool(
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
     approval_mode: Literal["always_require", "never_require"] | None = None,
+    kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
@@ -1106,6 +1113,7 @@ def tool(
     description: str | None = None,
     schema: type[BaseModel] | Mapping[str, Any] | None = None,
     approval_mode: Literal["always_require", "never_require"] | None = None,
+    kind: str | None = None,
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
@@ -1145,6 +1153,7 @@ def tool(
             function's signature. Defaults to ``None`` (infer from signature).
         approval_mode: Whether or not approval is required to run this tool.
             Default is that approval is NOT required (``"never_require"``).
+        kind: Optional provider-agnostic tool classification.
         max_invocations: The maximum number of times this function can be invoked
             across the **lifetime of this tool instance**. If None (default), there is
             no limit. Should be at least 1. For per-request limits, use
@@ -1245,6 +1254,7 @@ def tool(
                 name=tool_name,
                 description=tool_desc,
                 approval_mode=approval_mode,
+                kind=kind,
                 max_invocations=max_invocations,
                 max_invocation_exceptions=max_invocation_exceptions,
                 additional_properties=additional_properties or {},
@@ -1390,6 +1400,7 @@ async def _auto_invoke_function(
                 call_id=function_call_content.call_id,  # type: ignore[arg-type]
                 result=f'Error: Requested function "{function_call_content.name}" not found.',
                 exception=str(exc),  # type: ignore[arg-type]
+                additional_properties=function_call_content.additional_properties,
             )
     else:
         # Note: Unapproved tools (approved=False) are handled in _replace_approval_contents_with_results
@@ -1430,6 +1441,7 @@ async def _auto_invoke_function(
             call_id=function_call_content.call_id,  # type: ignore[arg-type]
             result=message,
             exception=str(exc),  # type: ignore[arg-type]
+            additional_properties=function_call_content.additional_properties,
         )
 
     if middleware_pipeline is None or not middleware_pipeline.has_middlewares:
@@ -1443,6 +1455,7 @@ async def _auto_invoke_function(
             return Content.from_function_result(
                 call_id=function_call_content.call_id,  # type: ignore[arg-type]
                 result=function_result,
+                additional_properties=function_call_content.additional_properties,
             )
         except Exception as exc:
             message = "Error: Function failed."
@@ -1452,6 +1465,7 @@ async def _auto_invoke_function(
                 call_id=function_call_content.call_id,  # type: ignore[arg-type]
                 result=message,
                 exception=str(exc),
+                additional_properties=function_call_content.additional_properties,
             )
     # Execute through middleware pipeline if available
     from ._middleware import FunctionInvocationContext
@@ -1477,6 +1491,7 @@ async def _auto_invoke_function(
         return Content.from_function_result(
             call_id=function_call_content.call_id,  # type: ignore[arg-type]
             result=function_result,
+            additional_properties=function_call_content.additional_properties,
         )
     except MiddlewareTermination as term_exc:
         # Re-raise to signal loop termination, but first capture any result set by middleware
@@ -1485,6 +1500,7 @@ async def _auto_invoke_function(
             term_exc.result = Content.from_function_result(
                 call_id=function_call_content.call_id,  # type: ignore[arg-type]
                 result=middleware_context.result,
+                additional_properties=function_call_content.additional_properties,
             )
         raise
     except Exception as exc:
@@ -1495,6 +1511,7 @@ async def _auto_invoke_function(
             call_id=function_call_content.call_id,  # type: ignore[arg-type]
             result=message,
             exception=str(exc),  # type: ignore[arg-type]
+            additional_properties=function_call_content.additional_properties,
         )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -16,6 +17,10 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypedDict, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
+    FileCitationAnnotation,
+    FileCitationDeltaAnnotation,
+    FilePathAnnotation,
+    FilePathDeltaAnnotation,
     ImageURLContentBlockParam,
     ImageURLParam,
     MessageContentPartParam,
@@ -23,6 +28,9 @@ from openai.types.beta.threads import (
     Run,
     TextContentBlockParam,
     TextDeltaBlock,
+)
+from openai.types.beta.threads import (
+    Message as ThreadMessage,
 )
 from openai.types.beta.threads.run_create_params import AdditionalMessage
 from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
@@ -39,12 +47,14 @@ from .._tools import (
     normalize_tools,
 )
 from .._types import (
+    Annotation,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     Message,
     ResponseStream,
+    TextSpanRegion,
     UsageDetails,
 )
 from ..observability import ChatTelemetryLayer
@@ -67,6 +77,8 @@ else:
 
 if TYPE_CHECKING:
     from .._middleware import MiddlewareTypes
+
+logger = logging.getLogger("agent_framework.openai")
 
 
 # region OpenAI Assistants Options TypedDict
@@ -554,14 +566,130 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
                     for delta_block in delta.content or []:
                         if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
+                            text_content = Content.from_text(delta_block.text.value)
+                            if delta_block.text.annotations:
+                                text_content.annotations = []
+                                for annotation in delta_block.text.annotations:
+                                    if isinstance(annotation, FileCitationDeltaAnnotation):
+                                        ann: Annotation = Annotation(
+                                            type="citation",
+                                            additional_properties={
+                                                "text": annotation.text,
+                                                "index": annotation.index,
+                                            },
+                                            raw_representation=annotation,
+                                        )
+                                        if annotation.file_citation and annotation.file_citation.file_id:
+                                            ann["file_id"] = annotation.file_citation.file_id
+                                        if annotation.start_index is not None and annotation.end_index is not None:
+                                            ann["annotated_regions"] = [
+                                                TextSpanRegion(
+                                                    type="text_span",
+                                                    start_index=annotation.start_index,
+                                                    end_index=annotation.end_index,
+                                                )
+                                            ]
+                                        text_content.annotations.append(ann)
+                                    elif isinstance(annotation, FilePathDeltaAnnotation):
+                                        ann = Annotation(
+                                            type="citation",
+                                            additional_properties={
+                                                "text": annotation.text,
+                                                "index": annotation.index,
+                                            },
+                                            raw_representation=annotation,
+                                        )
+                                        if annotation.file_path and annotation.file_path.file_id:
+                                            ann["file_id"] = annotation.file_path.file_id
+                                        if annotation.start_index is not None and annotation.end_index is not None:
+                                            ann["annotated_regions"] = [
+                                                TextSpanRegion(
+                                                    type="text_span",
+                                                    start_index=annotation.start_index,
+                                                    end_index=annotation.end_index,
+                                                )
+                                            ]
+                                        text_content.annotations.append(ann)
                             yield ChatResponseUpdate(
                                 role=role,  # type: ignore[arg-type]
-                                contents=[Content.from_text(delta_block.text.value)],
+                                contents=[text_content],
                                 conversation_id=thread_id,
                                 message_id=response_id,
                                 raw_representation=response.data,
                                 response_id=response_id,
                             )
+                elif response.event == "thread.message.completed" and isinstance(response.data, ThreadMessage):
+                    # Process completed message to extract fully resolved annotations.
+                    # Delta events may carry partial/empty annotation data; the completed
+                    # message contains the final text with all citation details populated.
+                    completed_contents: list[Content] = []
+                    for block in response.data.content:
+                        if block.type != "text":
+                            continue
+                        text_content = Content.from_text(block.text.value)
+                        if block.text.annotations:
+                            text_content.annotations = []
+                            for completed_annotation in block.text.annotations:
+                                if isinstance(completed_annotation, FileCitationAnnotation):
+                                    props: dict[str, Any] = {
+                                        "text": completed_annotation.text,
+                                    }
+                                    ann = Annotation(
+                                        type="citation",
+                                        additional_properties=props,
+                                        raw_representation=completed_annotation,
+                                    )
+                                    if (
+                                        completed_annotation.file_citation
+                                        and completed_annotation.file_citation.file_id
+                                    ):
+                                        ann["file_id"] = completed_annotation.file_citation.file_id
+                                    if (
+                                        completed_annotation.start_index is not None
+                                        and completed_annotation.end_index is not None
+                                    ):
+                                        ann["annotated_regions"] = [
+                                            TextSpanRegion(
+                                                type="text_span",
+                                                start_index=completed_annotation.start_index,
+                                                end_index=completed_annotation.end_index,
+                                            )
+                                        ]
+                                    text_content.annotations.append(ann)
+                                elif isinstance(completed_annotation, FilePathAnnotation):
+                                    ann = Annotation(
+                                        type="citation",
+                                        additional_properties={
+                                            "text": completed_annotation.text,
+                                        },
+                                        raw_representation=completed_annotation,
+                                    )
+                                    if completed_annotation.file_path and completed_annotation.file_path.file_id:
+                                        ann["file_id"] = completed_annotation.file_path.file_id
+                                    if (
+                                        completed_annotation.start_index is not None
+                                        and completed_annotation.end_index is not None
+                                    ):
+                                        ann["annotated_regions"] = [
+                                            TextSpanRegion(
+                                                type="text_span",
+                                                start_index=completed_annotation.start_index,
+                                                end_index=completed_annotation.end_index,
+                                            )
+                                        ]
+                                    text_content.annotations.append(ann)
+                                else:
+                                    logger.debug("Unparsed annotation type: %s", completed_annotation.type)
+                        completed_contents.append(text_content)
+                    if completed_contents:
+                        yield ChatResponseUpdate(
+                            role="assistant",
+                            contents=completed_contents,
+                            conversation_id=thread_id,
+                            message_id=response_id,
+                            raw_representation=response.data,
+                            response_id=response_id,
+                        )
                 elif response.event == "thread.run.requires_action" and isinstance(response.data, Run):
                     contents = self._parse_function_calls_from_assistants(response.data, response_id)
                     if contents:

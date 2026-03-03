@@ -159,6 +159,75 @@ actions:
         _text_outputs = [str(o) for o in outputs if isinstance(o, str) or hasattr(o, "data")]  # noqa: F841
         assert any("Condition was true" in str(o) for o in outputs)
 
+    @pytest.mark.asyncio
+    async def test_entry_join_executor_initializes_workflow_inputs(self):
+        """Regression test for #3948: Entry JoinExecutor must initialize Workflow.Inputs.
+
+        When workflow.run() is called with a dict input, the Entry node (JoinExecutor
+        with kind: 'Entry') must call _ensure_state_initialized so that Workflow.Inputs
+        is populated. Without this, expressions like =inputs.age resolve to blank and
+        conditions like =Local.age < 13 always evaluate as true (blank treated as 0).
+        """
+        factory = WorkflowFactory()
+        workflow = factory.create_workflow_from_yaml("""
+name: entry-inputs-test
+actions:
+  - kind: SetValue
+    id: get_age
+    path: Local.age
+    value: =inputs.age
+  - kind: If
+    id: check_age
+    condition: =Local.age < 13
+    then:
+      - kind: SendActivity
+        activity:
+          text: child
+    else:
+      - kind: SendActivity
+        activity:
+          text: adult
+""")
+
+        # age=8 -> child branch
+        result_child = await workflow.run({"age": 8})
+        outputs_child = result_child.get_outputs()
+        assert any("child" in str(o) for o in outputs_child), f"Expected 'child' for age=8 but got: {outputs_child}"
+        assert not any("adult" in str(o) for o in outputs_child), (
+            f"Did not expect 'adult' for age=8 but got: {outputs_child}"
+        )
+
+        # age=25 -> adult branch (bug: blank treated as 0 made this always go to child)
+        result_adult = await workflow.run({"age": 25})
+        outputs_adult = result_adult.get_outputs()
+        assert any("adult" in str(o) for o in outputs_adult), f"Expected 'adult' for age=25 but got: {outputs_adult}"
+        assert not any("child" in str(o) for o in outputs_adult), (
+            f"Did not expect 'child' for age=25 but got: {outputs_adult}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_entry_join_executor_initializes_workflow_inputs_string(self):
+        """Regression test for #3948: Entry JoinExecutor must initialize Workflow.Inputs for string input.
+
+        When workflow.run() is called with a string input, Workflow.Inputs.input and
+        System.LastMessage.Text should be set correctly.
+        """
+        factory = WorkflowFactory()
+        workflow = factory.create_workflow_from_yaml("""
+name: entry-string-inputs-test
+actions:
+  - kind: SetValue
+    path: Local.msg
+    value: =inputs.input
+  - kind: SendActivity
+    activity:
+      text: =Local.msg
+""")
+
+        result = await workflow.run("hello-world")
+        outputs = result.get_outputs()
+        assert any("hello-world" in str(o) for o in outputs), f"Expected 'hello-world' in outputs but got: {outputs}"
+
 
 class TestWorkflowFactoryAgentRegistration:
     """Tests for agent registration."""

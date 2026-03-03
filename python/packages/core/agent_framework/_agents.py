@@ -81,6 +81,16 @@ OptionsCoT = TypeVar(
 )
 
 
+def _get_tool_name(tool: Any) -> str | None:
+    """Extract a tool's name from either an object with a .name attribute or a dict tool definition."""
+    if isinstance(tool, dict):
+        func = tool.get("function")
+        if isinstance(func, dict):
+            return func.get("name")
+        return None
+    return getattr(tool, "name", None)
+
+
 def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Merge two options dicts, with override values taking precedence.
 
@@ -97,8 +107,8 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
             continue
         if key == "tools" and result.get("tools"):
             # Combine tool lists, avoiding duplicates by name
-            existing_names = {getattr(t, "name", None) for t in result["tools"]}
-            unique_new = [t for t in value if getattr(t, "name", None) not in existing_names]
+            existing_names = {_get_tool_name(t) for t in result["tools"]} - {None}
+            unique_new = [t for t in value if _get_tool_name(t) not in existing_names]
             result["tools"] = list(result["tools"]) + unique_new
         elif key == "logit_bias" and result.get("logit_bias"):
             # Merge logit_bias dicts

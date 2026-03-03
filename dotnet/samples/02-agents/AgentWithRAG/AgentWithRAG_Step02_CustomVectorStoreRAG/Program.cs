@@ -80,7 +80,7 @@ AIAgent agent = azureOpenAIClient
         // You may choose to persist the TextSearchProvider messages, if you want the search output to be provided to the model in future interactions as well.
         ChatHistoryProvider = new InMemoryChatHistoryProvider(new InMemoryChatHistoryProviderOptions()
         {
-            StorageInputMessageFilter = msgs => msgs.Where(m => m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory && m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.AIContextProvider)
+            StorageInputRequestMessageFilter = msgs => msgs.Where(m => m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory && m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.AIContextProvider)
         })
     });
 

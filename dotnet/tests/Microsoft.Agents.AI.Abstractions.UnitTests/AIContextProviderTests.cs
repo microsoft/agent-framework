@@ -543,7 +543,9 @@ public class AIContextProviderTests
         var storedRequest = provider.LastStoredContext!.RequestMessages.ToList();
         Assert.Single(storedRequest);
         Assert.Equal("External", storedRequest[0].Text);
-        Assert.Same(responseMessages, provider.LastStoredContext.ResponseMessages);
+        var storedResponse = provider.LastStoredContext.ResponseMessages!.ToList();
+        Assert.Single(storedResponse);
+        Assert.Equal("Response", storedResponse[0].Text);
     }
 
     [Fact]
@@ -565,13 +567,14 @@ public class AIContextProviderTests
     {
         // Arrange - filter that only keeps System messages
         var provider = new TestAIContextProvider(
-            storeInputMessageFilter: msgs => msgs.Where(m => m.Role == ChatRole.System));
+            storeInputRequestMessageFilter: msgs => msgs.Where(m => m.Role == ChatRole.System),
+            storeInputResponseMessageFilter: msgs => msgs.Where(m => m.Role == ChatRole.Assistant));
         var messages = new[]
         {
             new ChatMessage(ChatRole.User, "User msg"),
             new ChatMessage(ChatRole.System, "System msg")
         };
-        var context = new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, messages, [new ChatMessage(ChatRole.Assistant, "Response")]);
+        var context = new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, messages, [new ChatMessage(ChatRole.Assistant, "Response"), new ChatMessage(ChatRole.Tool, "Response")]);
 
         // Act
         await provider.InvokedAsync(context);
@@ -581,6 +584,9 @@ public class AIContextProviderTests
         var storedRequest = provider.LastStoredContext!.RequestMessages.ToList();
         Assert.Single(storedRequest);
         Assert.Equal("System msg", storedRequest[0].Text);
+        var storedResponse = provider.LastStoredContext.ResponseMessages!.ToList();
+        Assert.Single(storedResponse);
+        Assert.Equal("Response", storedResponse[0].Text);
     }
 
     [Fact]
@@ -605,6 +611,87 @@ public class AIContextProviderTests
         Assert.Equal("External", storedRequest[0].Text);
     }
 
+    [Fact]
+    public async Task InvokedCoreAsync_DefaultResponseFilterPassesAllResponseMessagesAsync()
+    {
+        // Arrange
+        var provider = new TestAIContextProvider();
+        var requestMessages = new[] { new ChatMessage(ChatRole.User, "Request") };
+        var externalResponse = new ChatMessage(ChatRole.Assistant, "ExternalResp");
+        var historyResponse = new ChatMessage(ChatRole.Assistant, "HistoryResp")
+            .WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, "src");
+        var contextResponse = new ChatMessage(ChatRole.Assistant, "ContextResp")
+            .WithAgentRequestMessageSource(AgentRequestMessageSourceType.AIContextProvider, "src");
+        var context = new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages, [externalResponse, historyResponse, contextResponse]);
+
+        // Act
+        await provider.InvokedAsync(context);
+
+        // Assert - default response filter is a noop, so all response messages are kept
+        Assert.NotNull(provider.LastStoredContext);
+        var storedResponse = provider.LastStoredContext!.ResponseMessages!.ToList();
+        Assert.Equal(3, storedResponse.Count);
+        Assert.Equal("ExternalResp", storedResponse[0].Text);
+        Assert.Equal("HistoryResp", storedResponse[1].Text);
+        Assert.Equal("ContextResp", storedResponse[2].Text);
+    }
+
+    [Fact]
+    public async Task InvokedCoreAsync_UsesCustomResponseFilterAsync()
+    {
+        // Arrange - response filter that only keeps Assistant messages with specific text
+        var provider = new TestAIContextProvider(
+            storeInputResponseMessageFilter: msgs => msgs.Where(m => m.Text == "Keep"));
+        var requestMessages = new[] { new ChatMessage(ChatRole.User, "Request") };
+        var responseMessages = new[]
+        {
+            new ChatMessage(ChatRole.Assistant, "Keep"),
+            new ChatMessage(ChatRole.Assistant, "Drop")
+        };
+        var context = new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages, responseMessages);
+
+        // Act
+        await provider.InvokedAsync(context);
+
+        // Assert
+        Assert.NotNull(provider.LastStoredContext);
+        var storedResponse = provider.LastStoredContext!.ResponseMessages!.ToList();
+        Assert.Single(storedResponse);
+        Assert.Equal("Keep", storedResponse[0].Text);
+    }
+
+    [Fact]
+    public async Task InvokedCoreAsync_RequestAndResponseFiltersOperateIndependentlyAsync()
+    {
+        // Arrange - different filters for request and response
+        var provider = new TestAIContextProvider(
+            storeInputRequestMessageFilter: msgs => msgs.Where(m => m.Role == ChatRole.System),
+            storeInputResponseMessageFilter: msgs => msgs.Where(m => m.Text == "Resp1"));
+        var requestMessages = new[]
+        {
+            new ChatMessage(ChatRole.User, "User"),
+            new ChatMessage(ChatRole.System, "System")
+        };
+        var responseMessages = new[]
+        {
+            new ChatMessage(ChatRole.Assistant, "Resp1"),
+            new ChatMessage(ChatRole.Assistant, "Resp2")
+        };
+        var context = new AIContextProvider.InvokedContext(s_mockAgent, s_mockSession, requestMessages, responseMessages);
+
+        // Act
+        await provider.InvokedAsync(context);
+
+        // Assert - request filter kept only System, response filter kept only Resp1
+        Assert.NotNull(provider.LastStoredContext);
+        var storedRequest = provider.LastStoredContext!.RequestMessages.ToList();
+        Assert.Single(storedRequest);
+        Assert.Equal("System", storedRequest[0].Text);
+        var storedResponse = provider.LastStoredContext!.ResponseMessages!.ToList();
+        Assert.Single(storedResponse);
+        Assert.Equal("Resp1", storedResponse[0].Text);
+    }
+
     #endregion
 
     private sealed class TestAIContextProvider : AIContextProvider
@@ -620,8 +707,9 @@ public class AIContextProviderTests
             AIContext? provideContext = null,
             bool captureFilteredContext = false,
             Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideInputMessageFilter = null,
-            Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputMessageFilter = null)
-            : base(provideInputMessageFilter, storeInputMessageFilter)
+            Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
+            Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
+            : base(provideInputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
         {
             this._provideContext = provideContext;
             this._captureFilteredContext = captureFilteredContext;
