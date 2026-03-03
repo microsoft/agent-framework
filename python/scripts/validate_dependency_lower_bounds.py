@@ -578,6 +578,7 @@ def _optimize_dependency(
     attempted_versions: list[str] = []
     attempts: list[DependencyAttempt] = []
 
+    # Establish a validated baseline before searching for lower acceptable bounds.
     baseline_version = dependency.lower_version
     attempted_versions.append(str(baseline_version))
     print(f"[cyan]{package_label} :: {dependency.name} :: baseline current_lower [{baseline_version}] [/cyan]")
@@ -637,6 +638,7 @@ def _optimize_dependency(
             skipped_reason="No lower candidate bounds found within allowed boundary.",
         )
 
+    # Probe older bounds with a binary-search-style loop: keep successful tighter lowers, revert failures.
     low = 0
     high = len(candidates) - 1
     while low <= high:
@@ -710,6 +712,7 @@ def _process_package(
             skipped=["No check/test task combination found."],
         )
 
+    # Build the per-package optimization target set from eligible bounded dependency specifications.
     targets, skipped = _collect_targets(pyproject_file, dependency_filters=dependency_filters)
     if not targets:
         return PackageOutcome(
@@ -758,6 +761,7 @@ def _process_package(
             if candidate.exists():
                 temp_internal_editables.append(candidate)
 
+        # Execute lower-bound trials per dependency and accumulate final replacement strings for persistence.
         dependency_results: list[DependencyOutcome] = []
         replacements: dict[str, str] = {}
         package_label = f"{plan.project_path} ({plan.package_name})"
@@ -893,6 +897,7 @@ def main() -> None:
     dependency_filters = {name.lower() for name in args.dependencies} if args.dependencies else None
     output_json_path = (workspace_root / args.output_json).resolve()
 
+    # Phase 1: prepare shared workspace metadata and collect package execution plans.
     package_map = _build_workspace_package_map(workspace_root)
     internal_graph = _build_internal_graph(workspace_root, package_map)
     lock_versions = _load_lock_versions(workspace_root)
@@ -927,6 +932,7 @@ def main() -> None:
         print("[yellow]No packages matched the selection.[/yellow]")
         return
 
+    # Phase 2: initialize incremental report state before running package validations in parallel.
     report: dict = {
         "started_at": _utc_now(),
         "workspace_root": str(workspace_root),
@@ -978,6 +984,7 @@ def main() -> None:
             if outcome.changed and not args.dry_run:
                 _apply_package_replacements(plan.pyproject_path, outcome.replacements)
 
+            # Phase 3: aggregate outcomes, persist incremental JSON snapshots, and emit per-package progress.
             report["packages"].append(_to_json(outcome))
             report["summary"]["packages_changed"] = sum(1 for value in package_outcomes if value.changed)
             report["summary"]["dependencies_changed"] = sum(

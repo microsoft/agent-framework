@@ -33,11 +33,13 @@ jobs:
 
       - name: Run dependency range validation
         id: validate_ranges
+        # Keep workflow running so we can still publish diagnostics from this run.
         continue-on-error: true
         run: uv run poe validate-dependency-ranges
         working-directory: ./python
 
       - name: Upload dependency range report
+        # Always publish the report so failures are inspectable even when validation fails.
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -46,6 +48,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Create issues for failed dependency candidates
+        # Always process the report so failed candidates create actionable tracking issues.
         if: always()
         uses: actions/github-script@v8
         with:
@@ -160,6 +163,7 @@ jobs:
             }
 
       - name: Refresh lockfile
+        # Only refresh lockfile after a clean validation to avoid committing known-bad ranges.
         if: steps.validate_ranges.outcome == 'success'
         run: uv lock --upgrade
         working-directory: ./python
@@ -186,6 +190,7 @@ jobs:
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
 
       - name: Create or update pull request with GitHub CLI
+        # Only open/update PRs for validated updates to keep automation branches trustworthy.
         if: steps.validate_ranges.outcome == 'success' && steps.commit_updates.outputs.has_changes == 'true'
         run: |
           BRANCH="automation/python-dependency-range-updates"

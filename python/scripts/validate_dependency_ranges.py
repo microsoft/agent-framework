@@ -576,6 +576,7 @@ def _optimize_dependency(
     include_dev_group: bool,
     include_dev_extra: bool,
 ) -> DependencyOutcome:
+    # Build descending candidate trial bounds from the current constraint window.
     candidates = _build_trial_bounds(
         available_versions,
         lower=dependency.lower_version,
@@ -674,6 +675,7 @@ def _optimize_dependency(
             skipped_reason="No higher candidate bounds found.",
         )
 
+    # Probe candidates from highest to lowest; keep the first passing upper-bound rewrite.
     for candidate in candidates:
         attempted_versions.append(str(candidate))
         trial_requirements = [entry.with_upper(candidate) for entry in dependency.entries]
@@ -793,6 +795,7 @@ def _process_package(
         replacements: dict[str, str] = {}
         package_label = f"{plan.project_path} ({plan.package_name})"
 
+        # Run per-dependency trial generation + validation in the isolated temp workspace.
         for target in targets:
             versions = catalog.get(target.name)
             outcome = _optimize_dependency(
@@ -918,6 +921,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Do not execute uv commands or update pyprojects.")
     args = parser.parse_args()
 
+    # Preparation/target collection: resolve workspace metadata and package execution plans.
     workspace_pyproject = Path(__file__).parent.parent / "pyproject.toml"
     workspace_root = workspace_pyproject.parent
     package_filters = set(args.packages) if args.packages else None
@@ -958,6 +962,7 @@ def main() -> None:
         print("[yellow]No packages matched the selection.[/yellow]")
         return
 
+    # Aggregation + persistence/reporting: initialize the incremental JSON report.
     report: dict = {
         "started_at": _utc_now(),
         "workspace_root": str(workspace_root),
@@ -1009,6 +1014,7 @@ def main() -> None:
             if outcome.changed and not args.dry_run:
                 _apply_package_replacements(plan.pyproject_path, outcome.replacements)
 
+            # Persist each completed package outcome so long runs keep a live report.
             report["packages"].append(_to_json(outcome))
             report["summary"]["packages_changed"] = sum(1 for value in package_outcomes if value.changed)
             report["summary"]["dependencies_changed"] = sum(
