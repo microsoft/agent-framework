@@ -120,8 +120,8 @@
     <!-- Durable Task -->
     <PackageVersion Include="Microsoft.DurableTask.Client" Version="1.19.1" />
     <PackageVersion Include="Microsoft.DurableTask.Client.AzureManaged" Version="1.19.0" />
-    <PackageVersion Include="Microsoft.DurableTask.Worker" Version="1.19.0" />
-    <PackageVersion Include="Microsoft.DurableTask.Worker.AzureManaged" Version="1.19.0" />
+    <PackageVersion Include="Microsoft.DurableTask.Worker" Version="1.19.1" />
+    <PackageVersion Include="Microsoft.DurableTask.Worker.AzureManaged" Version="1.19.1" />
     <!-- Azure Functions -->
     <PackageVersion Include="Microsoft.Azure.Functions.Worker" Version="2.50.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.50.0" />
