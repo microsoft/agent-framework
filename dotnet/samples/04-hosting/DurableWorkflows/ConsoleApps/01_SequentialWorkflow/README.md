@@ -52,7 +52,7 @@ See the [README.md](../../README.md) file in the parent directory for informatio
 ## Running the Sample
 
 ```bash
-cd dotnet/samples/Durable/Workflow/ConsoleApps/01_SequentialWorkflow
+cd dotnet/samples/04-hosting/DurableWorkflows/ConsoleApps/01_SequentialWorkflow
 dotnet run --framework net10.0
 ```
 

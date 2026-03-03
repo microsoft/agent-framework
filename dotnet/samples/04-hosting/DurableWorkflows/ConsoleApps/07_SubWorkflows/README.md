@@ -45,7 +45,7 @@ OrderProcessing (main workflow)
 
 ## How Sub-Workflows Work
 
-For an introduction to sub-workflows and the `BindAsExecutor()` API, see the [Sub-Workflows foundational sample](../../../../GettingStarted/Workflows/_Foundational/06_SubWorkflows).
+For an introduction to sub-workflows and the `BindAsExecutor()` API, see the [Sub-Workflows foundational sample](../../../../03-workflows/_StartHere/05_SubWorkflows).
 
 This durable sample extends the same pattern — the key difference is that each sub-workflow runs as a **separate orchestration instance** on the Durable Task Scheduler, providing independent checkpointing, fault tolerance, and hierarchical visualization in the DTS dashboard.
 
@@ -56,7 +56,7 @@ See the [README.md](../../README.md) file in the parent directory for informatio
 ## Running the Sample
 
 ```bash
-cd dotnet/samples/Durable/Workflow/ConsoleApps/07_SubWorkflows
+cd dotnet/samples/04-hosting/DurableWorkflows/ConsoleApps/07_SubWorkflows
 dotnet run --framework net10.0
 ```
 

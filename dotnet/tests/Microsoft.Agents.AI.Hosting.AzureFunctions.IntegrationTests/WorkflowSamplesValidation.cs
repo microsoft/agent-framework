@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests;
 
 /// <summary>
 /// Integration tests for validating the durable workflow Azure Functions samples
-/// located in samples/Durable/Workflow/AzureFunctions.
+/// located in samples/04-hosting/DurableWorkflows/AzureFunctions.
 /// </summary>
 [Collection("Samples")]
 [Trait("Category", "SampleValidation")]
@@ -32,7 +32,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
     private static bool s_infrastructureStarted;
     private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(1);
     private static readonly string s_samplesPath = Path.GetFullPath(
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "Durable", "Workflow", "AzureFunctions"));
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "04-hosting", "DurableWorkflows", "AzureFunctions"));
 
     private readonly ITestOutputHelper _outputHelper = outputHelper;
 

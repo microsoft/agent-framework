@@ -6,14 +6,14 @@ namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 
 /// <summary>
 /// Integration tests for validating the durable workflow console app samples
-/// located in samples/Durable/Workflow/ConsoleApps.
+/// located in samples/04-hosting/DurableWorkflows/ConsoleApps.
 /// </summary>
 [Collection("Samples")]
 [Trait("Category", "SampleValidation")]
 public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper outputHelper) : SamplesValidationBase(outputHelper)
 {
     private static readonly string s_samplesPath = Path.GetFullPath(
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "Durable", "Workflow", "ConsoleApps"));
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "04-hosting", "DurableWorkflows", "ConsoleApps"));
 
     /// <inheritdoc />
     protected override string SamplesPath => s_samplesPath;

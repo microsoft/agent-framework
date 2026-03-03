@@ -66,7 +66,7 @@ AZURE_OPENAI_KEY="your-key"  # Optional if using Azure CLI credentials
 ## Running the Sample
 
 ```bash
-cd dotnet/samples/Durable/Workflow/ConsoleApps/02_ConcurrentWorkflow
+cd dotnet/samples/04-hosting/DurableWorkflows/ConsoleApps/02_ConcurrentWorkflow
 dotnet run --framework net10.0
 ```
 
