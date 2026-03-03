@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from chatkit.store import AttachmentStore
-from chatkit.types import Attachment, AttachmentCreateParams, FileAttachment, ImageAttachment
+from chatkit.types import Attachment, AttachmentCreateParams, AttachmentUploadDescriptor, FileAttachment, ImageAttachment
 from pydantic import AnyUrl
 
 if TYPE_CHECKING:
@@ -87,7 +87,10 @@ class FileBasedAttachmentStore(AttachmentStore[dict[str, Any]]):
                 type="image",
                 mime_type=input.mime_type,
                 name=input.name,
-                upload_url=AnyUrl(upload_url),
+                upload_descriptor=AttachmentUploadDescriptor(
+                    url=AnyUrl(upload_url),
+                    method="POST",
+                ),
                 preview_url=AnyUrl(preview_url),
             )
         else:
@@ -97,7 +100,10 @@ class FileBasedAttachmentStore(AttachmentStore[dict[str, Any]]):
                 type="file",
                 mime_type=input.mime_type,
                 name=input.name,
-                upload_url=AnyUrl(upload_url),
+                upload_descriptor=AttachmentUploadDescriptor(
+                    url=AnyUrl(upload_url),
+                    method="POST",
+                ),
             )
 
         # Save attachment metadata to data store so it's available during upload
