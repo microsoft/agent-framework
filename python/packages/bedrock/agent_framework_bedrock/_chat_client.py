@@ -8,7 +8,7 @@ import logging
 import sys
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, Literal, Protocol, TypeGuard, TypedDict, cast
+from typing import Any, ClassVar, Generic, Literal, Protocol, TypedDict, TypeGuard, cast
 from uuid import uuid4
 
 from agent_framework import (

@@ -183,9 +183,7 @@ class ScopedContentProcessor:
                 version=self._settings.get("app_version", "Unknown"),
                 application_location=policy_location,
             )
-            integrated_app = IntegratedAppMetadata(
-                name=app_name, version=self._settings.get("app_version", "Unknown")
-            )
+            integrated_app = IntegratedAppMetadata(name=app_name, version=self._settings.get("app_version", "Unknown"))
             device_meta = DeviceMetadata(
                 operating_system_specifications=OperatingSystemSpecifications(
                     operating_system_platform="Unknown", operating_system_version="Unknown"

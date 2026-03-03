@@ -26,8 +26,8 @@ from typing import (
     Generic,
     Literal,
     TypeAlias,
-    TypeGuard,
     TypedDict,
+    TypeGuard,
     Union,
     cast,
     get_args,
@@ -895,9 +895,11 @@ def _build_pydantic_model_from_json_schema(
     properties = properties_raw if _is_str_key_mapping(properties_raw) else None
     required_raw = schema.get("required", [])
     required_obj: object = required_raw
-    required: list[str] = [
-        item for item in cast(list[object], required_obj) if isinstance(item, str)
-    ] if isinstance(required_obj, list) else []
+    required: list[str] = (
+        [item for item in cast(list[object], required_obj) if isinstance(item, str)]
+        if isinstance(required_obj, list)
+        else []
+    )
     defs_raw = schema.get("$defs", {})
     definitions: Mapping[str, Any] = defs_raw if _is_str_key_mapping(defs_raw) else {}
 
@@ -1010,9 +1012,11 @@ def _build_pydantic_model_from_json_schema(
                 nested_properties = nested_properties_raw if _is_str_key_mapping(nested_properties_raw) else None
                 nested_required_raw = prop_details.get("required", [])
                 nested_required_obj: object = nested_required_raw
-                nested_required: set[str] = {
-                    item for item in cast(list[object], nested_required_obj) if isinstance(item, str)
-                } if isinstance(nested_required_obj, list) else set()
+                nested_required: set[str] = (
+                    {item for item in cast(list[object], nested_required_obj) if isinstance(item, str)}
+                    if isinstance(nested_required_obj, list)
+                    else set()
+                )
 
                 if nested_properties:
                     # Create the name for the nested model
@@ -1637,9 +1641,7 @@ async def _try_execute_function_calls(
             declaration_only_flag = True
             break
         if (
-            config.get("terminate_on_unknown_calls", False)
-            and fcc.type == "function_call"
-            and fcc.name not in tool_map  # type: ignore[attr-defined]
+            config.get("terminate_on_unknown_calls", False) and fcc.type == "function_call" and fcc.name not in tool_map  # type: ignore[attr-defined]
         ):
             raise KeyError(f'Error: Requested function "{fcc.name}" not found.')  # type: ignore[attr-defined]
     if approval_needed:

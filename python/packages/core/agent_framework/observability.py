@@ -1253,9 +1253,9 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
 
             # Register a weak reference callback to close the span if stream is garbage collected
             # without being consumed. This ensures spans don't leak if users don't consume streams.
-            wrapped_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = (
-                result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
-            )
+            wrapped_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = result_stream.with_cleanup_hook(
+                _record_duration
+            ).with_cleanup_hook(_finalize_stream)
             weakref.finalize(wrapped_stream, _close_span)
             return wrapped_stream
 
@@ -1531,9 +1531,9 @@ class AgentTelemetryLayer:
 
             # Register a weak reference callback to close the span if stream is garbage collected
             # without being consumed. This ensures spans don't leak if users don't consume streams.
-            wrapped_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = (
-                result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
-            )
+            wrapped_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = result_stream.with_cleanup_hook(
+                _record_duration
+            ).with_cleanup_hook(_finalize_stream)
             weakref.finalize(wrapped_stream, _close_span)
             return wrapped_stream
 
@@ -1647,9 +1647,8 @@ def _get_instructions_from_options(options: Any) -> str | list[str] | None:
         instructions = cast(Mapping[str, Any], options).get("instructions")
         if isinstance(instructions, str):
             return instructions
-        if isinstance(instructions, list):
-            if all(isinstance(item, str) for item in instructions):  # pyright: ignore[reportUnknownVariableType]
-                return cast("list[str]", instructions)
+        if isinstance(instructions, list) and all(isinstance(item, str) for item in cast(list[object], instructions)):
+            return cast("list[str]", instructions)
         return None
     return None
 
@@ -1709,11 +1708,7 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     """Get the span attributes from a kwargs dictionary."""
     attributes: dict[str, Any] = {}
     options = kwargs.get("all_options", kwargs.get("options"))
-    options_mapping: Mapping[str, Any] | None
-    if isinstance(options, Mapping):
-        options_mapping = cast(Mapping[str, Any], options)
-    else:
-        options_mapping = None
+    options_mapping = cast(Mapping[str, Any], options) if isinstance(options, Mapping) else None
 
     for source_keys, (otel_key, transform_func, check_options, default_value) in OTEL_ATTR_MAP.items():
         # Normalize to tuple of keys

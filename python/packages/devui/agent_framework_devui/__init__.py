@@ -265,8 +265,8 @@ __all__ = [
     "OpenAIError",
     "OpenAIResponse",
     "ResponseStreamEvent",
+    "get_registered_cleanup_hooks",
     "main",
     "register_cleanup",
-    "get_registered_cleanup_hooks",
     "serve",
 ]

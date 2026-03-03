@@ -47,6 +47,7 @@ def _get_openai_schema(tool: Any) -> dict[str, Any]:
             return cast(dict[str, Any], schema_dict)
     raise TypeError(f"Tool {tool} does not expose a dict openai_schema")
 
+
 # Agent instructions matching tau2's LLMAgent
 ASSISTANT_AGENT_INSTRUCTION = """
 You are a customer service agent that helps the user according to the <policy> provided below.

@@ -677,7 +677,9 @@ class AgentFrameworkExecutor:
 
                                     # Use file_data or file_url
                                     # Include filename in additional_properties for OpenAI/Azure file handling
-                                    additional_props: dict[str, Any] | None = {"filename": filename} if filename else None
+                                    additional_props: dict[str, Any] | None = (
+                                        {"filename": filename} if filename else None
+                                    )
                                     if isinstance(file_data, str) and file_data:
                                         # Assume file_data is base64, create data URI
                                         data_uri = f"data:{media_type};base64,{file_data}"

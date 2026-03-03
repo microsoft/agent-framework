@@ -283,11 +283,7 @@ class AgentFunctionApp(DFAppBase):
             shared_state_raw = data.get("shared_state_snapshot", {})
             source_executor_ids_raw = data.get("source_executor_ids", [SOURCE_ORCHESTRATOR])
 
-            shared_state_snapshot: dict[str, Any]
-            if isinstance(shared_state_raw, dict):
-                shared_state_snapshot = cast(dict[str, Any], shared_state_raw)
-            else:
-                shared_state_snapshot = {}
+            shared_state_snapshot = cast(dict[str, Any], shared_state_raw) if isinstance(shared_state_raw, dict) else {}
 
             source_executor_ids: list[str]
             if isinstance(source_executor_ids_raw, list):

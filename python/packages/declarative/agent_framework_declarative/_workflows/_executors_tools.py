@@ -15,9 +15,9 @@ import json
 import logging
 import uuid
 from abc import abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from inspect import isawaitable
-from collections.abc import Mapping
 from typing import Any, cast
 
 from agent_framework import (
@@ -110,8 +110,6 @@ class ToolApprovalState:
 # ============================================================================
 # Result Types
 # ============================================================================
-
-
 
 
 def _empty_messages() -> list[Message]:

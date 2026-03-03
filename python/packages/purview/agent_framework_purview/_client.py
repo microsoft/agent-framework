@@ -142,7 +142,6 @@ class PurviewClient:
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/activities/contentActivities"
             return await self._post(url, request, ContentActivitiesResponse, token)
 
-
     @overload
     async def _post(
         self,
@@ -215,15 +214,12 @@ class PurviewClient:
         try:
             # Prefer pydantic-style model_validate if present, else fall back to constructor.
             model_validate = getattr(response_type, "model_validate", None)
-            if callable(model_validate):
-                response_obj = model_validate(data)
-            else:
-                response_obj = response_type(**data)  # type: ignore[call-arg]
+            response_obj = model_validate(data) if callable(model_validate) else response_type(**data)  # type: ignore[call-arg]
 
             # Extract correlation_id from response headers if response object supports it
             if "client-request-id" in resp.headers and hasattr(response_obj, "correlation_id"):
                 response_correlation_id = resp.headers["client-request-id"]
-                setattr(response_obj, "correlation_id", response_correlation_id)
+                response_obj.correlation_id = response_correlation_id  # pyright: ignore[reportAttributeAccessIssue]
                 logger.info(f"Purview response from {url} with correlation_id: {response_correlation_id}")
 
             typed_response_obj = response_obj if isinstance(response_obj, response_type) else response_type(**data)

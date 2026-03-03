@@ -287,7 +287,9 @@ def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max
                 if wanted_levels and (lvl not in wanted_levels):
                     continue
 
-                tasks.append(Task(task_id=qid, question=q, answer=str(ans), level=lvl, file_name=fname, metadata=record))
+                tasks.append(
+                    Task(task_id=qid, question=q, answer=str(ans), level=lvl, file_name=fname, metadata=record)
+                )
         except ImportError:
             print("Warning: pyarrow not installed. Install with: pip install pyarrow")
             continue

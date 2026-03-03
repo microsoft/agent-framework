@@ -182,18 +182,16 @@ class SessionManager:
 
         for session_id, session in self.sessions.items():
             if session["active"]:
-                active_sessions.append(
-                    {
-                        "session_id": session_id,
-                        "created_at": session["created_at"].isoformat(),
-                        "request_count": len(session["requests"]),
-                        "last_activity": (
-                            session["requests"][-1]["timestamp"].isoformat()
-                            if session["requests"]
-                            else session["created_at"].isoformat()
-                        ),
-                    }
-                )
+                active_sessions.append({
+                    "session_id": session_id,
+                    "created_at": session["created_at"].isoformat(),
+                    "request_count": len(session["requests"]),
+                    "last_activity": (
+                        session["requests"][-1]["timestamp"].isoformat()
+                        if session["requests"]
+                        else session["created_at"].isoformat()
+                    ),
+                })
 
         return active_sessions
 

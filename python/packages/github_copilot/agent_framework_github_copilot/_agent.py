@@ -30,9 +30,9 @@ from copilot.generated.session_events import SessionEvent, SessionEventType
 from copilot.types import (
     CopilotClientOptions,
     MCPServerConfig,
+    MessageOptions,
     PermissionRequest,
     PermissionRequestResult,
-    MessageOptions,
     ResumeSessionConfig,
     SessionConfig,
     SystemMessageConfig,

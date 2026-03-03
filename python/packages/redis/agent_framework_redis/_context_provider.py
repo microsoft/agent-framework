@@ -384,8 +384,7 @@ class RedisContextProvider(BaseContextProvider):
                     return_fields=return_fields,
                     stopwords=None,
                 )
-                hybrid_results = await self.redis_index.query(query)
-                return hybrid_results  # type: ignore[no-any-return]
+                return await self.redis_index.query(query)  # type: ignore[no-any-return]
             query = TextQuery(
                 text=q,
                 text_field_name="content",
@@ -395,8 +394,7 @@ class RedisContextProvider(BaseContextProvider):
                 return_fields=return_fields,
                 stopwords=None,
             )
-            text_results = await self.redis_index.query(query)
-            return text_results  # type: ignore[no-any-return]
+            return await self.redis_index.query(query)  # type: ignore[no-any-return]
         except Exception as exc:  # pragma: no cover
             raise IntegrationInvalidRequestException(f"Redis text search failed: {exc}") from exc
 

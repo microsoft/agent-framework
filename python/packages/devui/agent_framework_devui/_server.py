@@ -53,6 +53,7 @@ def _extract_error_details(body: object) -> tuple[str | None, str | None, str | 
         code if isinstance(code, str) else None,
     )
 
+
 # Get package version
 try:
     __version__ = importlib.metadata.version("agent-framework-devui")
@@ -1120,7 +1121,7 @@ class DevServer:
         # Checkpoints are exposed as conversation items with type="checkpoint"
         # ============================================================================
 
-        _registered_route_handlers = (
+        registered_route_handlers = (
             health_check,
             get_meta,
             discover_entities,
@@ -1143,7 +1144,7 @@ class DevServer:
             retrieve_conversation_item,
             delete_conversation_item,
         )
-        _ = _registered_route_handlers
+        _ = registered_route_handlers
 
     async def _stream_execution(
         self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest
@@ -1165,9 +1166,8 @@ class DevServer:
                 if conversation_id and hasattr(event, "type") and event.type == "response.trace.completed":
                     try:
                         trace_data = event.data if hasattr(event, "data") else None
-                        if trace_data:
-                            if isinstance(conversation_id, str):
-                                executor.conversation_store.add_trace(conversation_id, trace_data)
+                        if trace_data and isinstance(conversation_id, str):
+                            executor.conversation_store.add_trace(conversation_id, trace_data)
                     except Exception as e:
                         logger.debug(f"Failed to store trace event: {e}")
 

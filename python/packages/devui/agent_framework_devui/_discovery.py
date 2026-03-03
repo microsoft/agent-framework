@@ -885,7 +885,11 @@ class EntityDiscovery:
                     chat_options_tools = chat_options_dict.get("tools")
 
                 if chat_options_tools is not None:
-                    tool_iterable: list[object] = cast(list[object], chat_options_tools) if isinstance(chat_options_tools, list) else [chat_options_tools]
+                    tool_iterable: list[object] = (
+                        cast(list[object], chat_options_tools)
+                        if isinstance(chat_options_tools, list)
+                        else [chat_options_tools]
+                    )
                     for tool_obj in tool_iterable:
                         tool_name = getattr(tool_obj, "__name__", None)
                         if isinstance(tool_name, str):
@@ -925,7 +929,7 @@ class EntityDiscovery:
                             tools.append(str(getattr(executor_obj, "id", executor_obj)))
                     elif isinstance(executors, dict):
                         executors_dict = cast(dict[str, Any], executors)
-                        for key_obj in executors_dict.keys():
+                        for key_obj in executors_dict:
                             tools.append(str(key_obj))
 
         except Exception as e:

@@ -230,7 +230,7 @@ class SessionContext:
         """
         for tool in tools:
             if hasattr(tool, "additional_properties"):
-                additional_properties_obj = getattr(tool, "additional_properties")
+                additional_properties_obj = tool.additional_properties
                 if isinstance(additional_properties_obj, dict):
                     additional_properties = cast(dict[str, Any], additional_properties_obj)
                     additional_properties["context_source"] = source_id

@@ -1013,7 +1013,10 @@ class AzureAIAgentClient(
                                             logger.debug(f"Code Interpreter Input: {code_interpreter.input}")
                                         if code_interpreter.outputs is not None:
                                             for output in code_interpreter.outputs:
-                                                if isinstance(output, RunStepDeltaCodeInterpreterLogOutput) and output.logs:
+                                                if (
+                                                    isinstance(output, RunStepDeltaCodeInterpreterLogOutput)
+                                                    and output.logs
+                                                ):
                                                     code_contents.append(Content.from_text(text=output.logs))
                                                 if (
                                                     isinstance(output, RunStepDeltaCodeInterpreterImageOutput)

@@ -260,8 +260,7 @@ class FoundryLocalClient(
                 f"Model with ID or alias '{model_id_setting}:{device.value}' not found in Foundry Local."
                 if device
                 else (
-                    f"Model with ID or alias '{model_id_setting}' for your current device "
-                    "not found in Foundry Local."
+                    f"Model with ID or alias '{model_id_setting}' for your current device not found in Foundry Local."
                 )
             )
             raise ValueError(message)

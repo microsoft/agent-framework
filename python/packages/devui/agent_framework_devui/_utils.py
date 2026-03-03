@@ -21,6 +21,7 @@ def _string_key_dict(value: object) -> dict[str, Any] | None:
     source: dict[str, Any] = cast(dict[str, Any], value)
     return {str(k): v for k, v in source.items()}
 
+
 # ============================================================================
 # Agent Metadata Extraction
 # ============================================================================

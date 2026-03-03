@@ -223,7 +223,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             for tool in normalized_tools:
                 if isinstance(tool, MCPTool):
                     mcp_tools.append(tool)
-                elif isinstance(tool, FunctionTool) or isinstance(tool, MutableMapping):
+                elif isinstance(tool, (FunctionTool, MutableMapping)):
                     non_mcp_tools.append(tool)  # type: ignore[reportUnknownArgumentType]
 
         # Connect MCP tools and discover their functions BEFORE creating the agent

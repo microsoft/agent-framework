@@ -1045,11 +1045,10 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
                 # If result is ChatResponse (shouldn't happen for streaming), raise error
                 raise ValueError("Expected ResponseStream for streaming, got ChatResponse")
 
-            stream_result = cast(
+            return cast(
                 ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
                 cast(Any, ResponseStream).from_awaitable(_execute_stream()),
             )
-            return stream_result
 
         # For non-streaming, return the coroutine directly
         return _execute()  # type: ignore[return-value]
@@ -1133,9 +1132,7 @@ class AgentMiddlewareLayer:
         # Re-categorize self.middleware at runtime to support dynamic changes
         base_middleware_attr = getattr(self, "middleware", None)
         base_middleware: Sequence[MiddlewareTypes] = (
-            cast(Sequence[MiddlewareTypes], base_middleware_attr)
-            if isinstance(base_middleware_attr, Sequence)
-            else []
+            cast(Sequence[MiddlewareTypes], base_middleware_attr) if isinstance(base_middleware_attr, Sequence) else []
         )
         base_middleware_list = categorize_middleware(base_middleware)
         run_middleware_list = categorize_middleware(middleware)
@@ -1182,11 +1179,10 @@ class AgentMiddlewareLayer:
                 # If result is AgentResponse (shouldn't happen for streaming), convert to stream
                 raise ValueError("Expected ResponseStream for streaming, got AgentResponse")
 
-            stream_result = cast(
+            return cast(
                 ResponseStream[AgentResponseUpdate, AgentResponse[Any]],
                 cast(Any, ResponseStream).from_awaitable(_execute_stream()),
             )
-            return stream_result
 
         # For non-streaming, return the coroutine directly
         return _execute()  # type: ignore[return-value]

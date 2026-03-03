@@ -51,6 +51,7 @@ from agent_framework._workflows._typing_utils import is_chat_agent
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
+
 from ._base_group_chat_orchestrator import TerminationCondition
 from ._orchestrator_helpers import clean_conversation_for_handoff
 
@@ -251,7 +252,6 @@ class HandoffAgentExecutor(AgentExecutor):
         Returns:
             A cloned ``Agent`` instance with handoff tools added
         """
-
         # Clone the agent to avoid mutating the original
         cloned_agent = self._clone_chat_agent(agent)
         # Add handoff tools to the cloned agent
@@ -444,9 +444,7 @@ class HandoffAgentExecutor(AgentExecutor):
         return _handoff_tool
 
     @override
-    async def _run_agent_and_emit(
-        self, ctx: WorkflowContext[Any, Any]
-    ) -> None:
+    async def _run_agent_and_emit(self, ctx: WorkflowContext[Any, Any]) -> None:
         """Override to support handoff."""
         incoming_messages = list(self._cache)
         cleaned_incoming_messages = clean_conversation_for_handoff(incoming_messages)
@@ -481,7 +479,11 @@ class HandoffAgentExecutor(AgentExecutor):
         # Handoff workflows are orchestrator-stateful and provider-stateless by design.
         # If an existing session still has a service conversation id, clear it to avoid
         # replaying stale unresolved tool calls across resumed turns.
-        if is_chat_agent(self._agent) and self._agent.default_options.get("store") is False and self._session.service_session_id is not None:
+        if (
+            is_chat_agent(self._agent)
+            and self._agent.default_options.get("store") is False
+            and self._session.service_session_id is not None
+        ):
             self._session.service_session_id = None
 
         # Check termination condition before running the agent

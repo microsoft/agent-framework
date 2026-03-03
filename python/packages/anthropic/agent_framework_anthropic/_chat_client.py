@@ -803,9 +803,9 @@ class AnthropicClient(
                                 "allowed_tools": [str(item) for item in allowed_tools]  # pyright: ignore[reportUnknownArgumentType,reportUnknownVariableType]
                             }
                         headers = tool_data.get("headers")
-                        if isinstance(headers, Mapping):
-                            if isinstance(auth := headers.get("authorization"), str):  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-                                server_def["authorization_token"] = auth
+                        authorization = headers.get("authorization") if isinstance(headers, Mapping) else None  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+                        if isinstance(authorization, str):
+                            server_def["authorization_token"] = authorization
                         mcp_server_list.append(server_def)
                     else:
                         # Pass through all other tools (dicts, SDK types) unchanged

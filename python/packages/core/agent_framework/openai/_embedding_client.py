@@ -123,7 +123,9 @@ class RawOpenAIEmbeddingClient(
                 "total_token_count": response.usage.total_tokens,
             }
 
-        return cast(GeneratedEmbeddings[list[float]], GeneratedEmbeddings(embeddings, options=options, usage=usage_dict))
+        return cast(
+            GeneratedEmbeddings[list[float]], GeneratedEmbeddings(embeddings, options=options, usage=usage_dict)
+        )
 
 
 class OpenAIEmbeddingClient(

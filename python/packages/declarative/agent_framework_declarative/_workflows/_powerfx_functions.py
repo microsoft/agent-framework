@@ -44,8 +44,9 @@ def message_text(messages: Any) -> str:
         content: Any = messages_dict.get("content", "")
         if isinstance(content, str):
             return content
-        if hasattr(content, "text"):
-            return str(content.text)
+        text_attr = getattr(content, "text", None)
+        if text_attr is not None:
+            return str(text_attr)
         return str(content) if content else ""
 
     if isinstance(messages, list):
@@ -65,11 +66,11 @@ def message_text(messages: Any) -> str:
             else:
                 msg_obj: object = msg
                 if hasattr(msg_obj, "content"):
-                    msg_obj_content: Any = getattr(msg_obj, "content")
+                    msg_obj_content: Any = getattr(msg_obj, "content", None)
                     if isinstance(msg_obj_content, str):
                         texts.append(msg_obj_content)
-                    elif hasattr(msg_obj_content, "text"):
-                        texts.append(str(getattr(msg_obj_content, "text")))
+                    elif (msg_obj_text := getattr(msg_obj_content, "text", None)) is not None:
+                        texts.append(str(msg_obj_text))
                     elif msg_obj_content:
                         texts.append(str(msg_obj_content))
         return " ".join(texts)

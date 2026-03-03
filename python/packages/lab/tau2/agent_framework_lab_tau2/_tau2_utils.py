@@ -35,8 +35,6 @@ def _to_str(value: object, default: str = "") -> str:
     return str(value)
 
 
-
-
 def _is_any_list(value: Any) -> TypeGuard[list[Any]]:
     return isinstance(value, list)
 
@@ -47,6 +45,7 @@ def _is_any_mapping(value: Any) -> TypeGuard[Mapping[Any, Any]]:
 
 def _is_any_sequence(value: Any) -> TypeGuard[list[Any] | tuple[Any, ...] | set[Any]]:
     return isinstance(value, (list, tuple, set))
+
 
 def convert_tau2_tool_to_function_tool(tau2_tool: Tool) -> FunctionTool:
     """Convert a tau2 Tool to a FunctionTool for agent framework compatibility.

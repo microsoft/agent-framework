@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import base64
-import json
 import inspect
+import json
 import logging
 import re
 import sys
@@ -232,7 +232,7 @@ def _is_str_key_mapping(value: object) -> TypeGuard[Mapping[str, Any]]:
     if not isinstance(value, Mapping):
         return False
     mapping = cast(Mapping[object, object], value)
-    return all(isinstance(key, str) for key in mapping.keys())
+    return all(isinstance(key, str) for key in mapping)
 
 
 def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
@@ -1297,16 +1297,12 @@ class Content:
         input_items_obj: object = remaining.get("inputs")
         if isinstance(input_items_obj, list):
             input_items: list[Any] = list(cast(Iterable[Any], input_items_obj))
-            remaining["inputs"] = [
-                cls.from_dict(item) if _is_str_key_mapping(item) else item for item in input_items
-            ]
+            remaining["inputs"] = [cls.from_dict(item) if _is_str_key_mapping(item) else item for item in input_items]
 
         output_items_obj: object = remaining.get("outputs")
         if isinstance(output_items_obj, list):
             output_items: list[Any] = list(cast(Iterable[Any], output_items_obj))
-            remaining["outputs"] = [
-                cls.from_dict(item) if _is_str_key_mapping(item) else item for item in output_items
-            ]
+            remaining["outputs"] = [cls.from_dict(item) if _is_str_key_mapping(item) else item for item in output_items]
 
         return cls(
             type=content_type,
@@ -1345,8 +1341,12 @@ class Content:
         else:
             self_raw_repr: object = self.raw_representation
             other_raw_repr: object = other.raw_representation
-            self_raw: list[object] = cast(list[object], self_raw_repr) if isinstance(self_raw_repr, list) else [self_raw_repr]
-            other_raw: list[object] = cast(list[object], other_raw_repr) if isinstance(other_raw_repr, list) else [other_raw_repr]
+            self_raw: list[object] = (
+                cast(list[object], self_raw_repr) if isinstance(self_raw_repr, list) else [self_raw_repr]
+            )
+            other_raw: list[object] = (
+                cast(list[object], other_raw_repr) if isinstance(other_raw_repr, list) else [other_raw_repr]
+            )
             raw_representation = self_raw + other_raw
 
         # Merge annotations
@@ -1379,8 +1379,12 @@ class Content:
         else:
             self_raw_repr: object = self.raw_representation
             other_raw_repr: object = other.raw_representation
-            self_raw: list[object] = cast(list[object], self_raw_repr) if isinstance(self_raw_repr, list) else [self_raw_repr]
-            other_raw: list[object] = cast(list[object], other_raw_repr) if isinstance(other_raw_repr, list) else [other_raw_repr]
+            self_raw: list[object] = (
+                cast(list[object], self_raw_repr) if isinstance(self_raw_repr, list) else [self_raw_repr]
+            )
+            other_raw: list[object] = (
+                cast(list[object], other_raw_repr) if isinstance(other_raw_repr, list) else [other_raw_repr]
+            )
             raw_representation = self_raw + other_raw
 
         # Merge annotations
@@ -1441,8 +1445,12 @@ class Content:
         else:
             self_raw_repr: object = self.raw_representation
             other_raw_repr: object = other.raw_representation
-            self_raw: list[object] = cast(list[object], self_raw_repr) if isinstance(self_raw_repr, list) else [self_raw_repr]
-            other_raw: list[object] = cast(list[object], other_raw_repr) if isinstance(other_raw_repr, list) else [other_raw_repr]
+            self_raw: list[object] = (
+                cast(list[object], self_raw_repr) if isinstance(self_raw_repr, list) else [self_raw_repr]
+            )
+            other_raw: list[object] = (
+                cast(list[object], other_raw_repr) if isinstance(other_raw_repr, list) else [other_raw_repr]
+            )
             raw_representation = self_raw + other_raw
 
         return Content(
@@ -1484,8 +1492,12 @@ class Content:
         else:
             self_raw_repr: object = self.raw_representation
             other_raw_repr: object = other.raw_representation
-            self_raw: list[object] = cast(list[object], self_raw_repr) if isinstance(self_raw_repr, list) else [self_raw_repr]
-            other_raw: list[object] = cast(list[object], other_raw_repr) if isinstance(other_raw_repr, list) else [other_raw_repr]
+            self_raw: list[object] = (
+                cast(list[object], self_raw_repr) if isinstance(self_raw_repr, list) else [self_raw_repr]
+            )
+            other_raw: list[object] = (
+                cast(list[object], other_raw_repr) if isinstance(other_raw_repr, list) else [other_raw_repr]
+            )
             raw_representation = self_raw + other_raw
 
         return Content(
@@ -3382,7 +3394,9 @@ def merge_chat_options(
             base_tools = result.get("tools")
             if base_tools and value:
                 # Add tools that aren't already present
-                base_tool_values: list[Any] = list(cast(Iterable[Any], base_tools)) if isinstance(base_tools, list) else [base_tools]
+                base_tool_values: list[Any] = (
+                    list(cast(Iterable[Any], base_tools)) if isinstance(base_tools, list) else [base_tools]
+                )
                 merged_tools = list(base_tool_values)
                 tool_values: list[Any] = list(cast(Iterable[Any], value)) if isinstance(value, list) else [value]
                 for tool in tool_values:

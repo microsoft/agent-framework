@@ -30,8 +30,6 @@ else:
     from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 
-
-
 class BedrockRuntimeMeta(Protocol):
     endpoint_url: str
 
@@ -247,7 +245,9 @@ class RawBedrockEmbeddingClient(
 
         response_body_raw = response["body"]
         response_payload = response_body_raw.read()
-        payload_text = response_payload.decode() if isinstance(response_payload, (bytes, bytearray)) else response_payload
+        payload_text = (
+            response_payload.decode() if isinstance(response_payload, (bytes, bytearray)) else response_payload
+        )
         response_body_raw_map: object = json.loads(payload_text)
         if not isinstance(response_body_raw_map, dict):
             raise ValueError("Bedrock embedding response body must be a JSON object")
