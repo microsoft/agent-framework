@@ -7,19 +7,6 @@ from typing import Annotated, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import (
-    Agent,
-    AgentResponse,
-    AgentResponseUpdate,
-    AgentSession,
-    ChatResponse,
-    ChatResponseUpdate,
-    Content,
-    Message,
-    SupportsChatGetResponse,
-    tool,
-)
-from agent_framework.openai import OpenAIAssistantsClient
 from openai.types.beta.threads import (
     FileCitationAnnotation,
     FilePathAnnotation,
@@ -34,6 +21,20 @@ from openai.types.beta.threads.file_citation_delta_annotation import FileCitatio
 from openai.types.beta.threads.file_path_delta_annotation import FilePathDeltaAnnotation
 from openai.types.beta.threads.runs import RunStep
 from pydantic import Field
+
+from agent_framework import (
+    Agent,
+    AgentResponse,
+    AgentResponseUpdate,
+    AgentSession,
+    ChatResponse,
+    ChatResponseUpdate,
+    Content,
+    Message,
+    SupportsChatGetResponse,
+    tool,
+)
+from agent_framework.openai import OpenAIAssistantsClient
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
@@ -1719,8 +1720,6 @@ class TestMessageCompletedAnnotations:
         assert ann["file_id"] == "file-abc123"
         assert ann["annotated_regions"][0]["start_index"] == 10
         assert ann["annotated_regions"][0]["end_index"] == 24
-
-
 
     @pytest.mark.asyncio
     async def test_message_completed_with_file_path(self, client):
