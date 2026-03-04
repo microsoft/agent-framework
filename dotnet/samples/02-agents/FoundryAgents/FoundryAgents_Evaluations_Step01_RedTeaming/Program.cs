@@ -60,7 +60,7 @@ Console.WriteLine();
 
 // Submit the red team run to the service
 Console.WriteLine("Submitting red team run...");
-RedTeam redTeamRun = await aiProjectClient.RedTeams.CreateAsync(redTeamConfig);
+RedTeam redTeamRun = await aiProjectClient.RedTeams.CreateAsync(redTeamConfig, options: null);
 
 Console.WriteLine($"Red team run created: {redTeamRun.Name}");
 Console.WriteLine($"Status: {redTeamRun.Status}");

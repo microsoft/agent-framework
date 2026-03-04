@@ -109,7 +109,7 @@ public sealed class GitHubCopilotAgentTests
         var hooks = new SessionHooks();
         var infiniteSessions = new InfiniteSessionConfig();
         var systemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "Be helpful" };
-        PermissionHandler permissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult());
+        PermissionRequestHandler permissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult());
         UserInputHandler userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
         var mcpServers = new Dictionary<string, object> { ["server1"] = new McpLocalServerConfig() };
 
@@ -160,7 +160,7 @@ public sealed class GitHubCopilotAgentTests
         var hooks = new SessionHooks();
         var infiniteSessions = new InfiniteSessionConfig();
         var systemMessage = new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = "Be helpful" };
-        PermissionHandler permissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult());
+        PermissionRequestHandler permissionHandler = (_, _) => Task.FromResult(new PermissionRequestResult());
         UserInputHandler userInputHandler = (_, _) => Task.FromResult(new UserInputResponse { Answer = "input" });
         var mcpServers = new Dictionary<string, object> { ["server1"] = new McpLocalServerConfig() };
 

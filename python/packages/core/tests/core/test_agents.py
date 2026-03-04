@@ -755,6 +755,49 @@ async def test_chat_agent_with_local_mcp_tools(client: SupportsChatGetResponse) 
             pass
 
 
+async def test_mcp_tools_not_duplicated_when_passed_as_runtime_tools(chat_client_base: Any) -> None:
+    """Test that MCP tool functions from self.mcp_tools are not duplicated when already present in runtime tools."""
+    captured_options: list[dict[str, Any]] = []
+
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        captured_options.append(dict(options))
+        return await original_inner(messages=messages, options=options, **kwargs)
+
+    chat_client_base._inner_get_response = capturing_inner
+
+    # Create FunctionTool instances that simulate expanded MCP functions
+    mcp_func_a = FunctionTool(func=lambda: "a", name="tool_a", description="Tool A")
+    mcp_func_b = FunctionTool(func=lambda: "b", name="tool_b", description="Tool B")
+
+    # Create a mock MCP tool that is already connected (simulates turn 2)
+    mock_mcp_tool = MagicMock(spec=MCPTool)
+    mock_mcp_tool.is_connected = True
+    mock_mcp_tool.functions = [mcp_func_a, mcp_func_b]
+    mock_mcp_tool.__aenter__ = AsyncMock(return_value=mock_mcp_tool)
+    mock_mcp_tool.__aexit__ = AsyncMock(return_value=None)
+
+    # Agent has the MCP tool in its constructor (stored in self.mcp_tools)
+    agent = Agent(client=chat_client_base, name="TestAgent", tools=[mock_mcp_tool])
+
+    # Simulate AG-UI turn 2: pass already-expanded MCP functions + a client tool as runtime tools
+    client_tool = FunctionTool(func=lambda: "client", name="client_tool", description="Client tool")
+    runtime_tools = [mcp_func_a, mcp_func_b, client_tool]
+
+    await agent.run("hello", tools=runtime_tools)
+
+    # Verify the chat client received each tool exactly once
+    assert len(captured_options) >= 1
+    tool_names = [t.name for t in captured_options[0]["tools"]]
+    assert tool_names.count("tool_a") == 1, f"tool_a duplicated: {tool_names}"
+    assert tool_names.count("tool_b") == 1, f"tool_b duplicated: {tool_names}"
+    assert "client_tool" in tool_names
+    assert len(tool_names) == 3
+
+
 async def test_agent_tool_receives_session_in_kwargs(chat_client_base: Any) -> None:
     """Verify tool execution receives 'session' inside **kwargs when function is called by client."""
 
