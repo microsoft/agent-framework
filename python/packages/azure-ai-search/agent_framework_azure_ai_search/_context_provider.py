@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict
 
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Annotation, Content, Message, SupportsGetEmbeddings
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
@@ -456,10 +456,10 @@ class AzureAISearchContextProvider(BaseContextProvider):
             elif self.embedding_function:
                 if isinstance(self.embedding_function, SupportsGetEmbeddings):
                     embeddings = await self.embedding_function.get_embeddings([query])  # type: ignore[reportUnknownVariableType]
-                    query_vector = self._normalize_query_vector(embeddings[0].vector)  # type: ignore[reportUnknownVariableType]
+                    query_vector = embeddings[0].vector  # type: ignore[reportUnknownVariableType]
                 else:
-                    query_vector = self._normalize_query_vector(await self.embedding_function(query))
-                vector_queries = [VectorizedQuery(vector=query_vector, k=vector_k, fields=self.vector_field_name)]
+                    query_vector = await self.embedding_function(query)  # type: ignore[reportUnknownVariableType]
+                vector_queries = [VectorizedQuery(vector=query_vector, k=vector_k, fields=self.vector_field_name)]  # type: ignore[reportUnknownArgumentType]
 
         search_params: dict[str, Any] = {"search_text": query, "top": self.top_k}
         if vector_queries:
@@ -602,20 +602,6 @@ class AzureAISearchContextProvider(BaseContextProvider):
         retrieval_result = await self._retrieval_client.retrieve(retrieval_request=retrieval_request)
 
         return self._parse_messages_from_kb_response(retrieval_result)
-
-    @staticmethod
-    def _normalize_query_vector(vector: object) -> list[float]:
-        """Normalize query vector values to floats for Azure Search vector query."""
-        if not isinstance(vector, list):
-            raise TypeError("embedding_function must return list[float]")
-
-        vector_values = cast(list[object], vector)
-        normalized: list[float] = []
-        for value in vector_values:
-            if not isinstance(value, int | float):
-                raise TypeError("embedding_function must return list[float]")
-            normalized.append(float(value))
-        return normalized
 
     @staticmethod
     def _prepare_messages_for_kb_search(messages: list[Message]) -> list[KnowledgeBaseMessage]:

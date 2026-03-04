@@ -319,29 +319,17 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         if tools is None:
             return
 
-        non_builtin_tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None
-        if isinstance(tools, str):
-            self._builtin_tools.append(tools)
-            return
-        if isinstance(tools, Sequence) and not isinstance(tools, MutableMapping):
-            sequence_tools: list[ToolTypes | Callable[..., Any]] = []
-            for tool in tools:  # pyright: ignore[reportUnknownVariableType]
-                if isinstance(tool, str):
-                    self._builtin_tools.append(tool)
-                else:
-                    sequence_tools.append(tool)  # pyright: ignore[reportUnknownArgumentType]
-            non_builtin_tools = sequence_tools
-        else:
-            non_builtin_tools = tools
-
-        if not non_builtin_tools:
-            return
-
-        for tool in normalize_tools(non_builtin_tools):
+        non_builtin_tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] = []
+        if not isinstance(tools, list):
+            tools = [tools]  # type: ignore[assignment, reportUnknownVariableType]
+        for tool in tools:  # type: ignore[reportUnknownVariableType]
             if isinstance(tool, str):
                 self._builtin_tools.append(tool)
             else:
-                self._custom_tools.append(tool)
+                non_builtin_tools.append(tool)  # type: ignore[union-attr, reportUnknownArgumentType]
+        if not non_builtin_tools:
+            return
+        self._custom_tools.extend(normalize_tools(non_builtin_tools))  # type: ignore[reportUnknownVariableType]
 
     async def __aenter__(self) -> RawClaudeAgent[OptionsT]:
         """Start the agent when entering async context."""

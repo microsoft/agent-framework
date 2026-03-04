@@ -167,12 +167,12 @@ def _sanitize_agent_name(agent_name: str | None) -> str | None:
 class _RunContext(TypedDict):
     session: AgentSession | None
     session_context: SessionContext
-    input_messages: list[Message]
-    session_messages: list[Message]
+    input_messages: Sequence[Message]
+    session_messages: Sequence[Message]
     agent_name: str
-    chat_options: dict[str, Any]
-    filtered_kwargs: dict[str, Any]
-    finalize_kwargs: dict[str, Any]
+    chat_options: MutableMapping[str, Any]
+    filtered_kwargs: Mapping[str, Any]
+    finalize_kwargs: Mapping[str, Any]
 
 
 # region Agent Protocol
@@ -863,11 +863,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     kwargs=kwargs,
                 )
                 response = cast(
-                    ChatResponse[Any] | None,
-                    await self.client.get_response(  # type: ignore[call-overload]
+                    ChatResponse[Any],
+                    await self.client.get_response(  # type: ignore
                         messages=ctx["session_messages"],
                         stream=False,
-                        options=cast(Any, ctx["chat_options"]),
+                        options=ctx["chat_options"],  # type: ignore[reportArgumentType]
                         **ctx["filtered_kwargs"],
                     ),
                 )
@@ -947,7 +947,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             return self.client.get_response(  # type: ignore[call-overload, no-any-return]
                 messages=ctx["session_messages"],
                 stream=True,
-                options=cast(Any, ctx["chat_options"]),
+                options=ctx["chat_options"],  # type: ignore[reportArgumentType]
                 **ctx["filtered_kwargs"],
             )
 
@@ -974,12 +974,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             )
             return self._finalize_response_updates(updates, response_format=rf)
 
-        stream_response = cast(
-            ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
-            cast(Any, ResponseStream).from_awaitable(_get_stream()),
-        )
         return (
-            stream_response
+            ResponseStream  # type: ignore[reportUnknownMemberType]
+            .from_awaitable(_get_stream())
             .map(
                 transform=partial(
                     map_chat_to_agent_update,

@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
-
+# type: ignore
+# Because the Bedrock client does not have typing, we are ignoring type issues in this module.
 from __future__ import annotations
 
 import asyncio
@@ -8,7 +9,7 @@ import logging
 import sys
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, Literal, Protocol, TypedDict, TypeGuard, cast
+from typing import Any, ClassVar, Generic, Literal, TypedDict
 from uuid import uuid4
 
 from agent_framework import (
@@ -214,10 +215,6 @@ class BedrockSettings(TypedDict, total=False):
     session_token: SecretString | None
 
 
-class BedrockRuntimeClient(Protocol):
-    def converse(self, **kwargs: Any) -> Mapping[str, object]: ...
-
-
 class BedrockChatClient(
     ChatMiddlewareLayer[BedrockChatOptionsT],
     FunctionInvocationLayer[BedrockChatOptionsT],
@@ -228,37 +225,6 @@ class BedrockChatClient(
     """Async chat client for Amazon Bedrock's Converse API with middleware, telemetry, and function invocation."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
-    _bedrock_client: BedrockRuntimeClient
-
-    @staticmethod
-    def _is_runtime_client(value: object) -> TypeGuard[BedrockRuntimeClient]:
-        converse = getattr(value, "converse", None)
-        return callable(converse)
-
-    @staticmethod
-    def _get_str(value: object) -> str | None:
-        return value if isinstance(value, str) else None
-
-    @staticmethod
-    def _get_dict(value: object) -> dict[str, Any] | None:
-        if not isinstance(value, dict):
-            return None
-        return cast(dict[str, Any], value)
-
-    @staticmethod
-    def _is_nonstring_sequence(value: object) -> TypeGuard[Sequence[object]]:
-        return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
-
-    @staticmethod
-    def _get_content_blocks(value: object) -> list[dict[str, Any]]:
-        if not BedrockChatClient._is_nonstring_sequence(value):
-            return []
-        blocks: list[dict[str, Any]] = []
-        for item in value:
-            block = BedrockChatClient._get_dict(item)
-            if block is not None:
-                blocks.append(block)
-        return blocks
 
     def __init__(
         self,
@@ -326,30 +292,21 @@ class BedrockChatClient(
         region = settings.get("region") or DEFAULT_REGION
         chat_model_id = settings.get("chat_model_id")
 
-        if client is None:
+        if client:
+            self._bedrock_client = client
+        else:
             session = boto3_session or self._create_session(settings)
-            client_factory = getattr(session, "client", None)
-            if not callable(client_factory):
-                raise TypeError("Boto3 session does not provide a callable client factory.")
-            created_client: object = client_factory(
+            self._bedrock_client = session.client(
                 "bedrock-runtime",
                 region_name=region,
                 config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
             )
-            if not self._is_runtime_client(created_client):
-                raise TypeError("Boto3 session did not create a compatible Bedrock runtime client.")
-            runtime_client = created_client
-        elif not self._is_runtime_client(client):
-            raise TypeError("Provided client must expose a callable 'converse' method.")
-        else:
-            runtime_client = client
 
         super().__init__(
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
             **kwargs,
         )
-        self._bedrock_client = runtime_client
         self.model_id = chat_model_id
         self.region = region
 
@@ -370,7 +327,7 @@ class BedrockChatClient(
         response = self._bedrock_client.converse(**request)
         if not isinstance(response, Mapping):
             raise ChatClientInvalidResponseException("Bedrock converse response must be a mapping.")
-        return dict(response)
+        return response
 
     @override
     def _inner_get_response(
@@ -642,18 +599,17 @@ class BedrockChatClient(
         return f"tool-call-{uuid4().hex}"
 
     def _process_converse_response(self, response: dict[str, Any]) -> ChatResponse:
-        output = self._get_dict(response.get("output")) or {}
-        message = self._get_dict(output.get("message")) or {}
-        content_blocks = self._get_content_blocks(message.get("content"))
+        """Convert Bedrock Converse API response to ChatResponse."""
+        output = response.get("output") or {}
+        message = output.get("message") or {}
+        content_blocks = message.get("content") or []
         contents = self._parse_message_contents(content_blocks)
         chat_message = Message(role="assistant", contents=contents, raw_representation=message)
-        usage_source = self._get_dict(response.get("usage")) or self._get_dict(output.get("usage"))
+        usage_source = response.get("usage") or output.get("usage")
         usage_details = self._parse_usage(usage_source)
-        finish_reason = self._map_finish_reason(
-            self._get_str(output.get("completionReason")) or self._get_str(response.get("stopReason"))
-        )
-        response_id = self._get_str(response.get("responseId")) or self._get_str(message.get("id"))
-        model_id = self._get_str(response.get("modelId")) or self._get_str(output.get("modelId")) or self.model_id
+        finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
+        response_id = response.get("responseId") or message.get("id")
+        model_id = response.get("modelId") or output.get("modelId") or self.model_id
         return ChatResponse(
             response_id=response_id,
             messages=[chat_message],

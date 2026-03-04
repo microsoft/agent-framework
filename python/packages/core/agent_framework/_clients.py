@@ -785,7 +785,7 @@ class BaseEmbeddingClient(SerializationMixin, ABC, Generic[EmbeddingInputT, Embe
         values: Sequence[EmbeddingInputT],
         *,
         options: EmbeddingOptionsT | None = None,
-    ) -> GeneratedEmbeddings[EmbeddingT]:
+    ) -> GeneratedEmbeddings[EmbeddingT, EmbeddingOptionsT]:
         """Generate embeddings for the given values.
 
         Args:

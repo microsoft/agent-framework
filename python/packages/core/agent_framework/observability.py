@@ -199,6 +199,7 @@ class OtelAttr(str, Enum):
     T_TYPE_INPUT = "input"
     T_TYPE_OUTPUT = "output"
     DURATION_UNIT = "s"
+
     # Agent attributes
     AGENT_NAME = "gen_ai.agent.name"
     AGENT_DESCRIPTION = "gen_ai.agent.description"
@@ -1323,13 +1324,10 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
         values: Sequence[EmbeddingInputT],
         *,
         options: EmbeddingOptionsT | None = None,
-    ) -> GeneratedEmbeddings[EmbeddingT]:
+    ) -> GeneratedEmbeddings[EmbeddingT, EmbeddingOptionsT]:
         """Trace embedding generation with OpenTelemetry spans and metrics."""
         global OBSERVABILITY_SETTINGS
-        super_get_embeddings = cast(
-            "Callable[..., Awaitable[GeneratedEmbeddings[EmbeddingT]]]",
-            super().get_embeddings,  # type: ignore[misc]
-        )
+        super_get_embeddings = super().get_embeddings  # type: ignore[misc]
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
             return await super_get_embeddings(values, options=options)  # type: ignore[no-any-return]
@@ -1349,16 +1347,17 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.REQUEST_MODEL) as span:
             start_time_stamp = perf_counter()
             try:
-                result: GeneratedEmbeddings[EmbeddingT] = await super_get_embeddings(values, options=options)
+                result: GeneratedEmbeddings[EmbeddingT, EmbeddingOptionsT] = await super_get_embeddings(
+                    values, options=options
+                )
             except Exception as exception:
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
                 raise
             duration = perf_counter() - start_time_stamp
             response_attributes: dict[str, Any] = {**attributes}
-            usage = cast(Mapping[str, Any], result.usage) if result.usage else None
-            prompt_tokens = usage.get("prompt_tokens") if usage is not None else None
-            if prompt_tokens is not None:
-                response_attributes[OtelAttr.INPUT_TOKENS] = prompt_tokens
+            usage = result.usage or {}
+            if (input_tokens := usage.get("input_token_count")) is not None:
+                response_attributes[OtelAttr.INPUT_TOKENS] = input_tokens
             _capture_response(
                 span=span,
                 attributes=response_attributes,

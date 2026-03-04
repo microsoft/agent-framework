@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
-from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, cast
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -788,28 +788,23 @@ class AnthropicClient(
                         "description": tool.description,
                         "input_schema": tool.parameters(),
                     })
-                elif isinstance(tool, MutableMapping):
-                    tool_data = cast(MutableMapping[str, Any], tool)
-                    if tool_data.get("type") == "mcp":
-                        # MCP servers must be routed to separate mcp_servers parameter
-                        server_def: dict[str, Any] = {
-                            "type": "url",
-                            "name": tool_data.get("server_label", ""),
-                            "url": tool_data.get("server_url", ""),
+                elif isinstance(tool, Mapping) and tool.get("type") == "mcp":  # type: ignore[reportUnknownMemberType]
+                    # MCP servers must be routed to separate mcp_servers parameter
+                    server_def: dict[str, Any] = {
+                        "type": "url",
+                        "name": tool.get("server_label", ""),  # type: ignore[reportUnknownMemberType]
+                        "url": tool.get("server_url", ""),  # type: ignore[reportUnknownMemberType]
+                    }
+                    allowed_tools = tool.get("allowed_tools")  # type: ignore[reportUnknownMemberType]
+                    if isinstance(allowed_tools, Sequence) and not isinstance(allowed_tools, str):
+                        server_def["tool_configuration"] = {
+                            "allowed_tools": [str(item) for item in allowed_tools]  # pyright: ignore[reportUnknownArgumentType,reportUnknownVariableType]
                         }
-                        allowed_tools = tool_data.get("allowed_tools")
-                        if isinstance(allowed_tools, Sequence) and not isinstance(allowed_tools, str):
-                            server_def["tool_configuration"] = {
-                                "allowed_tools": [str(item) for item in allowed_tools]  # pyright: ignore[reportUnknownArgumentType,reportUnknownVariableType]
-                            }
-                        headers = tool_data.get("headers")
-                        authorization = headers.get("authorization") if isinstance(headers, Mapping) else None  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-                        if isinstance(authorization, str):
-                            server_def["authorization_token"] = authorization
-                        mcp_server_list.append(server_def)
-                    else:
-                        # Pass through all other tools (dicts, SDK types) unchanged
-                        tool_list.append(tool)
+                    headers = tool.get("headers")  # type: ignore[reportUnknownMemberType]
+                    authorization = headers.get("authorization") if isinstance(headers, Mapping) else None  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+                    if isinstance(authorization, str):
+                        server_def["authorization_token"] = authorization
+                    mcp_server_list.append(server_def)
                 else:
                     # Pass through all other tools (dicts, SDK types) unchanged
                     tool_list.append(tool)

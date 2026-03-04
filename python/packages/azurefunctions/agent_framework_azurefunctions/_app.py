@@ -280,17 +280,8 @@ class AgentFunctionApp(DFAppBase):
             data = cast(dict[str, Any], data_obj)
 
             message_data = data.get("message")
-            shared_state_raw = data.get("shared_state_snapshot", {})
-            source_executor_ids_raw = data.get("source_executor_ids", [SOURCE_ORCHESTRATOR])
-
-            shared_state_snapshot = cast(dict[str, Any], shared_state_raw) if isinstance(shared_state_raw, dict) else {}
-
-            source_executor_ids: list[str]
-            if isinstance(source_executor_ids_raw, list):
-                source_executor_ids_values = cast(list[object], source_executor_ids_raw)
-                source_executor_ids = [str(source_executor_id) for source_executor_id in source_executor_ids_values]
-            else:
-                source_executor_ids = [SOURCE_ORCHESTRATOR]
+            shared_state_snapshot = data.get("shared_state_snapshot", {})
+            source_executor_ids = cast(list[str], data.get("source_executor_ids", [SOURCE_ORCHESTRATOR]))
 
             if not self.workflow:
                 raise RuntimeError("Workflow not initialized in AgentFunctionApp")
@@ -478,29 +469,26 @@ class AgentFunctionApp(DFAppBase):
             }
 
             # Add pending HITL requests info if available
-            custom_status = status.custom_status
-            if isinstance(custom_status, dict):
-                custom_status_typed = cast(dict[str, Any], custom_status)
-                pending_requests_raw = custom_status_typed.get("pending_requests")
-                if isinstance(pending_requests_raw, dict):
-                    base_url = self._build_base_url(req.url)
-                    pending_requests: list[dict[str, Any]] = []
-                    pending_requests_dict = cast(dict[str, Any], pending_requests_raw)
-                    for req_id_raw, req_data_raw in pending_requests_dict.items():
-                        if not isinstance(req_data_raw, dict):
-                            continue
-
-                        req_id = str(req_id_raw)
-                        req_data = cast(dict[str, Any], req_data_raw)
-                        pending_requests.append({
-                            "requestId": req_id,
-                            "sourceExecutor": req_data.get("source_executor_id"),
-                            "requestData": req_data.get("data"),
-                            "requestType": req_data.get("request_type"),
-                            "responseType": req_data.get("response_type"),
-                            "respondUrl": f"{base_url}/api/workflow/respond/{instance_id}/{req_id}",
-                        })
-                    response["pendingHumanInputRequests"] = pending_requests
+            if (
+                (custom_status := status.custom_status)
+                and isinstance(custom_status, dict)
+                and (pending_requests_dict := custom_status.get("pending_requests"))  # type: ignore
+                and isinstance(pending_requests_dict, dict)
+            ):
+                base_url = self._build_base_url(req.url)
+                pending_requests: list[dict[str, Any]] = []
+                for req_id, req_data in pending_requests_dict.items():  # type: ignore
+                    if not isinstance(req_data, dict):
+                        continue
+                    pending_requests.append({
+                        "requestId": req_id,
+                        "sourceExecutor": req_data.get("source_executor_id"),  # type: ignore[reportUnknownMemberType]
+                        "requestData": req_data.get("data"),  # type: ignore[reportUnknownMemberType]
+                        "requestType": req_data.get("request_type"),  # type: ignore[reportUnknownMemberType]
+                        "responseType": req_data.get("response_type"),  # type: ignore[reportUnknownMemberType]
+                        "respondUrl": f"{base_url}/api/workflow/respond/{instance_id}/{req_id}",
+                    })
+                response["pendingHumanInputRequests"] = pending_requests
 
             return func.HttpResponse(
                 json.dumps(response, default=str),

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 import logging
 import re
 import sys
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from contextlib import suppress
 from typing import Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast
 
@@ -27,8 +26,6 @@ from agent_framework import (
     Message,
     MiddlewareTypes,
     ResponseStream,
-    Role,
-    RoleLiteral,
     TextSpanRegion,
 )
 from agent_framework._settings import load_settings
@@ -71,15 +68,6 @@ else:
 
 
 logger = logging.getLogger("agent_framework.azure")
-
-
-AzureMonitorConfigurator = Callable[..., Any]
-
-
-def _normalize_chat_role(role: Role | str | None) -> RoleLiteral | Role | None:
-    if role in {"system", "user", "assistant", "tool"}:
-        return cast(RoleLiteral, role)
-    return None
 
 
 class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):
@@ -316,17 +304,12 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
 
         # Import Azure Monitor with proper error handling
         try:
-            monitor_module = importlib.import_module("azure.monitor.opentelemetry")
+            from azure.monitor.opentelemetry import configure_azure_monitor  # type: ignore[import]
         except ImportError as exc:
             raise ImportError(
                 "azure-monitor-opentelemetry is required for Azure Monitor integration. "
                 "Install it with: pip install azure-monitor-opentelemetry"
             ) from exc
-
-        configure_azure_monitor_attr = getattr(monitor_module, "configure_azure_monitor", None)
-        if not callable(configure_azure_monitor_attr):
-            raise ImportError("azure-monitor-opentelemetry does not expose configure_azure_monitor")
-        configure_azure_monitor: AzureMonitorConfigurator = configure_azure_monitor_attr
 
         from agent_framework.observability import create_metric_views, create_resource, enable_instrumentation
 
@@ -461,30 +444,25 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             return tool.name
 
         if isinstance(tool, Mapping):
-            tool_mapping = cast(Mapping[str, Any], tool)
-            tool_type = tool_mapping.get("type")
+            tool_type = tool.get("type")  # type: ignore[reportUnknownMemberType]
             if tool_type == "function":
-                function_data = tool_mapping.get("function")
-                if isinstance(function_data, Mapping):
-                    function_mapping = cast(Mapping[str, Any], function_data)
-                    if function_name := function_mapping.get("name"):
-                        return str(function_name)
-                if tool_name := tool_mapping.get("name"):
-                    return str(tool_name)
-            if tool_name := tool_mapping.get("name"):
-                return str(tool_name)
-            if server_label := tool_mapping.get("server_label"):
+                function_data = tool.get("function")  # type: ignore[reportUnknownMemberType]
+                if isinstance(function_data, Mapping) and (function_name := function_data.get("name")):  # type: ignore[assignment]
+                    return function_name  # type: ignore[no-any-return]
+            if tool_name := tool.get("name"):  # type: ignore[reportUnknownMemberType]
+                return tool_name  # type: ignore[no-any-return]
+            if server_label := tool.get("server_label"):  # type: ignore[reportUnknownMemberType]
                 return f"mcp:{server_label}"
             if tool_type:
-                return str(tool_type)
-            return type(cast(Any, tool)).__name__
+                return tool_type  # type: ignore[no-any-return]
+            raise ValueError("Dict based tool definitions must include a 'name' property for runtime comparison.")
 
         if name_value := getattr(tool, "name", None):
-            return str(name_value)
+            return name_value  # type: ignore[no-any-return]
         if server_label_value := getattr(tool, "server_label", None):
             return f"mcp:{server_label_value}"
         if tool_type_value := getattr(tool, "type", None):
-            return str(tool_type_value)
+            return tool_type_value  # type: ignore[no-any-return]
         return type(tool).__name__
 
     def _get_structured_output_signature(self, chat_options: Mapping[str, Any] | None) -> str | None:
@@ -602,15 +580,14 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
 
             # Add 'annotations' only to output_text content items (assistant messages)
             # User messages (input_text) do NOT support annotations in Azure AI
-            if "content" in new_item and isinstance(new_item["content"], list):
+            if (content := new_item.get("content")) and isinstance(content, list):
                 new_content: list[Any] = []
-                for content_item in cast(list[object], new_item["content"]):
-                    if isinstance(content_item, Mapping):
-                        new_content_item: dict[str, Any] = dict(cast(Mapping[str, Any], content_item))
+                for content_item in content:  # type: ignore[list-item]
+                    if isinstance(content_item, MutableMapping):
                         # Only add annotations to output_text (assistant content)
-                        if new_content_item.get("type") == "output_text" and "annotations" not in new_content_item:
-                            new_content_item["annotations"] = []
-                        new_content.append(new_content_item)
+                        if content_item.get("type") == "output_text" and "annotations" not in content_item:  # type: ignore[reportUnknownMemberType]
+                            content_item["annotations"] = []
+                        new_content.append(content_item)
                     else:
                         new_content.append(content_item)
                 new_item["content"] = new_content
@@ -748,15 +725,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 # Streaming "added" events send output as an empty list; skip.
                 continue
             if output is not None:
-                urls: Any
-                if isinstance(output, Mapping):
-                    output_mapping = cast(Mapping[str, Any], output)
-                    urls = output_mapping.get("get_urls")
-                else:
-                    urls = getattr(output, "get_urls", None)
+                urls = output.get("get_urls") if isinstance(output, Mapping) else getattr(output, "get_urls", None)  # type: ignore
                 if isinstance(urls, list):
                     string_urls: list[str] = []
-                    for url_item in cast(list[object], urls):
+                    for url_item in urls:  # type: ignore[list-item]
                         if isinstance(url_item, str):
                             string_urls.append(url_item)
                     get_urls.extend(string_urls)
@@ -914,7 +886,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                         contents=contents_list,
                         conversation_id=update.conversation_id,
                         response_id=update.response_id,
-                        role=_normalize_chat_role(update.role),
+                        role=update.role,  # type: ignore[union-attr]
                         model_id=update.model_id,
                         continuation_token=update.continuation_token,
                         additional_properties=update.additional_properties,

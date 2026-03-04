@@ -26,7 +26,7 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
-from typing import Any, cast
+from typing import Any
 
 from agent_framework import (
     AgentExecutor,
@@ -348,16 +348,16 @@ def _process_agent_response(
         ExecutorResult containing the processed response
     """
     response_text = agent_response.text if agent_response else None
-    structured_response = None
+    structured_response: dict[str, Any] | None = None
 
     if agent_response and agent_response.value is not None:
         model_dump = getattr(agent_response.value, "model_dump", None)
         if callable(model_dump):
             dumped = model_dump()
             if isinstance(dumped, dict):
-                structured_response = cast(dict[str, Any], dumped)
+                structured_response = dumped  # type: ignore[assignment]
         elif isinstance(agent_response.value, dict):
-            structured_response = agent_response.value
+            structured_response = agent_response.value  # type: ignore[assignment]
 
     output_message = build_agent_executor_response(
         executor_id=executor_id,
@@ -869,9 +869,8 @@ def _extract_message_content(message: Any) -> str:
         # Extract text from the last message in the request
         message_content = message.messages[-1].text or ""
     elif isinstance(message, dict):
-        message_dict = cast(dict[str, Any], message)
-        key_names = list(message_dict.keys())
-        logger.warning("Unexpected dict message in _extract_message_content. Keys: %s", key_names)
+        key_names = list(message.keys())  # type: ignore[union-attr]
+        logger.warning("Unexpected dict message in _extract_message_content. Keys: %s", key_names)  # type: ignore
     elif isinstance(message, str):
         message_content = message
 

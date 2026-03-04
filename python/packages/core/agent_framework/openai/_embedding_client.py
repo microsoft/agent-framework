@@ -6,7 +6,7 @@ import base64
 import struct
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, Generic, Literal, TypedDict, cast
+from typing import Any, Generic, Literal, TypedDict
 
 from openai import AsyncOpenAI
 
@@ -67,7 +67,7 @@ class RawOpenAIEmbeddingClient(
         values: Sequence[str],
         *,
         options: OpenAIEmbeddingOptionsT | None = None,
-    ) -> GeneratedEmbeddings[list[float]]:
+    ) -> GeneratedEmbeddings[list[float], OpenAIEmbeddingOptionsT]:
         """Call the OpenAI embeddings API.
 
         Args:
@@ -81,9 +81,9 @@ class RawOpenAIEmbeddingClient(
             ValueError: If model_id is not provided or values is empty.
         """
         if not values:
-            return cast(GeneratedEmbeddings[list[float]], GeneratedEmbeddings([], options=options))
+            return GeneratedEmbeddings([], options=options)  # type: ignore
 
-        opts: dict[str, Any] = dict(options) if options else {}
+        opts: dict[str, Any] = options or {}  # type: ignore
         model = opts.get("model_id") or self.model_id
         if not model:
             raise ValueError("model_id is required")
@@ -123,9 +123,7 @@ class RawOpenAIEmbeddingClient(
                 "total_token_count": response.usage.total_tokens,
             }
 
-        return cast(
-            GeneratedEmbeddings[list[float]], GeneratedEmbeddings(embeddings, options=options, usage=usage_dict)
-        )
+        return GeneratedEmbeddings(embeddings, options=options, usage=usage_dict)
 
 
 class OpenAIEmbeddingClient(

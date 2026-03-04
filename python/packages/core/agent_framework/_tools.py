@@ -27,7 +27,6 @@ from typing import (
     Literal,
     TypeAlias,
     TypedDict,
-    TypeGuard,
     Union,
     cast,
     get_args,
@@ -78,13 +77,6 @@ else:
 
 
 logger = logging.getLogger("agent_framework")
-
-
-def _is_str_key_mapping(value: object) -> TypeGuard[Mapping[str, Any]]:
-    if not isinstance(value, Mapping):
-        return False
-    keys = cast(Mapping[object, object], value).keys()
-    return all(isinstance(key, str) for key in keys)
 
 
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
@@ -709,7 +701,7 @@ def normalize_tools(
         if isinstance(tool_item, FunctionTool):
             normalized.append(tool_item)
             continue
-        if _is_str_key_mapping(tool_item):
+        if isinstance(tool_item, dict):
             normalized.append(tool_item)
             continue
         if isinstance(tool_item, MCPTool):
@@ -745,8 +737,8 @@ def _tools_to_dict(  # pyright: ignore[reportUnusedFunction]
         if isinstance(tool_item, SerializationMixin):
             results.append(tool_item.to_dict())
             continue
-        if _is_str_key_mapping(tool_item):
-            results.append(dict(tool_item))
+        if isinstance(tool_item, dict):
+            results.append(tool_item)
             continue
         logger.warning("Can't parse tool.")
     return results
@@ -825,7 +817,7 @@ def _validate_arguments_against_schema(
         raise TypeError(f"Missing required argument(s) for '{tool_name}': {', '.join(sorted(missing_fields))}")
 
     properties_raw = schema.get("properties")
-    properties: Mapping[str, Any] = properties_raw if _is_str_key_mapping(properties_raw) else {}
+    properties: Mapping[str, Any] = properties_raw if isinstance(properties_raw, dict) else {}
 
     if schema.get("additionalProperties") is False:
         unexpected_fields = sorted(field for field in parsed_arguments if field not in properties)
@@ -834,7 +826,7 @@ def _validate_arguments_against_schema(
 
     for field_name, field_value in parsed_arguments.items():
         field_schema_raw = properties.get(field_name)
-        if not _is_str_key_mapping(field_schema_raw):
+        if not isinstance(field_schema_raw, dict):
             continue
         field_schema = field_schema_raw
 
@@ -892,7 +884,7 @@ def _build_pydantic_model_from_json_schema(
         The dynamically created Pydantic model class.
     """
     properties_raw = schema.get("properties")
-    properties = properties_raw if _is_str_key_mapping(properties_raw) else None
+    properties = properties_raw if isinstance(properties_raw, dict) else None
     required_raw = schema.get("required", [])
     required_obj: object = required_raw
     required: list[str] = (
@@ -901,7 +893,7 @@ def _build_pydantic_model_from_json_schema(
         else []
     )
     defs_raw = schema.get("$defs", {})
-    definitions: Mapping[str, Any] = defs_raw if _is_str_key_mapping(defs_raw) else {}
+    definitions: Mapping[str, Any] = defs_raw if isinstance(defs_raw, dict) else {}
 
     # Check if 'properties' is missing or not a dictionary
     if not properties:
@@ -942,7 +934,7 @@ def _build_pydantic_model_from_json_schema(
         # Handle oneOf + discriminator (polymorphic objects)
         if "oneOf" in prop_details and "discriminator" in prop_details:
             discriminator_raw = prop_details["discriminator"]
-            discriminator: Mapping[str, Any] = discriminator_raw if _is_str_key_mapping(discriminator_raw) else {}
+            discriminator: Mapping[str, Any] = discriminator_raw if isinstance(discriminator_raw, dict) else {}
             disc_field_raw = discriminator.get("propertyName")
             disc_field = disc_field_raw if isinstance(disc_field_raw, str) else None
 
@@ -950,7 +942,7 @@ def _build_pydantic_model_from_json_schema(
             one_of_raw = prop_details["oneOf"]
             one_of: list[object] = cast(list[object], one_of_raw) if isinstance(one_of_raw, list) else []
             for variant_raw in one_of:
-                if not _is_str_key_mapping(variant_raw):
+                if not isinstance(variant_raw, dict):
                     continue
                 variant = variant_raw
                 if "$ref" in variant:
@@ -999,7 +991,7 @@ def _build_pydantic_model_from_json_schema(
             case "array":
                 # Handle typed arrays
                 items_schema = prop_details.get("items")
-                if _is_str_key_mapping(items_schema):
+                if isinstance(items_schema, dict):
                     # Recursively resolve the item type
                     item_type = _resolve_type(items_schema, f"{parent_name}_item")
                     # Return list[ItemType] instead of bare list
@@ -1009,7 +1001,7 @@ def _build_pydantic_model_from_json_schema(
             case "object":
                 # Handle nested objects by creating a nested Pydantic model
                 nested_properties_raw = prop_details.get("properties")
-                nested_properties = nested_properties_raw if _is_str_key_mapping(nested_properties_raw) else None
+                nested_properties = nested_properties_raw if isinstance(nested_properties_raw, dict) else None
                 nested_required_raw = prop_details.get("required", [])
                 nested_required_obj: object = nested_required_raw
                 nested_required: set[str] = (
@@ -1030,7 +1022,7 @@ def _build_pydantic_model_from_json_schema(
                             if isinstance(nested_prop_details_raw, str)
                             else nested_prop_details_raw
                         )
-                        if not _is_str_key_mapping(nested_prop_details_candidate):
+                        if not isinstance(nested_prop_details_candidate, dict):
                             continue
                         nested_prop_details = nested_prop_details_candidate
 
@@ -1079,7 +1071,7 @@ def _build_pydantic_model_from_json_schema(
 
     for prop_name, prop_details_raw in properties.items():
         prop_details_candidate = json.loads(prop_details_raw) if isinstance(prop_details_raw, str) else prop_details_raw
-        if not _is_str_key_mapping(prop_details_candidate):
+        if not isinstance(prop_details_candidate, dict):
             continue
         prop_details = prop_details_candidate
 
