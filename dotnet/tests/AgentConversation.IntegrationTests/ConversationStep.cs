@@ -4,7 +4,7 @@ using System;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-namespace ConversationDynamics.IntegrationTests;
+namespace AgentConversation.IntegrationTests;
 
 /// <summary>
 /// Represents a single step within a <see cref="IConversationTestCase"/>, combining the agent to invoke,

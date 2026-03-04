@@ -3,7 +3,7 @@
 using System.Collections.Generic;
 using Microsoft.Extensions.AI;
 
-namespace ConversationDynamics.IntegrationTests;
+namespace AgentConversation.IntegrationTests;
 
 /// <summary>
 /// Defines an agent participating in a <see cref="IConversationTestCase"/>.

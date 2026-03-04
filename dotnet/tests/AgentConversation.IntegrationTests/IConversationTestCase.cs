@@ -6,10 +6,10 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-namespace ConversationDynamics.IntegrationTests;
+namespace AgentConversation.IntegrationTests;
 
 /// <summary>
-/// Defines a single conversation dynamics test case.
+/// Defines a single agent conversation test case.
 /// </summary>
 /// <remarks>
 /// Each test case describes the initial conversation context (as a list of <see cref="ChatMessage"/> instances),

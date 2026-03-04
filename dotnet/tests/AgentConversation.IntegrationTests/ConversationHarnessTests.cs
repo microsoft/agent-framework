@@ -6,10 +6,10 @@ using System.Diagnostics;
 using System.Threading.Tasks;
 using Xunit.Abstractions;
 
-namespace ConversationDynamics.IntegrationTests;
+namespace AgentConversation.IntegrationTests;
 
 /// <summary>
-/// Abstract xunit base class for conversation dynamics integration tests.
+/// Abstract xunit base class for agent conversation integration tests.
 /// </summary>
 /// <remarks>
 /// <para>

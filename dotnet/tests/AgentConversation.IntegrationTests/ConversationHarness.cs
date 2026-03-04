@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-namespace ConversationDynamics.IntegrationTests;
+namespace AgentConversation.IntegrationTests;
 
 /// <summary>
 /// Orchestrates the execution of a <see cref="IConversationTestCase"/> against a given

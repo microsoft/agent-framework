@@ -6,10 +6,10 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-namespace ConversationDynamics.IntegrationTests;
+namespace AgentConversation.IntegrationTests;
 
 /// <summary>
-/// Abstracts the system-specific concerns of a conversation dynamics test run: how agents are created
+/// Abstracts the system-specific concerns of an agent conversation test run: how agents are created
 /// and how context compaction is performed.
 /// </summary>
 /// <remarks>

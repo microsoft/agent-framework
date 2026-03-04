@@ -7,7 +7,7 @@ using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-namespace ConversationDynamics.IntegrationTests;
+namespace AgentConversation.IntegrationTests;
 
 /// <summary>
 /// Provides helpers for serializing and deserializing conversation contexts (lists of <see cref="ChatMessage"/>)
