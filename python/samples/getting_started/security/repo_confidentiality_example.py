@@ -35,7 +35,7 @@ HOW IT WORKS:
 
 To run this example:
     1. Ensure you have Azure CLI credentials configured: `az login`
-    2. Set AZURE_OPENAI_ENDPOINT environment variable (optional)
+    2. Set the AZURE_OPENAI_ENDPOINT environment variable
     3. Run: python repo_confidentiality_example.py
 """
 
@@ -190,10 +190,12 @@ def main():
     # =========================================================================
     # Setup: Azure OpenAI client with SecureAgentConfig
     # =========================================================================
-    endpoint = os.environ.get(
-        "AZURE_OPENAI_ENDPOINT",
-        "https://ppml-azure-openai-swedencentral.openai.azure.com"
-    )
+    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    if not endpoint:
+        raise ValueError(
+            "AZURE_OPENAI_ENDPOINT environment variable is not set. "
+            "Please set it to your Azure OpenAI endpoint URL."
+        )
     credential = AzureCliCredential()
 
     # Main client - using gpt-4o-mini which may be more compliant with requests

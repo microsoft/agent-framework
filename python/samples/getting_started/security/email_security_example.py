@@ -18,7 +18,7 @@ can see the violation reason and choose to approve or reject the action.
 
 To run this example:
     1. Ensure you have Azure CLI credentials configured: `az login`
-    2. Set the AZURE_OPENAI_ENDPOINT environment variable (optional - uses default if not set)
+    2. Set the AZURE_OPENAI_ENDPOINT environment variable
     3. Run: python email_security_example.py
 """
 
@@ -210,11 +210,13 @@ def main():
     print("prompt injection attacks in emails while still allowing safe processing.")
     print()
 
-    # Get Azure OpenAI endpoint from environment or use default
-    endpoint = os.environ.get(
-        "AZURE_OPENAI_ENDPOINT",
-        "https://ppml-azure-openai-swedencentral.openai.azure.com"
-    )
+    # Get Azure OpenAI endpoint from environment variable (required)
+    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    if not endpoint:
+        raise ValueError(
+            "AZURE_OPENAI_ENDPOINT environment variable is not set. "
+            "Please set it to your Azure OpenAI endpoint URL."
+        )
     
     credential = AzureCliCredential()
 
