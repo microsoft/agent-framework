@@ -339,3 +339,63 @@ class TestAsToolKwargsPropagation:
         # Verify other kwargs were still forwarded
         assert captured_kwargs.get("api_token") == "secret-xyz-123"
         assert captured_kwargs.get("user_id") == "user-456"
+
+    async def test_as_tool_propagates_conversation_id_via_options(self, client: MockChatClient) -> None:
+        """Test that parent_conversation_id from parent is passed to sub-agent's additional_function_arguments."""
+        captured_options: dict[str, Any] = {}
+
+        @agent_middleware
+        async def capture_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            captured_options.update(context.options or {})
+            await call_next()
+
+        # Setup mock response
+        client.responses = [
+            ChatResponse(messages=[Message(role="assistant", text="Sub-agent response")]),
+        ]
+
+        sub_agent = Agent(
+            client=client,
+            name="sub_agent",
+            middleware=[capture_middleware],
+        )
+
+        tool = sub_agent.as_tool(name="delegate", arg_name="task")
+
+        await tool.invoke(
+            arguments=tool.input_model(task="Test delegation"),
+            conversation_id="conv-parent-123",
+        )
+
+        # Verify parent_conversation_id was passed via additional_function_arguments
+        additional_args = captured_options.get("additional_function_arguments", {})
+        assert additional_args.get("parent_conversation_id") == "conv-parent-123"
+
+    async def test_as_tool_no_conversation_id_when_absent(self, client: MockChatClient) -> None:
+        """Test that no parent_conversation_id is injected when parent has none."""
+        captured_options: dict[str, Any] = {}
+
+        @agent_middleware
+        async def capture_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            captured_options.update(context.options or {})
+            await call_next()
+
+        client.responses = [
+            ChatResponse(messages=[Message(role="assistant", text="Sub-agent response")]),
+        ]
+
+        sub_agent = Agent(
+            client=client,
+            name="sub_agent",
+            middleware=[capture_middleware],
+        )
+
+        tool = sub_agent.as_tool(name="delegate", arg_name="task")
+
+        await tool.invoke(
+            arguments=tool.input_model(task="Test delegation"),
+            user_id="user-789",
+        )
+
+        # additional_function_arguments should not be in options when no conversation_id provided
+        assert "additional_function_arguments" not in captured_options

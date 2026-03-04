@@ -972,7 +972,10 @@ def _build_pydantic_model_from_json_schema(
 
                     # Recursively build field definitions for the nested model
                     nested_field_definitions: dict[str, Any] = {}
-                    for nested_prop_name, nested_prop_details in nested_properties.items():
+                    for (
+                        nested_prop_name,
+                        nested_prop_details,
+                    ) in nested_properties.items():
                         nested_prop_details = (
                             json.loads(nested_prop_details)
                             if isinstance(nested_prop_details, str)
@@ -1417,11 +1420,11 @@ async def _auto_invoke_function(
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
 
     # Filter out internal framework kwargs before passing to tools.
-    # conversation_id is an internal tracking ID that should not be forwarded to tools.
+    # conversation_id is forwarded so agent-as-tool wrappers can correlate sub-agent conversations.
     runtime_kwargs: dict[str, Any] = {
         key: value
         for key, value in (custom_args or {}).items()
-        if key not in {"_function_middleware_pipeline", "middleware", "conversation_id"}
+        if key not in {"_function_middleware_pipeline", "middleware"}
     }
     try:
         if not tool._schema_supplied and tool.input_model is not None:
@@ -2100,7 +2103,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_errors: int = self.function_invocation_configuration["max_consecutive_errors_per_request"]  # type: ignore[assignment]
         additional_function_arguments: dict[str, Any] = {}
         if options and (additional_opts := options.get("additional_function_arguments")):  # type: ignore[attr-defined]
-            additional_function_arguments = additional_opts  # type: ignore
+            additional_function_arguments = additional_opts  # type: ignore[assignment]
         execute_function_calls = partial(
             _execute_function_calls,
             custom_args=additional_function_arguments,
@@ -2162,6 +2165,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
                     if response.conversation_id is not None:
                         _update_conversation_id(kwargs, response.conversation_id, mutable_options)
+                        additional_function_arguments["conversation_id"] = response.conversation_id
                         prepped_messages = []
 
                     result = await _process_function_requests(
@@ -2296,6 +2300,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
                 if response.conversation_id is not None:
                     _update_conversation_id(kwargs, response.conversation_id, mutable_options)
+                    additional_function_arguments["conversation_id"] = response.conversation_id
                     prepped_messages = []
 
                 result = await _process_function_requests(
