@@ -39,17 +39,18 @@ public sealed class TextSearchProviderTests
     }
 
     [Fact]
-    public void StateKey_ReturnsDefaultKey_WhenNoOptionsProvided()
+    public void StateKeys_ReturnsDefaultKey_WhenNoOptionsProvided()
     {
         // Arrange & Act
         var provider = new TextSearchProvider((_, _) => Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]));
 
         // Assert
-        Assert.Equal("TextSearchProvider", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("TextSearchProvider", provider.StateKeys);
     }
 
     [Fact]
-    public void StateKey_ReturnsCustomKey_WhenSetViaOptions()
+    public void StateKeys_ReturnsCustomKey_WhenSetViaOptions()
     {
         // Arrange & Act
         var provider = new TextSearchProvider(
@@ -57,7 +58,8 @@ public sealed class TextSearchProviderTests
             new TextSearchProviderOptions { StateKey = "custom-key" });
 
         // Assert
-        Assert.Equal("custom-key", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("custom-key", provider.StateKeys);
     }
 
     [Theory]
@@ -467,7 +469,7 @@ public sealed class TextSearchProviderTests
         {
             RecentMessageMemoryLimit = 10,
             RecentMessageRolesIncluded = [ChatRole.User, ChatRole.System],
-            StorageInputMessageFilter = messages => messages // No filtering - store everything
+            StorageInputRequestMessageFilter = messages => messages // No filtering - store everything
         };
         string? capturedInput = null;
         Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)

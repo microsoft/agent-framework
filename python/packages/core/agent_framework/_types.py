@@ -340,8 +340,12 @@ ContentType = Literal[
     "image_generation_tool_result",
     "mcp_server_tool_call",
     "mcp_server_tool_result",
+    "shell_tool_call",
+    "shell_tool_result",
+    "shell_command_output",
     "function_approval_request",
     "function_approval_response",
+    "oauth_consent_request",
 ]
 
 
@@ -476,6 +480,16 @@ class Content:
         outputs: list[Content] | Any | None = None,
         # Image generation tool fields
         image_id: str | None = None,
+        # Shell tool fields
+        commands: list[str] | None = None,
+        timeout_ms: int | None = None,
+        max_output_length: int | None = None,
+        status: str | None = None,
+        # Shell command output fields
+        stdout: str | None = None,
+        stderr: str | None = None,
+        exit_code: int | None = None,
+        timed_out: bool | None = None,
         # MCP server tool fields
         tool_name: str | None = None,
         server_name: str | None = None,
@@ -485,6 +499,8 @@ class Content:
         function_call: Content | None = None,
         user_input_request: bool | None = None,
         approved: bool | None = None,
+        # OAuth consent fields
+        consent_link: str | None = None,
         # Common fields
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -518,6 +534,14 @@ class Content:
         self.inputs = inputs
         self.outputs = outputs
         self.image_id = image_id
+        self.commands = commands
+        self.timeout_ms = timeout_ms
+        self.max_output_length = max_output_length
+        self.status = status
+        self.stdout = stdout
+        self.stderr = stderr
+        self.exit_code = exit_code
+        self.timed_out = timed_out
         self.tool_name = tool_name
         self.server_name = server_name
         self.output = output
@@ -525,6 +549,7 @@ class Content:
         self.function_call = function_call
         self.user_input_request = user_input_request
         self.approved = approved
+        self.consent_link = consent_link
 
     @classmethod
     def from_text(
@@ -909,6 +934,112 @@ class Content:
         )
 
     @classmethod
+    def from_shell_tool_call(
+        cls: type[ContentT],
+        *,
+        call_id: str | None = None,
+        commands: list[str] | None = None,
+        timeout_ms: int | None = None,
+        max_output_length: int | None = None,
+        status: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create shell tool call content.
+
+        This content represents the model's request to run one or more shell
+        commands. It is request metadata, not command output.
+
+        Keyword Args:
+            call_id: The unique identifier for this tool call.
+            commands: The list of commands to execute.
+            timeout_ms: The timeout in milliseconds for the shell command execution.
+            max_output_length: The maximum output length in characters.
+            status: The status of the shell call (e.g., "in_progress", "completed", "incomplete").
+            annotations: Optional annotations for this content.
+            additional_properties: Optional additional properties.
+            raw_representation: The raw provider-specific representation.
+        """
+        return cls(
+            "shell_tool_call",
+            call_id=call_id,
+            commands=commands,
+            timeout_ms=timeout_ms,
+            max_output_length=max_output_length,
+            status=status,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_shell_tool_result(
+        cls: type[ContentT],
+        *,
+        call_id: str | None = None,
+        outputs: Sequence[Content] | None = None,
+        max_output_length: int | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create shell tool result content.
+
+        This content represents the aggregate result for a shell tool call.
+        Use :meth:`from_shell_command_output` to build each per-command output
+        item and pass those objects via ``outputs``.
+
+        Keyword Args:
+            call_id: The function call ID for which this is the result.
+            outputs: The list of shell command output Content objects.
+            max_output_length: The maximum output length in characters.
+            annotations: Optional annotations for this content.
+            additional_properties: Optional additional properties.
+            raw_representation: The raw provider-specific representation.
+        """
+        return cls(
+            "shell_tool_result",
+            call_id=call_id,
+            outputs=list(outputs) if outputs is not None else None,
+            max_output_length=max_output_length,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_shell_command_output(
+        cls: type[ContentT],
+        *,
+        stdout: str | None = None,
+        stderr: str | None = None,
+        exit_code: int | None = None,
+        timed_out: bool | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create shell command output content for one command execution.
+
+        Keyword Args:
+            stdout: The standard output of the command.
+            stderr: The standard error output of the command.
+            exit_code: The exit code of the command, or None if the command timed out.
+            timed_out: Whether the command execution timed out.
+            additional_properties: Optional additional properties.
+            raw_representation: The raw provider-specific representation.
+        """
+        return cls(
+            "shell_command_output",
+            stdout=stdout,
+            stderr=stderr,
+            exit_code=exit_code,
+            timed_out=timed_out,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
     def from_mcp_server_tool_call(
         cls: type[ContentT],
         call_id: str,
@@ -995,6 +1126,37 @@ class Content:
             raw_representation=raw_representation,
         )
 
+    @classmethod
+    def from_oauth_consent_request(
+        cls: type[ContentT],
+        consent_link: str,
+        *,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create OAuth consent request content.
+
+        Args:
+            consent_link: The URL the user must visit to complete OAuth consent.
+
+        Keyword Args:
+            annotations: Optional annotations.
+            additional_properties: Optional additional properties.
+            raw_representation: Optional raw representation from the provider.
+
+        Returns:
+            A new Content instance with type ``oauth_consent_request``.
+        """
+        return cls(
+            "oauth_consent_request",
+            consent_link=consent_link,
+            user_input_request=True,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
     def to_function_approval_response(
         self,
         approved: bool,
@@ -1034,6 +1196,14 @@ class Content:
             "inputs",
             "outputs",
             "image_id",
+            "commands",
+            "timeout_ms",
+            "max_output_length",
+            "status",
+            "stdout",
+            "stderr",
+            "exit_code",
+            "timed_out",
             "tool_name",
             "server_name",
             "output",
@@ -1041,6 +1211,7 @@ class Content:
             "user_input_request",
             "approved",
             "id",
+            "consent_link",
             "additional_properties",
         )
 

@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable
-from typing import Any
+from collections.abc import Awaitable
+from typing import Any, Literal, overload
 
-from agent_framework import AgentResponse, AgentResponseUpdate, AgentSession, Message
+from agent_framework import AgentResponse, AgentResponseUpdate, AgentRunInputs, AgentSession, ResponseStream
 from agent_framework._workflows._agent_utils import resolve_agent_id
 
 
@@ -11,39 +11,22 @@ class MockAgent:
     """Mock agent for testing agent utilities."""
 
     def __init__(self, agent_id: str, name: str | None = None) -> None:
-        self._id = agent_id
-        self._name = name
+        self.id: str = agent_id
+        self.name: str | None = name
+        self.description: str | None = None
 
-    @property
-    def id(self) -> str:
-        return self._id
-
-    @property
-    def name(self) -> str | None:
-        return self._name
-
-    @property
-    def display_name(self) -> str:
-        """Returns the display name of the agent."""
-        ...
-
-    @property
-    def description(self) -> str | None:
-        """Returns the description of the agent."""
-        ...
-
-    def run(
-        self,
-        messages: str | Message | list[str] | list[Message] | None = None,
-        *,
-        stream: bool = False,
-        session: AgentSession | None = None,
-        **kwargs: Any,
-    ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]: ...
+    @overload
+    def run(self, messages: AgentRunInputs | None = ..., *, stream: Literal[False] = ..., session: AgentSession | None = ..., **kwargs: Any) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(self, messages: AgentRunInputs | None = ..., *, stream: Literal[True], session: AgentSession | None = ..., **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+    def run(self, messages: AgentRunInputs | None = None, *, stream: bool = False, session: AgentSession | None = None, **kwargs: Any) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def create_session(self, **kwargs: Any) -> AgentSession:
         """Creates a new conversation session for the agent."""
         ...
+
+    def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+        return AgentSession()
 
 
 def test_resolve_agent_id_with_name() -> None:
