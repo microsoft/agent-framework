@@ -37,6 +37,14 @@ The `FoundryAgentClient` auto-discovers these environment variables at construct
 |[Basics](./FoundryAgentsRAPI_Step01_Basics/)|This sample demonstrates how to create and run a basic agent using the Responses API|
 |[Multi-turn conversation](./FoundryAgentsRAPI_Step02_MultiturnConversation/)|This sample demonstrates how to implement a multi-turn conversation using the Responses API|
 |[Using function tools](./FoundryAgentsRAPI_Step03_UsingFunctionTools/)|This sample demonstrates how to use function tools with the Responses API|
+|[Using function tools with approvals](./FoundryAgentsRAPI_Step04_UsingFunctionToolsWithApprovals/)|This sample demonstrates how to use function tools with human-in-the-loop approval|
+|[Structured output](./FoundryAgentsRAPI_Step05_StructuredOutput/)|This sample demonstrates how to use structured output with the Responses API|
+|[Persisted conversations](./FoundryAgentsRAPI_Step06_PersistedConversations/)|This sample demonstrates how to persist and resume conversations|
+|[Observability](./FoundryAgentsRAPI_Step07_Observability/)|This sample demonstrates how to add OpenTelemetry observability|
+|[Dependency injection](./FoundryAgentsRAPI_Step08_DependencyInjection/)|This sample demonstrates how to use dependency injection with a hosted service|
+|[Using images](./FoundryAgentsRAPI_Step10_UsingImages/)|This sample demonstrates how to use image multi-modality|
+|[Agent as function tool](./FoundryAgentsRAPI_Step11_AsFunctionTool/)|This sample demonstrates how to use one agent as a function tool for another|
+|[Middleware](./FoundryAgentsRAPI_Step12_Middleware/)|This sample demonstrates multiple middleware layers (PII, guardrails, approvals)|
 
 ## Running the samples from the console
 

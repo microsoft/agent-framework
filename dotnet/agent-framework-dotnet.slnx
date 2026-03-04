@@ -148,6 +148,14 @@
     <Project Path="samples/02-agents/FoundryAgents-RAPI/FoundryAgentsRAPI_Step01_Basics/FoundryAgentsRAPI_Step01_Basics.csproj" />
     <Project Path="samples/02-agents/FoundryAgents-RAPI/FoundryAgentsRAPI_Step02_MultiturnConversation/FoundryAgentsRAPI_Step02_MultiturnConversation.csproj" />
     <Project Path="samples/02-agents/FoundryAgents-RAPI/FoundryAgentsRAPI_Step03_UsingFunctionTools/FoundryAgentsRAPI_Step03_UsingFunctionTools.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents-RAPI/FoundryAgentsRAPI_Step04_UsingFunctionToolsWithApprovals/FoundryAgentsRAPI_Step04_UsingFunctionToolsWithApprovals.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents-RAPI/FoundryAgentsRAPI_Step05_StructuredOutput/FoundryAgentsRAPI_Step05_StructuredOutput.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents-RAPI/FoundryAgentsRAPI_Step06_PersistedConversations/FoundryAgentsRAPI_Step06_PersistedConversations.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents-RAPI/FoundryAgentsRAPI_Step07_Observability/FoundryAgentsRAPI_Step07_Observability.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents-RAPI/FoundryAgentsRAPI_Step08_DependencyInjection/FoundryAgentsRAPI_Step08_DependencyInjection.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents-RAPI/FoundryAgentsRAPI_Step10_UsingImages/FoundryAgentsRAPI_Step10_UsingImages.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents-RAPI/FoundryAgentsRAPI_Step11_AsFunctionTool/FoundryAgentsRAPI_Step11_AsFunctionTool.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents-RAPI/FoundryAgentsRAPI_Step12_Middleware/FoundryAgentsRAPI_Step12_Middleware.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/FoundryAgents/">
     <File Path="samples/02-agents/FoundryAgents/README.md" />
