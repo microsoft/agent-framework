@@ -469,10 +469,11 @@ class TestWorkflowAgent:
         assert updates[2].raw_representation.value == 42
 
     async def test_workflow_as_agent_yield_output_with_list_of_chat_messages(self) -> None:
-        """Test that yield_output with list[Message] extracts contents from all messages.
+        """Test that yield_output with list[Message] extracts contents from non-user messages.
 
-        Note: Content items are coalesced by _finalize_response, so multiple text contents
-        become a single merged Content in the final response.
+        User-role messages are filtered out since agent responses should only contain
+        assistant/tool output. Content items are coalesced by _finalize_response, so
+        multiple text contents become a single merged Content in the final response.
         """
 
         @executor
@@ -491,25 +492,25 @@ class TestWorkflowAgent:
         workflow = WorkflowBuilder(start_executor=list_yielding_executor).build()
         agent = workflow.as_agent("list-msg-agent")
 
-        # Verify streaming returns the update with all 4 contents before coalescing
+        # Verify streaming returns updates for non-user messages only
         updates: list[AgentResponseUpdate] = []
         async for update in agent.run("test", stream=True):
             updates.append(update)
 
-        assert len(updates) == 3
+        assert len(updates) == 2
         full_response = AgentResponse.from_updates(updates)
-        assert len(full_response.messages) == 3
+        assert len(full_response.messages) == 2
         texts = [message.text for message in full_response.messages]
         # Note: `from_agent_run_response_updates` coalesces multiple text contents into one content
-        assert texts == ["first message", "second message", "thirdfourth"]
+        assert texts == ["second message", "thirdfourth"]
 
         # Verify run()
         result = await agent.run("test")
 
         assert isinstance(result, AgentResponse)
-        assert len(result.messages) == 3
+        assert len(result.messages) == 2
         texts = [message.text for message in result.messages]
-        assert texts == ["first message", "second message", "third fourth"]
+        assert texts == ["second message", "third fourth"]
 
     async def test_session_conversation_history_included_in_workflow_run(self) -> None:
         """Test that messages provided to agent.run() are passed through to the workflow."""

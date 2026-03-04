@@ -462,7 +462,7 @@ class WorkflowAgent(BaseAgent):
                     )
 
                 if isinstance(data, AgentResponse):
-                    messages.extend(data.messages)
+                    messages.extend(msg for msg in data.messages if msg.role != "user")
                     raw_representations.append(data.raw_representation)
                     merged_usage = add_usage_details(merged_usage, data.usage_details)
                     latest_created_at = (
@@ -473,11 +473,12 @@ class WorkflowAgent(BaseAgent):
                         else latest_created_at
                     )
                 elif isinstance(data, Message):
-                    messages.append(data)
-                    raw_representations.append(data.raw_representation)
+                    if data.role != "user":
+                        messages.append(data)
+                        raw_representations.append(data.raw_representation)
                 elif is_instance_of(data, list[Message]):
                     chat_messages = cast(list[Message], data)
-                    messages.extend(chat_messages)
+                    messages.extend(msg for msg in chat_messages if msg.role != "user")
                     raw_representations.append(data)
                 else:
                     contents = self._extract_contents(data)
@@ -566,6 +567,8 @@ class WorkflowAgent(BaseAgent):
                 # Convert each message in AgentResponse to an AgentResponseUpdate
                 updates: list[AgentResponseUpdate] = []
                 for msg in data.messages:
+                    if msg.role == "user":
+                        continue
                     updates.append(
                         AgentResponseUpdate(
                             contents=list(msg.contents),
@@ -580,6 +583,8 @@ class WorkflowAgent(BaseAgent):
                     )
                 return updates
             if isinstance(data, Message):
+                if data.role == "user":
+                    return []
                 return [
                     AgentResponseUpdate(
                         contents=list(data.contents),
@@ -596,6 +601,8 @@ class WorkflowAgent(BaseAgent):
                 chat_messages = cast(list[Message], data)
                 updates = []
                 for msg in chat_messages:
+                    if msg.role == "user":
+                        continue
                     updates.append(
                         AgentResponseUpdate(
                             contents=list(msg.contents),

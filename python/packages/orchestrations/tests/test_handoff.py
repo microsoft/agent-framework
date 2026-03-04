@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from agent_framework import (
     Agent,
+    AgentResponseUpdate,
     BaseContextProvider,
     ChatResponse,
     ChatResponseUpdate,
@@ -1091,3 +1092,39 @@ async def test_auto_handoff_middleware_calls_next_for_non_handoff_tool() -> None
 
     call_next.assert_awaited_once()
     assert context.result is None
+
+
+async def test_handoff_as_agent_run_stream_does_not_echo_user_input() -> None:
+    """WorkflowAgent wrapping a handoff workflow must not echo user input in streamed updates.
+
+    When HandoffAgentExecutor emits the full conversation via ctx.yield_output() on
+    termination, user-role messages from that list should not appear as
+    AgentResponseUpdate items in the stream returned by WorkflowAgent.run_stream().
+    """
+    agent = MockHandoffAgent(name="single_agent")
+
+    workflow = (
+        HandoffBuilder(
+            participants=[agent],
+            # Terminate immediately after the agent responds (user msg + assistant msg = 2).
+            termination_condition=lambda conv: len(conv) >= 2,
+        )
+        .with_start_agent(agent)
+        .build()
+    )
+
+    workflow_agent = workflow.as_agent(name="test_workflow_agent")
+
+    user_input = "Hi! Can you help me with something?"
+    updates: list[AgentResponseUpdate] = []
+    async for update in workflow_agent.run(user_input, stream=True):
+        updates.append(update)
+
+    assert updates, "Expected at least one streaming update"
+
+    # The core assertion: no update should carry the user role.
+    user_role_updates = [u for u in updates if u.role == "user"]
+    assert not user_role_updates, (
+        f"User input was echoed back in the stream as {len(user_role_updates)} update(s). "
+        "Expected only assistant-role updates."
+    )
