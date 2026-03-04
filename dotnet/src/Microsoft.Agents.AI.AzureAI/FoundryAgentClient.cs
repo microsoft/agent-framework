@@ -30,6 +30,7 @@ public sealed class FoundryAgentClient : AIAgent
     /// </summary>
     /// <param name="endpoint">The Azure AI Foundry project endpoint.</param>
     /// <param name="tokenProvider">The authentication token provider used to authenticate with the Azure AI Foundry service.</param>
+    /// <param name="model">The model deployment name to use for the agent (e.g., "gpt-4o-mini").</param>
     /// <param name="clientOptions">Optional configuration options for the <see cref="AIProjectClient"/>.</param>
     /// <param name="instructions">Optional system instructions that guide the agent's behavior.</param>
     /// <param name="name">Optional name for the agent.</param>
@@ -42,6 +43,7 @@ public sealed class FoundryAgentClient : AIAgent
     public FoundryAgentClient(
         Uri endpoint,
         AuthenticationTokenProvider tokenProvider,
+        string model,
         AIProjectClientOptions? clientOptions = null,
         string? instructions = null,
         string? name = null,
@@ -56,8 +58,9 @@ public sealed class FoundryAgentClient : AIAgent
               clientOptions,
               new ChatClientAgentOptions
               {
-                  ChatOptions = (tools is null && string.IsNullOrWhiteSpace(instructions)) ? null : new ChatOptions
+                  ChatOptions = new ChatOptions
                   {
+                      ModelId = model,
                       Tools = tools,
                       Instructions = instructions
                   },
@@ -99,8 +102,8 @@ public sealed class FoundryAgentClient : AIAgent
         this._aiProjectClient = new AIProjectClient(endpoint, tokenProvider, clientOptions);
 
         IChatClient chatClient = this._aiProjectClient
-            .GetProjectOpenAIClient()
-            .GetProjectResponsesClient()
+            .OpenAI
+            .GetProjectResponsesClientForModel(options?.ChatOptions?.ModelId ?? string.Empty)
             .AsIChatClient();
 
         if (chatClientFactory is not null)

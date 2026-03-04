@@ -1,10 +1,9 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to create and run a basic agent using the Foundry Responses API directly,
 // without creating a server-side agent definition.
 
 using Azure.Identity;
-using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
@@ -17,7 +16,8 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 FoundryAgentClient agent = new(
     endpoint: new Uri(endpoint),
-    tokenProvider: new DefaultAzureCredentialTokenProvider(new DefaultAzureCredential()),
+    tokenProvider: new AzureCliCredential(),
+    model: deploymentName,
     instructions: "You are good at telling jokes.",
     name: "JokerAgent");
 

@@ -143,6 +143,12 @@
     <Project Path="samples/02-agents/AgentWithRAG/AgentWithRAG_Step03_CustomRAGDataSource/AgentWithRAG_Step03_CustomRAGDataSource.csproj" />
     <Project Path="samples/02-agents/AgentWithRAG/AgentWithRAG_Step04_FoundryServiceRAG/AgentWithRAG_Step04_FoundryServiceRAG.csproj" />
   </Folder>
+  <Folder Name="/Samples/02-agents/FoundryAgents-RAPI/">
+    <File Path="samples/02-agents/FoundryAgents-RAPI/README.md" />
+    <Project Path="samples/02-agents/FoundryAgents-RAPI/FoundryAgentsRAPI_Step01_Basics/FoundryAgentsRAPI_Step01_Basics.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents-RAPI/FoundryAgentsRAPI_Step02_MultiturnConversation/FoundryAgentsRAPI_Step02_MultiturnConversation.csproj" />
+    <Project Path="samples/02-agents/FoundryAgents-RAPI/FoundryAgentsRAPI_Step03_UsingFunctionTools/FoundryAgentsRAPI_Step03_UsingFunctionTools.csproj" />
+  </Folder>
   <Folder Name="/Samples/02-agents/FoundryAgents/">
     <File Path="samples/02-agents/FoundryAgents/README.md" />
     <Project Path="samples/02-agents/FoundryAgents/FoundryAgents_Evaluations_Step01_RedTeaming/FoundryAgents_Evaluations_Step01_RedTeaming.csproj" />
