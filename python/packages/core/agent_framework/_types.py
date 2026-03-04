@@ -2844,6 +2844,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         except StopAsyncIteration:
             self._consumed = True
             await self._run_cleanup_hooks()
+            await self.get_final_response()
             raise
         except Exception:
             await self._run_cleanup_hooks()
@@ -2901,23 +2902,28 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                     async for _ in self:
                         pass
 
-                # First, finalize the inner stream and run its result hooks
+            # Re-check: __anext__ auto-finalization may have already finalized this stream
+            if not self._finalized:
                 # This ensures inner post-processing (e.g., context provider notifications) runs
-                if self._inner_stream._finalizer is not None:
-                    inner_result: Any = self._inner_stream._finalizer(self._inner_stream._updates)
-                    if isinstance(inner_result, Awaitable):
-                        inner_result = await inner_result
+                # Skip if inner stream was already finalized (e.g., via auto-finalization on iteration)
+                if not self._inner_stream._finalized:
+                    if self._inner_stream._finalizer is not None:
+                        inner_result: Any = self._inner_stream._finalizer(self._inner_stream._updates)
+                        if isinstance(inner_result, Awaitable):
+                            inner_result = await inner_result
+                    else:
+                        inner_result = self._inner_stream._updates
+                    # Run inner stream's result hooks
+                    for hook in self._inner_stream._result_hooks:
+                        hooked = hook(inner_result)
+                        if isinstance(hooked, Awaitable):
+                            hooked = await hooked
+                        if hooked is not None:
+                            inner_result = hooked
+                    self._inner_stream._final_result = inner_result
+                    self._inner_stream._finalized = True
                 else:
-                    inner_result = self._inner_stream._updates
-                # Run inner stream's result hooks
-                for hook in self._inner_stream._result_hooks:
-                    hooked = hook(inner_result)
-                    if isinstance(hooked, Awaitable):
-                        hooked = await hooked
-                    if hooked is not None:
-                        inner_result = hooked
-                self._inner_stream._final_result = inner_result
-                self._inner_stream._finalized = True
+                    inner_result = self._inner_stream._final_result
 
                 # Now finalize the outer stream with its own finalizer
                 # If outer has no finalizer, use inner's result (preserves from_awaitable behavior)
@@ -2942,7 +2948,8 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             if not self._consumed:
                 async for _ in self:
                     pass
-            # Use finalizer if configured, otherwise return collected updates
+        # Re-check: __anext__ auto-finalization may have already finalized this stream
+        if not self._finalized:
             if self._finalizer is not None:
                 result = self._finalizer(self._updates)
                 if isinstance(result, Awaitable):
