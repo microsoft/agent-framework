@@ -64,6 +64,22 @@ public sealed class WorkflowNamingHelperTests
         Assert.Equal("Physicist", result);
     }
 
+    [Fact]
+    public void GetExecutorName_NameWithUnderscoresAndGuidSuffix_ReturnsFullName()
+    {
+        string result = WorkflowNamingHelper.GetExecutorName("my_agent_8884e71021334ce49517fa2b17b1695b");
+
+        Assert.Equal("my_agent", result);
+    }
+
+    [Fact]
+    public void GetExecutorName_NameWithUnderscoreButNoGuidSuffix_ReturnsSameName()
+    {
+        string result = WorkflowNamingHelper.GetExecutorName("my_custom_executor");
+
+        Assert.Equal("my_custom_executor", result);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

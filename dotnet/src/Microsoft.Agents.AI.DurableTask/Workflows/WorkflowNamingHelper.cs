@@ -63,8 +63,38 @@ internal static class WorkflowNamingHelper
     {
         ArgumentException.ThrowIfNullOrEmpty(executorId);
 
-        int separatorIndex = executorId.IndexOf(ExecutorIdSuffixSeparator);
-        return separatorIndex > 0 ? executorId[..separatorIndex] : executorId;
+        int separatorIndex = executorId.LastIndexOf(ExecutorIdSuffixSeparator);
+        if (separatorIndex > 0)
+        {
+            ReadOnlySpan<char> suffix = executorId.AsSpan(separatorIndex + 1);
+            if (IsGuidSuffix(suffix))
+            {
+                return executorId[..separatorIndex];
+            }
+        }
+
+        return executorId;
+    }
+
+    /// <summary>
+    /// Checks whether the given span looks like a sanitized GUID (32 hex characters).
+    /// </summary>
+    private static bool IsGuidSuffix(ReadOnlySpan<char> value)
+    {
+        if (value.Length != 32)
+        {
+            return false;
+        }
+
+        foreach (char c in value)
+        {
+            if (!char.IsAsciiHexDigit(c))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool TryGetWorkflowName(string? orchestrationFunctionName, [NotNullWhen(true)] out string? workflowName)
