@@ -1,7 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -292,5 +296,121 @@ public class AgentHostingServiceCollectionExtensionsTests
         Assert.NotNull(descriptor);
         Assert.Equal(lifetime, descriptor.Lifetime);
         Assert.Equal(lifetime, result.Lifetime);
+    }
+
+    /// <summary>
+    /// Verifies that AddAIAgent passes the application's IServiceProvider to the
+    /// ChatClientAgent, enabling tool dependency injection. Regression test for
+    /// https://github.com/microsoft/agent-framework/issues/4453.
+    /// </summary>
+    [Fact]
+    public void AddAIAgent_PassesServiceProvider_ToChatClientAgent()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IChatClient>(new MockChatClient());
+        services.AddSingleton<IMarkerService, MarkerService>();
+        services.AddAIAgent("test-agent", "Test instructions");
+
+        var serviceProvider = services.BuildServiceProvider();
+        var agent = serviceProvider.GetRequiredKeyedService<AIAgent>("test-agent") as ChatClientAgent;
+
+        Assert.NotNull(agent);
+        AssertServiceProviderPassedThrough(agent!);
+    }
+
+    /// <summary>
+    /// Verifies that AddAIAgent with a chat client instance passes the IServiceProvider.
+    /// </summary>
+    [Fact]
+    public void AddAIAgent_WithChatClient_PassesServiceProvider()
+    {
+        var services = new ServiceCollection();
+        var chatClient = new MockChatClient();
+        services.AddSingleton<IMarkerService, MarkerService>();
+        services.AddAIAgent("test-agent", "Test instructions", chatClient);
+
+        var serviceProvider = services.BuildServiceProvider();
+        var agent = serviceProvider.GetRequiredKeyedService<AIAgent>("test-agent") as ChatClientAgent;
+
+        Assert.NotNull(agent);
+        AssertServiceProviderPassedThrough(agent!);
+    }
+
+    /// <summary>
+    /// Verifies that AddAIAgent with a chat client key passes the IServiceProvider.
+    /// </summary>
+    [Fact]
+    public void AddAIAgent_WithChatClientKey_PassesServiceProvider()
+    {
+        var services = new ServiceCollection();
+        services.AddKeyedSingleton<IChatClient>("myKey", new MockChatClient());
+        services.AddSingleton<IMarkerService, MarkerService>();
+        services.AddAIAgent("test-agent", "Test instructions", "myKey");
+
+        var serviceProvider = services.BuildServiceProvider();
+        var agent = serviceProvider.GetRequiredKeyedService<AIAgent>("test-agent") as ChatClientAgent;
+
+        Assert.NotNull(agent);
+        AssertServiceProviderPassedThrough(agent!);
+    }
+
+    /// <summary>
+    /// Verifies that AddAIAgent with description and chat client key passes the IServiceProvider.
+    /// </summary>
+    [Fact]
+    public void AddAIAgent_WithDescriptionAndKey_PassesServiceProvider()
+    {
+        var services = new ServiceCollection();
+        services.AddKeyedSingleton<IChatClient>("myKey", new MockChatClient());
+        services.AddSingleton<IMarkerService, MarkerService>();
+        services.AddAIAgent("test-agent", "Test instructions", "A test agent", "myKey");
+
+        var serviceProvider = services.BuildServiceProvider();
+        var agent = serviceProvider.GetRequiredKeyedService<AIAgent>("test-agent") as ChatClientAgent;
+
+        Assert.NotNull(agent);
+        AssertServiceProviderPassedThrough(agent!);
+    }
+
+    /// <summary>
+    /// Verifies that the FunctionInvokingChatClient in the agent's pipeline received
+    /// the application's IServiceProvider (not null) by checking that it can resolve
+    /// a service registered in the DI container.
+    /// </summary>
+    private static void AssertServiceProviderPassedThrough(ChatClientAgent agent)
+    {
+        var funcClient = agent.ChatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(funcClient);
+
+        // Use reflection to access the internal IServiceProvider stored in FunctionInvokingChatClient.
+        // This verifies the application's service provider was forwarded, not null or an empty provider.
+        var spField = typeof(FunctionInvokingChatClient)
+            .GetField("_serviceProvider", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        if (spField is not null)
+        {
+            var innerProvider = spField.GetValue(funcClient) as IServiceProvider;
+            Assert.NotNull(innerProvider);
+            var marker = innerProvider!.GetService<IMarkerService>();
+            Assert.NotNull(marker);
+        }
+    }
+
+    private interface IMarkerService;
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via DI")]
+    private sealed class MarkerService : IMarkerService;
+
+    private sealed class MockChatClient : IChatClient
+    {
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose() { }
     }
 }
