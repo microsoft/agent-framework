@@ -8,6 +8,7 @@ from collections.abc import Mapping, MutableMapping, Sequence
 from typing import Any, cast
 
 from agent_framework import (
+    Content,
     FunctionTool,
 )
 from agent_framework.exceptions import IntegrationInvalidRequestException
@@ -107,6 +108,47 @@ def _extract_project_connection_id(additional_properties: dict[str, Any] | None)
                 return name
 
     return None
+
+
+def resolve_file_ids(file_ids: Sequence[str | Content] | None) -> list[str] | None:
+    """Resolve a list of file ID values that may include Content objects.
+
+    Accepts plain strings and Content objects with type "hosted_file", extracting
+    the file_id from each. This enables users to pass Content.from_hosted_file()
+    alongside plain file ID strings.
+
+    Args:
+        file_ids: Sequence of file ID strings or Content objects, or None.
+
+    Returns:
+        A list of resolved file ID strings, or None if input is None or empty.
+
+    Raises:
+        ValueError: If a Content object has an unsupported type (not "hosted_file").
+    """
+    if not file_ids:
+        return None
+
+    resolved: list[str] = []
+    for item in file_ids:
+        if isinstance(item, str):
+            if not item:
+                raise ValueError("file_ids must not contain empty strings.")
+            resolved.append(item)
+        elif isinstance(item, Content):
+            if item.type != "hosted_file":
+                raise ValueError(
+                    f"Unsupported Content type '{item.type}' for code interpreter file_ids. "
+                    "Only Content.from_hosted_file() is supported."
+                )
+            if item.file_id is None:
+                raise ValueError(
+                    "Content.from_hosted_file() item is missing a file_id. "
+                    "Ensure the Content object has a valid file_id before using it in file_ids."
+                )
+            resolved.append(item.file_id)
+
+    return resolved if resolved else None
 
 
 def to_azure_ai_agent_tools(

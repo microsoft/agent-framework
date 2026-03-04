@@ -51,7 +51,7 @@ from azure.ai.projects.models import (
 from azure.ai.projects.models import FileSearchTool as ProjectsFileSearchTool
 from azure.core.exceptions import ResourceNotFoundError
 
-from ._shared import AzureAISettings, create_text_format_config
+from ._shared import AzureAISettings, create_text_format_config, resolve_file_ids
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -597,6 +597,68 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """Get the current conversation ID from chat options or kwargs."""
         return options.get("conversation_id") or kwargs.get("conversation_id") or self.conversation_id
 
+    @override
+    def _parse_response_from_openai(
+        self,
+        response: Any,
+        options: dict[str, Any],
+    ) -> ChatResponse:
+        """Parse an Azure AI Responses API response, handling Azure-specific output item types."""
+        result = super()._parse_response_from_openai(response, options)
+
+        if result.messages:
+            for item in response.output:
+                if item.type == "oauth_consent_request":
+                    consent_link = item.consent_link
+                    if consent_link and not consent_link.startswith("https://"):
+                        logger.warning("Skipping oauth_consent_request with non-HTTPS consent_link: %s", item)
+                        consent_link = ""
+                    if consent_link:
+                        result.messages[0].contents.append(
+                            Content.from_oauth_consent_request(
+                                consent_link=consent_link,
+                                raw_representation=item,
+                            )
+                        )
+                    else:
+                        logger.warning("Received oauth_consent_request output without consent_link: %s", item)
+
+        return result
+
+    @override
+    def _parse_chunk_from_openai(
+        self,
+        event: Any,
+        options: dict[str, Any],
+        function_call_ids: dict[int, tuple[str, str]],
+    ) -> ChatResponseUpdate:
+        """Parse an Azure AI streaming event, handling Azure-specific event types."""
+        # Intercept output_item.added events for Azure-specific item types
+        if event.type == "response.output_item.added" and event.item.type == "oauth_consent_request":
+            event_item = event.item
+            consent_link = event_item.consent_link
+            if consent_link and not consent_link.startswith("https://"):
+                logger.warning("Skipping oauth_consent_request with non-HTTPS consent_link: %s", event_item)
+                consent_link = ""
+            contents: list[Content] = []
+            if consent_link:
+                contents.append(
+                    Content.from_oauth_consent_request(
+                        consent_link=consent_link,
+                        raw_representation=event_item,
+                    )
+                )
+            else:
+                logger.warning("Received oauth_consent_request output without consent_link: %s", event_item)
+            return ChatResponseUpdate(
+                contents=contents,
+                role="assistant",
+                model_id=self.model_id,
+                raw_representation=event,
+            )
+
+        return super()._parse_chunk_from_openai(event, options, function_call_ids)
+
     def _prepare_messages_for_azure_ai(self, messages: Sequence[Message]) -> tuple[list[Message], str | None]:
         """Prepare input from messages and convert system/developer messages to instructions."""
         result: list[Message] = []
@@ -839,14 +901,16 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
     @staticmethod
     def get_code_interpreter_tool(  # type: ignore[override]
         *,
-        file_ids: list[str] | None = None,
+        file_ids: list[str | Content] | None = None,
         container: Literal["auto"] | dict[str, Any] = "auto",
         **kwargs: Any,
     ) -> CodeInterpreterTool:
         """Create a code interpreter tool configuration for Azure AI Projects.
 
         Keyword Args:
-            file_ids: Optional list of file IDs to make available to the code interpreter.
+            file_ids: Optional list of file IDs or Content objects to make available to
+                the code interpreter. Accepts plain strings or Content.from_hosted_file()
+                instances.
             container: Container configuration. Use "auto" for automatic container management.
                 Note: Custom container settings from this parameter are not used by Azure AI Projects;
                 use file_ids instead.
@@ -866,7 +930,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         # Extract file_ids from container if provided as dict and file_ids not explicitly set
         if file_ids is None and isinstance(container, dict):
             file_ids = container.get("file_ids")
-        tool_container = CodeInterpreterContainerAuto(file_ids=file_ids if file_ids else None)
+        resolved = resolve_file_ids(file_ids)
+        tool_container = CodeInterpreterContainerAuto(file_ids=resolved)
         return CodeInterpreterTool(container=tool_container, **kwargs)
 
     @staticmethod

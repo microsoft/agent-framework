@@ -1685,6 +1685,35 @@ def test_get_code_interpreter_tool_with_file_ids() -> None:
     assert tool["container"]["file_ids"] == ["file-123", "file-456"]
 
 
+def test_get_code_interpreter_tool_with_content() -> None:
+    """Test get_code_interpreter_tool accepts Content.from_hosted_file in file_ids."""
+    from agent_framework import Content
+
+    content = Content.from_hosted_file("file-content-123")
+    tool = AzureAIClient.get_code_interpreter_tool(file_ids=[content])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert tool["container"]["file_ids"] == ["file-content-123"]
+
+
+def test_get_code_interpreter_tool_with_mixed_file_ids() -> None:
+    """Test get_code_interpreter_tool accepts a mix of strings and Content objects."""
+    from agent_framework import Content
+
+    content = Content.from_hosted_file("file-from-content")
+    tool = AzureAIClient.get_code_interpreter_tool(file_ids=["file-plain", content])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert sorted(tool["container"]["file_ids"]) == ["file-from-content", "file-plain"]
+
+
+def test_get_code_interpreter_tool_content_unsupported_type() -> None:
+    """Test get_code_interpreter_tool raises ValueError for unsupported Content types."""
+    from agent_framework import Content
+
+    content = Content.from_hosted_vector_store("vs-123")
+    with pytest.raises(ValueError, match="Unsupported Content type"):
+        AzureAIClient.get_code_interpreter_tool(file_ids=[content])
+
+
 def test_get_file_search_tool_basic() -> None:
     """Test get_file_search_tool returns FileSearchTool."""
     tool = AzureAIClient.get_file_search_tool(vector_store_ids=["vs-123"])
@@ -2143,6 +2172,105 @@ def test_build_url_citation_content_with_dict(mock_project_client: MagicMock) ->
     assert ann["title"] == "doc_1"
     # doc_1 is out of range for a 1-element get_urls, so no get_url
     assert "get_url" not in ann.get("additional_properties", {})
+
+
+# region OAuth Consent
+
+
+def test_parse_chunk_with_oauth_consent_request(mock_project_client: MagicMock) -> None:
+    """Test that a streaming oauth_consent_request output item is parsed into oauth_consent_request content.
+
+    This reproduces the bug from issue #3950 where the event was logged as "Unparsed event"
+    and silently discarded, causing the agent run to complete with zero content.
+    """
+    client = AzureAIClient(project_client=mock_project_client, agent_name="test")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_item = MagicMock()
+    mock_item.type = "oauth_consent_request"
+    mock_item.consent_link = "https://login.microsoftonline.com/common/oauth2/authorize?client_id=abc123"
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = mock_item
+    mock_event.output_index = 0
+
+    update = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert len(update.contents) == 1
+    consent_content = update.contents[0]
+    assert consent_content.type == "oauth_consent_request"
+    assert consent_content.consent_link == "https://login.microsoftonline.com/common/oauth2/authorize?client_id=abc123"
+    assert consent_content.user_input_request is True
+
+
+def test_parse_response_with_oauth_consent_output_item(mock_project_client: MagicMock) -> None:
+    """Test that a non-streaming oauth_consent_request output item is parsed correctly."""
+    client = AzureAIClient(project_client=mock_project_client, agent_name="test")
+
+    mock_item = MagicMock()
+    mock_item.type = "oauth_consent_request"
+    mock_item.consent_link = "https://login.microsoftonline.com/consent?code=abc"
+
+    mock_response = MagicMock()
+    mock_response.output = [mock_item]
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.id = "resp-oauth-1"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.usage = None
+    mock_response.status = "completed"
+
+    response = client._parse_response_from_openai(mock_response, {})
+
+    assert len(response.messages) > 0
+    consent_contents = [c for c in response.messages[0].contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "https://login.microsoftonline.com/consent?code=abc"
+
+
+def test_parse_chunk_oauth_consent_no_link(mock_project_client: MagicMock) -> None:
+    """Test that a streaming oauth_consent_request with no consent_link produces empty contents."""
+    client = AzureAIClient(project_client=mock_project_client, agent_name="test")
+
+    mock_item = MagicMock()
+    mock_item.type = "oauth_consent_request"
+    mock_item.consent_link = ""
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = mock_item
+    mock_event.output_index = 0
+
+    update = client._parse_chunk_from_openai(mock_event, {}, {})
+
+    assert not any(c.type == "oauth_consent_request" for c in update.contents)
+
+
+def test_parse_response_oauth_consent_no_link(mock_project_client: MagicMock) -> None:
+    """Test that a non-streaming oauth_consent_request with no consent_link appends no content."""
+    client = AzureAIClient(project_client=mock_project_client, agent_name="test")
+
+    mock_item = MagicMock()
+    mock_item.type = "oauth_consent_request"
+    mock_item.consent_link = None
+
+    mock_response = MagicMock()
+    mock_response.output = [mock_item]
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.id = "resp-oauth-2"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.usage = None
+    mock_response.status = "completed"
+
+    response = client._parse_response_from_openai(mock_response, {})
+
+    consent_contents = [c for c in response.messages[0].contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 0
 
 
 # endregion
