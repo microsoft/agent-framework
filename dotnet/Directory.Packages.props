@@ -19,8 +19,8 @@
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0" />
     <!-- Azure.* -->
-    <PackageVersion Include="Azure.AI.Projects" Version="1.2.0-beta.5" />
-    <PackageVersion Include="Azure.AI.Projects.OpenAI" Version="1.0.0-beta.5" />
+    <PackageVersion Include="Azure.AI.Projects" Version="2.0.0-beta.1" />
+    <PackageVersion Include="Azure.AI.Projects.OpenAI" Version="2.0.0-beta.1" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.8" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.8.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.17.1" />
@@ -35,7 +35,7 @@
     <!-- System.* -->
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.3" />
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
-    <PackageVersion Include="System.ClientModel" Version="1.8.1" />
+    <PackageVersion Include="System.ClientModel" Version="1.9.0" />
     <PackageVersion Include="System.CodeDom" Version="10.0.0" />
     <PackageVersion Include="System.Collections.Immutable" Version="10.0.1" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.2.25502.107" />
