@@ -133,7 +133,7 @@ internal sealed class ExecutorProtocol(MessageRouter router, ISet<Type> sendType
 
     public bool CanHandle(Type type) => router.CanHandle(type);
 
-    public bool CanOutput(Type type) => this._yieldTypes.Contains(new(type));
+    public bool CanOutput(Type type) => this._yieldTypes.Any(yieldType => yieldType.IsMatchPolymorphic(type));
 
     public ProtocolDescriptor Describe() => new(this.Router.IncomingTypes, yieldTypes, sendTypes, this.Router.HasCatchAll);
 }
