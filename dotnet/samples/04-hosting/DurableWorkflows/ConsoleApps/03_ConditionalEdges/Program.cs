@@ -21,7 +21,7 @@ string dtsConnectionString = Environment.GetEnvironmentVariable("DURABLE_TASK_SC
 // Create executor instances
 OrderIdParser orderParser = new();
 OrderEnrich orderEnrich = new();
-PaymentProcesser paymentProcessor = new();
+PaymentProcessor paymentProcessor = new();
 NotifyFraud notifyFraud = new();
 
 // Build workflow with conditional edges

@@ -52,7 +52,7 @@ internal sealed class OrderEnrich() : Executor<Order, Order>("EnrichOrder")
     }
 }
 
-internal sealed class PaymentProcesser() : Executor<Order, Order>("PaymentProcesser")
+internal sealed class PaymentProcessor() : Executor<Order, Order>("PaymentProcessor")
 {
     public override async ValueTask<Order> HandleAsync(Order message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {

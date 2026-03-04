@@ -55,8 +55,8 @@ internal static class OrderRouteConditions
 ### Routing Logic
 
 In this sample, the routing is based on the order ID:
-- Order IDs containing the letter **'B'** are associated with blocked customers ? routed to `NotifyFraud`
-- All other order IDs are associated with valid customers ? routed to `PaymentProcessor`
+- Order IDs containing the letter **'B'** are associated with blocked customers → routed to `NotifyFraud`
+- All other order IDs are associated with valid customers → routed to `PaymentProcessor`
 
 ## Environment Setup
 
