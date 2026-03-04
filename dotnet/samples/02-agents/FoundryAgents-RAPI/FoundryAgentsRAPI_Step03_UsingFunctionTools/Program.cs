@@ -3,13 +3,9 @@
 // This sample demonstrates how to use function tools with the Foundry Responses API directly.
 
 using System.ComponentModel;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
-
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 [Description("Get the weather for a given location.")]
 static string GetWeather([Description("The location to get the weather for.")] string location)
@@ -20,13 +16,11 @@ AITool tool = AIFunctionFactory.Create(GetWeather);
 
 // Create a FoundryAgentClient that uses the Responses API directly with function tools.
 // No server-side agent is created — instructions, tools and model are provided locally.
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+// The endpoint and model are resolved from environment variables:
+//   AZURE_AI_PROJECT_ENDPOINT - The Azure AI Foundry project endpoint URL.
+//   AZURE_AI_MODEL_DEPLOYMENT_NAME - The model deployment name to use.
+// Authentication uses DefaultAzureCredential.
 FoundryAgentClient agent = new(
-    endpoint: new Uri(endpoint),
-    tokenProvider: new AzureCliCredential(),
-    model: deploymentName,
     instructions: "You are a helpful assistant that can get weather information.",
     name: "WeatherAssistant",
     tools: [tool]);

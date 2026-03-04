@@ -21,6 +21,15 @@ Before you begin, ensure you have the following prerequisites:
 
 **Note**: These samples use Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure Foundry resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 
+Set the following environment variables:
+
+```powershell
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Azure Foundry resource endpoint
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Replace with your model deployment name
+```
+
+The `FoundryAgentClient` auto-discovers these environment variables at construction time, so no endpoint or credential code is needed in the samples.
+
 ## Samples
 
 |Sample|Description|
@@ -37,14 +46,12 @@ To run the samples, navigate to the desired sample directory, e.g.
 cd FoundryAgentsRAPI_Step01_Basics
 ```
 
-Set the following environment variables:
+Ensure the following environment variables are set:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Azure Foundry resource endpoint
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
 ```
-
-If the variables are not set, you will be prompted for the values when running the samples.
 
 Execute the following command to build the sample:
 
