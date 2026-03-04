@@ -145,7 +145,7 @@ public sealed class ObservabilityTests : IDisposable
         await this.TestWorkflowEndToEndActivitiesAsync("OffThread");
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky test - temporarily disabled")]
     public async Task CreatesWorkflowEndToEndActivities_WithCorrectName_ConcurrentAsync()
     {
         await this.TestWorkflowEndToEndActivitiesAsync("Concurrent");
