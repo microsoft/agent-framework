@@ -1,7 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-
-  <ItemGroup>
-    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.A2A\Microsoft.Agents.AI.A2A.csproj" />
-  </ItemGroup>
-  
-</Project>

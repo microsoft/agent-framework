@@ -1,8 +1,0 @@
-kind: Workflow
-trigger:
-
-  kind: OnConversationStart
-  actions:
-
-    - kind: EndConversation
-      id: end_all

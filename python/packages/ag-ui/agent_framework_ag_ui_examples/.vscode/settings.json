@@ -1,5 +1,0 @@
-{
-    "python.analysis.extraPaths": [
-        "${workspaceFolder}/packages/ag-ui/examples"
-    ]
-}

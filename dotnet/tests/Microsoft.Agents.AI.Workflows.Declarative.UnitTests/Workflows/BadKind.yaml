@@ -1,8 +1,0 @@
-kind: ToolDialog
-beginDialog:
-  kind: OnActivity
-  id: my_workflow
-  type: Message
-  actions:
-    - kind: EndConversation
-      id: end_all

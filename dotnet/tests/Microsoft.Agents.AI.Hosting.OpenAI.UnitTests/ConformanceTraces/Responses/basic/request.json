@@ -1,5 +1,0 @@
-{
-  "model": "gpt-4o-mini",
-  "input": "Hello, how are you?",
-  "max_output_tokens": 100
-}

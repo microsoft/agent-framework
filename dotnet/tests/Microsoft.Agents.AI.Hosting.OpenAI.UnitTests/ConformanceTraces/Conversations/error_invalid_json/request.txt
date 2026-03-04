@@ -1,5 +1,0 @@
-{
-  "metadata": {
-    "test": "invalid"
-  }
-  // missing closing brace and has comment which is invalid JSON

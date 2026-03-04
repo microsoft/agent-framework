@@ -1,8 +1,0 @@
-{
-  "error": {
-    "message": "Conversation with id 'conv_nonexistent123' not found.",
-    "type": "invalid_request_error",
-    "param": null,
-    "code": null
-  }
-}
