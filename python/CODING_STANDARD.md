@@ -79,20 +79,18 @@ def process_config(config: MutableMapping[str, Any]) -> None:
     ...
 ```
 
-### Pyright Ignore and Cast Policy
+### Typing Ignore and Cast Policy
 
 Use typing as a helper first and suppressions as a last resort:
 
 - **Prefer explicit typing before suppression**: Start with clearer type annotations, helper types, overloads,
-  protocols, or refactoring dynamic code into typed helpers.
+  protocols, or refactoring dynamic code into typed helpers. Prioritize performance over completeness of typing, but make a good-faith effort to reduce uncertainty with typing before ignoring. Prefer to use a cast over a typeguard function since that does add overhead.
+- **Avoid redundant casts**: Do not add `cast(...)` if the type already matches; casts should be reserved for
+  unavoidable narrowing where the runtime contract is known, we will use mypy's check on redundant casts to enforce this.
 - **Line-level pyright ignores only**: If suppression is still required, use a line-level rule-specific ignore
   (`# pyright: ignore[reportGeneralTypeIssues]`), never file-level or global suppression for this workflow.
 - **Private usage boundary**: Accessing private members across `agent_framework*` packages can be acceptable for this
   codebase, but private member usage for non-Agent Framework dependencies should remain flagged.
-- **Avoid redundant casts**: Do not add `cast(...)` if the type already matches; casts should be reserved for
-  unavoidable narrowing where the runtime contract is known.
-- **Uncertainty handoff**: If you are still unsure after best-effort typing, leave a targeted TODO note
-  (`TODO(<owner-or-issue>): ...`) that explains what reviewer guidance is needed.
 
 ## Function Parameter Guidelines
 

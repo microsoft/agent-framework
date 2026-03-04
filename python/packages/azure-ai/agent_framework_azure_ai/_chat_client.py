@@ -704,7 +704,7 @@ class AzureAIAgentClient(
                 args["tool_approvals"] = tool_approvals
             await self.agents_client.runs.submit_tool_outputs_stream(**args)  # type: ignore[reportUnknownMemberType]
             # Pass the handler to the stream to continue processing
-            stream = handler  # type: ignore
+            stream = handler
             final_thread_id = thread_run.thread_id
         else:
             # Handle thread creation or cancellation
@@ -881,7 +881,7 @@ class AzureAIAgentClient(
         azure_search_tool_calls: list[dict[str, Any]] = []
         response_stream = await stream.__aenter__() if isinstance(stream, AsyncAgentRunStream) else stream  # type: ignore[no-untyped-call]
         try:
-            async for event_type, event_data, _ in response_stream:  # type: ignore
+            async for event_type, event_data, _ in response_stream:
                 match event_data:
                     case MessageDeltaChunk():
                         # only one event_type: AgentStreamEvent.THREAD_MESSAGE_DELTA
@@ -1212,15 +1212,15 @@ class AzureAIAgentClient(
         self, options: Mapping[str, Any]
     ) -> AgentsToolChoiceOptionMode | AgentsNamedToolChoice | None:
         """Prepare the tool choice mode for Azure AI Agents API."""
-        tool_choice = options.get("tool_choice")
+        tool_choice = cast(str | dict[str, str] | None, options.get("tool_choice"))
         if tool_choice is None:
             return None
         if isinstance(tool_choice, str) and tool_choice in {"none", "auto"}:
             return AgentsToolChoiceOptionMode(tool_choice)
         if isinstance(tool_choice, dict):
-            mode: object = tool_choice.get("mode")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-            req_fn: object = tool_choice.get("required_function_name")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-            if mode == "required" and isinstance(req_fn, str):
+            mode = tool_choice.get("mode")
+            req_fn = tool_choice.get("required_function_name")
+            if mode == "required" and req_fn is not None:
                 return AgentsNamedToolChoice(
                     type=AgentsNamedToolChoiceType.FUNCTION,
                     function=FunctionName(name=req_fn),
