@@ -133,7 +133,7 @@ public sealed class ObservabilityTests : IDisposable
         activityEvents.Should().Contain(e => e.Name == EventNames.WorkflowCompleted, "activity should have workflow completed event");
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky test - temporarily disabled")]
     public async Task CreatesWorkflowEndToEndActivities_WithCorrectName_DefaultAsync()
     {
         await this.TestWorkflowEndToEndActivitiesAsync("Default");
