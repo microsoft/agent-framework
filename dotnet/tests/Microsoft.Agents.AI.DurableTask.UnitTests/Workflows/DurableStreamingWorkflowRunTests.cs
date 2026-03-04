@@ -624,7 +624,7 @@ public sealed class DurableStreamingWorkflowRunTests
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            run.SendResponseAsync<string>(null!, "response").AsTask());
+            run.SendResponseAsync(null!, "response").AsTask());
     }
 
     #endregion

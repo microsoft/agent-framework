@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // ConfigureAwait Usage in Orchestration Code:
 // This file uses ConfigureAwait(true) because it runs within orchestration context.

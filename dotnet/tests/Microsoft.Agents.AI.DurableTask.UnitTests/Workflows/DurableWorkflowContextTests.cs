@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Agents.AI.Workflows;
@@ -13,7 +13,7 @@ public sealed class DurableWorkflowContextTests
     #region ReadStateAsync
 
     [Fact]
-    public async Task ReadStateAsync_KeyExistsInInitialState_ReturnsValue()
+    public async Task ReadStateAsync_KeyExistsInInitialState_ReturnsValueAsync()
     {
         // Arrange
         Dictionary<string, string> state = new() { ["__default__:counter"] = "42" };
@@ -27,7 +27,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task ReadStateAsync_KeyDoesNotExist_ReturnsNull()
+    public async Task ReadStateAsync_KeyDoesNotExist_ReturnsNullAsync()
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -40,7 +40,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task ReadStateAsync_LocalUpdateTakesPriorityOverInitialState()
+    public async Task ReadStateAsync_LocalUpdateTakesPriorityOverInitialStateAsync()
     {
         // Arrange
         Dictionary<string, string> state = new() { ["__default__:key"] = "\"old\"" };
@@ -55,7 +55,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task ReadStateAsync_ScopeCleared_IgnoresInitialState()
+    public async Task ReadStateAsync_ScopeCleared_IgnoresInitialStateAsync()
     {
         // Arrange
         Dictionary<string, string> state = new() { ["__default__:key"] = "\"value\"" };
@@ -70,7 +70,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task ReadStateAsync_WithNamedScope_ReadsFromCorrectScope()
+    public async Task ReadStateAsync_WithNamedScope_ReadsFromCorrectScopeAsync()
     {
         // Arrange
         Dictionary<string, string> state = new()
@@ -92,7 +92,7 @@ public sealed class DurableWorkflowContextTests
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    public async Task ReadStateAsync_NullOrEmptyKey_ThrowsArgumentException(string? key)
+    public async Task ReadStateAsync_NullOrEmptyKey_ThrowsArgumentExceptionAsync(string? key)
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -106,7 +106,7 @@ public sealed class DurableWorkflowContextTests
     #region ReadOrInitStateAsync
 
     [Fact]
-    public async Task ReadOrInitStateAsync_KeyDoesNotExist_CallsFactoryAndQueuesUpdate()
+    public async Task ReadOrInitStateAsync_KeyDoesNotExist_CallsFactoryAndQueuesUpdateAsync()
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -120,7 +120,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task ReadOrInitStateAsync_KeyExists_ReturnsExistingValue()
+    public async Task ReadOrInitStateAsync_KeyExists_ReturnsExistingValueAsync()
     {
         // Arrange
         Dictionary<string, string> state = new() { ["__default__:key"] = "\"existing\"" };
@@ -142,7 +142,7 @@ public sealed class DurableWorkflowContextTests
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    public async Task ReadOrInitStateAsync_NullOrEmptyKey_ThrowsArgumentException(string? key)
+    public async Task ReadOrInitStateAsync_NullOrEmptyKey_ThrowsArgumentExceptionAsync(string? key)
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -153,7 +153,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task ReadOrInitStateAsync_ValueType_MissingKey_CallsFactory()
+    public async Task ReadOrInitStateAsync_ValueType_MissingKey_CallsFactoryAsync()
     {
         // Arrange
         // Validates that ReadStateAsync<int> returns null (not 0) for missing keys,
@@ -170,7 +170,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task ReadOrInitStateAsync_NullFactory_ThrowsArgumentNullException()
+    public async Task ReadOrInitStateAsync_NullFactory_ThrowsArgumentNullExceptionAsync()
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -185,7 +185,7 @@ public sealed class DurableWorkflowContextTests
     #region QueueStateUpdateAsync
 
     [Fact]
-    public async Task QueueStateUpdateAsync_SetsValue_VisibleToSubsequentRead()
+    public async Task QueueStateUpdateAsync_SetsValue_VisibleToSubsequentReadAsync()
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -199,7 +199,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task QueueStateUpdateAsync_NullValue_RecordsDeletion()
+    public async Task QueueStateUpdateAsync_NullValue_RecordsDeletionAsync()
     {
         // Arrange
         Dictionary<string, string> state = new() { ["__default__:key"] = "\"value\"" };
@@ -216,7 +216,7 @@ public sealed class DurableWorkflowContextTests
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    public async Task QueueStateUpdateAsync_NullOrEmptyKey_ThrowsArgumentException(string? key)
+    public async Task QueueStateUpdateAsync_NullOrEmptyKey_ThrowsArgumentExceptionAsync(string? key)
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -231,7 +231,7 @@ public sealed class DurableWorkflowContextTests
     #region QueueClearScopeAsync
 
     [Fact]
-    public async Task QueueClearScopeAsync_DefaultScope_ClearsStateAndPendingUpdates()
+    public async Task QueueClearScopeAsync_DefaultScope_ClearsStateAndPendingUpdatesAsync()
     {
         // Arrange
         Dictionary<string, string> state = new() { ["__default__:key"] = "\"value\"" };
@@ -247,7 +247,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task QueueClearScopeAsync_NamedScope_OnlyClearsThatScope()
+    public async Task QueueClearScopeAsync_NamedScope_OnlyClearsThatScopeAsync()
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -267,7 +267,7 @@ public sealed class DurableWorkflowContextTests
     #region ReadStateKeysAsync
 
     [Fact]
-    public async Task ReadStateKeysAsync_ReturnsKeysFromInitialState()
+    public async Task ReadStateKeysAsync_ReturnsKeysFromInitialStateAsync()
     {
         // Arrange
         Dictionary<string, string> state = new()
@@ -287,7 +287,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task ReadStateKeysAsync_MergesLocalUpdatesAndDeletions()
+    public async Task ReadStateKeysAsync_MergesLocalUpdatesAndDeletionsAsync()
     {
         // Arrange
         Dictionary<string, string> state = new()
@@ -309,7 +309,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task ReadStateKeysAsync_AfterClearScope_ExcludesInitialState()
+    public async Task ReadStateKeysAsync_AfterClearScope_ExcludesInitialStateAsync()
     {
         // Arrange
         Dictionary<string, string> state = new() { ["__default__:old"] = "\"val\"" };
@@ -326,7 +326,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task ReadStateKeysAsync_WithNamedScope_OnlyReturnsKeysFromThatScope()
+    public async Task ReadStateKeysAsync_WithNamedScope_OnlyReturnsKeysFromThatScopeAsync()
     {
         // Arrange
         Dictionary<string, string> state = new()
@@ -349,7 +349,7 @@ public sealed class DurableWorkflowContextTests
     #region AddEventAsync
 
     [Fact]
-    public async Task AddEventAsync_AddsEventToCollection()
+    public async Task AddEventAsync_AddsEventToCollectionAsync()
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -364,7 +364,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task AddEventAsync_NullEvent_DoesNotAdd()
+    public async Task AddEventAsync_NullEvent_DoesNotAddAsync()
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -383,7 +383,7 @@ public sealed class DurableWorkflowContextTests
     #region SendMessageAsync
 
     [Fact]
-    public async Task SendMessageAsync_SerializesMessageWithTypeName()
+    public async Task SendMessageAsync_SerializesMessageWithTypeNameAsync()
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -398,7 +398,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task SendMessageAsync_NullMessage_DoesNotAdd()
+    public async Task SendMessageAsync_NullMessage_DoesNotAddAsync()
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -417,7 +417,7 @@ public sealed class DurableWorkflowContextTests
     #region YieldOutputAsync
 
     [Fact]
-    public async Task YieldOutputAsync_AddsWorkflowOutputEvent()
+    public async Task YieldOutputAsync_AddsWorkflowOutputEventAsync()
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -432,7 +432,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task YieldOutputAsync_NullOutput_DoesNotAdd()
+    public async Task YieldOutputAsync_NullOutput_DoesNotAddAsync()
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -451,7 +451,7 @@ public sealed class DurableWorkflowContextTests
     #region RequestHaltAsync
 
     [Fact]
-    public async Task RequestHaltAsync_SetsHaltRequestedAndAddsEvent()
+    public async Task RequestHaltAsync_SetsHaltRequestedAndAddsEventAsync()
     {
         // Arrange
         DurableWorkflowContext context = new(null, CreateTestExecutor());
@@ -490,7 +490,7 @@ public sealed class DurableWorkflowContextTests
     }
 
     [Fact]
-    public async Task Constructor_NullInitialState_CreatesEmptyState()
+    public async Task Constructor_NullInitialState_CreatesEmptyStateAsync()
     {
         // Arrange & Act
         DurableWorkflowContext context = new(null, CreateTestExecutor());
