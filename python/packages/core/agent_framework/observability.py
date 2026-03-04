@@ -1155,10 +1155,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Trace chat responses with OpenTelemetry spans and metrics."""
         global OBSERVABILITY_SETTINGS
-        super_get_response = cast(
-            "Callable[..., Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]]",
-            super().get_response,  # type: ignore[misc]
-        )
+        super_get_response = super().get_response  # type: ignore[misc]
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
             return super_get_response(messages=messages, stream=stream, options=options, **kwargs)  # type: ignore[no-any-return]
@@ -1177,15 +1174,10 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         )
 
         if stream:
-            from ._types import ResponseStream
-
-            stream_result: object = super_get_response(messages=messages, stream=True, options=opts, **kwargs)
-            if isinstance(stream_result, ResponseStream):
-                result_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = stream_result  # pyright: ignore[reportUnknownVariableType]
-            elif isinstance(stream_result, Awaitable):
-                result_stream = ResponseStream.from_awaitable(stream_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
-            else:
-                raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
+            result_stream = cast(
+                ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
+                super_get_response(messages=messages, stream=True, options=opts, **kwargs),
+            )
 
             # Create span directly without trace.use_span() context attachment.
             # Streaming spans are closed asynchronously in cleanup hooks, which run

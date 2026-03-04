@@ -187,6 +187,7 @@ exclude = ["**/tests/**", "**/.venv/**", "packages/devui/frontend/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
+reportUnnecessaryCast = "error"
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
@@ -199,7 +200,6 @@ check_untyped_defs = true
 warn_return_any = true
 show_error_codes = true
 warn_unused_ignores = false
-warn_redundant_casts = true
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 

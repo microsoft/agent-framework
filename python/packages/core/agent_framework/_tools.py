@@ -2130,10 +2130,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             ResponseStream,
         )
 
-        super_get_response_untyped = super().get_response  # type: ignore[misc]
-
-        def super_get_response(*args: Any, **kwargs: Any) -> Any:
-            return super_get_response_untyped(*args, **kwargs)  # pyright: ignore[reportUnknownVariableType]
+        super_get_response = super().get_response  # type: ignore[misc]
 
         # ChatMiddleware adds this kwarg
         function_middleware_pipeline = FunctionMiddlewarePipeline(
