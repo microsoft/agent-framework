@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Awaitable, Sequence
-from typing import Any
+from typing import Any, Literal, overload
 
 import pytest
 from typing_extensions import Never
@@ -713,6 +713,14 @@ class TestWorkflowAgent:
             def create_session(self, **kwargs: Any) -> AgentSession:
                 return AgentSession()
 
+            def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+                return AgentSession()
+
+            @overload
+            def run(self, messages: str | Content | Message | Sequence[str | Content | Message] | None = ..., *, stream: Literal[False] = ..., session: AgentSession | None = ..., **kwargs: Any) -> Awaitable[AgentResponse[Any]]: ...
+            @overload
+            def run(self, messages: str | Content | Message | Sequence[str | Content | Message] | None = ..., *, stream: Literal[True], session: AgentSession | None = ..., **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
             def run(
                 self,
                 messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
@@ -800,6 +808,14 @@ class TestWorkflowAgent:
 
             def create_session(self, **kwargs: Any) -> AgentSession:
                 return AgentSession()
+
+            def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+                return AgentSession()
+
+            @overload
+            def run(self, messages: str | Content | Message | Sequence[str | Content | Message] | None = ..., *, stream: Literal[False] = ..., session: AgentSession | None = ..., **kwargs: Any) -> Awaitable[AgentResponse[Any]]: ...
+            @overload
+            def run(self, messages: str | Content | Message | Sequence[str | Content | Message] | None = ..., *, stream: Literal[True], session: AgentSession | None = ..., **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
             def run(
                 self,
@@ -1207,7 +1223,7 @@ class TestWorkflowAgentMergeUpdates:
         ]
 
         # Compare using role.value for Role enum
-        actual_sequence_normalized = [(t, r.value if hasattr(r, "value") else r) for t, r in content_sequence]
+        actual_sequence_normalized = [(t, r.value if hasattr(r, "value") else r) for t, r in content_sequence]  # type: ignore[union-attr]
 
         assert actual_sequence_normalized == expected_sequence, (
             f"FunctionResultContent should come immediately after FunctionCallContent. "

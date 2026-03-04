@@ -67,17 +67,18 @@ public sealed class Mem0ProviderTests : IDisposable
     }
 
     [Fact]
-    public void StateKey_ReturnsDefaultKey_WhenNoOptionsProvided()
+    public void StateKeys_ReturnsDefaultKey_WhenNoOptionsProvided()
     {
         // Arrange & Act
         var provider = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(new Mem0ProviderScope { ThreadId = "tid" }));
 
         // Assert
-        Assert.Equal("Mem0Provider", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("Mem0Provider", provider.StateKeys);
     }
 
     [Fact]
-    public void StateKey_ReturnsCustomKey_WhenSetViaOptions()
+    public void StateKeys_ReturnsCustomKey_WhenSetViaOptions()
     {
         // Arrange & Act
         var provider = new Mem0Provider(
@@ -86,7 +87,8 @@ public sealed class Mem0ProviderTests : IDisposable
             new Mem0ProviderOptions { StateKey = "custom-key" });
 
         // Assert
-        Assert.Equal("custom-key", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("custom-key", provider.StateKeys);
     }
 
     [Fact]
@@ -419,7 +421,7 @@ public sealed class Mem0ProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task StateKey_CanBeConfiguredViaOptionsAsync()
+    public async Task StateKeys_CanBeConfiguredViaOptionsAsync()
     {
         // Arrange
         this._handler.EnqueueJsonResponse("[]");

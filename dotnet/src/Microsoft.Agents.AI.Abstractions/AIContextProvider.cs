@@ -36,6 +36,8 @@ public abstract class AIContextProvider
     private static IEnumerable<ChatMessage> DefaultNoopFilter(IEnumerable<ChatMessage> messages)
         => messages;
 
+    private IReadOnlyList<string>? _stateKeys;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="AIContextProvider"/> class.
     /// </summary>
@@ -68,14 +70,15 @@ public abstract class AIContextProvider
     protected Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> StoreInputResponseMessageFilter { get; }
 
     /// <summary>
-    /// Gets the key used to store the provider state in the <see cref="AgentSession.StateBag"/>.
+    /// Gets the set of keys used to store the provider state in the <see cref="AgentSession.StateBag"/>.
     /// </summary>
     /// <remarks>
-    /// The default value is the name of the concrete type (e.g. <c>"TextSearchProvider"</c>).
-    /// Implementations may override this to provide a custom key, for example when multiple
-    /// instances of the same provider type are used in the same session.
+    /// The default value is a single-element set containing the name of the concrete type (e.g. <c>"TextSearchProvider"</c>).
+    /// Implementations may override this to provide custom keys, for example when multiple
+    /// instances of the same provider type are used in the same session, or when a provider
+    /// stores state under more than one key.
     /// </remarks>
-    public virtual string StateKey => this.GetType().Name;
+    public virtual IReadOnlyList<string> StateKeys => this._stateKeys ??= [this.GetType().Name];
 
     /// <summary>
     /// Called at the start of agent invocation to provide additional context.

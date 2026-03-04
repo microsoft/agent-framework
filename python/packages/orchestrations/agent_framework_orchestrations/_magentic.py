@@ -14,6 +14,7 @@ from typing import Any, ClassVar, TypeVar, cast
 
 from agent_framework import (
     AgentResponse,
+    AgentSession,
     Message,
     SupportsAgentRun,
 )
@@ -559,6 +560,7 @@ class StandardMagenticManager(MagenticManagerBase):
         )
 
         self._agent: SupportsAgentRun = agent
+        self._session: AgentSession = self._agent.create_session()
         self.task_ledger: _MagenticTaskLedger | None = task_ledger
 
         # Prompts may be overridden if needed
@@ -587,7 +589,7 @@ class StandardMagenticManager(MagenticManagerBase):
         The agent's run method is called which applies the agent's configured options
         (temperature, seed, instructions, etc.).
         """
-        response: AgentResponse = await self._agent.run(messages)
+        response: AgentResponse = await self._agent.run(messages, session=self._session)
         if not response.messages:
             raise RuntimeError("Agent returned no messages in response.")
         if len(response.messages) > 1:
@@ -730,6 +732,7 @@ class StandardMagenticManager(MagenticManagerBase):
         state: dict[str, Any] = {}
         if self.task_ledger is not None:
             state["task_ledger"] = self.task_ledger.to_dict()
+        state["agent_session"] = self._session.to_dict()
         return state
 
     @override
@@ -740,6 +743,12 @@ class StandardMagenticManager(MagenticManagerBase):
                 self.task_ledger = _MagenticTaskLedger.from_dict(ledger)
             except Exception:  # pragma: no cover - defensive
                 logger.warning("Failed to restore manager task ledger from checkpoint state")
+        session_payload = state.get("agent_session")
+        if session_payload is not None:
+            try:
+                self._session = AgentSession.from_dict(session_payload)
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("Failed to restore manager agent session from checkpoint state")
 
 
 # endregion Magentic Manager

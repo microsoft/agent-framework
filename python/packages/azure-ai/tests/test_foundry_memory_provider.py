@@ -17,9 +17,10 @@ from agent_framework_azure_ai._foundry_memory_provider import FoundryMemoryProvi
 def mock_project_client() -> AsyncMock:
     """Create a mock AIProjectClient."""
     mock_client = AsyncMock()
-    mock_client.memory_stores = AsyncMock()
-    mock_client.memory_stores.search_memories = AsyncMock()
-    mock_client.memory_stores.begin_update_memories = AsyncMock()
+    mock_client.beta = AsyncMock()
+    mock_client.beta.memory_stores = AsyncMock()
+    mock_client.beta.memory_stores.search_memories = AsyncMock()
+    mock_client.beta.memory_stores.begin_update_memories = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock()
     return mock_client
@@ -146,7 +147,7 @@ class TestBeforeRun:
         mem2.memory_item.content = "User is based in Seattle"
         mock_search_result = Mock()
         mock_search_result.memories = [mem1, mem2]
-        mock_project_client.memory_stores.search_memories.return_value = mock_search_result
+        mock_project_client.beta.memory_stores.search_memories.return_value = mock_search_result
 
         provider = FoundryMemoryProvider(
             project_client=mock_project_client,
@@ -161,7 +162,7 @@ class TestBeforeRun:
         )
 
         # Should call search_memories twice: once for static, once for contextual
-        assert mock_project_client.memory_stores.search_memories.call_count == 2
+        assert mock_project_client.beta.memory_stores.search_memories.call_count == 2
         # Static memories should be cached
         assert len(session.state[provider.source_id]["static_memories"]) == 2
         assert session.state[provider.source_id]["initialized"] is True
@@ -181,7 +182,7 @@ class TestBeforeRun:
         contextual_result.memories = [contextual_mem]
         contextual_result.search_id = "search-123"
 
-        mock_project_client.memory_stores.search_memories.side_effect = [static_result, contextual_result]
+        mock_project_client.beta.memory_stores.search_memories.side_effect = [static_result, contextual_result]
 
         provider = FoundryMemoryProvider(
             project_client=mock_project_client,
@@ -208,7 +209,7 @@ class TestBeforeRun:
         """Empty input messages → only static search performed, no contextual search."""
         static_result = Mock()
         static_result.memories = []
-        mock_project_client.memory_stores.search_memories.return_value = static_result
+        mock_project_client.beta.memory_stores.search_memories.return_value = static_result
 
         provider = FoundryMemoryProvider(
             project_client=mock_project_client,
@@ -223,14 +224,14 @@ class TestBeforeRun:
         )
 
         # Should only call search_memories once for static memories
-        assert mock_project_client.memory_stores.search_memories.call_count == 1
+        assert mock_project_client.beta.memory_stores.search_memories.call_count == 1
         assert provider.source_id not in ctx.context_messages
 
     async def test_empty_search_results_no_messages(self, mock_project_client: AsyncMock) -> None:
         """Empty search results → no messages added."""
         mock_search_result = Mock()
         mock_search_result.memories = []
-        mock_project_client.memory_stores.search_memories.return_value = mock_search_result
+        mock_project_client.beta.memory_stores.search_memories.return_value = mock_search_result
 
         provider = FoundryMemoryProvider(
             project_client=mock_project_client,
@@ -255,7 +256,7 @@ class TestBeforeRun:
         contextual_result = Mock()
         contextual_result.memories = []
 
-        mock_project_client.memory_stores.search_memories.side_effect = [static_result, contextual_result]
+        mock_project_client.beta.memory_stores.search_memories.side_effect = [static_result, contextual_result]
 
         provider = FoundryMemoryProvider(
             project_client=mock_project_client,
@@ -269,24 +270,24 @@ class TestBeforeRun:
         await provider.before_run(  # type: ignore[arg-type]
             agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
         )
-        assert mock_project_client.memory_stores.search_memories.call_count == 2
+        assert mock_project_client.beta.memory_stores.search_memories.call_count == 2
 
         # Reset mock for second call
-        mock_project_client.memory_stores.search_memories.reset_mock()
+        mock_project_client.beta.memory_stores.search_memories.reset_mock()
         contextual_result2 = Mock()
         contextual_result2.memories = []
-        mock_project_client.memory_stores.search_memories.return_value = contextual_result2
+        mock_project_client.beta.memory_stores.search_memories.return_value = contextual_result2
 
         # Second call - should only search contextual, not static
         ctx2 = SessionContext(input_messages=[Message(role="user", text="World")], session_id="s1")
         await provider.before_run(  # type: ignore[arg-type]
             agent=None, session=session, context=ctx2, state=session.state.setdefault(provider.source_id, {})
         )
-        assert mock_project_client.memory_stores.search_memories.call_count == 1
+        assert mock_project_client.beta.memory_stores.search_memories.call_count == 1
 
     async def test_handles_search_exception_gracefully(self, mock_project_client: AsyncMock) -> None:
         """Search exception is logged but doesn't fail the operation."""
-        mock_project_client.memory_stores.search_memories.side_effect = Exception("API error")
+        mock_project_client.beta.memory_stores.search_memories.side_effect = Exception("API error")
 
         provider = FoundryMemoryProvider(
             project_client=mock_project_client,
@@ -315,7 +316,7 @@ class TestAfterRun:
         """Stores input+response messages via begin_update_memories."""
         mock_poller = Mock()
         mock_poller.update_id = "update-456"
-        mock_project_client.memory_stores.begin_update_memories.return_value = mock_poller
+        mock_project_client.beta.memory_stores.begin_update_memories.return_value = mock_poller
 
         provider = FoundryMemoryProvider(
             project_client=mock_project_client,
@@ -330,8 +331,8 @@ class TestAfterRun:
             agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
         )
 
-        mock_project_client.memory_stores.begin_update_memories.assert_awaited_once()
-        call_kwargs = mock_project_client.memory_stores.begin_update_memories.call_args.kwargs
+        mock_project_client.beta.memory_stores.begin_update_memories.assert_awaited_once()
+        call_kwargs = mock_project_client.beta.memory_stores.begin_update_memories.call_args.kwargs
         assert call_kwargs["name"] == "test_store"
         assert call_kwargs["scope"] == "user_123"
         assert len(call_kwargs["items"]) == 2
@@ -342,7 +343,7 @@ class TestAfterRun:
     async def test_only_stores_user_assistant_system(self, mock_project_client: AsyncMock) -> None:
         """Only stores user/assistant/system messages with text."""
         mock_poller = Mock()
-        mock_project_client.memory_stores.begin_update_memories.return_value = mock_poller
+        mock_project_client.beta.memory_stores.begin_update_memories.return_value = mock_poller
 
         provider = FoundryMemoryProvider(
             project_client=mock_project_client,
@@ -363,7 +364,7 @@ class TestAfterRun:
             agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
         )
 
-        call_kwargs = mock_project_client.memory_stores.begin_update_memories.call_args.kwargs
+        call_kwargs = mock_project_client.beta.memory_stores.begin_update_memories.call_args.kwargs
         items = call_kwargs["items"]
         assert len(items) == 2
         assert items[0]["content"] == "hello"
@@ -390,12 +391,12 @@ class TestAfterRun:
             agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
         )
 
-        mock_project_client.memory_stores.begin_update_memories.assert_not_awaited()
+        mock_project_client.beta.memory_stores.begin_update_memories.assert_not_awaited()
 
     async def test_uses_configured_update_delay(self, mock_project_client: AsyncMock) -> None:
         """Uses the configured update_delay parameter."""
         mock_poller = Mock()
-        mock_project_client.memory_stores.begin_update_memories.return_value = mock_poller
+        mock_project_client.beta.memory_stores.begin_update_memories.return_value = mock_poller
 
         provider = FoundryMemoryProvider(
             project_client=mock_project_client,
@@ -411,7 +412,7 @@ class TestAfterRun:
             agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
         )
 
-        call_kwargs = mock_project_client.memory_stores.begin_update_memories.call_args.kwargs
+        call_kwargs = mock_project_client.beta.memory_stores.begin_update_memories.call_args.kwargs
         assert call_kwargs["update_delay"] == 60
 
     async def test_uses_previous_update_id_for_incremental_updates(self, mock_project_client: AsyncMock) -> None:
@@ -421,7 +422,7 @@ class TestAfterRun:
         mock_poller2 = Mock()
         mock_poller2.update_id = "update-2"
 
-        mock_project_client.memory_stores.begin_update_memories.side_effect = [mock_poller1, mock_poller2]
+        mock_project_client.beta.memory_stores.begin_update_memories.side_effect = [mock_poller1, mock_poller2]
 
         provider = FoundryMemoryProvider(
             project_client=mock_project_client,
@@ -446,13 +447,13 @@ class TestAfterRun:
             agent=None, session=session, context=ctx2, state=session.state.setdefault(provider.source_id, {})
         )
 
-        call_kwargs = mock_project_client.memory_stores.begin_update_memories.call_args.kwargs
+        call_kwargs = mock_project_client.beta.memory_stores.begin_update_memories.call_args.kwargs
         assert call_kwargs["previous_update_id"] == "update-1"
         assert session.state[provider.source_id]["previous_update_id"] == "update-2"
 
     async def test_handles_update_exception_gracefully(self, mock_project_client: AsyncMock) -> None:
         """Update exception is logged but doesn't fail the operation."""
-        mock_project_client.memory_stores.begin_update_memories.side_effect = Exception("API error")
+        mock_project_client.beta.memory_stores.begin_update_memories.side_effect = Exception("API error")
 
         provider = FoundryMemoryProvider(
             project_client=mock_project_client,
