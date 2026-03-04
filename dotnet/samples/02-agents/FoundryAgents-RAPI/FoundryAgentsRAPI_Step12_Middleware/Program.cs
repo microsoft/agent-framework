@@ -7,9 +7,13 @@
 
 using System.ComponentModel;
 using System.Text.RegularExpressions;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
+
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 [Description("Get the weather for a given location.")]
 static string GetWeather([Description("The location to get the weather for.")] string location)
@@ -22,10 +26,10 @@ static string GetDateTime()
 AITool dateTimeTool = AIFunctionFactory.Create(GetDateTime, name: nameof(GetDateTime));
 AITool getWeatherTool = AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather));
 
-// Create a FoundryAgentClient using environment variable auto-discovery.
-//   AZURE_AI_PROJECT_ENDPOINT - The Azure AI Foundry project endpoint URL.
-//   AZURE_AI_MODEL_DEPLOYMENT_NAME - The model deployment name to use.
 FoundryAgentClient originalAgent = new(
+    endpoint: new Uri(endpoint),
+    tokenProvider: new AzureCliCredential(),
+    model: deploymentName,
     instructions: "You are an AI assistant that helps people find information.",
     name: "InformationAssistant",
     tools: [getWeatherTool, dateTimeTool]);
@@ -57,6 +61,9 @@ Console.WriteLine($"Function calling response: {functionCallResponse}");
 Console.WriteLine("\n\n=== Example 4: Middleware with human in the loop function approval ===");
 
 FoundryAgentClient humanInTheLoopAgent = new(
+    endpoint: new Uri(endpoint),
+    tokenProvider: new AzureCliCredential(),
+    model: deploymentName,
     instructions: "You are a Human in the loop testing AI assistant that helps people find information.",
     name: "HumanInTheLoopAgent",
     tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather)))]);

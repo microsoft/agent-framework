@@ -2,15 +2,19 @@
 
 // This sample shows how to use dependency injection to register a FoundryAgentClient and use it from a hosted service.
 
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-// Create the agent using environment variable auto-discovery.
-//   AZURE_AI_PROJECT_ENDPOINT - The Azure AI Foundry project endpoint URL.
-//   AZURE_AI_MODEL_DEPLOYMENT_NAME - The model deployment name to use.
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
 FoundryAgentClient agent = new(
+    endpoint: new Uri(endpoint),
+    tokenProvider: new AzureCliCredential(),
+    model: deploymentName,
     instructions: "You are good at telling jokes.",
     name: "JokerAgent");
 

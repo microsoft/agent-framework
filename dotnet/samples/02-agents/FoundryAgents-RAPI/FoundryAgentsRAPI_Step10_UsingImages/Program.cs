@@ -2,14 +2,18 @@
 
 // This sample shows how to use image multi-modality with an agent using the Responses API directly.
 
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 
-// Create a FoundryAgentClient using environment variable auto-discovery.
-//   AZURE_AI_PROJECT_ENDPOINT - The Azure AI Foundry project endpoint URL.
-//   AZURE_AI_MODEL_DEPLOYMENT_NAME - The model deployment name to use (use a vision-capable model like gpt-4o).
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
+
 FoundryAgentClient agent = new(
+    endpoint: new Uri(endpoint),
+    tokenProvider: new AzureCliCredential(),
+    model: deploymentName,
     instructions: "You are a helpful agent that can analyze images.",
     name: "VisionAgent");
 

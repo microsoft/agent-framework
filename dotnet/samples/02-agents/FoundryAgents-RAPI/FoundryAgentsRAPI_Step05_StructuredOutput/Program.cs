@@ -5,16 +5,20 @@
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using SampleApp;
 
 #pragma warning disable CA5399
 
-// Create a FoundryAgentClient using environment variable auto-discovery.
-//   AZURE_AI_PROJECT_ENDPOINT - The Azure AI Foundry project endpoint URL.
-//   AZURE_AI_MODEL_DEPLOYMENT_NAME - The model deployment name to use.
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
 FoundryAgentClient agent = new(
+    endpoint: new Uri(endpoint),
+    tokenProvider: new AzureCliCredential(),
+    model: deploymentName,
     instructions: "You are a helpful assistant that extracts structured information about people.",
     name: "StructuredOutputAssistant");
 

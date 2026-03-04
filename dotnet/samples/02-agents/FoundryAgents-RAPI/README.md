@@ -45,6 +45,18 @@ The `FoundryAgentClient` auto-discovers these environment variables at construct
 |[Using images](./FoundryAgentsRAPI_Step10_UsingImages/)|This sample demonstrates how to use image multi-modality|
 |[Agent as function tool](./FoundryAgentsRAPI_Step11_AsFunctionTool/)|This sample demonstrates how to use one agent as a function tool for another|
 |[Middleware](./FoundryAgentsRAPI_Step12_Middleware/)|This sample demonstrates multiple middleware layers (PII, guardrails, approvals)|
+|[Using MCP client as tools](./FoundryAgentsRAPI_Step09_UsingMcpClientAsTools/)|This sample demonstrates how to use MCP client tools with the Responses API|
+|[Plugins](./FoundryAgentsRAPI_Step13_Plugins/)|This sample demonstrates how to use plugins with dependency injection|
+|[Code interpreter](./FoundryAgentsRAPI_Step14_CodeInterpreter/)|This sample demonstrates how to use the code interpreter tool|
+|[Computer use](./FoundryAgentsRAPI_Step15_ComputerUse/)|This sample demonstrates how to use the computer use tool|
+|[File search](./FoundryAgentsRAPI_Step16_FileSearch/)|This sample demonstrates how to use the file search tool|
+|[OpenAPI tools](./FoundryAgentsRAPI_Step17_OpenAPITools/)|This sample demonstrates how to use OpenAPI tools|
+|[Bing custom search](./FoundryAgentsRAPI_Step18_BingCustomSearch/)|This sample demonstrates how to use the Bing Custom Search tool|
+|[SharePoint](./FoundryAgentsRAPI_Step19_SharePoint/)|This sample demonstrates how to use the SharePoint grounding tool|
+|[Microsoft Fabric](./FoundryAgentsRAPI_Step20_MicrosoftFabric/)|This sample demonstrates how to use the Microsoft Fabric tool|
+|[Web search](./FoundryAgentsRAPI_Step21_WebSearch/)|This sample demonstrates how to use the web search tool|
+|[Memory search](./FoundryAgentsRAPI_Step22_MemorySearch/)|This sample demonstrates how to use the memory search tool|
+|[Local MCP](./FoundryAgentsRAPI_Step23_LocalMCP/)|This sample demonstrates how to use a local MCP client with HTTP transport|
 
 ## Running the samples from the console
 

@@ -2,12 +2,15 @@
 
 // This sample shows how to add OpenTelemetry observability to an agent using the Responses API directly.
 
+using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using OpenTelemetry;
 using OpenTelemetry.Trace;
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 string? applicationInsightsConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING");
 
 // Create TracerProvider with console exporter.
@@ -25,6 +28,9 @@ using var tracerProvider = tracerProviderBuilder.Build();
 //   AZURE_AI_PROJECT_ENDPOINT - The Azure AI Foundry project endpoint URL.
 //   AZURE_AI_MODEL_DEPLOYMENT_NAME - The model deployment name to use.
 AIAgent agent = new FoundryAgentClient(
+    endpoint: new Uri(endpoint),
+    tokenProvider: new AzureCliCredential(),
+    model: deploymentName,
     instructions: "You are good at telling jokes.",
     name: "JokerAgent")
     .AsBuilder()

@@ -1,0 +1,30 @@
+# SharePoint Grounding with the Responses API
+
+This sample shows how to use the SharePoint Grounding tool with a `FoundryAgentClient` using the Responses API directly.
+
+## What this sample demonstrates
+
+- Configuring `SharePointGroundingToolOptions` with project connections
+- Using `AgentTool.CreateSharepointTool()` with `FoundryAgentClient`
+- Displaying grounding annotations from agent responses
+
+## Prerequisites
+
+- .NET 10 SDK or later
+- Azure Foundry service endpoint and deployment configured
+- Azure CLI installed and authenticated (`az login`)
+- SharePoint connection configured in your Azure Foundry project
+
+Set the following environment variables:
+
+```powershell
+$env:AZURE_FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME="gpt-4o-mini"
+$env:SHAREPOINT_PROJECT_CONNECTION_ID="your-sharepoint-connection-id"
+```
+
+## Run the sample
+
+```powershell
+dotnet run
+```
