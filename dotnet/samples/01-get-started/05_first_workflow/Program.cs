@@ -19,6 +19,7 @@ public static class Program
 {
     private static async Task Main()
     {
+        // <create_workflow>
         // Create the executors
         Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
         var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
@@ -29,7 +30,9 @@ public static class Program
         WorkflowBuilder builder = new(uppercase);
         builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
         var workflow = builder.Build();
+        // </create_workflow>
 
+        // <run_workflow>
         // Execute the workflow with input data
         await using Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");
         foreach (WorkflowEvent evt in run.NewEvents)
@@ -39,6 +42,7 @@ public static class Program
                 Console.WriteLine($"{executorComplete.ExecutorId}: {executorComplete.Data}");
             }
         }
+        // </run_workflow>
     }
 }
 

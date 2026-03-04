@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.Agents.Persistent;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
@@ -9,7 +9,7 @@ using Microsoft.Extensions.AI;
 namespace WorkflowFoundryAgentSample;
 
 /// <summary>
-/// This sample shows how to use Azure Foundry Agents within a workflow.
+/// This sample shows how to use code-first agents within a workflow.
 /// </summary>
 /// <remarks>
 /// Pre-requisites:
@@ -20,16 +20,32 @@ public static class Program
 {
     private static async Task Main()
     {
-        // Set up the Azure OpenAI client
+        // Set up the Foundry project client
         var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
             ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        var persistentAgentsClient = new PersistentAgentsClient(endpoint, new AzureCliCredential());
 
-        // Create agents
-        AIAgent frenchAgent = await GetTranslationAgentAsync("French", persistentAgentsClient, deploymentName);
-        AIAgent spanishAgent = await GetTranslationAgentAsync("Spanish", persistentAgentsClient, deploymentName);
-        AIAgent englishAgent = await GetTranslationAgentAsync("English", persistentAgentsClient, deploymentName);
+        // Create agents using code-first pattern (no server-side agent registration)
+        IChatClient chatClient = new ProjectResponsesClient(
+            projectEndpoint: new Uri(endpoint),
+            tokenProvider: new DefaultAzureCredential())
+            .AsIChatClient();
+
+        AIAgent frenchAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
+        {
+            Name = "French Translator",
+            ChatOptions = new() { ModelId = deploymentName, Instructions = "You are a translation assistant that translates the provided text to French." },
+        });
+        AIAgent spanishAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
+        {
+            Name = "Spanish Translator",
+            ChatOptions = new() { ModelId = deploymentName, Instructions = "You are a translation assistant that translates the provided text to Spanish." },
+        });
+        AIAgent englishAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
+        {
+            Name = "English Translator",
+            ChatOptions = new() { ModelId = deploymentName, Instructions = "You are a translation assistant that translates the provided text to English." },
+        });
 
         // Build the workflow by adding executors and connecting them
         var workflow = new WorkflowBuilder(frenchAgent)
@@ -50,30 +66,5 @@ public static class Program
                 Console.WriteLine($"{executorComplete.ExecutorId}: {executorComplete.Data}");
             }
         }
-
-        // Cleanup the agents created for the sample.
-        await persistentAgentsClient.Administration.DeleteAgentAsync(frenchAgent.Id);
-        await persistentAgentsClient.Administration.DeleteAgentAsync(spanishAgent.Id);
-        await persistentAgentsClient.Administration.DeleteAgentAsync(englishAgent.Id);
-    }
-
-    /// <summary>
-    /// Creates a translation agent for the specified target language.
-    /// </summary>
-    /// <param name="targetLanguage">The target language for translation</param>
-    /// <param name="persistentAgentsClient">The PersistentAgentsClient to create the agent</param>
-    /// <param name="model">The model to use for the agent</param>
-    /// <returns>A ChatClientAgent configured for the specified language</returns>
-    private static async Task<ChatClientAgent> GetTranslationAgentAsync(
-        string targetLanguage,
-        PersistentAgentsClient persistentAgentsClient,
-        string model)
-    {
-        var agentMetadata = await persistentAgentsClient.Administration.CreateAgentAsync(
-            model: model,
-            name: $"{targetLanguage} Translator",
-            instructions: $"You are a translation assistant that translates the provided text to {targetLanguage}.");
-
-        return await persistentAgentsClient.GetAIAgentAsync(agentMetadata.Value.Id);
     }
 }

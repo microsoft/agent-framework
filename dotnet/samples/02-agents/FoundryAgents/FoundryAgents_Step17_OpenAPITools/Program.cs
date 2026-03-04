@@ -2,10 +2,10 @@
 
 // This sample shows how to use OpenAPI Tools with AI Agents.
 
-using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
 // Warning: DefaultAzureCredential is intended for simplicity in development. For production scenarios, consider using a more specific credential.
@@ -68,8 +68,11 @@ const string CountriesOpenApiSpec = """
 }
 """;
 
-// Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+// Create a Foundry project Responses API client.
+IChatClient chatClient = new ProjectResponsesClient(
+    projectEndpoint: new Uri(endpoint),
+    tokenProvider: new DefaultAzureCredential())
+    .AsIChatClient();
 
 // Create the OpenAPI function definition
 var openApiFunction = new OpenAPIFunctionDefinition(
@@ -80,37 +83,41 @@ var openApiFunction = new OpenAPIFunctionDefinition(
     Description = "Retrieve information about countries by currency code"
 };
 
-AIAgent agent = await CreateAgentWithMEAI();
-// AIAgent agent = await CreateAgentWithNativeSDK();
+ChatClientAgent agent = CreateAgentWithMEAI();
+// ChatClientAgent agent = CreateAgentWithNativeSDK();
 
 // Run the agent with a question about countries
 Console.WriteLine(await agent.RunAsync("What countries use the Euro (EUR) as their currency? Please list them."));
 
-// Cleanup by deleting the agent
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
-
 // --- Agent Creation Options ---
 
+#pragma warning disable CS8321 // Local function is declared but never used
 // Option 1 - Using AsAITool wrapping for OpenApiTool (MEAI + AgentFramework)
-async Task<AIAgent> CreateAgentWithMEAI()
+ChatClientAgent CreateAgentWithMEAI()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
-        model: deploymentName,
-        name: "OpenAPIToolsAgent-MEAI",
-        instructions: AgentInstructions,
-        tools: [((ResponseTool)AgentTool.CreateOpenApiTool(openApiFunction)).AsAITool()]);
+    return new ChatClientAgent(chatClient, new ChatClientAgentOptions
+    {
+        Name = "OpenAPIToolsAgent-MEAI",
+        ChatOptions = new()
+        {
+            ModelId = deploymentName,
+            Instructions = AgentInstructions,
+            Tools = [((ResponseTool)AgentTool.CreateOpenApiTool(openApiFunction)).AsAITool()]
+        },
+    });
 }
 
-// Option 2 - Using PromptAgentDefinition with AgentTool.CreateOpenApiTool (Native SDK)
-async Task<AIAgent> CreateAgentWithNativeSDK()
+// Option 2 - Using ResponseTool via AsAITool (Native SDK type)
+ChatClientAgent CreateAgentWithNativeSDK()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
-        name: "OpenAPIToolsAgent-NATIVE",
-        creationOptions: new AgentVersionCreationOptions(
-            new PromptAgentDefinition(model: deploymentName)
-            {
-                Instructions = AgentInstructions,
-                Tools = { (ResponseTool)AgentTool.CreateOpenApiTool(openApiFunction) }
-            })
-    );
+    return new ChatClientAgent(chatClient, new ChatClientAgentOptions
+    {
+        Name = "OpenAPIToolsAgent-NATIVE",
+        ChatOptions = new()
+        {
+            ModelId = deploymentName,
+            Instructions = AgentInstructions,
+            Tools = [((ResponseTool)AgentTool.CreateOpenApiTool(openApiFunction)).AsAITool()]
+        },
+    });
 }

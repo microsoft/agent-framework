@@ -1,6 +1,6 @@
-# OpenTelemetry Aspire Demo with Azure OpenAI
+# OpenTelemetry Aspire Demo with Azure AI Foundry
 
-This demo showcases the integration of OpenTelemetry with the Microsoft Agent Framework using Azure OpenAI and .NET Aspire Dashboard for telemetry visualization.
+This demo showcases the integration of OpenTelemetry with the Microsoft Agent Framework using Azure AI Foundry and .NET Aspire Dashboard for telemetry visualization.
 
 ## Overview
 
@@ -15,7 +15,7 @@ The demo consists of three main components:
 ```mermaid
 graph TD
     A["Console App<br/>(Interactive)"] --> B["Agent Framework<br/>with OpenTel<br/>Instrumentation"]
-    B --> C["Azure OpenAI<br/>Service"]
+    B --> C["Azure AI Foundry<br/>Service"]
     A --> D["Aspire Dashboard<br/>(OpenTelemetry Visualization)"]
     B --> D
 ```
@@ -23,21 +23,21 @@ graph TD
 ## Prerequisites
 
 - .NET 10 SDK or later
-- Azure OpenAI service endpoint and deployment configured
+- Azure AI Foundry project endpoint and model deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 - Docker installed (for running Aspire Dashboard)
 - [Optional] Application Insights and Grafana
 
 ## Configuration
 
-### Azure OpenAI Setup
+### Azure AI Foundry Setup
 Set the following environment variables:
 ```powershell
-$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
 
-**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure OpenAI resource.
+**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure AI Foundry project.
 
 ### [Optional] Application Insights Setup
 Set the following environment variables:
@@ -56,7 +56,7 @@ The easiest way to run the demo is using the provided PowerShell script:
 ```
 
 This script will automatically:
-- ✅ Check prerequisites (Docker, Azure OpenAI configuration)
+- ✅ Check prerequisites (Docker, Azure AI Foundry configuration)
 - 🔨 Build the console application
 - 🐳 Start the Aspire Dashboard via Docker (with anonymous access)
 - ⏳ Wait for dashboard to be ready (polls port until listening)
@@ -158,7 +158,7 @@ Open dashboard in Azure portal: <https://aka.ms/amg/dash/af-workflow>
 - **Telemetry correlation** across the entire request flow
 
 ### Agent Framework Features
-- **ChatClientAgent** with Azure OpenAI integration
+- **ChatClientAgent** with Azure AI Foundry integration
 - **OpenTelemetry wrapper** using `.WithOpenTelemetry()`
 - **Conversation threading** for multi-turn conversations
 - **Error handling** with telemetry correlation
@@ -182,7 +182,7 @@ Complete demo startup script that handles everything automatically.
 ```
 
 **Features:**
-- **Automatic configuration detection** - Checks for Azure OpenAI configuration
+- **Automatic configuration detection** - Checks for Azure AI Foundry configuration
 - **Project building** - Automatically builds projects before running
 - **Error handling** - Provides clear error messages if something goes wrong
 - **Multi-window support** - Opens dashboard in separate window for better experience
@@ -201,10 +201,10 @@ If you encounter port binding errors, try:
 2. Or kill any processes using the conflicting ports
 
 ### Authentication Issues
-- Ensure your Azure OpenAI endpoint is correctly configured
+- Ensure your Azure AI Foundry endpoint is correctly configured
 - Check that the environment variables are set in the correct terminal session
-- Verify you're logged in with Azure CLI (`az login`) and have access to the Azure OpenAI resource
-- Ensure the Azure OpenAI deployment name matches your actual deployment
+- Verify you're logged in with Azure CLI (`az login`) and have access to the Azure AI Foundry project
+- Ensure the model deployment name matches your actual deployment
 
 ### Build Issues
 - Ensure you're using .NET 10.0 SDK
@@ -216,7 +216,7 @@ If you encounter port binding errors, try:
 ```
 AgentOpenTelemetry/
 ├── AgentOpenTelemetry.csproj             # Project file with dependencies
-├── Program.cs                            # Main application with Azure OpenAI agent integration
+├── Program.cs                            # Main application with Azure AI Foundry agent integration
 ├── start-demo.ps1                        # PowerShell script to start the demo
 └── README.md                             # This file
 ```

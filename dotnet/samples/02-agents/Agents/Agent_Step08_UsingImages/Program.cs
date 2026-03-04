@@ -2,23 +2,27 @@
 
 // This sample shows how to use Image Multi-Modality with an AI agent.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-var agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
-    .AsAIAgent(
-        name: "VisionAgent",
-        instructions: "You are a helpful agent that can analyze images");
+var agent = new ProjectResponsesClient(
+    projectEndpoint: new Uri(endpoint),
+    tokenProvider: new DefaultAzureCredential())
+    .AsIChatClient()
+    .AsAIAgent(new ChatClientAgentOptions
+    {
+        Name = "VisionAgent",
+        ChatOptions = new() { ModelId = deploymentName, Instructions = "You are a helpful agent that can analyze images" },
+    });
 
 ChatMessage message = new(ChatRole.User, [
     new TextContent("What do you see in this image?"),

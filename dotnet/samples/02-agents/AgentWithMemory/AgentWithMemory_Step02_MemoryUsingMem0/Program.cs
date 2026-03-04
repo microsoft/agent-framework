@@ -6,15 +6,14 @@
 
 using System.Net.Http.Headers;
 using System.Text.Json;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Mem0;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 var mem0ServiceUri = Environment.GetEnvironmentVariable("MEM0_ENDPOINT") ?? throw new InvalidOperationException("MEM0_ENDPOINT is not set.");
 var mem0ApiKey = Environment.GetEnvironmentVariable("MEM0_API_KEY") ?? throw new InvalidOperationException("MEM0_API_KEY is not set.");
@@ -27,13 +26,13 @@ mem0HttpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderVal
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
+AIAgent agent = new ProjectResponsesClient(
+    projectEndpoint: new Uri(endpoint),
+    tokenProvider: new DefaultAzureCredential())
+    .AsIChatClient()
     .AsAIAgent(new ChatClientAgentOptions()
     {
-        ChatOptions = new() { Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details." },
+        ChatOptions = new() { ModelId = deploymentName, Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details." },
         // The stateInitializer can be used to customize the Mem0 scope per session and it will be called each time a session
         // is encountered by the Mem0Provider that does not already have Mem0Provider state stored on the session.
         // If each session should have its own Mem0 scope, you can create a new id per session via the stateInitializer, e.g.:

@@ -7,7 +7,7 @@ This sample demonstrates how to add middleware to intercept:
 
 ## What This Sample Shows
 
-1. Azure OpenAI integration via `AzureOpenAIClient` and `DefaultAzureCredential`
+1. Azure AI Foundry integration via `ProjectResponsesClient` and `DefaultAzureCredential`
 2. Chat client middleware using `ChatClientBuilder.Use(...)`
 3. Agent run middleware (PII redaction and wording guardrails)
 4. Function invocation middleware (logging and overriding a tool result)
@@ -26,8 +26,8 @@ Attempting to use function middleware on agents that do not wrap a ChatClientAge
 ## Prerequisites
 
 1. Environment variables:
-   - `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint
-   - `AZURE_OPENAI_DEPLOYMENT_NAME`: Chat deployment name (optional; defaults to `gpt-4o`)
+   - `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI Foundry endpoint
+   - `AZURE_AI_MODEL_DEPLOYMENT_NAME`: Chat deployment name (optional; defaults to `gpt-4o`)
 2. Sign in with Azure CLI (PowerShell):
    ```powershell
    az login

@@ -4,31 +4,30 @@
 
 // This sample shows how to use dependency injection to register an AIAgent and use it from a hosted service with a user input chat loop.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Create a host builder that we will register services with and then run.
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
 // Add agent options to the service collection.
-builder.Services.AddSingleton(new ChatClientAgentOptions() { Name = "Joker", ChatOptions = new() { Instructions = "You are good at telling jokes." } });
+builder.Services.AddSingleton(new ChatClientAgentOptions() { Name = "Joker", ChatOptions = new() { ModelId = deploymentName, Instructions = "You are good at telling jokes." } });
 
 // Add a chat client to the service collection.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-builder.Services.AddKeyedChatClient("AzureOpenAI", (sp) => new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
-        .GetChatClient(deploymentName)
-        .AsIChatClient());
+builder.Services.AddKeyedChatClient("AzureOpenAI", (sp) => new ProjectResponsesClient(
+    projectEndpoint: new Uri(endpoint),
+    tokenProvider: new DefaultAzureCredential())
+    .AsIChatClient());
 
 // Add the AI agent to the service collection.
 builder.Services.AddSingleton<AIAgent>((sp) => new ChatClientAgent(

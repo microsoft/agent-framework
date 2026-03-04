@@ -9,15 +9,14 @@
 // as AI functions. The AsAITools method of the plugin class shows how to specify
 // which methods should be exposed to the AI agent.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Create a service collection to hold the agent plugin and its dependencies.
 ServiceCollection services = new();
@@ -30,15 +29,20 @@ IServiceProvider serviceProvider = services.BuildServiceProvider();
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
-    .AsAIAgent(
-        instructions: "You are a helpful assistant that helps people find information.",
-        name: "Assistant",
-        tools: [.. serviceProvider.GetRequiredService<AgentPlugin>().AsAITools()],
-        services: serviceProvider); // Pass the service provider to the agent so it will be available to plugin functions to resolve dependencies.
+AIAgent agent = new ProjectResponsesClient(
+    projectEndpoint: new Uri(endpoint),
+    tokenProvider: new DefaultAzureCredential())
+    .AsIChatClient()
+    .AsAIAgent(new ChatClientAgentOptions
+    {
+        Name = "Assistant",
+        ChatOptions = new()
+        {
+            ModelId = deploymentName,
+            Instructions = "You are a helpful assistant that helps people find information.",
+            Tools = [.. serviceProvider.GetRequiredService<AgentPlugin>().AsAITools()]
+        },
+    }, services: serviceProvider); // Pass the service provider to the agent so it will be available to plugin functions to resolve dependencies.
 
 Console.WriteLine(await agent.RunAsync("Tell me current time and weather in Seattle."));
 

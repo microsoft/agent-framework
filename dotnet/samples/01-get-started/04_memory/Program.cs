@@ -8,23 +8,25 @@
 
 using System.Text;
 using System.Text.Json;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 using SampleApp;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
+// <create_agent>
+// Create a Foundry project Responses API chat client.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-ChatClient chatClient = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
-    .GetChatClient(deploymentName);
+IChatClient chatClient = new ProjectResponsesClient(
+    projectEndpoint: new Uri(endpoint),
+    tokenProvider: new DefaultAzureCredential())
+    .AsIChatClient();
 
 // Create the agent and provide a factory to add our custom memory component to
 // all sessions created by the agent. Here each new memory component will have its own
@@ -33,13 +35,14 @@ ChatClient chatClient = new AzureOpenAIClient(
 // and preferably shared between multiple sessions used by the same user, ensure that the
 // factory reads the user id from the current context and scopes the memory component
 // and its storage to that user id.
-AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
+AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions()
 {
-    ChatOptions = new() { Instructions = "You are a friendly assistant. Always address the user by their name." },
-    AIContextProviders = [new UserInfoMemory(chatClient.AsIChatClient())]
+    ChatOptions = new() { ModelId = deploymentName, Instructions = "You are a friendly assistant. Always address the user by their name." },
+    AIContextProviders = [new UserInfoMemory(chatClient)]
 });
+// </create_agent>
 
-// Create a new session for the conversation.
+// <run_with_memory>
 AgentSession session = await agent.CreateSessionAsync();
 
 Console.WriteLine(">> Use session with blank memory\n");
@@ -80,7 +83,9 @@ if (userInfo is not null && agent.GetService<UserInfoMemory>() is UserInfoMemory
 // Invoke the agent and output the text result.
 // This time the agent should remember the user's name and use it in the response.
 Console.WriteLine(await agent.RunAsync("What is my name and age?", newSession));
+// </run_with_memory>
 
+// <context_provider>
 namespace SampleApp
 {
     /// <summary>
@@ -159,4 +164,5 @@ namespace SampleApp
         public string? UserName { get; set; }
         public int? UserAge { get; set; }
     }
+    // </context_provider>
 }

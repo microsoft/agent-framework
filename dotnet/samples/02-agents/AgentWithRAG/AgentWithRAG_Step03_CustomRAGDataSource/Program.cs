@@ -6,14 +6,13 @@
 // The provider invokes the custom search function
 // before each model invocation and injects the results into the model context.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 TextSearchProviderOptions textSearchOptions = new()
 {
@@ -25,13 +24,13 @@ TextSearchProviderOptions textSearchOptions = new()
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
+AIAgent agent = new ProjectResponsesClient(
+    projectEndpoint: new Uri(endpoint),
+    tokenProvider: new DefaultAzureCredential())
+    .AsIChatClient()
     .AsAIAgent(new ChatClientAgentOptions
     {
-        ChatOptions = new() { Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available." },
+        ChatOptions = new() { ModelId = deploymentName, Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available." },
         AIContextProviders = [new TextSearchProvider(MockSearchAsync, textSearchOptions)]
     });
 

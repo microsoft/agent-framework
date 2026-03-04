@@ -2,7 +2,6 @@
 
 // This sample shows how to use the Responses API Web Search Tool with AI Agents.
 
-using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -13,16 +12,36 @@ string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT"
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AgentInstructions = "You are a helpful assistant that can search the web to find current information and answer questions accurately.";
-const string AgentName = "WebSearchAgent";
 
-// Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+// Create a Foundry project Responses API client.
+IChatClient chatClient = new ProjectResponsesClient(
+    projectEndpoint: new Uri(endpoint),
+    tokenProvider: new DefaultAzureCredential())
+    .AsIChatClient();
 
 // Option 1 - Using HostedWebSearchTool (MEAI + AgentFramework)
-AIAgent agent = await CreateAgentWithMEAIAsync();
+ChatClientAgent agent = new(chatClient, new ChatClientAgentOptions
+{
+    Name = "WebSearchAgent",
+    ChatOptions = new()
+    {
+        ModelId = deploymentName,
+        Instructions = AgentInstructions,
+        Tools = [new HostedWebSearchTool()]
+    },
+});
 
-// Option 2 - Using PromptAgentDefinition with the Responses API native type
-// AIAgent agent = await CreateAgentWithNativeSDKAsync();
+// Option 2 - Using ResponseTool.CreateWebSearchTool converted via AsAITool (Native SDK type)
+// ChatClientAgent agent = new(chatClient, new ChatClientAgentOptions
+// {
+//     Name = "WebSearchAgent",
+//     ChatOptions = new()
+//     {
+//         ModelId = deploymentName,
+//         Instructions = AgentInstructions,
+//         Tools = [ResponseTool.CreateWebSearchTool().AsAITool()]
+//     },
+// });
 
 AgentResponse response = await agent.RunAsync("What's the weather today in Seattle?");
 
@@ -41,25 +60,3 @@ foreach (AIAnnotation annotation in response.Messages.SelectMany(m => m.Contents
             """);
     }
 }
-
-// Cleanup by agent name removes the agent version created.
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
-
-// Creates the agent using the HostedWebSearchTool MEAI abstraction that maps to the built-in Responses API web search tool.
-async Task<AIAgent> CreateAgentWithMEAIAsync()
-    => await aiProjectClient.CreateAIAgentAsync(
-        name: AgentName,
-        model: deploymentName,
-        instructions: AgentInstructions,
-        tools: [new HostedWebSearchTool()]);
-
-// Creates the agent using the PromptAgentDefinition with the Responses API native ResponseTool.CreateWebSearchTool().
-async Task<AIAgent> CreateAgentWithNativeSDKAsync()
-    => await aiProjectClient.CreateAIAgentAsync(
-        AgentName,
-        new AgentVersionCreationOptions(
-            new PromptAgentDefinition(model: deploymentName)
-            {
-                Instructions = AgentInstructions,
-                Tools = { ResponseTool.CreateWebSearchTool() }
-            }));

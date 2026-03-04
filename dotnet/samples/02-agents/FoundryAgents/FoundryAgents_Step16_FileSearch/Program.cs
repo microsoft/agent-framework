@@ -16,7 +16,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 
 const string AgentInstructions = "You are a helpful assistant that can search through uploaded files to answer questions.";
 
-// Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
+// Create a project client for file and vector store management.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
@@ -52,8 +52,14 @@ var vectorStoreResult = await vectorStoresClient.CreateVectorStoreAsync(
 string vectorStoreId = vectorStoreResult.Value.Id;
 Console.WriteLine($"Created vector store, vector store ID: {vectorStoreId}");
 
-AIAgent agent = await CreateAgentWithMEAI();
-// AIAgent agent = await CreateAgentWithNativeSDK();
+// Create a Foundry project Responses API client.
+IChatClient chatClient = new ProjectResponsesClient(
+    projectEndpoint: new Uri(endpoint),
+    tokenProvider: new DefaultAzureCredential())
+    .AsIChatClient();
+
+ChatClientAgent agent = CreateAgentWithMEAI();
+// ChatClientAgent agent = CreateAgentWithNativeSDK();
 
 // Run the agent
 Console.WriteLine("\n--- Running File Search Agent ---");
@@ -73,9 +79,8 @@ foreach (AIAnnotation annotation in response.Messages.SelectMany(m => m.Contents
     }
 }
 
-// Cleanup.
+// Cleanup file and vector store resources (no agent cleanup needed).
 Console.WriteLine("\n--- Cleanup ---");
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
 await vectorStoresClient.DeleteVectorStoreAsync(vectorStoreId);
 await filesClient.DeleteFileAsync(uploadedFile.Id);
 File.Delete(searchFilePath);
@@ -85,27 +90,31 @@ Console.WriteLine("Cleanup completed successfully.");
 
 #pragma warning disable CS8321 // Local function is declared but never used
 // Option 1 - Using HostedFileSearchTool (MEAI + AgentFramework)
-async Task<AIAgent> CreateAgentWithMEAI()
+ChatClientAgent CreateAgentWithMEAI()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
-        model: deploymentName,
-        name: "FileSearchAgent-MEAI",
-        instructions: AgentInstructions,
-        tools: [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreId)] }]);
+    return new ChatClientAgent(chatClient, new ChatClientAgentOptions
+    {
+        Name = "FileSearchAgent-MEAI",
+        ChatOptions = new()
+        {
+            ModelId = deploymentName,
+            Instructions = AgentInstructions,
+            Tools = [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreId)] }]
+        },
+    });
 }
 
-// Option 2 - Using PromptAgentDefinition with ResponseTool.CreateFileSearchTool (Native SDK)
-async Task<AIAgent> CreateAgentWithNativeSDK()
+// Option 2 - Using ResponseTool.CreateFileSearchTool converted via AsAITool (Native SDK type)
+ChatClientAgent CreateAgentWithNativeSDK()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
-        name: "FileSearchAgent-NATIVE",
-        creationOptions: new AgentVersionCreationOptions(
-            new PromptAgentDefinition(model: deploymentName)
-            {
-                Instructions = AgentInstructions,
-                Tools = {
-                    ResponseTool.CreateFileSearchTool(vectorStoreIds: [vectorStoreId])
-                }
-            })
-    );
+    return new ChatClientAgent(chatClient, new ChatClientAgentOptions
+    {
+        Name = "FileSearchAgent-NATIVE",
+        ChatOptions = new()
+        {
+            ModelId = deploymentName,
+            Instructions = AgentInstructions,
+            Tools = [ResponseTool.CreateFileSearchTool(vectorStoreIds: [vectorStoreId]).AsAITool()]
+        },
+    });
 }

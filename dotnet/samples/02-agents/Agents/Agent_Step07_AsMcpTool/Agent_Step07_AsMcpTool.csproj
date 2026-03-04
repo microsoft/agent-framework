@@ -10,14 +10,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.AI.Agents.Persistent" />
+    <PackageReference Include="Azure.AI.Projects.OpenAI" />
     <PackageReference Include="Azure.Identity" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="ModelContextProtocol" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.AzureAI.Persistent\Microsoft.Agents.AI.AzureAI.Persistent.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
   </ItemGroup>
   
 </Project>

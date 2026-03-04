@@ -5,26 +5,25 @@
 // NOTE: this feature is only supported where the chat history is stored locally, such as with OpenAI Chat Completion.
 // Where the chat history is stored server side, such as with Azure Foundry Agents, the service must manage the chat history size.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Construct the agent, and provide a factory to create an in-memory chat message store with a reducer that keeps only the last 2 non-system messages.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
+AIAgent agent = new ProjectResponsesClient(
+    projectEndpoint: new Uri(endpoint),
+    tokenProvider: new DefaultAzureCredential())
+    .AsIChatClient()
     .AsAIAgent(new ChatClientAgentOptions
     {
-        ChatOptions = new() { Instructions = "You are good at telling jokes." },
+        ChatOptions = new() { ModelId = deploymentName, Instructions = "You are good at telling jokes." },
         Name = "Joker",
         ChatHistoryProvider = new InMemoryChatHistoryProvider(new() { ChatReducer = new MessageCountingChatReducer(2) })
     });

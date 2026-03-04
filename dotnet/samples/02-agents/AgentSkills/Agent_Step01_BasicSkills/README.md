@@ -36,13 +36,13 @@ Agent_Step01_BasicSkills/
 
 ### Prerequisites
 - .NET 10.0 SDK
-- Azure OpenAI endpoint with a deployed model
+- Azure AI Foundry project endpoint with a deployed model
 
 ### Setup
 1. Set environment variables:
    ```bash
-   export AZURE_OPENAI_ENDPOINT="https://your-endpoint.openai.azure.com/"
-   export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+   export AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"
+   export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
    ```
 
 2. Run the sample:
