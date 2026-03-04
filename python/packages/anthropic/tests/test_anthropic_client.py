@@ -1044,6 +1044,128 @@ async def test_inner_get_response_ignores_options_stream_streaming(mock_anthropi
     assert mock_anthropic_client.beta.messages.create.call_args.kwargs["stream"] is True
 
 
+def test_process_stream_event_message_start_sets_assistant_role(mock_anthropic_client: MagicMock) -> None:
+    """Test that message_start streaming event sets role='assistant'.
+
+    This is critical: without role='assistant', _process_update cannot detect
+    a role boundary between a prior tool message and the new assistant turn,
+    causing tool_use blocks to collapse into a user-role message and triggering
+    Anthropic's '`tool_use` blocks can only be in `assistant` messages' error.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_event = MagicMock()
+    mock_event.type = "message_start"
+    mock_event.message.id = "msg_abc"
+    mock_event.message.role = "assistant"
+    mock_event.message.model = "claude-3-5-sonnet-20241022"
+    mock_event.message.content = []
+    mock_event.message.stop_reason = None
+    mock_event.message.usage = None
+
+    result = client._process_stream_event(mock_event)
+
+    assert result is not None
+    assert result.role == "assistant"
+
+
+def test_process_stream_event_message_start_role_prevents_tool_use_collapse() -> None:
+    """Regression test: tool_use blocks must not end up in a user-role message.
+
+    Simulates two consecutive streaming tool-call iterations:
+      Iteration 1: assistant emits tool_use → framework appends tool result (role=tool)
+      Iteration 2: assistant starts a new message_start → must create a NEW message
+
+    Without role='assistant' on the message_start update, _process_update sees
+    update.role=None (falsy) and appends to the last message (role='tool'),
+    producing {"role": "user", "content": [tool_result, tool_use]} which
+    Anthropic rejects with HTTP 400.
+    """
+    from agent_framework import ChatResponse, ChatResponseUpdate, Content, Message
+
+    # Simulate what the streaming tool loop produces after iteration 1:
+    # an existing 'tool' message is the last in the response
+    existing_tool_message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="call_1", result="some result")],
+    )
+
+    response = ChatResponse(messages=[existing_tool_message])
+
+    # Now simulate the message_start update from iteration 2 — WITH role set
+    message_start_update = ChatResponseUpdate(
+        role="assistant",
+        response_id="msg_iter2",
+    )
+
+    # Simulate a content_block_start carrying a tool_use — no role on this one (correct)
+    tool_use_update = ChatResponseUpdate(
+        contents=[
+            Content.from_function_call(
+                call_id="call_2",
+                name="get_weather",
+                arguments={"location": "NYC"},
+            )
+        ],
+    )
+
+    # Apply updates exactly as from_updates / _process_update would
+    from agent_framework._types import _process_update
+
+    _process_update(response, message_start_update)
+    _process_update(response, tool_use_update)
+
+    # Must have TWO messages: the original tool message + a new assistant message
+    assert len(response.messages) == 2, "tool_use from iteration 2 collapsed into the tool message from iteration 1"
+    assert response.messages[0].role == "tool"
+    assert response.messages[1].role == "assistant"
+
+    # The assistant message must contain the tool_use, not the tool result
+    assert response.messages[1].contents[0].type == "function_call"
+    assert response.messages[1].contents[0].call_id == "call_2"
+
+
+def test_process_stream_event_message_start_without_role_reproduces_bug() -> None:
+    """Documents the original bug: missing role causes tool_use to collapse into tool message.
+
+    This test demonstrates WHY the fix (adding role='assistant') was necessary.
+    It intentionally reproduces the broken behavior when role is absent.
+    """
+    from agent_framework import ChatResponse, ChatResponseUpdate, Content, Message
+    from agent_framework._types import _process_update
+
+    existing_tool_message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="call_1", result="some result")],
+    )
+    response = ChatResponse(messages=[existing_tool_message])
+
+    # message_start WITHOUT role (the original broken state)
+    message_start_update = ChatResponseUpdate(
+        role=None,
+        response_id="msg_iter2",
+    )
+    tool_use_update = ChatResponseUpdate(
+        contents=[
+            Content.from_function_call(
+                call_id="call_2",
+                name="get_weather",
+                arguments={"location": "NYC"},
+            )
+        ],
+    )
+
+    _process_update(response, message_start_update)
+    _process_update(response, tool_use_update)
+
+    # BUG: only 1 message — tool_use collapsed into the tool message
+    assert len(response.messages) == 1, "Expected bug: should still be 1 message without the fix"
+    # The single message has role='tool' but contains a function_call — invalid for Anthropic API
+    assert response.messages[0].role == "tool"
+    has_function_call = any(c.type == "function_call" for c in response.messages[0].contents)
+    assert has_function_call, "Expected bug: function_call leaked into tool message"
+
+
 # Integration Tests
 
 

@@ -855,6 +855,110 @@ async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_file_search_with_
     assert run_options["tool_resources"] == {"file_search": {"vector_store_ids": ["vs-123"]}}
 
 
+async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_code_interpreter_with_file_ids(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _prepare_tools_for_azure_ai with CodeInterpreterTool with file_ids from get_code_interpreter_tool()."""
+
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+
+    code_interpreter_tool = client.get_code_interpreter_tool(file_ids=["file-123", "file-456"])
+
+    run_options: dict[str, Any] = {}
+    result = await client._prepare_tools_for_azure_ai([code_interpreter_tool], run_options)  # type: ignore
+
+    assert len(result) == 1
+    assert result[0] == {"type": "code_interpreter"}
+    assert "tool_resources" in run_options
+    assert "code_interpreter" in run_options["tool_resources"]
+    assert sorted(run_options["tool_resources"]["code_interpreter"]["file_ids"]) == ["file-123", "file-456"]
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_basic() -> None:
+    """Test get_code_interpreter_tool returns CodeInterpreterTool without files."""
+    from azure.ai.agents.models import CodeInterpreterTool
+
+    tool = AzureAIAgentClient.get_code_interpreter_tool()
+    assert isinstance(tool, CodeInterpreterTool)
+    assert len(tool.file_ids) == 0
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_with_file_ids() -> None:
+    """Test get_code_interpreter_tool forwards file_ids to the SDK."""
+    from azure.ai.agents.models import CodeInterpreterTool
+
+    tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=["file-abc", "file-def"])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert "file-abc" in tool.file_ids
+    assert "file-def" in tool.file_ids
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_with_data_sources() -> None:
+    """Test get_code_interpreter_tool forwards data_sources to the SDK."""
+    from azure.ai.agents.models import CodeInterpreterTool, VectorStoreDataSource
+
+    ds = VectorStoreDataSource(asset_identifier="test-asset-id", asset_type="id_asset")
+    tool = AzureAIAgentClient.get_code_interpreter_tool(data_sources=[ds])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert "test-asset-id" in tool.data_sources
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_mutually_exclusive() -> None:
+    """Test get_code_interpreter_tool raises ValueError when both file_ids and data_sources are provided."""
+    from azure.ai.agents.models import VectorStoreDataSource
+
+    ds = VectorStoreDataSource(asset_identifier="test-asset-id", asset_type="id_asset")
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        AzureAIAgentClient.get_code_interpreter_tool(file_ids=["file-abc"], data_sources=[ds])
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_with_content() -> None:
+    """Test get_code_interpreter_tool accepts Content.from_hosted_file in file_ids."""
+    from agent_framework import Content
+    from azure.ai.agents.models import CodeInterpreterTool
+
+    content = Content.from_hosted_file("file-content-123")
+    tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=[content])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert "file-content-123" in tool.file_ids
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_with_mixed_file_ids() -> None:
+    """Test get_code_interpreter_tool accepts a mix of strings and Content objects."""
+    from agent_framework import Content
+    from azure.ai.agents.models import CodeInterpreterTool
+
+    content = Content.from_hosted_file("file-from-content")
+    tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=["file-plain", content])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert "file-plain" in tool.file_ids
+    assert "file-from-content" in tool.file_ids
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_content_unsupported_type() -> None:
+    """Test get_code_interpreter_tool raises ValueError for unsupported Content types."""
+    from agent_framework import Content
+
+    content = Content.from_hosted_vector_store("vs-123")
+    with pytest.raises(ValueError, match="Unsupported Content type"):
+        AzureAIAgentClient.get_code_interpreter_tool(file_ids=[content])
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_content_missing_file_id() -> None:
+    """Test get_code_interpreter_tool raises ValueError when Content.file_id is None."""
+    from agent_framework import Content
+
+    content = Content(type="hosted_file")
+    with pytest.raises(ValueError, match="missing a file_id"):
+        AzureAIAgentClient.get_code_interpreter_tool(file_ids=[content])
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_empty_string_file_id() -> None:
+    """Test get_code_interpreter_tool raises ValueError for empty string file_ids."""
+    with pytest.raises(ValueError, match="must not contain empty strings"):
+        AzureAIAgentClient.get_code_interpreter_tool(file_ids=[""])
+
+
 async def test_azure_ai_chat_client_create_agent_stream_submit_tool_approvals(
     mock_agents_client: MagicMock,
 ) -> None:
