@@ -74,6 +74,7 @@ else:
     from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._types import ChatOptions
 
 logger = logging.getLogger("agent_framework")
@@ -665,6 +666,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a Agent instance.
@@ -688,6 +691,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 Note: response_format typing does not flow into run outputs when set via default_options.
                 These can be overridden at runtime via the ``options`` parameter of ``run()``.
             tools: The tools to use for the request.
+            compaction_strategy: Optional in-run compaction strategy for function-calling loops.
+            tokenizer: Optional tokenizer for token-aware compaction strategies.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
         """
         opts = dict(default_options) if default_options else {}
@@ -705,6 +710,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             **kwargs,
         )
         self.client = client
+        self.compaction_strategy = compaction_strategy or getattr(client, "compaction_strategy", None)
+        self.tokenizer = tokenizer or getattr(client, "tokenizer", None)
+        if isinstance(self.client, FunctionInvocationLayer):
+            self.client.compaction_strategy = self.compaction_strategy
+            self.client.tokenizer = self.tokenizer
 
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
@@ -1408,6 +1418,8 @@ class Agent(
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a Agent instance."""
@@ -1421,5 +1433,7 @@ class Agent(
             default_options=default_options,
             context_providers=context_providers,
             middleware=middleware,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
             **kwargs,
         )

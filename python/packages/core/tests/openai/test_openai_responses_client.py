@@ -524,6 +524,58 @@ def test_response_content_creation_with_reasoning() -> None:
     assert response.messages[0].contents[0].text == "Reasoning step"
 
 
+def test_response_content_keeps_reasoning_and_function_calls_in_one_message() -> None:
+    """Reasoning + function calls should parse into one assistant message."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    mock_reasoning_content = MagicMock()
+    mock_reasoning_content.text = "Reasoning step"
+
+    mock_reasoning_item = MagicMock()
+    mock_reasoning_item.type = "reasoning"
+    mock_reasoning_item.id = "rs_123"
+    mock_reasoning_item.content = [mock_reasoning_content]
+    mock_reasoning_item.summary = []
+
+    mock_function_call_item_1 = MagicMock()
+    mock_function_call_item_1.type = "function_call"
+    mock_function_call_item_1.id = "fc_1"
+    mock_function_call_item_1.call_id = "call_1"
+    mock_function_call_item_1.name = "tool_1"
+    mock_function_call_item_1.arguments = '{"x": 1}'
+
+    mock_function_call_item_2 = MagicMock()
+    mock_function_call_item_2.type = "function_call"
+    mock_function_call_item_2.id = "fc_2"
+    mock_function_call_item_2.call_id = "call_2"
+    mock_function_call_item_2.name = "tool_2"
+    mock_function_call_item_2.arguments = '{"y": 2}'
+
+    mock_response.output = [
+        mock_reasoning_item,
+        mock_function_call_item_1,
+        mock_function_call_item_2,
+    ]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages) == 1
+    assert response.messages[0].role == "assistant"
+    assert [content.type for content in response.messages[0].contents] == [
+        "text_reasoning",
+        "function_call",
+        "function_call",
+    ]
+
+
 def test_response_content_creation_with_code_interpreter() -> None:
     """Test _parse_response_from_openai with code interpreter outputs."""
 

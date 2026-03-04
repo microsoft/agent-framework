@@ -52,6 +52,7 @@ else:
 
 if TYPE_CHECKING:
     from ._agents import Agent
+    from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._middleware import (
         MiddlewareTypes,
     )
@@ -252,7 +253,11 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "unknown"
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {
+        "additional_properties",
+        "compaction_strategy",
+        "tokenizer",
+    }
     STORES_BY_DEFAULT: ClassVar[bool] = False
     """Whether this client stores conversation history server-side by default.
 
@@ -267,15 +272,21 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         self,
         *,
         additional_properties: dict[str, Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a BaseChatClient instance.
 
         Keyword Args:
             additional_properties: Additional properties for the client.
+            compaction_strategy: Optional compaction strategy to apply before model calls.
+            tokenizer: Optional tokenizer used by token-aware compaction strategies.
             kwargs: Additional keyword arguments (merged into additional_properties).
         """
         self.additional_properties = additional_properties or {}
+        self.compaction_strategy = compaction_strategy
+        self.tokenizer = tokenizer
         super().__init__(**kwargs)
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
@@ -335,6 +346,21 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         return ResponseStream(
             stream,
             finalizer=lambda updates: self._finalize_response_updates(updates, response_format=response_format),
+        )
+
+    async def _prepare_messages_for_model_call(
+        self,
+        messages: Sequence[Message],
+    ) -> list[Message]:
+        prepared_messages = list(messages)
+        if self.compaction_strategy is None:
+            return prepared_messages
+        from ._compaction import apply_compaction
+
+        return await apply_compaction(
+            prepared_messages,
+            strategy=self.compaction_strategy,
+            tokenizer=self.tokenizer,
         )
 
     # region Internal method to be implemented by derived classes
@@ -416,12 +442,37 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         Returns:
             When streaming a response stream of ChatResponseUpdates, otherwise an Awaitable ChatResponse.
         """
-        return self._inner_get_response(
-            messages=messages,
-            stream=stream,
-            options=options or {},  # type: ignore[arg-type]
-            **kwargs,
-        )
+        if self.compaction_strategy is None:
+            return self._inner_get_response(
+                messages=messages,
+                stream=stream,
+                options=options or {},
+                **kwargs,
+            )
+
+        if stream:
+
+            async def _get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
+                prepared_messages = await self._prepare_messages_for_model_call(messages)
+                return self._inner_get_response(
+                    messages=prepared_messages,
+                    stream=True,
+                    options=options or {},
+                    **kwargs,
+                )
+
+            return ResponseStream.from_awaitable(_get_stream())
+
+        async def _get_response() -> ChatResponse[Any]:
+            prepared_messages = await self._prepare_messages_for_model_call(messages)
+            return await self._inner_get_response(
+                messages=prepared_messages,
+                stream=False,
+                options=options or {},
+                **kwargs,
+            )
+
+        return _get_response()
 
     def service_url(self) -> str:
         """Get the URL of the service.
@@ -446,6 +497,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         context_providers: Sequence[Any] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Agent[OptionsCoT]:
         """Create a Agent with this client.
@@ -468,6 +521,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
             function_invocation_configuration: Optional function invocation configuration override.
+            compaction_strategy: Optional in-run compaction strategy used by function-calling loops.
+            tokenizer: Optional tokenizer used by token-aware compaction strategies.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
 
         Returns:
@@ -493,6 +548,9 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         """
         from ._agents import Agent
 
+        strategy = self.compaction_strategy if compaction_strategy is None else compaction_strategy
+        resolved_tokenizer = self.tokenizer if tokenizer is None else tokenizer
+
         return Agent(
             client=self,
             id=id,
@@ -504,6 +562,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             context_providers=context_providers,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
+            compaction_strategy=strategy,
+            tokenizer=resolved_tokenizer,
             **kwargs,
         )
 

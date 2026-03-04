@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 
+from typing import Any
 from unittest.mock import patch
 
 from agent_framework import (
@@ -13,6 +14,7 @@ from agent_framework import (
     SupportsImageGenerationTool,
     SupportsMCPTool,
     SupportsWebSearchTool,
+    TruncationStrategy,
 )
 
 
@@ -46,6 +48,60 @@ async def test_base_client_get_response(chat_client_base: SupportsChatGetRespons
 async def test_base_client_get_response_streaming(chat_client_base: SupportsChatGetResponse):
     async for update in chat_client_base.get_response([Message(role="user", text="Hello")], stream=True):
         assert update.text == "update - Hello" or update.text == "another update"
+
+
+async def test_base_client_applies_compaction_before_non_streaming_inner_call(
+    chat_client_base: SupportsChatGetResponse,
+):
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]
+    chat_client_base.compaction_strategy = TruncationStrategy(max_n=1, compact_to=1)  # type: ignore[attr-defined]
+    captured_roles: list[list[str]] = []
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+
+    async def _capture(
+        *,
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        captured_roles.append([message.role for message in messages])
+        return await original(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    await chat_client_base.get_response([
+        Message(role="user", text="Hello"),
+        Message(role="assistant", text="Previous response"),
+    ])
+    assert captured_roles == [["assistant"]]
+
+
+async def test_base_client_applies_compaction_before_streaming_inner_call(
+    chat_client_base: SupportsChatGetResponse,
+):
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]
+    chat_client_base.compaction_strategy = TruncationStrategy(max_n=1, compact_to=1)  # type: ignore[attr-defined]
+    captured_roles: list[list[str]] = []
+    original = chat_client_base._get_streaming_response  # type: ignore[attr-defined]
+
+    def _capture(
+        *,
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ):
+        captured_roles.append([message.role for message in messages])
+        return original(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    async for _ in chat_client_base.get_response(
+        [
+            Message(role="user", text="Hello"),
+            Message(role="assistant", text="Previous response"),
+        ],
+        stream=True,
+    ):
+        pass
+    assert captured_roles == [["assistant"]]
 
 
 async def test_chat_client_instructions_handling(chat_client_base: SupportsChatGetResponse):
