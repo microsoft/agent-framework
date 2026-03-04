@@ -712,8 +712,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         self.client = client
         self.compaction_strategy = compaction_strategy or getattr(client, "compaction_strategy", None)
         self.tokenizer = tokenizer or getattr(client, "tokenizer", None)
-        if isinstance(self.client, FunctionInvocationLayer):
+        if hasattr(self.client, "compaction_strategy"):
             self.client.compaction_strategy = self.compaction_strategy
+        if hasattr(self.client, "tokenizer"):
             self.client.tokenizer = self.tokenizer
 
         # Get tools from options or named parameter (named param takes precedence)

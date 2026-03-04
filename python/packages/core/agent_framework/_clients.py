@@ -456,12 +456,18 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
 
             async def _get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
                 prepared_messages = await self._prepare_messages_for_model_call(messages)
-                return self._inner_get_response(
+                stream_response = self._inner_get_response(
                     messages=prepared_messages,
                     stream=True,
                     options=options or {},
                     **kwargs,
                 )
+                if isinstance(stream_response, ResponseStream):
+                    return stream_response
+                awaited_stream_response = await stream_response
+                if isinstance(awaited_stream_response, ResponseStream):
+                    return awaited_stream_response
+                raise ValueError("Streaming responses must return a ResponseStream.")
 
             return ResponseStream.from_awaitable(_get_stream())
 
