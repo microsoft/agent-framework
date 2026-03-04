@@ -59,6 +59,7 @@ export function RunWorkflowButton({
   showCheckpoints = true,
 }: RunWorkflowButtonProps) {
   const [showModal, setShowModal] = useState(false);
+  const [modalCheckpointId, setModalCheckpointId] = useState<string | null>(null);
 
   // Handle escape key to close modal
   useEffect(() => {
@@ -147,8 +148,12 @@ export function RunWorkflowButton({
         );
       }
 
+      // For direct runs, always treat as a fresh execution
+      setModalCheckpointId(null);
       onRun(defaultData);
     } else {
+      // Fresh configuration run (no checkpoint selected yet)
+      setModalCheckpointId(null);
       setShowModal(true);
     }
   };
@@ -174,7 +179,8 @@ export function RunWorkflowButton({
 
       onRun(defaultData, checkpointId);
     } else {
-      // TODO: Pass checkpoint ID to modal for custom inputs
+      // Open the modal and remember which checkpoint we are resuming from
+      setModalCheckpointId(checkpointId);
       setShowModal(true);
     }
   };
@@ -368,7 +374,7 @@ export function RunWorkflowButton({
       {/* Modal for input configuration */}
       {inputSchema && (
         <Dialog open={showModal} onOpenChange={setShowModal}>
-          <DialogContent className="w-full min-w-[400px] max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-4xl xl:max-w-5xl max-h-[90vh] flex flex-col">
+          <DialogContent className="w-full min-w-[400px] max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-4xl xl-max-w-5xl max-h-[90vh] flex flex-col">
             <DialogHeader className="px-8 pt-6">
               <DialogTitle>Configure Workflow Inputs</DialogTitle>
               <DialogClose onClose={() => setShowModal(false)} />
@@ -398,7 +404,11 @@ export function RunWorkflowButton({
                     const openaiInput = [
                       { type: "message", role: "user", content },
                     ];
-                    onRun(openaiInput as unknown as Record<string, unknown>);
+                    onRun(
+                      openaiInput as unknown as Record<string, unknown>,
+                      modalCheckpointId ?? undefined
+                    );
+                    setModalCheckpointId(null);
                     setShowModal(false);
                   }}
                   isSubmitting={isSubmitting}
@@ -411,7 +421,11 @@ export function RunWorkflowButton({
                   inputSchema={inputSchema}
                   inputTypeName="Input"
                   onSubmit={(values) => {
-                    onRun(values as Record<string, unknown>);
+                    onRun(
+                      values as Record<string, unknown>,
+                      modalCheckpointId ?? undefined
+                    );
+                    setModalCheckpointId(null);
                     setShowModal(false);
                   }}
                   isSubmitting={isSubmitting}
@@ -425,3 +439,4 @@ export function RunWorkflowButton({
     </>
   );
 }
+
