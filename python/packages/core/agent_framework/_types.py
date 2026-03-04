@@ -2881,18 +2881,16 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     async def _get_stream(self) -> AsyncIterable[UpdateT]:
         if self._stream is None:
             if hasattr(self._stream_source, "__aiter__"):
-                self._stream = cast(AsyncIterable[UpdateT], self._stream_source)
+                self._stream = self._stream_source  # type: ignore[assignment]
             else:
                 if not iscoroutine(self._stream_source):
-                    self._stream = cast(AsyncIterable[UpdateT], self._stream_source)
+                    self._stream = self._stream_source  # type: ignore[assignment]
                 else:
                     self._stream = await self._stream_source
-            stream_obj = cast(Any, self._stream)
-            if isinstance(stream_obj, ResponseStream) and self._wrap_inner:
-                inner_stream: Any = cast(Any, stream_obj)
-                self._inner_stream = inner_stream
-                return cast(AsyncIterable[UpdateT], inner_stream)
-        return cast(AsyncIterable[UpdateT], cast(Any, self._stream))
+            if isinstance(self._stream, ResponseStream) and self._wrap_inner:
+                self._inner_stream = self._stream  # type: ignore[assignment]
+                return self._inner_stream
+        return self._stream  # type: ignore[return-value]
 
     def __aiter__(self) -> ResponseStream[UpdateT, FinalT]:
         return self
@@ -3497,7 +3495,7 @@ class Embedding(Generic[EmbeddingT]):
         """
         if self._dimensions is not None:
             return self._dimensions
-        if isinstance(self.vector, Sized):
+        if isinstance(self.vector, Sized) and not isinstance(self.vector, str):
             return len(cast(Sized, self.vector))
         return None
 

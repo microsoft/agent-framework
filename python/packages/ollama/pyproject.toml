@@ -90,7 +90,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_ollama"
-test = "pytest --cov=agent_framework_ollama --cov-report=term-missing:skip-covered tests"
+test = "pytest -m \"not integration\" --cov=agent_framework_ollama --cov-report=term-missing:skip-covered tests"
 
 [tool.uv.build-backend]
 module-name = "agent_framework_ollama"

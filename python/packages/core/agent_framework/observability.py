@@ -1163,7 +1163,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             return super_get_response(messages=messages, stream=stream, options=options, **kwargs)  # type: ignore[no-any-return]
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
-        provider_name = str(self.otel_provider_name)
+        provider_name = str(getattr(self, "otel_provider_name", "unknown"))
         model_id = kwargs.get("model_id") or opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
         service_url_func = getattr(self, "service_url", None)
         service_url = str(service_url_func() if callable(service_url_func) else "unknown")
@@ -1182,12 +1182,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             if isinstance(stream_result, ResponseStream):
                 result_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = stream_result  # pyright: ignore[reportUnknownVariableType]
             elif isinstance(stream_result, Awaitable):
-                result_stream = cast(
-                    ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
-                    ResponseStream.from_awaitable(  # pyright: ignore[reportUnknownMemberType]
-                        cast(Awaitable[ResponseStream[ChatResponseUpdate, ChatResponse[Any]]], stream_result)
-                    ),
-                )
+                result_stream = ResponseStream.from_awaitable(stream_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
             else:
                 raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
 
@@ -1230,8 +1225,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     _capture_response(
                         span=span,
                         attributes=response_attributes,
-                        token_usage_histogram=self.token_usage_histogram,
-                        operation_duration_histogram=self.duration_histogram,
+                        token_usage_histogram=getattr(self, "token_usage_histogram", None),
+                        operation_duration_histogram=getattr(self, "duration_histogram", None),
                         duration=duration,
                     )
                     if (
@@ -1284,8 +1279,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 _capture_response(
                     span=span,
                     attributes=response_attributes,
-                    token_usage_histogram=self.token_usage_histogram,
-                    operation_duration_histogram=self.duration_histogram,
+                    token_usage_histogram=getattr(self, "token_usage_histogram", None),
+                    operation_duration_histogram=getattr(self, "duration_histogram", None),
                     duration=duration,
                 )
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
@@ -1340,7 +1335,7 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
             return await super_get_embeddings(values, options=options)  # type: ignore[no-any-return]
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
-        provider_name = str(self.otel_provider_name)
+        provider_name = str(getattr(self, "otel_provider_name", "unknown"))
         model_id = opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
         service_url_func = getattr(self, "service_url", None)
         service_url = str(service_url_func() if callable(service_url_func) else "unknown")
@@ -1463,12 +1458,7 @@ class AgentTelemetryLayer:
             if isinstance(run_result, ResponseStream):
                 result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
             elif isinstance(run_result, Awaitable):
-                result_stream = cast(
-                    ResponseStream[AgentResponseUpdate, AgentResponse[Any]],
-                    ResponseStream.from_awaitable(  # pyright: ignore[reportUnknownMemberType]
-                        cast(Awaitable[ResponseStream[AgentResponseUpdate, AgentResponse[Any]]], run_result)
-                    ),
-                )
+                result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
             else:
                 raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
 

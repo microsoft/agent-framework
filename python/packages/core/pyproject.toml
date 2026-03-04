@@ -131,7 +131,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"
-test = "pytest --cov=agent_framework --cov-report=term-missing:skip-covered -n auto --dist worksteal tests"
+test = "pytest -m \"not integration\" --cov=agent_framework --cov-report=term-missing:skip-covered -n auto --dist worksteal tests"
 
 [tool.flit.module]
 name = "agent_framework"

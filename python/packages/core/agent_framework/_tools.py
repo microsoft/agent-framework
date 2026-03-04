@@ -1755,19 +1755,6 @@ def _update_conversation_id(
         options["conversation_id"] = conversation_id
 
 
-async def _ensure_response_stream(
-    stream_like: ResponseStream[ChatResponseUpdate, ChatResponse[Any]]
-    | Awaitable[ResponseStream[ChatResponseUpdate, ChatResponse[Any]]],
-) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
-    from ._types import ResponseStream
-
-    stream = await stream_like if isinstance(stream_like, Awaitable) else stream_like
-    if not isinstance(stream, ResponseStream):
-        raise ValueError("Streaming function invocation requires a ResponseStream result.")
-    await stream
-    return cast(ResponseStream[ChatResponseUpdate, ChatResponse[Any]], stream)
-
-
 def _extract_tools(
     options: dict[str, Any] | None,
 ) -> ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None:
@@ -2151,7 +2138,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             ResponseStream,
         )
 
-        super_get_response = super().get_response  # type: ignore[misc]
+        super_get_response_untyped = super().get_response  # type: ignore[misc]
+
+        def super_get_response(*args: Any, **kwargs: Any) -> Any:
+            return super_get_response_untyped(*args, **kwargs)  # pyright: ignore[reportUnknownVariableType]
 
         # ChatMiddleware adds this kwarg
         function_middleware_pipeline = FunctionMiddlewarePipeline(
@@ -2332,17 +2322,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     mutable_options["tool_choice"] = "none"
                     return
 
-                stream_like = cast(
-                    ResponseStream[ChatResponseUpdate, ChatResponse[Any]]
-                    | Awaitable[ResponseStream[ChatResponseUpdate, ChatResponse[Any]]],
-                    super_get_response(
-                        messages=prepped_messages,
-                        stream=True,
-                        options=mutable_options,
-                        **filtered_kwargs,
-                    ),
+                inner_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = super_get_response(
+                    messages=prepped_messages,
+                    stream=True,
+                    options=mutable_options,
+                    **filtered_kwargs,
                 )
-                inner_stream = await _ensure_response_stream(stream_like)
+                await inner_stream
                 # Collect result hooks from the inner stream to run later
                 stream_result_hooks[:] = _get_result_hooks_from_stream(inner_stream)
 
@@ -2425,21 +2411,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS),
                 )
             mutable_options["tool_choice"] = "none"
-            stream_like = cast(
-                ResponseStream[ChatResponseUpdate, ChatResponse[Any]]
-                | Awaitable[ResponseStream[ChatResponseUpdate, ChatResponse[Any]]],
-                super_get_response(
-                    messages=prepped_messages,
-                    stream=True,
-                    options=mutable_options,
-                    **filtered_kwargs,
-                ),
+            final_inner_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = super_get_response(
+                messages=prepped_messages,
+                stream=True,
+                options=mutable_options,
+                **filtered_kwargs,
             )
-            inner_stream = await _ensure_response_stream(stream_like)
-            async for update in inner_stream:
+            await final_inner_stream
+            async for update in final_inner_stream:
                 yield update
             # Finalize the inner stream to trigger its hooks
-            await inner_stream.get_final_response()
+            await final_inner_stream.get_final_response()
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
             # Note: stream_result_hooks are already run via inner stream's get_final_response()

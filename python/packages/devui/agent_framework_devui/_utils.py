@@ -123,9 +123,8 @@ def extract_executor_message_types(executor: Any) -> list[Any]:
     if not message_types and hasattr(executor, "_handlers"):
         try:
             handlers = executor._handlers
-            handlers_dict = _string_key_dict(handlers)
-            if handlers_dict is not None:
-                message_types = list(handlers_dict.keys())
+            if isinstance(handlers, dict):
+                message_types = list(handlers.keys())  # type: ignore[arg-type]  # pyright: ignore[reportUnknownArgumentType]
         except Exception as exc:  # pragma: no cover - defensive logging path
             logger.debug(f"Failed to read executor handlers: {exc}")
 

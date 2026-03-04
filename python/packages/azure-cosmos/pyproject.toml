@@ -86,7 +86,7 @@ executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azure_cosmos"
-test = "pytest --cov=agent_framework_azure_cosmos --cov-report=term-missing:skip-covered tests"
+test = "pytest -m \"not integration\" --cov=agent_framework_azure_cosmos --cov-report=term-missing:skip-covered tests"
 integration-tests = "pytest tests/test_cosmos_history_provider.py -m integration"
 
 [build-system]

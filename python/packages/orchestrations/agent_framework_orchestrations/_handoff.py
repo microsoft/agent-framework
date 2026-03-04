@@ -34,6 +34,7 @@ import json
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -349,43 +350,21 @@ class HandoffAgentExecutor(AgentExecutor):
     def _clone_chat_agent(self, agent: Agent[Any]) -> Agent[Any]:
         """Produce a deep copy of the Agent while preserving runtime configuration."""
         options = agent.default_options
-        middleware = list(agent.middleware or [])
 
         # Reconstruct the original tools list by combining regular tools with MCP tools.
         # Agent.__init__ separates MCP tools during initialization,
         # so we need to recombine them here to pass the complete tools list to the constructor.
         # This makes sure MCP tools are preserved when cloning agents for handoff workflows.
-        tools_from_options = options.get("tools")
-        all_tools = list(tools_from_options) if tools_from_options else []
+        tools_from_options = options.pop("tools", [])
         if agent.mcp_tools:
-            all_tools.extend(agent.mcp_tools)
+            tools_from_options.extend(agent.mcp_tools)
 
-        logit_bias = options.get("logit_bias")
-        metadata = options.get("metadata")
-
+        # this ensures all options (including custom ones) are kept
+        cloned_options = deepcopy(options)
         # Disable parallel tool calls to prevent the agent from invoking multiple handoff tools at once.
-        cloned_options: dict[str, Any] = {
-            "allow_multiple_tool_calls": False,
-            # Handoff workflows already manage full conversation context explicitly
-            # across executors. Keep provider-side conversation storage disabled to
-            # avoid stale tool-call state (Responses API previous_response chains).
-            "store": False,
-        }
-        cloned_options["frequency_penalty"] = options.get("frequency_penalty")
-        cloned_options["instructions"] = options.get("instructions")
-        cloned_options["logit_bias"] = dict(logit_bias) if logit_bias else None
-        cloned_options["max_tokens"] = options.get("max_tokens")
-        cloned_options["metadata"] = dict(metadata) if metadata else None
-        cloned_options["model_id"] = options.get("model_id")
-        cloned_options["presence_penalty"] = options.get("presence_penalty")
-        cloned_options["response_format"] = options.get("response_format")
-        cloned_options["seed"] = options.get("seed")
-        cloned_options["stop"] = options.get("stop")
-        cloned_options["temperature"] = options.get("temperature")
-        cloned_options["tool_choice"] = options.get("tool_choice")
-        cloned_options["tools"] = all_tools if all_tools else None
-        cloned_options["top_p"] = options.get("top_p")
-        cloned_options["user"] = options.get("user")
+        cloned_options["allow_multiple_tool_calls"] = False
+        cloned_options["store"] = False
+        cloned_options["tools"] = tools_from_options
 
         return Agent(
             client=agent.client,
@@ -393,8 +372,8 @@ class HandoffAgentExecutor(AgentExecutor):
             name=agent.name,
             description=agent.description,
             context_providers=agent.context_providers,
-            middleware=middleware,
-            default_options=cloned_options,  # type: ignore[arg-type]
+            middleware=agent.agent_middleware,
+            default_options=cloned_options,  # type: ignore[assignment]
         )
 
     def _apply_auto_tools(self, agent: Agent, targets: Sequence[HandoffConfiguration]) -> None:

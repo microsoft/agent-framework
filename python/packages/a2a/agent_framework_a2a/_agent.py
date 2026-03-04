@@ -307,10 +307,12 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     response_id=str(getattr(item, "message_id", uuid.uuid4())),
                     raw_representation=item,
                 )
-            else:
+            elif isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], Task):
                 task, _update_event = item
                 for update in self._updates_from_task(task, background=background):
                     yield update
+            else:
+                raise NotImplementedError("Only Message and Task responses are supported")
 
     # ------------------------------------------------------------------
     # Task helpers

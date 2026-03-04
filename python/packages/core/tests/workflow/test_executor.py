@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 
 import pytest
+from typing_extensions import Never
+
 from agent_framework import (
     Executor,
     Message,
@@ -14,7 +16,6 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from typing_extensions import Never
 
 
 # Module-level types for string forward reference tests
@@ -155,11 +156,7 @@ async def test_executor_invoked_event_contains_input_data():
     workflow = WorkflowBuilder(start_executor=upper).add_edge(upper, collector).build()
 
     events = await workflow.run("hello world")
-    invoked_events = [
-        e
-        for e in events
-        if isinstance(e, WorkflowEvent) and e.type == "executor_invoked"
-    ]
+    invoked_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_invoked"]
 
     assert len(invoked_events) == 2
 
@@ -193,16 +190,10 @@ async def test_executor_completed_event_contains_sent_messages():
     sender = MultiSenderExecutor(id="sender")
     collector = CollectorExecutor(id="collector")
 
-    workflow = (
-        WorkflowBuilder(start_executor=sender).add_edge(sender, collector).build()
-    )
+    workflow = WorkflowBuilder(start_executor=sender).add_edge(sender, collector).build()
 
     events = await workflow.run("hello")
-    completed_events = [
-        e
-        for e in events
-        if isinstance(e, WorkflowEvent) and e.type == "executor_completed"
-    ]
+    completed_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_completed"]
 
     # Sender should have completed with the sent messages
     sender_completed = next(e for e in completed_events if e.executor_id == "sender")
@@ -210,9 +201,7 @@ async def test_executor_completed_event_contains_sent_messages():
     assert sender_completed.data == ["hello-first", "hello-second"]
 
     # Collector should have completed with no sent messages (None)
-    collector_completed_events = [
-        e for e in completed_events if e.executor_id == "collector"
-    ]
+    collector_completed_events = [e for e in completed_events if e.executor_id == "collector"]
     # Collector is called twice (once per message from sender)
     assert len(collector_completed_events) == 2
     for collector_completed in collector_completed_events:
@@ -231,11 +220,7 @@ async def test_executor_completed_event_includes_yielded_outputs():
     workflow = WorkflowBuilder(start_executor=executor).build()
 
     events = await workflow.run("test")
-    completed_events = [
-        e
-        for e in events
-        if isinstance(e, WorkflowEvent) and e.type == "executor_completed"
-    ]
+    completed_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_completed"]
 
     assert len(completed_events) == 1
     assert completed_events[0].executor_id == "yielder"
@@ -263,9 +248,7 @@ async def test_executor_events_with_complex_message_types():
 
     class ProcessorExecutor(Executor):
         @handler
-        async def handle(
-            self, request: Request, ctx: WorkflowContext[Response]
-        ) -> None:
+        async def handle(self, request: Request, ctx: WorkflowContext[Response]) -> None:
             response = Response(results=[request.query.upper()] * request.limit)
             await ctx.send_message(response)
 
@@ -277,23 +260,13 @@ async def test_executor_events_with_complex_message_types():
     processor = ProcessorExecutor(id="processor")
     collector = CollectorExecutor(id="collector")
 
-    workflow = (
-        WorkflowBuilder(start_executor=processor).add_edge(processor, collector).build()
-    )
+    workflow = WorkflowBuilder(start_executor=processor).add_edge(processor, collector).build()
 
     input_request = Request(query="hello", limit=3)
     events = await workflow.run(input_request)
 
-    invoked_events = [
-        e
-        for e in events
-        if isinstance(e, WorkflowEvent) and e.type == "executor_invoked"
-    ]
-    completed_events = [
-        e
-        for e in events
-        if isinstance(e, WorkflowEvent) and e.type == "executor_completed"
-    ]
+    invoked_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_invoked"]
+    completed_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_completed"]
 
     # Check processor invoked event has the Request object
     processor_invoked = next(e for e in invoked_events if e.executor_id == "processor")
@@ -302,9 +275,7 @@ async def test_executor_events_with_complex_message_types():
     assert processor_invoked.data.limit == 3
 
     # Check processor completed event has the Response object
-    processor_completed = next(
-        e for e in completed_events if e.executor_id == "processor"
-    )
+    processor_completed = next(e for e in completed_events if e.executor_id == "processor")
     assert processor_completed.data is not None
     assert len(processor_completed.data) == 1
     assert isinstance(processor_completed.data[0], Response)
@@ -390,9 +361,7 @@ def test_executor_workflow_output_types_property():
     # Test executor with union workflow output types
     class UnionWorkflowOutputExecutor(Executor):
         @handler
-        async def handle(
-            self, text: str, ctx: WorkflowContext[int, str | bool]
-        ) -> None:
+        async def handle(self, text: str, ctx: WorkflowContext[int, str | bool]) -> None:
             pass
 
     executor = UnionWorkflowOutputExecutor(id="union_workflow_output")
@@ -403,15 +372,11 @@ def test_executor_workflow_output_types_property():
     # Test executor with multiple handlers having different workflow output types
     class MultiHandlerWorkflowExecutor(Executor):
         @handler
-        async def handle_string(
-            self, text: str, ctx: WorkflowContext[int, str]
-        ) -> None:
+        async def handle_string(self, text: str, ctx: WorkflowContext[int, str]) -> None:
             pass
 
         @handler
-        async def handle_number(
-            self, num: int, ctx: WorkflowContext[bool, float]
-        ) -> None:
+        async def handle_number(self, num: int, ctx: WorkflowContext[bool, float]) -> None:
             pass
 
     executor = MultiHandlerWorkflowExecutor(id="multi_workflow")
@@ -465,9 +430,7 @@ def test_executor_output_types_includes_response_handlers():
             pass
 
         @response_handler
-        async def handle_response(
-            self, original_request: str, response: bool, ctx: WorkflowContext[float]
-        ) -> None:
+        async def handle_response(self, original_request: str, response: bool, ctx: WorkflowContext[float]) -> None:
             pass
 
     executor = RequestResponseExecutor(id="request_response")
@@ -574,9 +537,7 @@ async def test_executor_invoked_event_data_not_mutated_by_handler():
     """Test that executor_invoked event (type='executor_invoked').data captures original input, not mutated input."""
 
     @executor(id="Mutator")
-    async def mutator(
-        messages: list[Message], ctx: WorkflowContext[list[Message]]
-    ) -> None:
+    async def mutator(messages: list[Message], ctx: WorkflowContext[list[Message]]) -> None:
         # The handler mutates the input list by appending new messages
         original_len = len(messages)
         messages.append(Message(role="assistant", text="Added by executor"))
@@ -591,11 +552,7 @@ async def test_executor_invoked_event_data_not_mutated_by_handler():
     events = await workflow.run(input_messages)
 
     # Find the invoked event for the Mutator executor
-    invoked_events = [
-        e
-        for e in events
-        if isinstance(e, WorkflowEvent) and e.type == "executor_invoked"
-    ]
+    invoked_events = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_invoked"]
     assert len(invoked_events) == 1
     mutator_invoked = invoked_events[0]
 
@@ -672,12 +629,8 @@ class TestHandlerExplicitTypes:
         assert handler_func._handler_spec["output_types"] == [list]  # pyright: ignore[reportFunctionMemberAccess]
 
         # Verify can_handle
-        assert exec_instance.can_handle(
-            WorkflowMessage(data={"key": "value"}, source_id="mock")
-        )
-        assert not exec_instance.can_handle(
-            WorkflowMessage(data="string", source_id="mock")
-        )
+        assert exec_instance.can_handle(WorkflowMessage(data={"key": "value"}, source_id="mock"))
+        assert not exec_instance.can_handle(WorkflowMessage(data="string", source_id="mock"))
 
     def test_handler_with_explicit_union_input_type(self):
         """Test that explicit union input_type is handled correctly."""
@@ -698,9 +651,7 @@ class TestHandlerExplicitTypes:
         assert exec_instance.can_handle(WorkflowMessage(data="hello", source_id="mock"))
         assert exec_instance.can_handle(WorkflowMessage(data=42, source_id="mock"))
         # Cannot handle float
-        assert not exec_instance.can_handle(
-            WorkflowMessage(data=3.14, source_id="mock")
-        )
+        assert not exec_instance.can_handle(WorkflowMessage(data=3.14, source_id="mock"))
 
     def test_handler_with_explicit_union_output_type(self):
         """Test that explicit union output is normalized to a list."""
@@ -776,9 +727,7 @@ class TestHandlerExplicitTypes:
 
             class OnlyWorkflowOutputExecutor(Executor):  # pyright: ignore[reportUnusedClass]
                 @handler(workflow_output=bool)
-                async def handle(
-                    self, message: str, ctx: WorkflowContext[int, str]
-                ) -> None:
+                async def handle(self, message: str, ctx: WorkflowContext[int, str]) -> None:
                     pass
 
     def test_handler_explicit_input_type_allows_no_message_annotation(self):
@@ -803,9 +752,7 @@ class TestHandlerExplicitTypes:
                 pass
 
             @handler
-            async def handle_introspected(
-                self, message: float, ctx: WorkflowContext[bool]
-            ) -> None:
+            async def handle_introspected(self, message: float, ctx: WorkflowContext[bool]) -> None:
                 pass
 
         exec_instance = MixedExecutor(id="mixed")
@@ -831,9 +778,7 @@ class TestHandlerExplicitTypes:
 
         # Should resolve the string to the actual type
         assert ForwardRefMessage in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
-        assert exec_instance.can_handle(
-            WorkflowMessage(data=ForwardRefMessage("hello"), source_id="mock")
-        )
+        assert exec_instance.can_handle(WorkflowMessage(data=ForwardRefMessage("hello"), source_id="mock"))
 
     def test_handler_with_string_forward_reference_union(self):
         """Test that string forward references work with union types."""
@@ -846,12 +791,8 @@ class TestHandlerExplicitTypes:
         exec_instance = StringUnionExecutor(id="string_union")
 
         # Should handle both types
-        assert exec_instance.can_handle(
-            WorkflowMessage(data=ForwardRefTypeA("hello"), source_id="mock")
-        )
-        assert exec_instance.can_handle(
-            WorkflowMessage(data=ForwardRefTypeB(42), source_id="mock")
-        )
+        assert exec_instance.can_handle(WorkflowMessage(data=ForwardRefTypeA("hello"), source_id="mock"))
+        assert exec_instance.can_handle(WorkflowMessage(data=ForwardRefTypeB(42), source_id="mock"))
 
     def test_handler_with_string_forward_reference_output_type(self):
         """Test that string forward references work for output_type."""
@@ -890,9 +831,7 @@ class TestHandlerExplicitTypes:
 
         class PrecedenceExecutor(Executor):
             @handler(input=int, output=float, workflow_output=str)
-            async def handle(
-                self, message: int, ctx: WorkflowContext[int, bool]
-            ) -> None:
+            async def handle(self, message: int, ctx: WorkflowContext[int, bool]) -> None:
                 pass
 
         exec_instance = PrecedenceExecutor(id="precedence")
@@ -958,9 +897,7 @@ class TestHandlerExplicitTypes:
             async def handle(self, message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
                 pass
 
-        exec_instance = StringUnionWorkflowOutputExecutor(
-            id="string_union_workflow_output"
-        )
+        exec_instance = StringUnionWorkflowOutputExecutor(id="string_union_workflow_output")
 
         # Should resolve both types from string union
         assert ForwardRefTypeA in exec_instance.workflow_output_types
@@ -971,14 +908,10 @@ class TestHandlerExplicitTypes:
 
         class IntrospectedWorkflowOutputExecutor(Executor):
             @handler
-            async def handle(
-                self, message: str, ctx: WorkflowContext[int, bool]
-            ) -> None:
+            async def handle(self, message: str, ctx: WorkflowContext[int, bool]) -> None:
                 pass
 
-        exec_instance = IntrospectedWorkflowOutputExecutor(
-            id="introspected_workflow_output"
-        )
+        exec_instance = IntrospectedWorkflowOutputExecutor(id="introspected_workflow_output")
 
         # Should use introspected types from WorkflowContext[int, bool]
         assert int in exec_instance.output_types
