@@ -2896,11 +2896,10 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 await self._get_stream()
             if self._inner_stream is None:
                 raise RuntimeError("Inner stream not available")
-            if not self._finalized:
+            if not self._finalized and not self._consumed:
                 # Consume outer stream (which delegates to inner) if not already consumed
-                if not self._consumed:
-                    async for _ in self:
-                        pass
+                async for _ in self:
+                    pass
 
             # Re-check: __anext__ auto-finalization may have already finalized this stream
             if not self._finalized:
@@ -2944,10 +2943,9 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 self._final_result = result
                 self._finalized = True
             return self._final_result  # type: ignore[return-value]
-        if not self._finalized:
-            if not self._consumed:
-                async for _ in self:
-                    pass
+        if not self._finalized and not self._consumed:
+            async for _ in self:
+                pass
         # Re-check: __anext__ auto-finalization may have already finalized this stream
         if not self._finalized:
             if self._finalizer is not None:
