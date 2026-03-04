@@ -88,7 +88,9 @@ internal sealed class Program
     {
         string workflowYaml = File.ReadAllText("MathChat.yaml");
 
+#pragma warning disable AAIP001 // WorkflowAgentDefinition is experimental
         WorkflowAgentDefinition workflowAgentDefinition = WorkflowAgentDefinition.FromYaml(workflowYaml);
+#pragma warning restore AAIP001
 
         return
             await agentClient.CreateAgentAsync(

@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -113,7 +114,7 @@ async def test_runner_run_until_convergence():
     assert result is not None and result == 10
 
     # iteration count shouldn't be reset after convergence
-    assert runner._iteration == 10  # type: ignore
+    assert runner._iteration == 10  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_runner_run_until_convergence_not_completed():
@@ -173,7 +174,7 @@ async def test_runner_run_iteration_preserves_message_order_per_edge_runner() ->
     for index in range(5):
         await ctx.send_message(WorkflowMessage(data=MockMessage(data=index), source_id="source"))
 
-    await runner._run_iteration()
+    await runner._run_iteration()  # pyright: ignore[reportPrivateUsage]
 
     assert edge_runner.received == [0, 1, 2, 3, 4]
 
@@ -213,7 +214,7 @@ async def test_runner_run_iteration_delivers_different_edge_runners_concurrently
 
     await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source"))
 
-    iteration_task = asyncio.create_task(runner._run_iteration())
+    iteration_task = asyncio.create_task(runner._run_iteration())  # pyright: ignore[reportPrivateUsage]
 
     await blocking_edge_runner.started.wait()
     await asyncio.wait_for(probe_edge_runner.probe_completed.wait(), timeout=2.0)
@@ -280,7 +281,7 @@ async def test_fanout_edge_runner_delivers_to_multiple_targets_concurrently() ->
     # Queue a message from source (will be delivered to both targets via FanOut)
     await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id=source.id))
 
-    iteration_task = asyncio.create_task(runner._run_iteration())
+    iteration_task = asyncio.create_task(runner._run_iteration())  # pyright: ignore[reportPrivateUsage]
 
     # Wait for the blocking executor to start
     await blocking_target.started.wait()
@@ -477,11 +478,11 @@ async def test_runner_reset_iteration_count():
     ctx = InProcRunnerContext()
 
     runner = Runner([], {executor_a.id: executor_a}, state, ctx, "test_name", graph_signature_hash="test_hash")
-    runner._iteration = 10
+    runner._iteration = 10  # pyright: ignore[reportPrivateUsage]
 
     runner.reset_iteration_count()
 
-    assert runner._iteration == 0
+    assert runner._iteration == 0  # pyright: ignore[reportPrivateUsage]
 
 
 class CheckpointingContext(InProcRunnerContext):
@@ -501,18 +502,19 @@ class CheckpointingContext(InProcRunnerContext):
         graph_signature_hash: str,
         state: State,
         previous_checkpoint_id: str | None,
-        iteration: int,
+        iteration_count: int,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         checkpoint = WorkflowCheckpoint(
             workflow_name=workflow_name,
             graph_signature_hash=graph_signature_hash,
-            state=state.export(),
+            state=state.export_state(),
             previous_checkpoint_id=previous_checkpoint_id,
-            iteration_count=iteration,
+            iteration_count=iteration_count,
         )
         return await self._storage.save(checkpoint)
 
-    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
+    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:  # pyright: ignore[reportIncompatibleMethodOverride]
         try:
             return await self._storage.load(checkpoint_id)
         except WorkflowCheckpointException:
@@ -537,7 +539,8 @@ class FailingCheckpointContext(InProcRunnerContext):
         graph_signature_hash: str,
         state: State,
         previous_checkpoint_id: str | None,
-        iteration: int,
+        iteration_count: int,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         raise RuntimeError("Simulated checkpoint failure")
 
@@ -609,8 +612,8 @@ async def test_runner_restore_from_checkpoint_with_external_storage():
     # Restore using external storage
     await runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage=storage)
 
-    assert runner._resumed_from_checkpoint is True
-    assert runner._iteration == 5
+    assert runner._resumed_from_checkpoint is True  # pyright: ignore[reportPrivateUsage]
+    assert runner._iteration == 5  # pyright: ignore[reportPrivateUsage]
     assert state.get("test_key") == "test_value"
 
 
@@ -684,7 +687,7 @@ async def test_runner_restore_executor_states_invalid_states_type():
     runner = Runner([], {executor_a.id: executor_a}, state, ctx, "test_name", graph_signature_hash="test_hash")
 
     with pytest.raises(WorkflowCheckpointException, match="not a dictionary"):
-        await runner._restore_executor_states()
+        await runner._restore_executor_states()  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_runner_restore_executor_states_invalid_executor_id_type():
@@ -698,7 +701,7 @@ async def test_runner_restore_executor_states_invalid_executor_id_type():
     runner = Runner([], {executor_a.id: executor_a}, state, ctx, "test_name", graph_signature_hash="test_hash")
 
     with pytest.raises(WorkflowCheckpointException, match="not a string"):
-        await runner._restore_executor_states()
+        await runner._restore_executor_states()  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_runner_restore_executor_states_invalid_state_type():
@@ -712,7 +715,7 @@ async def test_runner_restore_executor_states_invalid_state_type():
     runner = Runner([], {executor_a.id: executor_a}, state, ctx, "test_name", graph_signature_hash="test_hash")
 
     with pytest.raises(WorkflowCheckpointException, match="not a dict"):
-        await runner._restore_executor_states()
+        await runner._restore_executor_states()  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_runner_restore_executor_states_invalid_state_keys():
@@ -726,7 +729,7 @@ async def test_runner_restore_executor_states_invalid_state_keys():
     runner = Runner([], {executor_a.id: executor_a}, state, ctx, "test_name", graph_signature_hash="test_hash")
 
     with pytest.raises(WorkflowCheckpointException, match="not a dict"):
-        await runner._restore_executor_states()
+        await runner._restore_executor_states()  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_runner_restore_executor_states_missing_executor():
@@ -739,7 +742,7 @@ async def test_runner_restore_executor_states_missing_executor():
     runner = Runner([], {}, state, ctx, "test_name", graph_signature_hash="test_hash")
 
     with pytest.raises(WorkflowCheckpointException, match="not found during state restoration"):
-        await runner._restore_executor_states()
+        await runner._restore_executor_states()  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_runner_set_executor_state_invalid_existing_states():
@@ -752,7 +755,7 @@ async def test_runner_set_executor_state_invalid_existing_states():
     runner = Runner([], {executor_a.id: executor_a}, state, ctx, "test_name", graph_signature_hash="test_hash")
 
     with pytest.raises(WorkflowCheckpointException, match="not a dictionary"):
-        await runner._set_executor_state("executor_a", {"key": "value"})
+        await runner._set_executor_state("executor_a", {"key": "value"})  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_runner_with_pre_loop_events():
@@ -779,7 +782,7 @@ class EventEmittingExecutor(Executor):
     """An executor that emits events during execution."""
 
     @handler
-    async def handle(self, message: MockMessage, ctx: WorkflowContext[MockMessage, int]) -> None:
+    async def handle(self, message: MockMessage, ctx: WorkflowContext[MockMessage, str]) -> None:
         # Emit event during processing
         await ctx.yield_output(f"processed-{message.data}")
         if message.data < 3:
@@ -831,7 +834,7 @@ async def test_runner_restore_executor_states_no_states():
     runner = Runner([], {executor_a.id: executor_a}, state, ctx, "test_name", graph_signature_hash="test_hash")
 
     # Should complete without error when no executor states exist
-    await runner._restore_executor_states()
+    await runner._restore_executor_states()  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_runner_checkpoint_with_resumed_flag():
@@ -853,7 +856,7 @@ async def test_runner_checkpoint_with_resumed_flag():
     state = State()
 
     runner = Runner(edges, executors, state, ctx, "test_name", graph_signature_hash="test_hash")
-    runner._mark_resumed(5)
+    runner._mark_resumed(5)  # pyright: ignore[reportPrivateUsage]
 
     # Add a message to trigger the checkpoint creation path
     await ctx.send_message(WorkflowMessage(data=MockMessage(data=8), source_id="START"))
@@ -870,7 +873,7 @@ async def test_runner_checkpoint_with_resumed_flag():
         pass
 
     # After completing, resumed flag should be reset
-    assert runner._resumed_from_checkpoint is False
+    assert runner._resumed_from_checkpoint is False  # pyright: ignore[reportPrivateUsage]
 
 
 class ExecutorThatFailsWithEvents(Executor):
@@ -883,7 +886,7 @@ class ExecutorThatFailsWithEvents(Executor):
         self._iteration_count = 0
 
     @handler
-    async def handle(self, message: MockMessage, ctx: WorkflowContext[MockMessage, int]) -> None:
+    async def handle(self, message: MockMessage, ctx: WorkflowContext[MockMessage, str]) -> None:
         self._iteration_count += 1
         # First emit an output event to the workflow context
         await ctx.yield_output(f"output-before-failure-{message.data}")
@@ -951,7 +954,7 @@ class SlowEventEmittingExecutor(Executor):
         self.current_iteration = 0
 
     @handler
-    async def handle(self, message: MockMessage, ctx: WorkflowContext[MockMessage, int]) -> None:
+    async def handle(self, message: MockMessage, ctx: WorkflowContext[MockMessage, str]) -> None:
         self.current_iteration += 1
         # Emit output event
         await ctx.yield_output(f"iteration-{self.current_iteration}")

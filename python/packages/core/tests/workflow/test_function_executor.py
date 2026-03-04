@@ -48,12 +48,12 @@ class TestFunctionExecutor:
         func_exec = FunctionExecutor(process_string)
 
         # Check that handler was registered
-        assert len(func_exec._handlers) == 1
-        assert str in func_exec._handlers
+        assert len(func_exec._handlers) == 1  # pyright: ignore[reportPrivateUsage]
+        assert str in func_exec._handlers  # pyright: ignore[reportPrivateUsage]
 
         # Check handler spec was created
-        assert len(func_exec._handler_specs) == 1
-        spec = func_exec._handler_specs[0]
+        assert len(func_exec._handler_specs) == 1  # pyright: ignore[reportPrivateUsage]
+        spec = func_exec._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["name"] == "process_string"
         assert spec["message_type"] is str
         assert spec["output_types"] == [str]
@@ -67,10 +67,10 @@ class TestFunctionExecutor:
 
         assert isinstance(process_int, FunctionExecutor)
         assert process_int.id == "test_executor"
-        assert int in process_int._handlers
+        assert int in process_int._handlers  # pyright: ignore[reportPrivateUsage]
 
         # Check spec
-        spec = process_int._handler_specs[0]
+        spec = process_int._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["message_type"] is int
         assert spec["output_types"] == [int]
 
@@ -78,7 +78,7 @@ class TestFunctionExecutor:
         """Test @executor decorator uses function name as default ID."""
 
         @executor
-        async def my_function(data: dict, ctx: WorkflowContext[Any]) -> None:
+        async def my_function(data: dict[str, Any], ctx: WorkflowContext[Any]) -> None:
             await ctx.send_message(data)
 
         assert my_function.id == "my_function"
@@ -92,7 +92,7 @@ class TestFunctionExecutor:
 
         assert isinstance(no_parens_function, FunctionExecutor)
         assert no_parens_function.id == "no_parens_function"
-        assert str in no_parens_function._handlers
+        assert str in no_parens_function._handlers  # pyright: ignore[reportPrivateUsage]
 
         # Also test with single parameter function
         @executor
@@ -101,7 +101,7 @@ class TestFunctionExecutor:
 
         assert isinstance(simple_no_parens, FunctionExecutor)
         assert simple_no_parens.id == "simple_no_parens"
-        assert int in simple_no_parens._handlers
+        assert int in simple_no_parens._handlers  # pyright: ignore[reportPrivateUsage]
 
     def test_union_output_types(self):
         """Test that union output types are properly inferred for both messages and workflow outputs."""
@@ -113,7 +113,7 @@ class TestFunctionExecutor:
             else:
                 await ctx.send_message(text.upper())
 
-        spec = multi_output._handler_specs[0]
+        spec = multi_output._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert set(spec["output_types"]) == {str, int}
         assert spec["workflow_output_types"] == []  # No workflow outputs defined
 
@@ -127,7 +127,7 @@ class TestFunctionExecutor:
             else:
                 await ctx.yield_output(data.upper())
 
-        workflow_spec = multi_workflow_output._handler_specs[0]
+        workflow_spec = multi_workflow_output._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert workflow_spec["output_types"] == []  # None means no message outputs
         assert set(workflow_spec["workflow_output_types"]) == {str, int, bool}
 
@@ -139,7 +139,7 @@ class TestFunctionExecutor:
             # This executor doesn't send any messages
             pass
 
-        spec = no_output._handler_specs[0]
+        spec = no_output._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["output_types"] == []
         assert spec["workflow_output_types"] == []  # No workflow outputs defined
 
@@ -150,7 +150,7 @@ class TestFunctionExecutor:
         async def any_output(data: str, ctx: WorkflowContext[Any]) -> None:
             await ctx.send_message("result")
 
-        spec = any_output._handler_specs[0]
+        spec = any_output._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["output_types"] == [Any]
         assert spec["workflow_output_types"] == []  # No workflow outputs defined
 
@@ -160,7 +160,7 @@ class TestFunctionExecutor:
             await ctx.send_message("message")
             await ctx.yield_output("workflow_output")
 
-        both_spec = any_both_output._handler_specs[0]
+        both_spec = any_both_output._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert both_spec["output_types"] == [Any]
         assert both_spec["workflow_output_types"] == [Any]
 
@@ -228,11 +228,11 @@ class TestFunctionExecutor:
             await ctx.yield_output(result)
 
         # Verify type inference for both executors
-        upper_spec = to_upper._handler_specs[0]
+        upper_spec = to_upper._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert upper_spec["output_types"] == [str]
         assert upper_spec["workflow_output_types"] == []  # No workflow outputs
 
-        reverse_spec = reverse_text._handler_specs[0]
+        reverse_spec = reverse_text._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert reverse_spec["output_types"] == [Any]  # First parameter is Any
         assert reverse_spec["workflow_output_types"] == [str]  # Second parameter is str
 
@@ -270,7 +270,7 @@ class TestFunctionExecutor:
             await ctx.send_message(message)
 
         with pytest.raises(ValueError, match="Handler for type .* already registered"):
-            func_exec._register_instance_handler(
+            func_exec._register_instance_handler(  # pyright: ignore[reportPrivateUsage]
                 name="second",
                 func=second_handler,
                 message_type=str,
@@ -287,7 +287,7 @@ class TestFunctionExecutor:
             result = {item: len(item) for item in items}
             await ctx.send_message(result)
 
-        spec = process_list._handler_specs[0]
+        spec = process_list._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["message_type"] == list[str]
         assert spec["output_types"] == [dict[str, int]]
 
@@ -300,10 +300,10 @@ class TestFunctionExecutor:
 
         assert isinstance(process_simple, FunctionExecutor)
         assert process_simple.id == "simple_processor"
-        assert str in process_simple._handlers
+        assert str in process_simple._handlers  # pyright: ignore[reportPrivateUsage]
 
         # Check spec - single parameter functions have no output types since they can't send messages
-        spec = process_simple._handler_specs[0]
+        spec = process_simple._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["message_type"] is str
         assert spec["output_types"] == []
         assert spec["ctx_annotation"] is None
@@ -316,7 +316,7 @@ class TestFunctionExecutor:
             return data * 2
 
         func_exec = FunctionExecutor(valid_single)
-        assert int in func_exec._handlers
+        assert int in func_exec._handlers  # pyright: ignore[reportPrivateUsage]
 
         # Single parameter with missing type annotation should still fail
         async def no_annotation(data):  # type: ignore
@@ -349,7 +349,7 @@ class TestFunctionExecutor:
 
         # For testing purposes, we can check that the handler is registered correctly
         assert double_value.can_handle(WorkflowMessage(data=5, source_id="mock"))
-        assert int in double_value._handlers
+        assert int in double_value._handlers  # pyright: ignore[reportPrivateUsage]
 
     def test_sync_function_basic(self):
         """Test basic synchronous function support."""
@@ -360,10 +360,10 @@ class TestFunctionExecutor:
 
         assert isinstance(process_sync, FunctionExecutor)
         assert process_sync.id == "sync_processor"
-        assert str in process_sync._handlers
+        assert str in process_sync._handlers  # pyright: ignore[reportPrivateUsage]
 
         # Check spec - sync single parameter functions have no output types
-        spec = process_sync._handler_specs[0]
+        spec = process_sync._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["message_type"] is str
         assert spec["output_types"] == []
         assert spec["ctx_annotation"] is None
@@ -378,10 +378,10 @@ class TestFunctionExecutor:
 
         assert isinstance(sync_with_ctx, FunctionExecutor)
         assert sync_with_ctx.id == "sync_with_ctx"
-        assert int in sync_with_ctx._handlers
+        assert int in sync_with_ctx._handlers  # pyright: ignore[reportPrivateUsage]
 
         # Check spec - sync functions with context can infer output types
-        spec = sync_with_ctx._handler_specs[0]
+        spec = sync_with_ctx._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["message_type"] is int
         assert spec["output_types"] == [int]
 
@@ -404,18 +404,18 @@ class TestFunctionExecutor:
             return data.upper()
 
         func_exec = FunctionExecutor(valid_sync)
-        assert str in func_exec._handlers
+        assert str in func_exec._handlers  # pyright: ignore[reportPrivateUsage]
 
         # Valid sync function with two parameters
         def valid_sync_with_ctx(data: int, ctx: WorkflowContext[str]):
             return str(data)
 
         func_exec2 = FunctionExecutor(valid_sync_with_ctx)
-        assert int in func_exec2._handlers
+        assert int in func_exec2._handlers  # pyright: ignore[reportPrivateUsage]
 
         # Sync function with missing type annotation should still fail
-        def no_annotation(data):  # type: ignore
-            return data
+        def no_annotation(data):  # type: ignore  # pyright: ignore[reportUnknownVariableType]
+            return data  # pyright: ignore[reportUnknownVariableType]
 
         with pytest.raises(ValueError, match="type annotation for the message"):
             FunctionExecutor(no_annotation)  # type: ignore
@@ -457,11 +457,11 @@ class TestFunctionExecutor:
             await ctx.yield_output(result)
 
         # Verify type inference for sync and async functions
-        sync_spec = to_upper_sync._handler_specs[0]
+        sync_spec = to_upper_sync._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert sync_spec["output_types"] == [str]
         assert sync_spec["workflow_output_types"] == []  # No workflow outputs
 
-        async_spec = reverse_async._handler_specs[0]
+        async_spec = reverse_async._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert async_spec["output_types"] == [Any]  # First parameter is Any
         assert async_spec["workflow_output_types"] == [str]  # Second parameter is str
 
@@ -471,8 +471,8 @@ class TestFunctionExecutor:
 
         # For integration testing, we mainly verify that the handlers are properly registered
         # and the functions are wrapped correctly
-        assert str in to_upper_sync._handlers
-        assert str in reverse_async._handlers
+        assert str in to_upper_sync._handlers  # pyright: ignore[reportPrivateUsage]
+        assert str in reverse_async._handlers  # pyright: ignore[reportPrivateUsage]
 
     async def test_sync_function_thread_execution(self):
         """Test that sync functions run in thread pool and don't block the event loop."""
@@ -491,13 +491,13 @@ class TestFunctionExecutor:
             return data.upper()
 
         # Verify the function is wrapped and registered
-        assert str in blocking_function._handlers
+        assert str in blocking_function._handlers  # pyright: ignore[reportPrivateUsage]
 
         # For a more complete test, we'd need to create a full workflow context,
         # but for now we can verify that the function was properly wrapped
         # and that sync functions store the correct metadata
-        assert not blocking_function._is_async
-        assert not blocking_function._has_context
+        assert not blocking_function._is_async  # pyright: ignore[reportPrivateUsage]
+        assert not blocking_function._has_context  # pyright: ignore[reportPrivateUsage]
 
         # The actual thread execution test would require a full workflow setup,
         # but the important thing is that asyncio.to_thread is used in the wrapper
@@ -506,7 +506,7 @@ class TestFunctionExecutor:
         """Test that @executor decorator properly rejects @staticmethod with clear error."""
         with pytest.raises(ValueError) as exc_info:
 
-            class Example:
+            class Example:  # pyright: ignore[reportUnusedClass]
                 @executor
                 @staticmethod
                 async def bad_handler(data: str) -> str:
@@ -519,7 +519,7 @@ class TestFunctionExecutor:
         """Test that @executor decorator properly rejects @classmethod with clear error."""
         with pytest.raises(ValueError) as exc_info:
 
-            class Example:
+            class Example:  # pyright: ignore[reportUnusedClass]
                 @executor
                 @classmethod
                 async def bad_handler(cls, data: str) -> str:
@@ -570,8 +570,8 @@ class TestExecutorExplicitTypes:
             pass
 
         # Handler should be registered for str (explicit)
-        assert str in process._handlers
-        assert len(process._handlers) == 1
+        assert str in process._handlers  # pyright: ignore[reportPrivateUsage]
+        assert len(process._handlers) == 1  # pyright: ignore[reportPrivateUsage]
 
         # Can handle str messages
         assert process.can_handle(WorkflowMessage(data="hello", source_id="mock"))
@@ -586,7 +586,7 @@ class TestExecutorExplicitTypes:
             pass
 
         # Handler spec should have int as output type (explicit), not str (introspected)
-        spec = process._handler_specs[0]
+        spec = process._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["output_types"] == [int]
 
         # Executor output_types property should reflect explicit type
@@ -601,11 +601,11 @@ class TestExecutorExplicitTypes:
             pass
 
         # Handler should be registered for dict (explicit input type)
-        assert dict in process._handlers
-        assert len(process._handlers) == 1
+        assert dict in process._handlers  # pyright: ignore[reportPrivateUsage]
+        assert len(process._handlers) == 1  # pyright: ignore[reportPrivateUsage]
 
         # Output type should be list (explicit)
-        spec = process._handler_specs[0]
+        spec = process._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["output_types"] == [list]
 
         # Verify can_handle
@@ -620,7 +620,7 @@ class TestExecutorExplicitTypes:
             pass
 
         # Handler should be registered for the union type
-        assert len(process._handlers) == 1
+        assert len(process._handlers) == 1  # pyright: ignore[reportPrivateUsage]
 
         # Can handle both str and int messages
         assert process.can_handle(WorkflowMessage(data="hello", source_id="mock"))
@@ -648,8 +648,8 @@ class TestExecutorExplicitTypes:
             pass
 
         # Should use explicit input type (bytes), not introspected (str)
-        assert bytes in process._handlers
-        assert str not in process._handlers
+        assert bytes in process._handlers  # pyright: ignore[reportPrivateUsage]
+        assert str not in process._handlers  # pyright: ignore[reportPrivateUsage]
 
         # Should use explicit output type (float), not introspected (int)
         assert float in process.output_types
@@ -663,7 +663,7 @@ class TestExecutorExplicitTypes:
             pass
 
         # Should use introspected types
-        assert str in process._handlers
+        assert str in process._handlers  # pyright: ignore[reportPrivateUsage]
         assert int in process.output_types
 
     def test_executor_partial_explicit_types(self):
@@ -674,7 +674,7 @@ class TestExecutorExplicitTypes:
         async def process_input(message: str, ctx: WorkflowContext[int]) -> None:
             pass
 
-        assert bytes in process_input._handlers  # Explicit
+        assert bytes in process_input._handlers  # Explicit  # pyright: ignore[reportPrivateUsage]
         assert int in process_input.output_types  # Introspected
 
         # Only explicit output_type, introspect input_type
@@ -682,7 +682,7 @@ class TestExecutorExplicitTypes:
         async def process_output(message: str, ctx: WorkflowContext[int]) -> None:
             pass
 
-        assert str in process_output._handlers  # Introspected
+        assert str in process_output._handlers  # Introspected  # pyright: ignore[reportPrivateUsage]
         assert float in process_output.output_types  # Explicit
         assert int not in process_output.output_types  # Not introspected when explicit provided
 
@@ -694,7 +694,7 @@ class TestExecutorExplicitTypes:
             pass
 
         # Should work with explicit input_type
-        assert str in process._handlers
+        assert str in process._handlers  # pyright: ignore[reportPrivateUsage]
         assert process.can_handle(WorkflowMessage(data="hello", source_id="mock"))
 
     def test_executor_explicit_types_with_id(self):
@@ -705,7 +705,7 @@ class TestExecutorExplicitTypes:
             pass
 
         assert process.id == "custom_id"
-        assert bytes in process._handlers
+        assert bytes in process._handlers  # pyright: ignore[reportPrivateUsage]
         assert int in process.output_types
 
     def test_executor_explicit_types_with_single_param_function(self):
@@ -713,10 +713,10 @@ class TestExecutorExplicitTypes:
 
         @executor(input=str)
         async def process(message):  # type: ignore[no-untyped-def]
-            return message.upper()
+            return message.upper()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
         # Should work with explicit input_type
-        assert str in process._handlers
+        assert str in process._handlers  # pyright: ignore[reportPrivateUsage]
         assert process.can_handle(WorkflowMessage(data="hello", source_id="mock"))
         assert not process.can_handle(WorkflowMessage(data=42, source_id="mock"))
 
@@ -727,7 +727,7 @@ class TestExecutorExplicitTypes:
         def process(message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
             pass
 
-        assert int in process._handlers
+        assert int in process._handlers  # pyright: ignore[reportPrivateUsage]
         assert str in process.output_types
 
     def test_function_executor_constructor_with_explicit_types(self):
@@ -736,10 +736,10 @@ class TestExecutorExplicitTypes:
         async def process(message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
             pass
 
-        func_exec = FunctionExecutor(process, id="test", input=dict, output=list)
+        func_exec = FunctionExecutor(process, id="test", input=dict, output=list)  # pyright: ignore[reportUnknownArgumentType]
 
-        assert dict in func_exec._handlers
-        spec = func_exec._handler_specs[0]
+        assert dict in func_exec._handlers  # pyright: ignore[reportPrivateUsage]
+        spec = func_exec._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["message_type"] is dict
         assert spec["output_types"] == [list]
 
@@ -766,7 +766,7 @@ class TestExecutorExplicitTypes:
             pass
 
         # Should resolve the string to the actual type
-        assert FuncExecForwardRefMessage in process._handlers
+        assert FuncExecForwardRefMessage in process._handlers  # pyright: ignore[reportPrivateUsage]
         assert process.can_handle(WorkflowMessage(data=FuncExecForwardRefMessage("hello"), source_id="mock"))
 
     def test_executor_with_string_forward_reference_union(self):
@@ -798,7 +798,7 @@ class TestExecutorExplicitTypes:
             pass
 
         # Handler spec should have bool as workflow_output_type (explicit)
-        spec = process._handler_specs[0]
+        spec = process._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["workflow_output_types"] == [bool]
 
         # Executor workflow_output_types property should reflect explicit type
@@ -826,7 +826,7 @@ class TestExecutorExplicitTypes:
             pass
 
         # Check input type
-        assert str in process._handlers
+        assert str in process._handlers  # pyright: ignore[reportPrivateUsage]
         assert process.can_handle(WorkflowMessage(data="hello", source_id="mock"))
 
         # Check output_type
@@ -892,6 +892,6 @@ class TestExecutorExplicitTypes:
             workflow_output=bool,
         )
 
-        assert str in exec_instance._handlers
+        assert str in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
         assert int in exec_instance.output_types
         assert bool in exec_instance.workflow_output_types

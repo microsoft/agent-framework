@@ -372,6 +372,15 @@ def _emit_usage(content: Content) -> list[BaseEvent]:
     return [CustomEvent(name="usage", value=usage_details)]
 
 
+def _emit_oauth_consent(content: Content) -> list[BaseEvent]:
+    """Emit an OAuth consent request as a custom event so frontends can render a consent link."""
+    return (
+        [CustomEvent(name="oauth_consent_request", value={"consent_link": content.consent_link})]
+        if content.consent_link
+        else []
+    )
+
+
 def _emit_content(
     content: Any,
     flow: FlowState,
@@ -391,5 +400,7 @@ def _emit_content(
         return _emit_approval_request(content, flow, predictive_handler, require_confirmation)
     if content_type == "usage":
         return _emit_usage(content)
+    if content_type == "oauth_consent_request":
+        return _emit_oauth_consent(content)
     logger.debug("Skipping unsupported content type in AG-UI emitter: %s", content_type)
     return []

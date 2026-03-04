@@ -3,11 +3,11 @@
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from agent_framework._workflows._checkpoint_encoding import (
-    _PICKLE_MARKER,
-    _TYPE_MARKER,
+    _PICKLE_MARKER,  # pyright: ignore[reportPrivateUsage]
+    _TYPE_MARKER,  # pyright: ignore[reportPrivateUsage]
     encode_checkpoint_value,
 )
 
@@ -185,8 +185,9 @@ def test_encode_list_of_dataclasses() -> None:
     result = encode_checkpoint_value(data)
 
     assert isinstance(result, list)
-    assert len(result) == 2
-    for item in result:
+    result_list = cast(list[Any], result)
+    assert len(result_list) == 2
+    for item in result_list:
         assert _PICKLE_MARKER in item
 
 
