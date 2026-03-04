@@ -1215,17 +1215,16 @@ class AzureAIAgentClient(
         tool_choice = options.get("tool_choice")
         if tool_choice is None:
             return None
-        if tool_choice in {"none", "auto"}:
+        if isinstance(tool_choice, str) and tool_choice in {"none", "auto"}:
             return AgentsToolChoiceOptionMode(tool_choice)
-        if (
-            isinstance(tool_choice, Mapping)
-            and tool_choice.get("mode") == "required"  # type: ignore[attr-unknown]
-            and (req_fn := tool_choice.get("required_function_name"))  # type: ignore[attr-unknown]
-        ):
-            return AgentsNamedToolChoice(
-                type=AgentsNamedToolChoiceType.FUNCTION,
-                function=FunctionName(name=req_fn),  # type: ignore[call-arg]
-            )
+        if isinstance(tool_choice, dict):
+            mode: object = tool_choice.get("mode")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+            req_fn: object = tool_choice.get("required_function_name")  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+            if mode == "required" and isinstance(req_fn, str):
+                return AgentsNamedToolChoice(
+                    type=AgentsNamedToolChoiceType.FUNCTION,
+                    function=FunctionName(name=req_fn),
+                )
         return None
 
     async def _prepare_tool_definitions_and_resources(

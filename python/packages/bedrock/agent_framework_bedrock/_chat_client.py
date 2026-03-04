@@ -348,7 +348,9 @@ class BedrockChatClient(
                 contents = list(parsed_response.messages[0].contents if parsed_response.messages else [])
                 if parsed_response.usage_details:
                     contents.append(Content.from_usage(usage_details=parsed_response.usage_details))  # type: ignore[arg-type]
-                raw_finish_reason = self._get_str(parsed_response.finish_reason)
+                raw_finish_reason = (
+                    parsed_response.finish_reason if isinstance(parsed_response.finish_reason, str) else None
+                )
                 finish_reason = self._map_finish_reason(raw_finish_reason)
                 yield ChatResponseUpdate(
                     response_id=parsed_response.response_id,
@@ -549,7 +551,7 @@ class BedrockChatClient(
         return self._convert_prepared_tool_result_to_blocks(parsed_result)
 
     def _convert_prepared_tool_result_to_blocks(self, value: object) -> list[dict[str, Any]]:
-        if self._is_nonstring_sequence(value):
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
             blocks: list[dict[str, Any]] = []
             for item in value:
                 blocks.extend(self._convert_prepared_tool_result_to_blocks(item))
@@ -559,7 +561,7 @@ class BedrockChatClient(
     def _normalize_tool_result_value(self, value: object) -> dict[str, Any]:
         if isinstance(value, dict):
             return {"json": value}
-        if self._is_nonstring_sequence(value):
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
             return {"json": [item for item in value]}
         if isinstance(value, str):
             return {"text": value}
@@ -640,32 +642,50 @@ class BedrockChatClient(
             if (json_value := block.get("json")) is not None:
                 contents.append(Content.from_text(text=json.dumps(json_value), raw_representation=block))
                 continue
-            tool_use = self._get_dict(block.get("toolUse"))
+            tool_use_value = block.get("toolUse")
+            tool_use = (
+                tool_use_value
+                if isinstance(tool_use_value, dict)
+                else dict(tool_use_value)
+                if isinstance(tool_use_value, Mapping)
+                else None
+            )
             if tool_use is not None:
-                tool_name = self._get_str(tool_use.get("name"))
+                tool_name_value = tool_use.get("name")
+                tool_name = tool_name_value if isinstance(tool_name_value, str) else None
                 if not tool_name:
                     raise ChatClientInvalidResponseException(
                         "Bedrock response missing required tool name in toolUse block."
                     )
+                tool_use_id = tool_use.get("toolUseId")
                 contents.append(
                     Content.from_function_call(
-                        call_id=self._get_str(tool_use.get("toolUseId")) or self._generate_tool_call_id(),
+                        call_id=tool_use_id if isinstance(tool_use_id, str) else self._generate_tool_call_id(),
                         name=tool_name,
                         arguments=tool_use.get("input"),
                         raw_representation=block,
                     )
                 )
                 continue
-            tool_result = self._get_dict(block.get("toolResult"))
+            tool_result_value = block.get("toolResult")
+            tool_result = (
+                tool_result_value
+                if isinstance(tool_result_value, dict)
+                else dict(tool_result_value)
+                if isinstance(tool_result_value, Mapping)
+                else None
+            )
             if tool_result is not None:
-                status = (self._get_str(tool_result.get("status")) or "success").lower()
+                status_value = tool_result.get("status")
+                status = (status_value if isinstance(status_value, str) else "success").lower()
                 exception = None
                 if status not in {"success", "ok"}:
                     exception = RuntimeError(f"Bedrock tool result status: {status}")
                 result_value = self._convert_bedrock_tool_result_to_value(tool_result.get("content"))
+                tool_use_id = tool_result.get("toolUseId")
                 contents.append(
                     Content.from_function_result(
-                        call_id=self._get_str(tool_result.get("toolUseId")) or self._generate_tool_call_id(),
+                        call_id=tool_use_id if isinstance(tool_use_id, str) else self._generate_tool_call_id(),
                         result=result_value,
                         exception=str(exception) if exception else None,  # type: ignore[arg-type]
                         raw_representation=block,
@@ -691,12 +711,13 @@ class BedrockChatClient(
     def _convert_bedrock_tool_result_to_value(self, content: object) -> object:
         if not content:
             return None
-        if self._is_nonstring_sequence(content):
+        if isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray)):
             values: list[object] = []
             for item in content:
-                item_dict = self._get_dict(item)
+                item_dict = item if isinstance(item, dict) else dict(item) if isinstance(item, Mapping) else None
                 if item_dict is not None:
-                    if (text_value := self._get_str(item_dict.get("text"))) is not None:
+                    text_value = item_dict.get("text")
+                    if isinstance(text_value, str):
                         values.append(text_value)
                         continue
                     if "json" in item_dict:
@@ -704,9 +725,10 @@ class BedrockChatClient(
                         continue
                 values.append(item)
             return values[0] if len(values) == 1 else values
-        content_dict = self._get_dict(content)
+        content_dict = content if isinstance(content, dict) else dict(content) if isinstance(content, Mapping) else None
         if content_dict is not None:
-            if (text_value := self._get_str(content_dict.get("text"))) is not None:
+            text_value = content_dict.get("text")
+            if isinstance(text_value, str):
                 return text_value
             if "json" in content_dict:
                 return content_dict["json"]

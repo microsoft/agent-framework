@@ -144,8 +144,12 @@ class CosmosHistoryProvider(BaseHistoryProvider):
 
         messages: list[Message] = []
         async for item in items:
+            message_payload = item.get("message")
+            if not isinstance(message_payload, dict):
+                logger.warning("Skipping Cosmos DB item with non-mapping message payload.")
+                continue
             try:
-                msg = Message.from_dict(item.get("message"))  # type: ignore
+                msg = Message.from_dict(message_payload)  # pyright: ignore[reportUnknownArgumentType]
             except ValueError as e:
                 logger.warning("Failed to deserialize message from Cosmos DB item: %s", e)
                 continue

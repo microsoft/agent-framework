@@ -79,7 +79,7 @@ class AzureAISettings(TypedDict, total=False):
     model_deployment_name: str | None
 
 
-def _extract_project_connection_id(additional_properties: dict[str, Any] | None) -> str | None:
+def _extract_project_connection_id(additional_properties: Mapping[str, Any] | None) -> str | None:
     """Extract project_connection_id from tool additional_properties.
 
     Checks for both direct 'project_connection_id' key (programmatic usage)
@@ -454,11 +454,16 @@ def _prepare_mcp_tool_dict_for_azure_ai(tool_dict: dict[str, Any]) -> MCPTool:
         mcp["server_description"] = description
 
     # Check for project_connection_id
-    if project_connection_id := (
-        tool_dict.get("project_connection_id") or _extract_project_connection_id(tool_dict.get("additional_properties"))
-        if isinstance(tool_dict.get("additional_properties"), Mapping)
-        else None
-    ):
+    project_connection_id = tool_dict.get("project_connection_id")
+    if not isinstance(project_connection_id, str):
+        additional_properties = tool_dict.get("additional_properties")
+        project_connection_id = (
+            _extract_project_connection_id(additional_properties)  # pyright: ignore[reportUnknownArgumentType]
+            if isinstance(additional_properties, Mapping)
+            else None
+        )
+
+    if project_connection_id:
         mcp["project_connection_id"] = project_connection_id
     elif headers := tool_dict.get("headers"):
         mcp["headers"] = headers
