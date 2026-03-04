@@ -119,7 +119,7 @@
     <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.8.1" />
     <!-- Durable Task -->
     <PackageVersion Include="Microsoft.DurableTask.Client" Version="1.19.1" />
-    <PackageVersion Include="Microsoft.DurableTask.Client.AzureManaged" Version="1.19.0" />
+    <PackageVersion Include="Microsoft.DurableTask.Client.AzureManaged" Version="1.19.1" />
     <PackageVersion Include="Microsoft.DurableTask.Worker" Version="1.19.1" />
     <PackageVersion Include="Microsoft.DurableTask.Worker.AzureManaged" Version="1.19.1" />
     <!-- Azure Functions -->
