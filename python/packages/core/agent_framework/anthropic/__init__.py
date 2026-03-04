@@ -11,6 +11,7 @@ Supported classes:
 - AnthropicChatOptions
 - ClaudeAgent
 - ClaudeAgentOptions
+- RawClaudeAgent
 """
 
 import importlib
@@ -21,6 +22,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "AnthropicChatOptions": ("agent_framework_anthropic", "agent-framework-anthropic"),
     "ClaudeAgent": ("agent_framework_claude", "agent-framework-claude"),
     "ClaudeAgentOptions": ("agent_framework_claude", "agent-framework-claude"),
+    "RawClaudeAgent": ("agent_framework_claude", "agent-framework-claude"),
 }
 
 

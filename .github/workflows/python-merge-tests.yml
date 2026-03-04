@@ -38,6 +38,7 @@ jobs:
       miscChanged: ${{ steps.filter.outputs.misc }}
       functionsChanged: ${{ steps.filter.outputs.functions }}
       azureAiChanged: ${{ steps.filter.outputs.azure-ai }}
+      cosmosChanged: ${{ steps.filter.outputs.cosmos }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -67,6 +68,8 @@ jobs:
               - 'python/packages/durabletask/**'
             azure-ai:
               - 'python/packages/azure-ai/**'
+            cosmos:
+              - 'python/packages/azure-cosmos/**'
       # run only if 'python' files were changed
       - name: python tests
         if: steps.filter.outputs.python == 'true'
@@ -390,6 +393,64 @@ jobs:
 
   # TODO: Add python-tests-lab
 
+  # Azure Cosmos integration tests
+  python-tests-cosmos:
+    name: Python Tests - Cosmos Integration
+    needs: paths-filter
+    if: >
+      github.event_name != 'pull_request' &&
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name != 'merge_group' ||
+       needs.paths-filter.outputs.cosmosChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    environment: integration
+    services:
+      cosmosdb:
+        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
+        ports:
+          - 8081:8081
+    env:
+      AZURE_COSMOS_ENDPOINT: "http://localhost:8081/"
+      # Static Azure Cosmos DB emulator key (documented): https://learn.microsoft.com/en-us/azure/cosmos-db/emulator
+      AZURE_COSMOS_KEY: "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
+      AZURE_COSMOS_DATABASE_NAME: "agent-framework-cosmos-it-db"
+      AZURE_COSMOS_CONTAINER_NAME: "agent-framework-cosmos-it-container"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up python and install the project
+        id: python-setup
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Wait for Cosmos DB emulator
+        run: |
+          for i in {1..60}; do
+            if curl --silent --show-error http://localhost:8081/ > /dev/null; then
+              echo "Cosmos DB emulator is ready."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Cosmos DB emulator did not become ready in time." >&2
+          exit 1
+      - name: Test with pytest (Cosmos integration)
+        run: uv run --directory packages/azure-cosmos poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
+        working-directory: ./python
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@v0.7.2
+        with:
+          path: ./python/**.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: false
+          title: Cosmos integration test results
+
   python-integration-tests-check:
     if: always()
     runs-on: ubuntu-latest
@@ -401,6 +462,7 @@ jobs:
         python-tests-misc-integration,
         python-tests-functions,
         python-tests-azure-ai,
+        python-tests-cosmos,
       ]
     steps:
       - name: Fail workflow if tests failed

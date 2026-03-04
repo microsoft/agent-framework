@@ -5,6 +5,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -24,7 +25,7 @@ class _TestToolApprovalRequest:
     """Request data for tool approval in tests."""
 
     tool_name: str
-    arguments: dict
+    arguments: dict[str, Any]
     timestamp: datetime
 
 
@@ -41,7 +42,7 @@ class _TestApprovalRequest:
     """Approval request data for tests."""
 
     action: str
-    params: tuple
+    params: tuple[Any, ...]
 
 
 @dataclass
@@ -78,8 +79,8 @@ def test_workflow_checkpoint_custom_values():
         workflow_name="test-workflow-456",
         graph_signature_hash="test-hash-456",
         timestamp=custom_timestamp,
-        messages={"executor1": [{"data": "test"}]},
-        pending_request_info_events={"req123": {"data": "test"}},
+        messages={"executor1": [{"data": "test"}]},  # type: ignore[arg-type]  # raw dict for serialization test
+        pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type]  # raw dict for serialization test
         state={"key": "value"},
         iteration_count=5,
         metadata={"test": True},
@@ -103,7 +104,7 @@ def test_workflow_checkpoint_to_dict():
         checkpoint_id="test-id",
         workflow_name="test-workflow",
         graph_signature_hash="test-hash",
-        messages={"executor1": [{"data": "test"}]},
+        messages={"executor1": [{"data": "test"}]},  # type: ignore[arg-type]  # raw dict for serialization test
         state={"key": "value"},
         iteration_count=5,
     )
@@ -161,8 +162,8 @@ async def test_memory_checkpoint_storage_save_and_load():
     checkpoint = WorkflowCheckpoint(
         workflow_name="test-workflow",
         graph_signature_hash="test-hash",
-        messages={"executor1": [{"data": "hello"}]},
-        pending_request_info_events={"req123": {"data": "test"}},
+        messages={"executor1": [{"data": "hello"}]},  # type: ignore[arg-type]  # raw dict for serialization test
+        pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type]  # raw dict for serialization test
     )
 
     # Save checkpoint
@@ -776,9 +777,9 @@ async def test_file_checkpoint_storage_save_and_load():
         checkpoint = WorkflowCheckpoint(
             workflow_name="test-workflow",
             graph_signature_hash="test-hash",
-            messages={"executor1": [{"data": "hello", "source_id": "test", "target_id": None}]},
+            messages={"executor1": [{"data": "hello", "source_id": "test", "target_id": None}]},  # type: ignore[arg-type]  # raw dict for serialization test
             state={"key": "value"},
-            pending_request_info_events={"req123": {"data": "test"}},
+            pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type]  # raw dict for serialization test
         )
 
         # Save checkpoint
@@ -904,9 +905,9 @@ async def test_file_checkpoint_storage_json_serialization():
         checkpoint = WorkflowCheckpoint(
             workflow_name="test-workflow",
             graph_signature_hash="test-hash",
-            messages={"executor1": [{"data": {"nested": {"value": 42}}, "source_id": "test", "target_id": None}]},
+            messages={"executor1": [{"data": {"nested": {"value": 42}}, "source_id": "test", "target_id": None}]},  # type: ignore[arg-type]  # raw dict for serialization test
             state={"list": [1, 2, 3], "dict": {"a": "b", "c": {"d": "e"}}, "bool": True, "null": None},
-            pending_request_info_events={"req123": {"data": "test"}},
+            pending_request_info_events={"req123": {"data": "test"}},  # type: ignore[arg-type]  # raw dict for serialization test
         )
 
         # Save and load

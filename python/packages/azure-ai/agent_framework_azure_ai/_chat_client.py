@@ -87,10 +87,11 @@ from azure.ai.agents.models import (
     ToolApproval,
     ToolDefinition,
     ToolOutput,
+    VectorStoreDataSource,
 )
 from pydantic import BaseModel
 
-from ._shared import AzureAISettings, to_azure_ai_agent_tools
+from ._shared import AzureAISettings, resolve_file_ids, to_azure_ai_agent_tools
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -219,8 +220,20 @@ class AzureAIAgentClient(
     # region Hosted Tool Factory Methods
 
     @staticmethod
-    def get_code_interpreter_tool() -> CodeInterpreterTool:
+    def get_code_interpreter_tool(
+        *,
+        file_ids: list[str | Content] | None = None,
+        data_sources: list[VectorStoreDataSource] | None = None,
+    ) -> CodeInterpreterTool:
         """Create a code interpreter tool configuration for Azure AI Agents.
+
+        Keyword Args:
+            file_ids: List of uploaded file IDs or Content objects to make available to
+                the code interpreter. Accepts plain strings or Content.from_hosted_file()
+                instances. The underlying SDK raises ValueError if both file_ids and
+                data_sources are provided.
+            data_sources: List of vector store data sources for enterprise file search.
+                Mutually exclusive with file_ids.
 
         Returns:
             A CodeInterpreterTool instance ready to pass to ChatAgent.
@@ -230,10 +243,21 @@ class AzureAIAgentClient(
 
                 from agent_framework.azure import AzureAIAgentClient
 
+                # Basic code interpreter
                 tool = AzureAIAgentClient.get_code_interpreter_tool()
+
+                # With uploaded file IDs
+                tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=["file-abc123"])
+
+                # With Content objects
+                from agent_framework import Content
+
+                tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=[Content.from_hosted_file("file-abc123")])
+
                 agent = ChatAgent(client, tools=[tool])
         """
-        return CodeInterpreterTool()
+        resolved = resolve_file_ids(file_ids)
+        return CodeInterpreterTool(file_ids=resolved, data_sources=data_sources)
 
     @staticmethod
     def get_file_search_tool(

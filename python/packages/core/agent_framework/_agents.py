@@ -81,6 +81,16 @@ OptionsCoT = TypeVar(
 )
 
 
+def _get_tool_name(tool: Any) -> str | None:
+    """Extract a tool's name from either an object with a .name attribute or a dict tool definition."""
+    if isinstance(tool, dict):
+        func = tool.get("function")
+        if isinstance(func, dict):
+            return func.get("name")
+        return None
+    return getattr(tool, "name", None)
+
+
 def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Merge two options dicts, with override values taking precedence.
 
@@ -97,8 +107,8 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
             continue
         if key == "tools" and result.get("tools"):
             # Combine tool lists, avoiding duplicates by name
-            existing_names = {getattr(t, "name", None) for t in result["tools"]}
-            unique_new = [t for t in value if getattr(t, "name", None) not in existing_names]
+            existing_names = {_get_tool_name(t) for t in result["tools"]} - {None}
+            unique_new = [t for t in value if _get_tool_name(t) not in existing_names]
             result["tools"] = list(result["tools"]) + unique_new
         elif key == "logit_bias" and result.get("logit_bias"):
             # Merge logit_bias dicts
@@ -935,6 +945,15 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 session.service_session_id = conv_id
             return update
 
+        def _finalizer(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
+            ctx = ctx_holder["ctx"]
+            rf = (
+                ctx.get("chat_options", {}).get("response_format")
+                if ctx
+                else (options.get("response_format") if options else None)
+            )
+            return self._finalize_response_updates(updates, response_format=rf)
+
         return (
             ResponseStream
             .from_awaitable(_get_stream())
@@ -943,9 +962,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     map_chat_to_agent_update,
                     agent_name=self.name,
                 ),
-                finalizer=partial(
-                    self._finalize_response_updates, response_format=options.get("response_format") if options else None
-                ),
+                finalizer=_finalizer,
             )
             .with_transform_hook(_propagate_conversation_id)
             .with_result_hook(_post_hook)
@@ -1034,10 +1051,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             else:
                 final_tools.append(tool)  # type: ignore
 
+        existing_names = {name for t in final_tools if (name := _get_tool_name(t)) is not None}
         for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
-            final_tools.extend(mcp_server.functions)
+            final_tools.extend(f for f in mcp_server.functions if f.name not in existing_names)
 
         # Merge runtime kwargs into additional_function_arguments so they're available
         # in function middleware context and tool invocation.

@@ -99,6 +99,7 @@ class AzureOpenAIEmbeddingClient(
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
+        otel_provider_name: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -133,4 +134,5 @@ class AzureOpenAIEmbeddingClient(
             credential=credential,
             default_headers=default_headers,
             client=async_client,
+            otel_provider_name=otel_provider_name,
         )

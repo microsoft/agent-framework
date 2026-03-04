@@ -14,6 +14,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework._settings import load_settings
+from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from anthropic.types.beta import (
     BetaMessage,
     BetaTextBlock,
@@ -40,6 +41,8 @@ def create_test_anthropic_client(
     anthropic_settings: AnthropicSettings | None = None,
 ) -> AnthropicClient:
     """Helper function to create AnthropicClient instances for testing, bypassing normal validation."""
+    from agent_framework._tools import normalize_function_invocation_configuration
+
     if anthropic_settings is None:
         anthropic_settings = load_settings(
             AnthropicSettings,
@@ -55,9 +58,13 @@ def create_test_anthropic_client(
     client.anthropic_client = mock_anthropic_client
     client.model_id = model_id or anthropic_settings["chat_model_id"]
     client._last_call_id_name = None
+    client._tool_name_aliases = {}
     client.additional_properties = {}
     client.middleware = None
     client.additional_beta_flags = []
+    client.chat_middleware = []
+    client.function_middleware = []
+    client.function_invocation_configuration = normalize_function_invocation_configuration(None)
 
     return client
 
@@ -410,6 +417,87 @@ def test_prepare_tools_for_anthropic_code_interpreter(mock_anthropic_client: Mag
     assert result["tools"][0]["name"] == "code_execution"
 
 
+def _dummy_bash(command: str) -> str:
+    return f"executed: {command}"
+
+
+def test_prepare_tools_for_anthropic_shell_tool(mock_anthropic_client: MagicMock) -> None:
+    """Test converting tool-decorated FunctionTool to Anthropic bash format."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    @tool(kind=SHELL_TOOL_KIND_VALUE)
+    def run_bash(command: str) -> str:
+        return _dummy_bash(command)
+
+    chat_options = ChatOptions(tools=[run_bash])
+
+    result = client._prepare_tools_for_anthropic(chat_options)
+
+    assert result is not None
+    assert "tools" in result
+    assert len(result["tools"]) == 1
+    assert result["tools"][0]["type"] == "bash_20250124"
+    assert result["tools"][0]["name"] == "bash"
+
+
+def test_prepare_tools_for_anthropic_shell_tool_custom_type(mock_anthropic_client: MagicMock) -> None:
+    """Test shell tool with custom type via additional_properties."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    @tool(kind=SHELL_TOOL_KIND_VALUE, additional_properties={"type": "bash_20241022"})
+    def run_bash(command: str) -> str:
+        return _dummy_bash(command)
+
+    chat_options = ChatOptions(tools=[run_bash])
+
+    result = client._prepare_tools_for_anthropic(chat_options)
+
+    assert result is not None
+    assert "tools" in result
+    assert result["tools"][0]["type"] == "bash_20241022"
+    assert result["tools"][0]["name"] == "bash"
+
+
+def test_prepare_tools_for_anthropic_shell_tool_does_not_mutate_name(mock_anthropic_client: MagicMock) -> None:
+    """Shell tool API name should be 'bash' without mutating local FunctionTool name."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    @tool(
+        name="run_local_shell",
+        approval_mode="never_require",
+        kind=SHELL_TOOL_KIND_VALUE,
+    )
+    def run_local_shell(command: str) -> str:
+        return command
+
+    chat_options = ChatOptions(tools=[run_local_shell])
+    result = client._prepare_tools_for_anthropic(chat_options)
+
+    assert result is not None
+    assert result["tools"][0]["name"] == "bash"
+    assert run_local_shell.name == "run_local_shell"
+
+
+def test_get_shell_tool_reuses_function_tool_instance(mock_anthropic_client: MagicMock) -> None:
+    """Passing a FunctionTool should update and return the same tool instance."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    @tool(name="run_shell", approval_mode="never_require")
+    def run_shell(command: str) -> str:
+        return command
+
+    shell_tool = client.get_shell_tool(
+        func=run_shell,
+        description="Run local bash",
+        approval_mode="always_require",
+    )
+
+    assert shell_tool is run_shell
+    assert shell_tool.kind == SHELL_TOOL_KIND_VALUE
+    assert shell_tool.description == "Run local bash"
+    assert shell_tool.approval_mode == "always_require"
+
+
 def test_prepare_tools_for_anthropic_mcp_tool(mock_anthropic_client: MagicMock) -> None:
     """Test converting MCP dict tool to Anthropic format."""
     client = create_test_anthropic_client(mock_anthropic_client)
@@ -500,6 +588,62 @@ async def test_prepare_options_with_system_message(mock_anthropic_client: MagicM
 
     assert run_options["system"] == "You are helpful."
     assert len(run_options["messages"]) == 1  # System message not in messages list
+
+
+async def test_anthropic_shell_tool_is_invoked_in_function_loop(mock_anthropic_client: MagicMock) -> None:
+    """Function invocation loop should execute shell tool when Anthropic returns bash tool_use."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    executed_commands: list[str] = []
+
+    def run_local_shell(command: str) -> str:
+        executed_commands.append(command)
+        return f"executed: {command}"
+
+    shell_tool_instance = client.get_shell_tool(func=run_local_shell, approval_mode="never_require")
+
+    mock_tool_use = MagicMock()
+    mock_tool_use.type = "tool_use"
+    mock_tool_use.id = "call_bash_loop"
+    mock_tool_use.name = "bash"
+    mock_tool_use.input = {"command": "pwd"}
+
+    first_message = MagicMock()
+    first_message.id = "msg_1"
+    first_message.content = [mock_tool_use]
+    first_message.usage = None
+    first_message.model = "claude-test"
+    first_message.stop_reason = "tool_use"
+
+    mock_text_block = MagicMock()
+    mock_text_block.type = "text"
+    mock_text_block.text = "Done"
+
+    second_message = MagicMock()
+    second_message.id = "msg_2"
+    second_message.content = [mock_text_block]
+    second_message.usage = None
+    second_message.model = "claude-test"
+    second_message.stop_reason = "end_turn"
+
+    mock_anthropic_client.beta.messages.create.side_effect = [first_message, second_message]
+
+    await client.get_response(
+        messages=[Message(role="user", text="Run pwd")],
+        options={"tools": [shell_tool_instance], "max_tokens": 64},
+    )
+
+    assert executed_commands == ["pwd"]
+    assert mock_anthropic_client.beta.messages.create.call_count == 2
+    second_request_messages = mock_anthropic_client.beta.messages.create.call_args_list[1].kwargs["messages"]
+    tool_results = [
+        block
+        for message in second_request_messages
+        for block in message.get("content", [])
+        if block.get("type") == "tool_result"
+    ]
+    assert len(tool_results) == 1
+    assert tool_results[0]["tool_use_id"] == "call_bash_loop"
+    assert "executed: pwd" in tool_results[0]["content"]
 
 
 async def test_prepare_options_with_tool_choice_auto(mock_anthropic_client: MagicMock) -> None:
@@ -898,6 +1042,128 @@ async def test_inner_get_response_ignores_options_stream_streaming(mock_anthropi
 
     assert mock_anthropic_client.beta.messages.create.call_count == 1
     assert mock_anthropic_client.beta.messages.create.call_args.kwargs["stream"] is True
+
+
+def test_process_stream_event_message_start_sets_assistant_role(mock_anthropic_client: MagicMock) -> None:
+    """Test that message_start streaming event sets role='assistant'.
+
+    This is critical: without role='assistant', _process_update cannot detect
+    a role boundary between a prior tool message and the new assistant turn,
+    causing tool_use blocks to collapse into a user-role message and triggering
+    Anthropic's '`tool_use` blocks can only be in `assistant` messages' error.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_event = MagicMock()
+    mock_event.type = "message_start"
+    mock_event.message.id = "msg_abc"
+    mock_event.message.role = "assistant"
+    mock_event.message.model = "claude-3-5-sonnet-20241022"
+    mock_event.message.content = []
+    mock_event.message.stop_reason = None
+    mock_event.message.usage = None
+
+    result = client._process_stream_event(mock_event)
+
+    assert result is not None
+    assert result.role == "assistant"
+
+
+def test_process_stream_event_message_start_role_prevents_tool_use_collapse() -> None:
+    """Regression test: tool_use blocks must not end up in a user-role message.
+
+    Simulates two consecutive streaming tool-call iterations:
+      Iteration 1: assistant emits tool_use → framework appends tool result (role=tool)
+      Iteration 2: assistant starts a new message_start → must create a NEW message
+
+    Without role='assistant' on the message_start update, _process_update sees
+    update.role=None (falsy) and appends to the last message (role='tool'),
+    producing {"role": "user", "content": [tool_result, tool_use]} which
+    Anthropic rejects with HTTP 400.
+    """
+    from agent_framework import ChatResponse, ChatResponseUpdate, Content, Message
+
+    # Simulate what the streaming tool loop produces after iteration 1:
+    # an existing 'tool' message is the last in the response
+    existing_tool_message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="call_1", result="some result")],
+    )
+
+    response = ChatResponse(messages=[existing_tool_message])
+
+    # Now simulate the message_start update from iteration 2 — WITH role set
+    message_start_update = ChatResponseUpdate(
+        role="assistant",
+        response_id="msg_iter2",
+    )
+
+    # Simulate a content_block_start carrying a tool_use — no role on this one (correct)
+    tool_use_update = ChatResponseUpdate(
+        contents=[
+            Content.from_function_call(
+                call_id="call_2",
+                name="get_weather",
+                arguments={"location": "NYC"},
+            )
+        ],
+    )
+
+    # Apply updates exactly as from_updates / _process_update would
+    from agent_framework._types import _process_update
+
+    _process_update(response, message_start_update)
+    _process_update(response, tool_use_update)
+
+    # Must have TWO messages: the original tool message + a new assistant message
+    assert len(response.messages) == 2, "tool_use from iteration 2 collapsed into the tool message from iteration 1"
+    assert response.messages[0].role == "tool"
+    assert response.messages[1].role == "assistant"
+
+    # The assistant message must contain the tool_use, not the tool result
+    assert response.messages[1].contents[0].type == "function_call"
+    assert response.messages[1].contents[0].call_id == "call_2"
+
+
+def test_process_stream_event_message_start_without_role_reproduces_bug() -> None:
+    """Documents the original bug: missing role causes tool_use to collapse into tool message.
+
+    This test demonstrates WHY the fix (adding role='assistant') was necessary.
+    It intentionally reproduces the broken behavior when role is absent.
+    """
+    from agent_framework import ChatResponse, ChatResponseUpdate, Content, Message
+    from agent_framework._types import _process_update
+
+    existing_tool_message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="call_1", result="some result")],
+    )
+    response = ChatResponse(messages=[existing_tool_message])
+
+    # message_start WITHOUT role (the original broken state)
+    message_start_update = ChatResponseUpdate(
+        role=None,
+        response_id="msg_iter2",
+    )
+    tool_use_update = ChatResponseUpdate(
+        contents=[
+            Content.from_function_call(
+                call_id="call_2",
+                name="get_weather",
+                arguments={"location": "NYC"},
+            )
+        ],
+    )
+
+    _process_update(response, message_start_update)
+    _process_update(response, tool_use_update)
+
+    # BUG: only 1 message — tool_use collapsed into the tool message
+    assert len(response.messages) == 1, "Expected bug: should still be 1 message without the fix"
+    # The single message has role='tool' but contains a function_call — invalid for Anthropic API
+    assert response.messages[0].role == "tool"
+    has_function_call = any(c.type == "function_call" for c in response.messages[0].contents)
+    assert has_function_call, "Expected bug: function_call leaked into tool message"
 
 
 # Integration Tests
@@ -1733,7 +1999,7 @@ def test_parse_code_execution_result_with_files(mock_anthropic_client: MagicMock
 
 
 def test_parse_bash_execution_result_with_stdout(mock_anthropic_client: MagicMock) -> None:
-    """Test parsing bash execution result with stdout."""
+    """Test parsing bash execution result with stdout produces shell_tool_result."""
     client = create_test_anthropic_client(mock_anthropic_client)
     client._last_call_id_name = ("call_bash2", "bash_code_execution")
 
@@ -1741,6 +2007,7 @@ def test_parse_bash_execution_result_with_stdout(mock_anthropic_client: MagicMoc
     mock_content = MagicMock()
     mock_content.stdout = "Output text"
     mock_content.stderr = None
+    mock_content.return_code = 0
     mock_content.content = []
 
     mock_block = MagicMock()
@@ -1751,11 +2018,18 @@ def test_parse_bash_execution_result_with_stdout(mock_anthropic_client: MagicMoc
     result = client._parse_contents_from_anthropic([mock_block])
 
     assert len(result) == 1
-    assert result[0].type == "function_result"
+    assert result[0].type == "shell_tool_result"
+    assert result[0].call_id == "call_bash2"
+    assert result[0].outputs is not None
+    assert len(result[0].outputs) == 1
+    assert result[0].outputs[0].type == "shell_command_output"
+    assert result[0].outputs[0].stdout == "Output text"
+    assert result[0].outputs[0].exit_code == 0
+    assert result[0].outputs[0].timed_out is False
 
 
 def test_parse_bash_execution_result_with_stderr(mock_anthropic_client: MagicMock) -> None:
-    """Test parsing bash execution result with stderr."""
+    """Test parsing bash execution result with stderr produces shell_tool_result."""
     client = create_test_anthropic_client(mock_anthropic_client)
     client._last_call_id_name = ("call_bash3", "bash_code_execution")
 
@@ -1763,6 +2037,7 @@ def test_parse_bash_execution_result_with_stderr(mock_anthropic_client: MagicMoc
     mock_content = MagicMock()
     mock_content.stdout = None
     mock_content.stderr = "Error output"
+    mock_content.return_code = 1
     mock_content.content = []
 
     mock_block = MagicMock()
@@ -1773,7 +2048,39 @@ def test_parse_bash_execution_result_with_stderr(mock_anthropic_client: MagicMoc
     result = client._parse_contents_from_anthropic([mock_block])
 
     assert len(result) == 1
-    assert result[0].type == "function_result"
+    assert result[0].type == "shell_tool_result"
+    assert result[0].call_id == "call_bash3"
+    assert result[0].outputs is not None
+    assert result[0].outputs[0].type == "shell_command_output"
+    assert result[0].outputs[0].stderr == "Error output"
+    assert result[0].outputs[0].exit_code == 1
+
+
+def test_parse_bash_execution_result_with_error(mock_anthropic_client: MagicMock) -> None:
+    """Test parsing bash execution error produces shell_tool_result with error info."""
+    from anthropic.types.beta.beta_bash_code_execution_tool_result_error import (
+        BetaBashCodeExecutionToolResultError,
+    )
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    client._last_call_id_name = ("call_bash_err", "bash_code_execution")
+
+    mock_error = MagicMock(spec=BetaBashCodeExecutionToolResultError)
+    mock_error.error_code = "execution_time_exceeded"
+
+    mock_block = MagicMock()
+    mock_block.type = "bash_code_execution_tool_result"
+    mock_block.tool_use_id = "call_bash_err"
+    mock_block.content = mock_error
+
+    result = client._parse_contents_from_anthropic([mock_block])
+
+    assert len(result) == 1
+    assert result[0].type == "shell_tool_result"
+    assert result[0].outputs is not None
+    assert result[0].outputs[0].type == "shell_command_output"
+    assert result[0].outputs[0].stderr == "execution_time_exceeded"
+    assert result[0].outputs[0].timed_out is True
 
 
 # Text Editor Result Tests

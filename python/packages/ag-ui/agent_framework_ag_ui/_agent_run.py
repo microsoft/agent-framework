@@ -56,6 +56,7 @@ from ._utils import (
     get_conversation_id_from_update,
     get_role_value,
     make_json_safe,
+    normalize_agui_role,
 )
 
 if TYPE_CHECKING:
@@ -450,7 +451,7 @@ async def _resolve_approval_responses(
     _convert_approval_results_to_tool_messages(messages)
 
 
-def _convert_approval_results_to_tool_messages(messages: list[Any]) -> None:
+def _convert_approval_results_to_tool_messages(messages: list[Message]) -> None:
     """Convert function_result content in user messages to proper tool messages.
 
     After approval processing, tool results end up in user messages. OpenAI and other
@@ -462,14 +463,14 @@ def _convert_approval_results_to_tool_messages(messages: list[Any]) -> None:
     Args:
         messages: List of Message objects to process
     """
-    result: list[Any] = []
+    result: list[Message] = []
 
     for msg in messages:
         if get_role_value(msg) != "user":
             result.append(msg)
             continue
 
-        msg_contents = cast(list[Content], getattr(msg, "contents", None) or [])
+        msg_contents = msg.contents or []
         function_results: list[Content] = [content for content in msg_contents if content.type == "function_result"]
         other_contents: list[Content] = [content for content in msg_contents if content.type != "function_result"]
 
@@ -490,6 +491,68 @@ def _convert_approval_results_to_tool_messages(messages: list[Any]) -> None:
             result.append(Message(role="user", contents=other_contents))
 
     messages[:] = result
+
+
+def _clean_resolved_approvals_from_snapshot(
+    snapshot_messages: list[dict[str, Any]],
+    resolved_messages: list[Message],
+) -> None:
+    """Replace approval payloads in snapshot messages with actual tool results.
+
+    After _resolve_approval_responses executes approved tools, the snapshot still
+    contains the raw approval payload (e.g. ``{"accepted": true}``). When this
+    snapshot is sent back to CopilotKit via ``MessagesSnapshotEvent``, the approval
+    payload persists in the conversation history.  On the next turn CopilotKit
+    re-sends the full history and the adapter re-detects the approval, causing the
+    tool to be re-executed.
+
+    This function replaces approval tool-message content in ``snapshot_messages``
+    with the real tool result so the approval payload no longer appears in the
+    history sent to the client.
+
+    Args:
+        snapshot_messages: Raw AG-UI snapshot messages (mutated in place).
+        resolved_messages: Provider messages after approval resolution.
+    """
+    # Build call_id → result text from resolved tool messages
+    result_by_call_id: dict[str, str] = {}
+    for msg in resolved_messages:
+        if get_role_value(msg) != "tool":
+            continue
+        for content in msg.contents or []:
+            if content.type == "function_result" and content.call_id:
+                result_text = (
+                    content.result if isinstance(content.result, str) else json.dumps(make_json_safe(content.result))
+                )
+                result_by_call_id[str(content.call_id)] = result_text
+
+    if not result_by_call_id:
+        return
+
+    for snap_msg in snapshot_messages:
+        if normalize_agui_role(snap_msg.get("role", "")) != "tool":
+            continue
+        raw_content = snap_msg.get("content")
+        if not isinstance(raw_content, str):
+            continue
+
+        # Check if this is an approval payload
+        try:
+            parsed = json.loads(raw_content)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(parsed, dict) or "accepted" not in parsed:
+            continue
+
+        # Find matching tool result by toolCallId
+        tool_call_id = snap_msg.get("toolCallId") or snap_msg.get("tool_call_id") or ""
+        replacement = result_by_call_id.get(str(tool_call_id))
+        if replacement is not None:
+            snap_msg["content"] = replacement
+            logger.info(
+                "Replaced approval payload in snapshot for tool_call_id=%s with actual result",
+                tool_call_id,
+            )
 
 
 def _build_messages_snapshot(
@@ -645,6 +708,10 @@ async def run_agent_stream(
     # This must happen before running the agent so it sees the tool results
     tools_for_execution = tools if tools is not None else server_tools
     await _resolve_approval_responses(messages, tools_for_execution, agent, run_kwargs)
+
+    # Defense-in-depth: replace approval payloads in snapshot with actual tool results
+    # so CopilotKit does not re-send stale approval content on subsequent turns.
+    _clean_resolved_approvals_from_snapshot(snapshot_messages, messages)
 
     # Feature #3: Emit StateSnapshotEvent for approved state-changing tools before agent runs
     approved_state_updates = _extract_approved_state_updates(messages, predictive_handler)

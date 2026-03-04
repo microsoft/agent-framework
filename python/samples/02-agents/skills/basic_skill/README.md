@@ -1,6 +1,6 @@
 # Agent Skills Sample
 
-This sample demonstrates how to use **Agent Skills** with a `FileAgentSkillsProvider` in the Microsoft Agent Framework.
+This sample demonstrates how to use **Agent Skills** with a `SkillsProvider` in the Microsoft Agent Framework.
 
 ## What are Agent Skills?
 
@@ -20,8 +20,8 @@ Policy-based expense filing with spending limits, receipt requirements, and appr
 ## Project Structure
 
 ```
-basic_skills/
-├── basic_file_skills.py
+basic_skill/
+├── basic_skill.py
 ├── README.md
 └── skills/
     └── expense-report/
@@ -52,7 +52,7 @@ This sample uses `AzureCliCredential` for authentication. Run `az login` in your
 
 ```bash
 cd python
-uv run samples/02-agents/skills/basic_skills/basic_file_skills.py
+uv run samples/02-agents/skills/basic_skill/basic_skill.py
 ```
 
 ### Examples

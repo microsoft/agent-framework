@@ -18,8 +18,8 @@ namespace Microsoft.Agents.AI.CosmosNoSql.UnitTests;
 /// - Default Mode: Cleans up all test data after each test run (deletes database)
 /// - Preserve Mode: Keeps containers and data for inspection in Cosmos DB Emulator Data Explorer
 ///
-/// To enable Preserve Mode, set environment variable: COSMOS_PRESERVE_CONTAINERS=true
-/// Example: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test
+/// To enable Preserve Mode, set environment variable: COSMOSDB_PRESERVE_CONTAINERS=true
+/// Example: $env:COSMOSDB_PRESERVE_CONTAINERS="true"; dotnet test
 ///
 /// In Preserve Mode, you can view the data in Cosmos DB Emulator Data Explorer at:
 /// https://localhost:8081/_explorer/index.html
@@ -29,12 +29,12 @@ namespace Microsoft.Agents.AI.CosmosNoSql.UnitTests;
 /// Environment Variable Reference:
 /// | Variable | Values | Description |
 /// |----------|--------|-------------|
-/// | COSMOS_PRESERVE_CONTAINERS | true / false | Controls whether to preserve test data after completion |
+/// | COSMOSDB_PRESERVE_CONTAINERS | true / false | Controls whether to preserve test data after completion |
 ///
 /// Usage Examples:
-/// - Run all tests in preserve mode: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/
-/// - Run specific test category in preserve mode: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/ --filter "Category=CosmosDB"
-/// - Reset to cleanup mode: $env:COSMOS_PRESERVE_CONTAINERS=""; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/
+/// - Run all tests in preserve mode: $env:COSMOSDB_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/
+/// - Run specific test category in preserve mode: $env:COSMOSDB_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/ --filter "Category=CosmosDB"
+/// - Reset to cleanup mode: $env:COSMOSDB_PRESERVE_CONTAINERS=""; dotnet test tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/
 /// </summary>
 [Collection("CosmosDB")]
 public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
@@ -64,8 +64,8 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         // Check environment variable to determine if we should preserve containers
-        // Set COSMOS_PRESERVE_CONTAINERS=true to keep containers and data for inspection
-        this._preserveContainer = string.Equals(Environment.GetEnvironmentVariable("COSMOS_PRESERVE_CONTAINERS"), "true", StringComparison.OrdinalIgnoreCase);
+        // Set COSMOSDB_PRESERVE_CONTAINERS=true to keep containers and data for inspection
+        this._preserveContainer = string.Equals(Environment.GetEnvironmentVariable("COSMOSDB_PRESERVE_CONTAINERS"), bool.TrueString, StringComparison.OrdinalIgnoreCase);
 
         this._connectionString = $"AccountEndpoint={s_emulatorEndpoint};AccountKey={s_emulatorKey}";
 
@@ -139,9 +139,9 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     private void SkipIfEmulatorNotAvailable()
     {
-        // In CI: Skip if COSMOS_EMULATOR_AVAILABLE is not set to "true"
+        // In CI: Skip if COSMOSDB_EMULATOR_AVAILABLE is not set to "true"
         // Locally: Skip if emulator connection check failed
-        var ciEmulatorAvailable = string.Equals(Environment.GetEnvironmentVariable("COSMOS_EMULATOR_AVAILABLE"), "true", StringComparison.OrdinalIgnoreCase);
+        var ciEmulatorAvailable = string.Equals(Environment.GetEnvironmentVariable("COSMOSDB_EMULATOR_AVAILABLE"), bool.TrueString, StringComparison.OrdinalIgnoreCase);
 
         Xunit.Skip.If(!ciEmulatorAvailable && !this._emulatorAvailable, "Cosmos DB Emulator is not available");
     }
@@ -150,7 +150,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     [SkippableFact]
     [Trait("Category", "CosmosDB")]
-    public void StateKey_ReturnsDefaultKey_WhenNoStateKeyProvided()
+    public void StateKeys_ReturnsDefaultKey_WhenNoStateKeyProvided()
     {
         // Arrange & Act
         this.SkipIfEmulatorNotAvailable();
@@ -159,12 +159,13 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             _ => new CosmosChatHistoryProvider.State("test-conversation"));
 
         // Assert
-        Assert.Equal("CosmosChatHistoryProvider", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("CosmosChatHistoryProvider", provider.StateKeys);
     }
 
     [SkippableFact]
     [Trait("Category", "CosmosDB")]
-    public void StateKey_ReturnsCustomKey_WhenSetViaConstructor()
+    public void StateKeys_ReturnsCustomKey_WhenSetViaConstructor()
     {
         // Arrange & Act
         this.SkipIfEmulatorNotAvailable();
@@ -174,7 +175,8 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             stateKey: "custom-key");
 
         // Assert
-        Assert.Equal("custom-key", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("custom-key", provider.StateKeys);
     }
 
     [SkippableFact]
@@ -1004,7 +1006,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             s_testDatabaseId,
             TestContainerId,
             _ => new CosmosChatHistoryProvider.State(conversationId),
-            storeInputMessageFilter: messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External));
+            storeInputRequestMessageFilter: messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External));
 
         var requestMessages = new[]
         {

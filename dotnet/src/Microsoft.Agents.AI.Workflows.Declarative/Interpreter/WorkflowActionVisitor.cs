@@ -493,6 +493,42 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.ContinueWith(new SendActivityExecutor(item, this._workflowState));
     }
 
+    protected override void Visit(InvokeMcpTool item)
+    {
+        this.Trace(item);
+
+        // Verify MCP handler is configured
+        if (this._workflowOptions.McpToolHandler is null)
+        {
+            throw new DeclarativeModelException("MCP tool handler not configured. Set McpToolHandler in DeclarativeWorkflowOptions to use InvokeMcpTool actions.");
+        }
+
+        // Entry point to invoke MCP tool - may yield for approval
+        InvokeMcpToolExecutor action = new(item, this._workflowOptions.McpToolHandler, this._workflowOptions.AgentProvider, this._workflowState);
+        this.ContinueWith(action);
+
+        // Transition to post action if no external input is required (no approval needed)
+        string postId = Steps.Post(action.Id);
+        this._workflowModel.AddLink(action.Id, postId, InvokeMcpToolExecutor.RequiresNothing);
+
+        // If approval is required, define request-port for approval flow
+        string externalInputPortId = InvokeMcpToolExecutor.Steps.ExternalInput(action.Id);
+        RequestPortAction externalInputPort = new(RequestPort.Create<ExternalInputRequest, ExternalInputResponse>(externalInputPortId));
+        this._workflowModel.AddNode(externalInputPort, action.ParentId);
+        this._workflowModel.AddLink(action.Id, externalInputPortId, InvokeMcpToolExecutor.RequiresInput);
+
+        // Capture response when external input is received
+        string resumeId = InvokeMcpToolExecutor.Steps.Resume(action.Id);
+        this._workflowModel.AddNode(new DelegateActionExecutor<ExternalInputResponse>(resumeId, this._workflowState, action.CaptureResponseAsync), action.ParentId);
+        this._workflowModel.AddLink(externalInputPortId, resumeId);
+
+        // After resume, transition to post action
+        this._workflowModel.AddLink(resumeId, postId);
+
+        // Define post action (completion)
+        this._workflowModel.AddNode(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId);
+    }
+
     #region Not supported
 
     protected override void Visit(AnswerQuestionWithAI item) => this.NotSupported(item);
