@@ -353,14 +353,16 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         messages: Sequence[Message],
     ) -> list[Message]:
         prepared_messages = list(messages)
-        if self.compaction_strategy is None:
+        strategy = getattr(self, "compaction_strategy", None)
+        if strategy is None:
             return prepared_messages
+        tokenizer = getattr(self, "tokenizer", None)
         from ._compaction import apply_compaction
 
         return await apply_compaction(
             prepared_messages,
-            strategy=self.compaction_strategy,
-            tokenizer=self.tokenizer,
+            strategy=strategy,
+            tokenizer=tokenizer,
         )
 
     # region Internal method to be implemented by derived classes
@@ -442,7 +444,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         Returns:
             When streaming a response stream of ChatResponseUpdates, otherwise an Awaitable ChatResponse.
         """
-        if self.compaction_strategy is None:
+        if getattr(self, "compaction_strategy", None) is None:
             return self._inner_get_response(
                 messages=messages,
                 stream=stream,
@@ -548,8 +550,14 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         """
         from ._agents import Agent
 
-        strategy = self.compaction_strategy if compaction_strategy is None else compaction_strategy
-        resolved_tokenizer = self.tokenizer if tokenizer is None else tokenizer
+        strategy = (
+            getattr(self, "compaction_strategy", None)
+            if compaction_strategy is None
+            else compaction_strategy
+        )
+        resolved_tokenizer = (
+            getattr(self, "tokenizer", None) if tokenizer is None else tokenizer
+        )
 
         return Agent(
             client=self,
