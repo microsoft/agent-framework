@@ -28,7 +28,7 @@ AIAgent agent = new AzureOpenAIClient(
     new AzureCliCredential())
     .GetChatClient(deploymentName)
     .AsIChatClient()
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You are a helpful assistant",
         tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]
     );

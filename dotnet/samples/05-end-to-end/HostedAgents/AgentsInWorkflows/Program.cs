@@ -32,7 +32,7 @@ AIAgent agent = new WorkflowBuilder(frenchAgent)
     .AddEdge(frenchAgent, spanishAgent)
     .AddEdge(spanishAgent, englishAgent)
     .Build()
-    .AsAgent();
+    .AsAIAgent();
 
 await agent.RunAIAgentAsync();
 

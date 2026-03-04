@@ -29,7 +29,7 @@ AIAgent agent = new AzureOpenAIClient(
     new DefaultAzureCredential())
     .GetResponsesClient(deploymentName)
     .AsIChatClient()
-    .CreateAIAgent(
+    .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",
         name: "MicrosoftLearnAgent",
         tools: [mcpTool]);

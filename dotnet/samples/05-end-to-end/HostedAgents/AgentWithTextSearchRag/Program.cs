@@ -9,7 +9,6 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -28,13 +27,14 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
     .GetChatClient(deploymentName)
-    .CreateAIAgent(new ChatClientAgentOptions
+    .AsIChatClient()
+    .AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new ChatOptions
         {
             Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
         },
-        AIContextProviderFactory = ctx => new TextSearchProvider(MockSearchAsync, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions)
+        AIContextProviders = [new TextSearchProvider(MockSearchAsync, textSearchOptions)]
     });
 
 await agent.RunAIAgentAsync();
