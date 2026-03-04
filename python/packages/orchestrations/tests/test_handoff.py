@@ -1125,7 +1125,7 @@ async def test_handoff_as_agent_run_stream_does_not_echo_user_input() -> None:
 
     When HandoffAgentExecutor emits the full conversation via ctx.yield_output() on
     termination, user-role messages from that list should not appear as
-    AgentResponseUpdate items in the stream returned by WorkflowAgent.run_stream().
+    AgentResponseUpdate items in the stream returned by WorkflowAgent.run(..., stream=True).
     """
     agent = MockHandoffAgent(name="single_agent")
 

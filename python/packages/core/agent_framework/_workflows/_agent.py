@@ -573,6 +573,8 @@ class WorkflowAgent(BaseAgent):
 
             if isinstance(data, AgentResponseUpdate):
                 # Pass through AgentResponseUpdate directly (streaming from AgentExecutor)
+                if data.role == "user":
+                    return []
                 if not data.author_name:
                     data.author_name = executor_id
                 return [data]

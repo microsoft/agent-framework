@@ -501,7 +501,7 @@ class TestWorkflowAgent:
         full_response = AgentResponse.from_updates(updates)
         assert len(full_response.messages) == 2
         texts = [message.text for message in full_response.messages]
-        # Note: `from_agent_run_response_updates` coalesces multiple text contents into one content
+        # Note: AgentResponse.from_updates coalesces multiple text contents into a single merged Content
         assert texts == ["second message", "thirdfourth"]
 
         # Verify run()
