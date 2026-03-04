@@ -884,3 +884,12 @@ async def test_azure_chat_client_agent_level_tool_persistence():
         assert second_response.text is not None
         # Should use the agent-level weather tool again
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
+
+
+def test_get_web_search_tool_raises_not_implemented() -> None:
+    """Test that get_web_search_tool() raises NotImplementedError on Azure OpenAI.
+
+    Regression test for: https://github.com/microsoft/agent-framework/issues/3629
+    """
+    with pytest.raises(NotImplementedError, match="not supported by Azure OpenAI"):
+        AzureOpenAIChatClient.get_web_search_tool()
