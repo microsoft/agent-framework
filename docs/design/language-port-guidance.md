@@ -19,7 +19,6 @@ The following aspects of the Microsoft Agent Framework are out of scope for this
 3. Durable Task extension
 4. Agent runtime
 
-
 ## General Guidance
 
 1. Feature Compatibility
