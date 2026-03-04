@@ -121,9 +121,6 @@ class ClaudeAgentOptions(TypedDict, total=False):
     fallback_model: str
     """Fallback model if primary fails."""
 
-    max_thinking_tokens: int
-    """Maximum tokens for thinking blocks."""
-
     allowed_tools: list[str]
     """Allowlist of tools. If set, Claude can ONLY use tools in this list."""
 
@@ -173,7 +170,7 @@ class ClaudeAgentOptions(TypedDict, total=False):
     """Which Claude settings files to load ("user", "project", "local")."""
 
     thinking: ThinkingConfig
-    """Extended thinking configuration. Takes precedence over max_thinking_tokens."""
+    """Extended thinking configuration (adaptive, enabled, or disabled)."""
 
     effort: Literal["low", "medium", "high", "max"]
     """Effort level for thinking depth."""
@@ -228,7 +225,11 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         description: str | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
-        tools: ToolTypes | Callable[..., Any] | str | Sequence[ToolTypes | Callable[..., Any] | str] | None = None,
+        tools: ToolTypes
+        | Callable[..., Any]
+        | str
+        | Sequence[ToolTypes | Callable[..., Any] | str]
+        | None = None,
         default_options: OptionsT | MutableMapping[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -304,7 +305,11 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     def _normalize_tools(
         self,
-        tools: ToolTypes | Callable[..., Any] | str | Sequence[ToolTypes | Callable[..., Any] | str] | None,
+        tools: ToolTypes
+        | Callable[..., Any]
+        | str
+        | Sequence[ToolTypes | Callable[..., Any] | str]
+        | None,
     ) -> None:
         """Separate built-in tools (strings) from custom tools.
 
@@ -373,7 +378,9 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             session_id: The session ID to use, or None for a new session.
         """
         needs_new_client = (
-            not self._started or self._client is None or (session_id and session_id != self._current_session_id)
+            not self._started
+            or self._client is None
+            or (session_id and session_id != self._current_session_id)
         )
 
         if needs_new_client:
@@ -396,7 +403,9 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 self._client = None
                 raise AgentException(f"Failed to start Claude SDK client: {ex}") from ex
 
-    def _prepare_client_options(self, resume_session_id: str | None = None) -> SDKOptions:
+    def _prepare_client_options(
+        self, resume_session_id: str | None = None
+    ) -> SDKOptions:
         """Prepare SDK options for client initialization.
 
         Args:
@@ -436,7 +445,9 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         # Prepare custom tools (FunctionTool instances)
         custom_tools_server, custom_tool_names = (
-            self._prepare_tools(self._custom_tools) if self._custom_tools else (None, [])
+            self._prepare_tools(self._custom_tools)
+            if self._custom_tools
+            else (None, [])
         )
 
         # MCP servers - merge user-provided servers with custom tools server
@@ -483,9 +494,13 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         if not sdk_tools:
             return None, []
 
-        return create_sdk_mcp_server(name=TOOLS_MCP_SERVER_NAME, tools=sdk_tools), tool_names
+        return create_sdk_mcp_server(
+            name=TOOLS_MCP_SERVER_NAME, tools=sdk_tools
+        ), tool_names
 
-    def _function_tool_to_sdk_mcp_tool(self, func_tool: FunctionTool) -> SdkMcpTool[Any]:
+    def _function_tool_to_sdk_mcp_tool(
+        self, func_tool: FunctionTool
+    ) -> SdkMcpTool[Any]:
         """Convert a FunctionTool to an SDK MCP tool.
 
         Args:
@@ -508,7 +523,9 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 return {"content": [{"type": "text", "text": f"Error: {e}"}]}
 
         # Get JSON schema from pydantic model
-        schema: dict[str, Any] = func_tool.input_model.model_json_schema() if func_tool.input_model else {}
+        schema: dict[str, Any] = (
+            func_tool.input_model.model_json_schema() if func_tool.input_model else {}
+        )
         input_schema: dict[str, Any] = {
             "type": "object",
             "properties": schema.get("properties", {}),
@@ -569,7 +586,9 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             opts["instructions"] = system_prompt
         return opts
 
-    def _finalize_response(self, updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
+    def _finalize_response(
+        self, updates: Sequence[AgentResponseUpdate]
+    ) -> AgentResponse[Any]:
         """Build AgentResponse and propagate structured_output as value.
 
         Args:
@@ -608,7 +627,10 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+    ) -> (
+        Awaitable[AgentResponse[Any]]
+        | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]
+    ):
         """Run the agent with the given messages.
 
         Args:
@@ -674,7 +696,11 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                         if text:
                             yield AgentResponseUpdate(
                                 role="assistant",
-                                contents=[Content.from_text(text=text, raw_representation=message)],
+                                contents=[
+                                    Content.from_text(
+                                        text=text, raw_representation=message
+                                    )
+                                ],
                                 raw_representation=message,
                             )
                     elif delta_type == "thinking_delta":
@@ -682,7 +708,11 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                         if thinking:
                             yield AgentResponseUpdate(
                                 role="assistant",
-                                contents=[Content.from_text_reasoning(text=thinking, raw_representation=message)],
+                                contents=[
+                                    Content.from_text_reasoning(
+                                        text=thinking, raw_representation=message
+                                    )
+                                ],
                                 raw_representation=message,
                             )
             elif isinstance(message, AssistantMessage):
@@ -699,7 +729,9 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                         "server_error": "Claude API server error",
                         "unknown": "Unknown error from Claude API",
                     }
-                    error_msg = error_messages.get(message.error, f"Claude API error: {message.error}")
+                    error_msg = error_messages.get(
+                        message.error, f"Claude API error: {message.error}"
+                    )
                     # Extract any error details from content blocks
                     if message.content:
                         for block in message.content:
