@@ -252,7 +252,6 @@ class HandoffAgentExecutor(AgentExecutor):
         Returns:
             A cloned ``Agent`` instance with handoff tools added
         """
-
         # Clone the agent to avoid mutating the original
         cloned_agent = self._clone_chat_agent(agent)  # type: ignore
         # Add handoff tools to the cloned agent
