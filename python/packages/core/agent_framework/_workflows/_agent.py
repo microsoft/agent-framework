@@ -526,9 +526,8 @@ class WorkflowAgent(BaseAgent):
         # (e.g. group_chat) where the orchestrator runs agents internally and only
         # emits OrchestrationComplete as a workflow output.
         if not messages and orchestration_complete is not None:
-            non_user_messages = [msg for msg in orchestration_complete.messages if msg.role != "user"]
-            messages.extend(non_user_messages)
-            if non_user_messages:
+            messages.extend(orchestration_complete.messages)
+            if orchestration_complete.messages:
                 raw_representations.append(orchestration_complete)
 
         return AgentResponse(
