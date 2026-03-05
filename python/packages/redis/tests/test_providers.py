@@ -274,12 +274,12 @@ class TestRedisContextProviderContextManager:
 class TestRedisContextProviderHybridQuery:
     """Test for AggregateHybridQuery parameter compatibility with redisvl 0.14.0."""
 
-    async def test_aggregate_hybrid_query_uses_alpha(
+    async def test_aggregate_hybrid_query_uses_linear_alpha(
         self,
         mock_index: AsyncMock,
         patch_index_from_dict: MagicMock,  # noqa: ARG002 - fixture modifies behavior via side effects
     ):
-        """Ensure AggregateHybridQuery is called with alpha parameter for backward compatibility."""
+        """Ensure AggregateHybridQuery is called with linear_alpha parameter for redisvl 0.14.0 compatibility."""
         from redisvl.utils.vectorize import BaseVectorizer
 
         # Create a mock vectorizer that inherits from BaseVectorizer
@@ -297,18 +297,16 @@ class TestRedisContextProviderHybridQuery:
             vector_field_name="embedding",
         )
 
-        # Call _redis_search with custom alpha
+        # Call _redis_search with custom linear_alpha
         with patch("agent_framework_redis._context_provider.AggregateHybridQuery") as mock_hybrid_query:
             mock_hybrid_query.return_value = MagicMock()
-            await provider._redis_search(text="test query", alpha=0.5)
+            await provider._redis_search(text="test query", linear_alpha=0.5)
 
-            # Verify AggregateHybridQuery was called with alpha parameter
+            # Verify AggregateHybridQuery was called with linear_alpha parameter
             mock_hybrid_query.assert_called_once()
             call_kwargs = mock_hybrid_query.call_args.kwargs
-            assert "alpha" in call_kwargs
-            assert call_kwargs["alpha"] == 0.5
-            # linear_alpha should NOT be in the call (that's for the new HybridQuery)
-            assert "linear_alpha" not in call_kwargs
+            assert "linear_alpha" in call_kwargs
+            assert call_kwargs["linear_alpha"] == 0.5
 
 
 # ===========================================================================
