@@ -375,13 +375,6 @@ class HandoffAgentExecutor(AgentExecutor):
 
         # Remove function call related content from the agent response for full conversation history
         cleaned_response = clean_conversation_for_handoff(response.messages)
-        if not cleaned_response:
-            logger.warning(
-                "Agent %s: Agent response contains no messages after removing function related contents. This "
-                "may be caused by the agent only invoking the handoff tool without generating any other content "
-                "types. This could cause issues for some providers that require at one message in the request.",
-                self.id,
-            )
 
         # Append the agent response to the full conversation history. This list removes
         # function call related content such that the result stays consistent regardless
