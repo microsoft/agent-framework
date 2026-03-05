@@ -248,18 +248,19 @@ class FoundryLocalClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
+        model_id_setting: str = settings["model_id"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
+
         manager = FoundryLocalManager(bootstrap=bootstrap, timeout=timeout)
         model_info = manager.get_model_info(
-            alias_or_model_id=settings["model_id"],
+            alias_or_model_id=model_id_setting,
             device=device,
         )
         if model_info is None:
             message = (
-                f"Model with ID or alias '{settings['model_id']}:{device.value}' not found in Foundry Local."
+                f"Model with ID or alias '{model_id_setting}:{device.value}' not found in Foundry Local."
                 if device
                 else (
-                    f"Model with ID or alias '{settings['model_id']}' for your current device "
-                    "not found in Foundry Local."
+                    f"Model with ID or alias '{model_id_setting}' for your current device not found in Foundry Local."
                 )
             )
             raise ValueError(message)

@@ -183,10 +183,11 @@ omit = [
 ]
 
 [tool.pyright]
-include = ["agent_framework*"]
+exclude = ["**/tests/**", "**/.venv/**", "packages/devui/frontend/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
+reportUnnecessaryCast = "error"
 
 [tool.mypy]
 plugins = ['pydantic.mypy']

@@ -12,7 +12,7 @@ from .._settings import load_settings
 from ..openai import OpenAIAssistantsClient
 from ..openai._assistants_client import OpenAIAssistantsOptions
 from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider, resolve_credential_to_token_provider
-from ._shared import AzureOpenAISettings, _apply_azure_defaults
+from ._shared import AzureOpenAISettings, _apply_azure_defaults  # pyright: ignore[reportPrivateUsage]
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -145,43 +145,46 @@ class AzureOpenAIAssistantsClient(
         )
         _apply_azure_defaults(azure_openai_settings, default_api_version=self.DEFAULT_AZURE_API_VERSION)
 
-        if not azure_openai_settings["chat_deployment_name"]:
+        chat_deployment_name = azure_openai_settings.get("chat_deployment_name")
+        if not chat_deployment_name:
             raise ValueError(
                 "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_CHAT_DEPLOYMENT_NAME' environment variable."
             )
 
+        api_key_secret = azure_openai_settings.get("api_key")
+        token_scope = azure_openai_settings.get("token_endpoint")
+
         # Resolve credential to token provider
         ad_token_provider = None
-        if not async_client and not azure_openai_settings["api_key"] and credential:
-            ad_token_provider = resolve_credential_to_token_provider(
-                credential, azure_openai_settings["token_endpoint"]
-            )
+        if not async_client and not api_key_secret and credential:
+            ad_token_provider = resolve_credential_to_token_provider(credential, token_scope)
 
-        if not async_client and not azure_openai_settings["api_key"] and not ad_token_provider:
+        if not async_client and not api_key_secret and not ad_token_provider:
             raise ValueError("Please provide either api_key, credential, or a client.")
 
         # Create Azure client if not provided
         if not async_client:
             client_params: dict[str, Any] = {
-                "api_version": azure_openai_settings["api_version"],
                 "default_headers": default_headers,
             }
+            if resolved_api_version := azure_openai_settings.get("api_version"):
+                client_params["api_version"] = resolved_api_version
 
-            if azure_openai_settings["api_key"]:
-                client_params["api_key"] = azure_openai_settings["api_key"].get_secret_value()
+            if api_key_secret:
+                client_params["api_key"] = api_key_secret.get_secret_value()
             elif ad_token_provider:
                 client_params["azure_ad_token_provider"] = ad_token_provider
 
-            if azure_openai_settings["base_url"]:
-                client_params["base_url"] = str(azure_openai_settings["base_url"])
-            elif azure_openai_settings["endpoint"]:
-                client_params["azure_endpoint"] = str(azure_openai_settings["endpoint"])
+            if resolved_base_url := azure_openai_settings.get("base_url"):
+                client_params["base_url"] = str(resolved_base_url)
+            elif resolved_endpoint := azure_openai_settings.get("endpoint"):
+                client_params["azure_endpoint"] = str(resolved_endpoint)
 
             async_client = AsyncAzureOpenAI(**client_params)
 
         super().__init__(
-            model_id=azure_openai_settings["chat_deployment_name"],
+            model_id=chat_deployment_name,
             assistant_id=assistant_id,
             assistant_name=assistant_name,
             assistant_description=assistant_description,

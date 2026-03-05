@@ -123,6 +123,9 @@ def _apply_azure_defaults(
         settings["token_endpoint"] = default_token_endpoint
 
 
+_AZURE_DEFAULTS_APPLIER = _apply_azure_defaults
+
+
 class AzureOpenAIConfigMixin(OpenAIBase):
     """Internal class for configuring a connection to an Azure OpenAI service."""
 

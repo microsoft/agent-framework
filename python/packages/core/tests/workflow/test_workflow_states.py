@@ -38,7 +38,9 @@ async def test_executor_failed_and_workflow_failed_events_streaming():
             events.append(ev)
 
     # executor_failed event (type='executor_failed') should be emitted before workflow failed event
-    executor_failed_events: list[WorkflowEvent[Any]] = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_failed"]
+    executor_failed_events: list[WorkflowEvent[Any]] = [
+        e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_failed"
+    ]
     assert executor_failed_events, "executor_failed event should be emitted when start executor fails"
     assert executor_failed_events[0].executor_id == "f"
     assert executor_failed_events[0].origin is WorkflowEventSource.FRAMEWORK
@@ -96,7 +98,9 @@ async def test_executor_failed_event_from_second_executor_in_chain():
             events.append(ev)
 
     # executor_failed event should be emitted for the failing executor
-    executor_failed_events: list[WorkflowEvent[Any]] = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_failed"]
+    executor_failed_events: list[WorkflowEvent[Any]] = [
+        e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_failed"
+    ]
     assert executor_failed_events, "executor_failed event should be emitted when second executor fails"
     assert executor_failed_events[0].executor_id == "failing"
     assert executor_failed_events[0].origin is WorkflowEventSource.FRAMEWORK

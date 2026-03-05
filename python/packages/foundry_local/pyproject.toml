@@ -59,6 +59,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_foundry_local"]
 exclude = ['tests']
 
 [tool.mypy]
@@ -85,7 +86,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_foundry_local"
-test = "pytest --cov=agent_framework_foundry_local --cov-report=term-missing:skip-covered tests"
+test = "pytest -m \"not integration\" --cov=agent_framework_foundry_local --cov-report=term-missing:skip-covered tests"
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
