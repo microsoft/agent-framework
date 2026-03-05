@@ -37,6 +37,7 @@ public enum MessageGroupKind
     /// </remarks>
     ToolCall,
 
+#pragma warning disable IDE0001 // Simplify Names
     /// <summary>
     /// A summary message group produced by a compaction strategy (e.g., <c>SummarizationCompactionStrategy</c>).
     /// </summary>
@@ -45,5 +46,6 @@ public enum MessageGroupKind
     /// They are identified by the <see cref="MessageGroup.SummaryPropertyKey"/> metadata entry
     /// on the underlying <see cref="Microsoft.Extensions.AI.ChatMessage"/>.
     /// </remarks>
+#pragma warning restore IDE0001 // Simplify Names
     Summary,
 }
