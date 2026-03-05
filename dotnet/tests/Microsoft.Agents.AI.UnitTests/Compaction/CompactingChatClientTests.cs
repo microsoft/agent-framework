@@ -26,7 +26,7 @@ public sealed class CompactingChatClientTests : IDisposable
     }
 
     [Fact]
-    public void ConstructorThrowsOnNullStrategyAsync()
+    public void ConstructorThrowsOnNullStrategy()
     {
         Mock<IChatClient> mockInner = new();
         Assert.Throws<ArgumentNullException>(() => new CompactingChatClient(mockInner.Object, null!));
