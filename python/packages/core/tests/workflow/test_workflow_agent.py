@@ -717,9 +717,23 @@ class TestWorkflowAgent:
                 return AgentSession()
 
             @overload
-            def run(self, messages: str | Content | Message | Sequence[str | Content | Message] | None = ..., *, stream: Literal[False] = ..., session: AgentSession | None = ..., **kwargs: Any) -> Awaitable[AgentResponse[Any]]: ...
+            def run(
+                self,
+                messages: str | Content | Message | Sequence[str | Content | Message] | None = ...,
+                *,
+                stream: Literal[False] = ...,
+                session: AgentSession | None = ...,
+                **kwargs: Any,
+            ) -> Awaitable[AgentResponse[Any]]: ...
             @overload
-            def run(self, messages: str | Content | Message | Sequence[str | Content | Message] | None = ..., *, stream: Literal[True], session: AgentSession | None = ..., **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+            def run(
+                self,
+                messages: str | Content | Message | Sequence[str | Content | Message] | None = ...,
+                *,
+                stream: Literal[True],
+                session: AgentSession | None = ...,
+                **kwargs: Any,
+            ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
             def run(
                 self,
@@ -813,9 +827,23 @@ class TestWorkflowAgent:
                 return AgentSession()
 
             @overload
-            def run(self, messages: str | Content | Message | Sequence[str | Content | Message] | None = ..., *, stream: Literal[False] = ..., session: AgentSession | None = ..., **kwargs: Any) -> Awaitable[AgentResponse[Any]]: ...
+            def run(
+                self,
+                messages: str | Content | Message | Sequence[str | Content | Message] | None = ...,
+                *,
+                stream: Literal[False] = ...,
+                session: AgentSession | None = ...,
+                **kwargs: Any,
+            ) -> Awaitable[AgentResponse[Any]]: ...
             @overload
-            def run(self, messages: str | Content | Message | Sequence[str | Content | Message] | None = ..., *, stream: Literal[True], session: AgentSession | None = ..., **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+            def run(
+                self,
+                messages: str | Content | Message | Sequence[str | Content | Message] | None = ...,
+                *,
+                stream: Literal[True],
+                session: AgentSession | None = ...,
+                **kwargs: Any,
+            ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
             def run(
                 self,

@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
@@ -66,17 +65,23 @@ public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRu
         Assert.Equal("Paris", response.Result.Name);
     }
 
-    [Fact(Skip = NotSupported)]
-    public override Task RunWithGenericTypeReturnsExpectedResultAsync() =>
-        base.RunWithGenericTypeReturnsExpectedResultAsync();
+    public override Task RunWithGenericTypeReturnsExpectedResultAsync()
+    {
+        Assert.Skip(NotSupported);
+        return base.RunWithGenericTypeReturnsExpectedResultAsync();
+    }
 
-    [Fact(Skip = NotSupported)]
-    public override Task RunWithResponseFormatReturnsExpectedResultAsync() =>
-        base.RunWithResponseFormatReturnsExpectedResultAsync();
+    public override Task RunWithResponseFormatReturnsExpectedResultAsync()
+    {
+        Assert.Skip(NotSupported);
+        return base.RunWithResponseFormatReturnsExpectedResultAsync();
+    }
 
-    [Fact(Skip = NotSupported)]
-    public override Task RunWithPrimitiveTypeReturnsExpectedResultAsync() =>
-        base.RunWithPrimitiveTypeReturnsExpectedResultAsync();
+    public override Task RunWithPrimitiveTypeReturnsExpectedResultAsync()
+    {
+        Assert.Skip(NotSupported);
+        return base.RunWithPrimitiveTypeReturnsExpectedResultAsync();
+    }
 }
 
 /// <summary>
@@ -84,7 +89,7 @@ public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRu
 /// </summary>
 public class AIProjectClientStructuredOutputFixture<T> : AIProjectClientFixture
 {
-    public override Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         var agentOptions = new ChatClientAgentOptions
         {
@@ -94,6 +99,6 @@ public class AIProjectClientStructuredOutputFixture<T> : AIProjectClientFixture
             },
         };
 
-        return this.InitializeAsync(agentOptions);
+        await this.InitializeAsync(agentOptions);
     }
 }

@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
-from agent_framework import Skill, SkillResource, SkillsProvider, SessionContext
+from agent_framework import SessionContext, Skill, SkillResource, SkillsProvider
 from agent_framework._skills import (
     DEFAULT_RESOURCE_EXTENSIONS,
     _create_instructions,
@@ -993,6 +994,42 @@ class TestSkillsProviderCodeSkill:
         result = await provider._read_skill_resource("prog-skill", "nonexistent")
         assert result.startswith("Error:")
 
+    async def test_read_callable_resource_sync_with_kwargs(self) -> None:
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+
+        @skill.resource
+        def get_user_config(**kwargs: Any) -> str:
+            user_id = kwargs.get("user_id", "unknown")
+            return f"config for {user_id}"
+
+        provider = SkillsProvider(skills=[skill])
+        result = await provider._read_skill_resource("prog-skill", "get_user_config", user_id="user_123")
+        assert result == "config for user_123"
+
+    async def test_read_callable_resource_async_with_kwargs(self) -> None:
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+
+        @skill.resource
+        async def get_user_data(**kwargs: Any) -> str:
+            token = kwargs.get("auth_token", "none")
+            return f"data with token={token}"
+
+        provider = SkillsProvider(skills=[skill])
+        result = await provider._read_skill_resource("prog-skill", "get_user_data", auth_token="abc")
+        assert result == "data with token=abc"
+
+    async def test_read_callable_resource_without_kwargs_ignores_extra_args(self) -> None:
+        """Resource functions without **kwargs should still work when kwargs are passed."""
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+
+        @skill.resource
+        def static_resource() -> str:
+            return "static content"
+
+        provider = SkillsProvider(skills=[skill])
+        result = await provider._read_skill_resource("prog-skill", "static_resource", user_id="ignored")
+        assert result == "static content"
+
     async def test_before_run_injects_code_skills(self) -> None:
         skill = Skill(name="prog-skill", description="A code-defined skill.", content="Body")
         provider = SkillsProvider(skills=[skill])
@@ -1348,9 +1385,7 @@ class TestReadAndParseSkillFile:
     def test_valid_file(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text(
-            "---\nname: my-skill\ndescription: A skill.\n---\nBody.", encoding="utf-8"
-        )
+        (skill_dir / "SKILL.md").write_text("---\nname: my-skill\ndescription: A skill.\n---\nBody.", encoding="utf-8")
         result = _read_and_parse_skill_file(str(skill_dir))
         assert result is not None
         name, desc, content = result
@@ -1393,7 +1428,7 @@ class TestCreateResourceElement:
     def test_xml_escapes_name(self) -> None:
         r = SkillResource(name='ref"special', content="data")
         elem = _create_resource_element(r)
-        assert '&quot;' in elem
+        assert "&quot;" in elem
 
     def test_xml_escapes_description(self) -> None:
         r = SkillResource(name="ref", description='Uses <tags> & "quotes"', content="data")

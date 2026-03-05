@@ -107,6 +107,15 @@ class SkillResource:
         self.content = content
         self.function = function
 
+        # Precompute whether the function accepts **kwargs to avoid
+        # repeated inspect.signature() calls on every invocation.
+        self._accepts_kwargs: bool = False
+        if function is not None:
+            sig = inspect.signature(function)
+            self._accepts_kwargs = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+
 
 class Skill:
     """A skill definition with optional resources.
@@ -150,6 +159,7 @@ class Skill:
                 description="Database operations",
                 content="Use this skill for DB tasks.",
             )
+
 
             @skill.resource
             def get_schema() -> str:
@@ -510,7 +520,7 @@ class SkillsProvider(BaseContextProvider):
 
         return content
 
-    async def _read_skill_resource(self, skill_name: str, resource_name: str) -> str:
+    async def _read_skill_resource(self, skill_name: str, resource_name: str, **kwargs: Any) -> str:
         """Read a named resource from a skill.
 
         Resolves the resource by case-insensitive name lookup.  Static
@@ -520,6 +530,9 @@ class SkillsProvider(BaseContextProvider):
         Args:
             skill_name: The name of the owning skill.
             resource_name: The resource name to look up (case-insensitive).
+            **kwargs: Runtime keyword arguments forwarded to resource functions
+                that accept ``**kwargs`` (e.g. arguments passed via
+                ``agent.run(user_id="123")``).
 
         Returns:
             The resource content string, or a user-facing error message on
@@ -549,9 +562,11 @@ class SkillsProvider(BaseContextProvider):
         if resource.function is not None:
             try:
                 if inspect.iscoroutinefunction(resource.function):
-                    result = await resource.function()
+                    result = (
+                        await resource.function(**kwargs) if resource._accepts_kwargs else await resource.function()
+                    )
                 else:
-                    result = resource.function()
+                    result = resource.function(**kwargs) if resource._accepts_kwargs else resource.function()
                 return str(result)
             except Exception as exc:
                 logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
@@ -972,9 +987,7 @@ def _load_skills(
 
     if skills:
         for code_skill in skills:
-            error = _validate_skill_metadata(
-                code_skill.name, code_skill.description, "code skill"
-            )
+            error = _validate_skill_metadata(code_skill.name, code_skill.description, "code skill")
             if error:
                 logger.warning(error)
                 continue

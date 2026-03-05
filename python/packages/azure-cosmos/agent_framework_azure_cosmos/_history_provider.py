@@ -124,7 +124,6 @@ class CosmosHistoryProvider(BaseHistoryProvider):
 
         self._database_client = self._cosmos_client.get_database_client(self.database_name)
 
-
     async def get_messages(self, session_id: str | None, **kwargs: Any) -> list[Message]:
         """Retrieve stored messages for this session from Azure Cosmos DB."""
         await self._ensure_container_proxy()
@@ -146,8 +145,15 @@ class CosmosHistoryProvider(BaseHistoryProvider):
         messages: list[Message] = []
         async for item in items:
             message_payload = item.get("message")
-            if isinstance(message_payload, dict):
-                messages.append(Message.from_dict(message_payload))
+            if not isinstance(message_payload, dict):
+                logger.warning("Skipping Cosmos DB item with non-mapping message payload.")
+                continue
+            try:
+                msg = Message.from_dict(message_payload)  # pyright: ignore[reportUnknownArgumentType]
+            except ValueError as e:
+                logger.warning("Failed to deserialize message from Cosmos DB item: %s", e)
+                continue
+            messages.append(msg)
 
         return messages
 
@@ -205,12 +211,8 @@ class CosmosHistoryProvider(BaseHistoryProvider):
     async def list_sessions(self) -> list[str]:
         """List all session IDs stored in this provider's Cosmos container."""
         await self._ensure_container_proxy()
-        query = (
-            "SELECT DISTINCT VALUE c.session_id FROM c WHERE c.source_id = @source_id"
-        )
-        parameters: list[dict[str, object]] = [
-            {"name": "@source_id", "value": self.source_id}
-        ]
+        query = "SELECT DISTINCT VALUE c.session_id FROM c WHERE c.source_id = @source_id"
+        parameters: list[dict[str, object]] = [{"name": "@source_id", "value": self.source_id}]
         # without a partition key, it is automatically a cross-partition query
         items = self._container_proxy.query_items(query=query, parameters=parameters)  # type: ignore[union-attr]
 
@@ -249,11 +251,9 @@ class CosmosHistoryProvider(BaseHistoryProvider):
         if self._database_client is None:
             raise RuntimeError("Cosmos database client is not initialized.")
 
-        self._container_proxy = (
-            await self._database_client.create_container_if_not_exists(
-                id=self.container_name,
-                partition_key=PartitionKey(path="/session_id"),
-            )
+        self._container_proxy = await self._database_client.create_container_if_not_exists(
+            id=self.container_name,
+            partition_key=PartitionKey(path="/session_id"),
         )
 
     @staticmethod

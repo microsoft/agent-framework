@@ -8,7 +8,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests;
 
@@ -36,7 +35,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 
     private readonly ITestOutputHelper _outputHelper = outputHelper;
 
-    async Task IAsyncLifetime.InitializeAsync()
+    async ValueTask IAsyncLifetime.InitializeAsync()
     {
         if (!s_infrastructureStarted)
         {
@@ -45,7 +44,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         }
     }
 
-    async Task IAsyncLifetime.DisposeAsync()
+    async ValueTask IAsyncDisposable.DisposeAsync()
     {
         // Nothing to clean up
         await Task.CompletedTask;
@@ -793,6 +792,9 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 
     private async Task RunSampleTestAsync(string samplePath, Func<IReadOnlyList<OutputLog>, Task> testAction)
     {
+        // Build the sample project first (it may not have been built as part of the solution)
+        await this.BuildSampleAsync(samplePath);
+
         // Start the Azure Functions app
         List<OutputLog> logsContainer = [];
         using Process funcProcess = this.StartFunctionApp(samplePath, logsContainer);
@@ -812,12 +814,44 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 
     private sealed record OutputLog(DateTime Timestamp, LogLevel Level, string Message);
 
+    private async Task BuildSampleAsync(string samplePath)
+    {
+        this._outputHelper.WriteLine($"Building sample at {samplePath}...");
+
+        ProcessStartInfo buildInfo = new()
+        {
+            FileName = "dotnet",
+            Arguments = $"build -f {s_dotnetTargetFramework}",
+            WorkingDirectory = samplePath,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+
+        using Process buildProcess = new() { StartInfo = buildInfo };
+        buildProcess.Start();
+
+        // Read both streams asynchronously to avoid deadlocks from filled pipe buffers
+        Task<string> stdoutTask = buildProcess.StandardOutput.ReadToEndAsync();
+        Task<string> stderrTask = buildProcess.StandardError.ReadToEndAsync();
+        await buildProcess.WaitForExitAsync();
+
+        string stderr = await stderrTask;
+        if (buildProcess.ExitCode != 0)
+        {
+            string stdout = await stdoutTask;
+            throw new InvalidOperationException($"Failed to build sample at {samplePath}:\n{stdout}\n{stderr}");
+        }
+
+        this._outputHelper.WriteLine($"Build completed for {samplePath}.");
+    }
+
     private Process StartFunctionApp(string samplePath, List<OutputLog> logs)
     {
         ProcessStartInfo startInfo = new()
         {
             FileName = "dotnet",
-            Arguments = $"run -f {s_dotnetTargetFramework} --port {AzureFunctionsPort}",
+            Arguments = $"run --no-build -f {s_dotnetTargetFramework} --port {AzureFunctionsPort}",
             WorkingDirectory = samplePath,
             UseShellExecute = false,
             RedirectStandardOutput = true,
