@@ -4,9 +4,8 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import patch
 
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-
 import pytest
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from agent_framework import (
     Executor,
