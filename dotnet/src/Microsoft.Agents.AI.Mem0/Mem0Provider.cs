@@ -14,7 +14,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI.Mem0;
 
 /// <summary>
-/// Provides a Mem0 backed <see cref="AIContextProvider"/> that persists conversation messages as memories
+/// Provides a Mem0 backed <see cref="MessageAIContextProvider"/> that persists conversation messages as memories
 /// and retrieves related memories to augment the agent invocation context.
 /// </summary>
 /// <remarks>
@@ -22,11 +22,12 @@ namespace Microsoft.Agents.AI.Mem0;
 /// for new invocations using a semantic search endpoint. Retrieved memories are injected as user messages
 /// to the model, prefixed by a configurable context prompt.
 /// </remarks>
-public sealed class Mem0Provider : AIContextProvider
+public sealed class Mem0Provider : MessageAIContextProvider
 {
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
 
     private readonly ProviderSessionState<State> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
     private readonly string _contextPrompt;
     private readonly bool _enableSensitiveTelemetryData;
 
@@ -52,7 +53,7 @@ public sealed class Mem0Provider : AIContextProvider
     /// </code>
     /// </remarks>
     public Mem0Provider(HttpClient httpClient, Func<AgentSession?, State> stateInitializer, Mem0ProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
-        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputRequestMessageFilter, options?.StorageInputResponseMessageFilter)
     {
         this._sessionState = new ProviderSessionState<State>(
             ValidateStateInitializer(Throw.IfNull(stateInitializer)),
@@ -72,7 +73,7 @@ public sealed class Mem0Provider : AIContextProvider
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._sessionState.StateKey;
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     private static Func<AgentSession?, State> ValidateStateInitializer(Func<AgentSession?, State> stateInitializer) =>
         session =>
@@ -92,7 +93,7 @@ public sealed class Mem0Provider : AIContextProvider
         };
 
     /// <inheritdoc />
-    protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<IEnumerable<ChatMessage>> ProvideMessagesAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(context);
 
@@ -101,7 +102,7 @@ public sealed class Mem0Provider : AIContextProvider
 
         string queryText = string.Join(
             Environment.NewLine,
-                (context.AIContext.Messages ?? [])
+                context.RequestMessages
                 .Where(m => !string.IsNullOrWhiteSpace(m.Text))
                 .Select(m => m.Text));
 
@@ -142,12 +143,9 @@ public sealed class Mem0Provider : AIContextProvider
                 }
             }
 
-            return new AIContext
-            {
-                Messages = outputMessageText is not null
-                    ? [new ChatMessage(ChatRole.User, outputMessageText)]
-                    : null
-            };
+            return outputMessageText is not null
+                ? [new ChatMessage(ChatRole.User, outputMessageText)]
+                : [];
         }
         catch (ArgumentException)
         {
@@ -166,7 +164,7 @@ public sealed class Mem0Provider : AIContextProvider
                     this.SanitizeLogData(searchScope.UserId));
             }
 
-            return new AIContext();
+            return [];
         }
     }
 

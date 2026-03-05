@@ -20,7 +20,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_framework_declarative._workflows._declarative_base import (
+try:
+    import powerfx  # noqa: F401
+
+    _powerfx_available = True
+except (ImportError, RuntimeError):
+    _powerfx_available = False
+
+pytestmark = pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
+
+from agent_framework_declarative._workflows._declarative_base import (  # noqa: E402
     DeclarativeWorkflowState,
 )
 
@@ -483,6 +492,31 @@ class TestPowerFxUndefinedVariables:
         # Nested undefined variable
         result = state.eval("=Local.Something.Nested.Deep")
         assert result is None
+
+    async def test_undefined_variable_returns_none_with_non_english_ui_culture(self, mock_state):
+        """Test that undefined variables return None even when CurrentUICulture is non-English.
+
+        Regression test for #4321: on non-English systems, CurrentUICulture causes
+        PowerFx to emit localized error messages that don't match the English
+        string guards ("isn't recognized", "Name isn't valid"), crashing the workflow.
+        The fix sets CurrentUICulture to en-US alongside CurrentCulture before eval.
+        """
+        from System.Globalization import CultureInfo
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        # Simulate a non-English UI culture (e.g. Italian)
+        original_ui_culture = CultureInfo.CurrentUICulture
+        CultureInfo.CurrentUICulture = CultureInfo("it-IT")
+        try:
+            # Should return None, not raise ValueError with Italian error text
+            result = state.eval("=Local.StatusConversationId")
+            assert result is None
+            # Verify the production code restored CurrentUICulture after eval
+            assert str(CultureInfo.CurrentUICulture) == str(CultureInfo("it-IT"))
+        finally:
+            CultureInfo.CurrentUICulture = original_ui_culture
 
 
 class TestStringInterpolation:

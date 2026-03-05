@@ -22,6 +22,7 @@ from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIChatClient
 from aiohttp import web
 from aiohttp.web_middlewares import middleware
+from dotenv import load_dotenv
 from microsoft_agents.activity import load_configuration_from_env
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import CloudAdapter, start_agent_process
@@ -35,6 +36,9 @@ from microsoft_agents.hosting.core import (
     TurnState,
 )
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Demo application using Microsoft Agent 365 SDK.

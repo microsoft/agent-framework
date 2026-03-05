@@ -9,7 +9,7 @@ This module provides ``RedisHistoryProvider``, built on the new
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, ClassVar
 
 import redis.asyncio as redis
 from agent_framework import Message
@@ -24,9 +24,11 @@ class RedisHistoryProvider(BaseHistoryProvider):
     unique Redis key.
     """
 
+    DEFAULT_SOURCE_ID: ClassVar[str] = "redis_memory"
+
     def __init__(
         self,
-        source_id: str,
+        source_id: str = DEFAULT_SOURCE_ID,
         redis_url: str | None = None,
         credential_provider: CredentialProvider | None = None,
         host: str | None = None,

@@ -1,0 +1,31 @@
+@endpoint = http://localhost:7071
+
+### Start the workflow with a spam email
+POST {{endpoint}}/api/workflow/run
+Content-Type: application/json
+
+"URGENT! You have won $1,000,000! Click here to claim your prize now before it expires!"
+
+### Start the workflow with a legitimate email
+POST {{endpoint}}/api/workflow/run
+Content-Type: application/json
+
+"Hi team, just a reminder about the sprint planning meeting tomorrow at 10 AM. Please review the agenda items in Jira before the call."
+
+### Start the workflow with another legitimate email
+POST {{endpoint}}/api/workflow/run
+Content-Type: application/json
+
+"Hello, I wanted to follow up on our conversation from last week regarding the project timeline. Could we schedule a brief call this afternoon to discuss the next steps?"
+
+### Start the workflow with a phishing attempt
+POST {{endpoint}}/api/workflow/run
+Content-Type: application/json
+
+"Dear Customer, Your account has been compromised! Click this link immediately to secure your account: http://totallylegit.suspicious.com/secure"
+
+### Check workflow status (replace {instanceId} with actual instance ID from response)
+GET {{endpoint}}/runtime/webhooks/durabletask/instances/{instanceId}
+
+### Purge all orchestration instances (use for cleanup)
+POST {{endpoint}}/runtime/webhooks/durabletask/instances/purge?createdTimeFrom=2020-01-01T00:00:00Z&createdTimeTo=2030-12-31T23:59:59Z

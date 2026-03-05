@@ -27,13 +27,16 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
     protected string FormatDisplayName(string name) => $"{this.GetType().Name}_{name}";
 
     internal Task<WorkflowEvent[]> ExecuteAsync(string actionId, DelegateAction<ActionExecutorResult> executorAction) =>
-        this.ExecuteAsync(new DelegateActionExecutor(actionId, this.State, executorAction), isDiscrete: false);
+        this.ExecuteAsync([new DelegateActionExecutor(actionId, this.State, executorAction)], isDiscrete: false);
 
     internal Task<WorkflowEvent[]> ExecuteAsync(Executor executor, string actionId, DelegateAction<ActionExecutorResult> executorAction) =>
         this.ExecuteAsync([executor, new DelegateActionExecutor(actionId, this.State, executorAction)], isDiscrete: false);
 
-    internal Task<WorkflowEvent[]> ExecuteAsync(Executor executor, bool isDiscrete = true) =>
-        this.ExecuteAsync([executor], isDiscrete);
+    internal async Task<WorkflowEvent[]> ExecuteAsync(DeclarativeActionExecutor executor, bool isDiscrete = true)
+    {
+        VerifyIsDiscrete(executor, isDiscrete);
+        return await this.ExecuteAsync([executor], isDiscrete);
+    }
 
     internal async Task<WorkflowEvent[]> ExecuteAsync(Executor[] executors, bool isDiscrete)
     {
@@ -48,7 +51,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
             prevExecutor = executor;
         }
 
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflowBuilder.Build(), this.State);
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflowBuilder.Build(), this.State);
         WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
 
         if (isDiscrete)
@@ -77,6 +80,15 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
     {
         Assert.Equal(model.Id, action.Id);
         Assert.Equal(model, action.Model);
+    }
+
+    internal static void VerifyIsDiscrete(DeclarativeActionExecutor action, bool isDiscrete = true)
+    {
+        Assert.Equal(
+            isDiscrete,
+            action.GetType().BaseType?
+                .GetProperty("IsDiscreteAction", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
+                .GetValue(action));
     }
 
     protected static void VerifyInvocationEvent(WorkflowEvent[] events) =>
@@ -113,6 +125,7 @@ public abstract class WorkflowActionExecutorTest(ITestOutputHelper output) : Wor
 
     internal sealed class TestWorkflowExecutor() : Executor<WorkflowFormulaState>("test_workflow")
     {
+        [SendsMessage(typeof(ActionExecutorResult))]
         public override async ValueTask HandleAsync(WorkflowFormulaState message, IWorkflowContext context, CancellationToken cancellationToken) =>
             await context.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
     }

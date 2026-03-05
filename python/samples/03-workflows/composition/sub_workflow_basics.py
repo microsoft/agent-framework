@@ -141,10 +141,7 @@ def create_sub_workflow() -> WorkflowExecutor:
     print("Setting up sub-workflow...")
 
     text_processor = TextProcessor()
-    processing_workflow = (
-        WorkflowBuilder(start_executor=text_processor)
-        .build()
-    )
+    processing_workflow = WorkflowBuilder(start_executor=text_processor).build()
 
     return WorkflowExecutor(processing_workflow, id="text_processor_workflow")
 

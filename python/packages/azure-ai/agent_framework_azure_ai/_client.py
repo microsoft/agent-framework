@@ -4,47 +4,54 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from typing import Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Agent,
+    Annotation,
     BaseContextProvider,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
+    ChatResponse,
+    ChatResponseUpdate,
+    Content,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
     Message,
     MiddlewareTypes,
+    ResponseStream,
+    TextSpanRegion,
 )
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIResponsesOptions
 from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
+    CodeInterpreterContainerAuto,
     CodeInterpreterTool,
-    CodeInterpreterToolAuto,
+    FoundryFeaturesOptInKeys,
     ImageGenTool,
     MCPTool,
     PromptAgentDefinition,
-    PromptAgentDefinitionText,
+    PromptAgentDefinitionTextOptions,
     RaiConfig,
     Reasoning,
     WebSearchPreviewTool,
 )
 from azure.ai.projects.models import FileSearchTool as ProjectsFileSearchTool
-from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
 
-from ._shared import AzureAISettings, create_text_format_config
+from ._shared import AzureAISettings, create_text_format_config, resolve_file_ids
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -72,6 +79,9 @@ class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):
     reasoning: Reasoning  # type: ignore[misc]
     """Configuration for enabling reasoning capabilities (requires azure.ai.projects.models.Reasoning)."""
 
+    foundry_features: FoundryFeaturesOptInKeys | str
+    """Optional Foundry preview feature opt-in for agent version creation."""
+
 
 AzureAIClientOptionsT = TypeVar(
     "AzureAIClientOptionsT",
@@ -79,6 +89,8 @@ AzureAIClientOptionsT = TypeVar(
     default="AzureAIProjectAgentOptions",
     covariant=True,
 )
+
+_DOC_INDEX_PATTERN = re.compile(r"doc_(\d+)")
 
 
 class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[AzureAIClientOptionsT]):
@@ -109,7 +121,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         conversation_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
-        credential: AsyncTokenCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
         use_latest_version: bool | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -132,7 +144,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 Ignored when a project_client is passed.
             model_deployment_name: The model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
-            credential: Azure async credential to use for authentication.
+            credential: Azure credential for authentication. Accepts a TokenCredential,
+                AsyncTokenCredential, or a callable token provider.
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
             env_file_path: Path to environment file for loading settings.
@@ -187,17 +200,17 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         if project_client is None:
             resolved_endpoint = azure_ai_settings.get("project_endpoint")
             if not resolved_endpoint:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
                     "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
                 )
 
             # Use provided credential
             if not credential:
-                raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
+                raise ValueError("Azure credential is required when project_client is not provided.")
             project_client = AIProjectClient(
                 endpoint=resolved_endpoint,
-                credential=credential,
+                credential=credential,  # type: ignore[arg-type]
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             should_close_client = True
@@ -344,7 +357,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """
         # Agent name must be explicitly provided by the user.
         if self.agent_name is None:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Agent name is required. Provide 'agent_name' when initializing AzureAIClient "
                 "or 'name' when initializing Agent."
             )
@@ -362,7 +375,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                     return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
 
             if "model" not in run_options or not run_options["model"]:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Model deployment name is required for agent creation, "
                     "can also be passed to the get_response methods."
                 )
@@ -383,7 +396,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             # response_format is accessed from chat_options or additional_properties
             # since the base class excludes it from run_options
             if chat_options and (response_format := chat_options.get("response_format")):
-                args["text"] = PromptAgentDefinitionText(format=create_text_format_config(response_format))
+                args["text"] = PromptAgentDefinitionTextOptions(format=create_text_format_config(response_format))
 
             # Combine instructions from messages and options
             # instructions is accessed from chat_options since the base class excludes it from run_options
@@ -395,11 +408,15 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             if combined_instructions:
                 args["instructions"] = "".join(combined_instructions)
 
-            created_agent = await self.project_client.agents.create_version(
-                agent_name=self.agent_name,
-                definition=PromptAgentDefinition(**args),
-                description=self.agent_description,
-            )
+            create_version_kwargs: dict[str, Any] = {
+                "agent_name": self.agent_name,
+                "definition": PromptAgentDefinition(**args),
+                "description": self.agent_description,
+            }
+            if foundry_features := run_options.get("foundry_features"):
+                create_version_kwargs["foundry_features"] = foundry_features
+
+            created_agent = await self.project_client.agents.create_version(**create_version_kwargs)
 
             self.agent_version = created_agent.version
             self.warn_runtime_tools_and_structure_changed = True
@@ -491,6 +508,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             "temperature": ("temperature",),
             "top_p": ("top_p",),
             "reasoning": ("reasoning",),
+            "foundry_features": ("foundry_features",),
         }
 
         for run_keys in agent_level_option_to_run_keys.values():
@@ -517,9 +535,9 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             run_options["input"] = self._transform_input_for_azure_ai(cast(list[dict[str, Any]], run_options["input"]))
 
         if not self._is_application_endpoint:
-            # Application-scoped response APIs do not support "agent" property.
+            # Application-scoped response APIs do not support "agent_reference" property.
             agent_reference = await self._get_agent_reference_or_create(run_options, instructions, options)
-            run_options["extra_body"] = {"agent": agent_reference}
+            run_options["extra_body"] = {"agent_reference": agent_reference}
 
         # Remove only keys that map to this client's declared options TypedDict.
         self._remove_agent_level_run_options(run_options, options)
@@ -579,6 +597,68 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """Get the current conversation ID from chat options or kwargs."""
         return options.get("conversation_id") or kwargs.get("conversation_id") or self.conversation_id
 
+    @override
+    def _parse_response_from_openai(
+        self,
+        response: Any,
+        options: dict[str, Any],
+    ) -> ChatResponse:
+        """Parse an Azure AI Responses API response, handling Azure-specific output item types."""
+        result = super()._parse_response_from_openai(response, options)
+
+        if result.messages:
+            for item in response.output:
+                if item.type == "oauth_consent_request":
+                    consent_link = item.consent_link
+                    if consent_link and not consent_link.startswith("https://"):
+                        logger.warning("Skipping oauth_consent_request with non-HTTPS consent_link: %s", item)
+                        consent_link = ""
+                    if consent_link:
+                        result.messages[0].contents.append(
+                            Content.from_oauth_consent_request(
+                                consent_link=consent_link,
+                                raw_representation=item,
+                            )
+                        )
+                    else:
+                        logger.warning("Received oauth_consent_request output without consent_link: %s", item)
+
+        return result
+
+    @override
+    def _parse_chunk_from_openai(
+        self,
+        event: Any,
+        options: dict[str, Any],
+        function_call_ids: dict[int, tuple[str, str]],
+    ) -> ChatResponseUpdate:
+        """Parse an Azure AI streaming event, handling Azure-specific event types."""
+        # Intercept output_item.added events for Azure-specific item types
+        if event.type == "response.output_item.added" and event.item.type == "oauth_consent_request":
+            event_item = event.item
+            consent_link = event_item.consent_link
+            if consent_link and not consent_link.startswith("https://"):
+                logger.warning("Skipping oauth_consent_request with non-HTTPS consent_link: %s", event_item)
+                consent_link = ""
+            contents: list[Content] = []
+            if consent_link:
+                contents.append(
+                    Content.from_oauth_consent_request(
+                        consent_link=consent_link,
+                        raw_representation=event_item,
+                    )
+                )
+            else:
+                logger.warning("Received oauth_consent_request output without consent_link: %s", event_item)
+            return ChatResponseUpdate(
+                contents=contents,
+                role="assistant",
+                model_id=self.model_id,
+                raw_representation=event,
+            )
+
+        return super()._parse_chunk_from_openai(event, options, function_call_ids)
+
     def _prepare_messages_for_azure_ai(self, messages: Sequence[Message]) -> tuple[list[Message], str | None]:
         """Prepare input from messages and convert system/developer messages to instructions."""
         result: list[Message] = []
@@ -616,19 +696,221 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         if description and not self.agent_description:
             self.agent_description = description
 
+    # region Azure AI Search Citation Enhancement
+
+    def _extract_azure_search_urls(self, output_items: Any) -> list[str]:
+        """Extract document URLs from azure_ai_search_call_output items.
+
+        Args:
+            output_items: The response output items to scan.
+
+        Returns:
+            A flat list of get_urls from all azure_ai_search_call_output items.
+        """
+        get_urls: list[str] = []
+        for item in output_items:
+            if item.type != "azure_ai_search_call_output":
+                continue
+            output = item.output
+            if isinstance(output, str):
+                try:
+                    output = json.loads(output)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            if isinstance(output, list):
+                # Streaming "added" events send output as an empty list; skip.
+                continue
+            if output is not None:
+                urls = output.get("get_urls") if isinstance(output, dict) else output.get_urls
+                if urls and isinstance(urls, list):
+                    get_urls.extend(urls)
+        return get_urls
+
+    def _get_search_doc_url(self, citation_title: str | None, get_urls: list[str]) -> str | None:
+        """Map a citation title like 'doc_0' to its corresponding get_url.
+
+        Args:
+            citation_title: The annotation title (e.g., "doc_0").
+            get_urls: The list of document URLs from azure_ai_search_call_output.
+
+        Returns:
+            The matching document URL if found, otherwise None.
+        """
+        if not citation_title or not get_urls:
+            return None
+        match = _DOC_INDEX_PATTERN.search(citation_title)
+        if not match:
+            return None
+        doc_index = int(match.group(1))
+        if 0 <= doc_index < len(get_urls):
+            return str(get_urls[doc_index])
+        return None
+
+    def _enrich_annotations_with_search_urls(self, contents: list[Content], get_urls: list[str]) -> None:
+        """Enrich citation annotations in contents with real document URLs from Azure AI Search.
+
+        Looks for annotations with ``type == "citation"`` and a ``title`` matching ``doc_N``,
+        then adds the corresponding document URL from *get_urls* to ``additional_properties["get_url"]``.
+
+        Args:
+            contents: The parsed content list from a ChatResponse or ChatResponseUpdate.
+            get_urls: Document URLs extracted from azure_ai_search_call_output.
+        """
+        if not get_urls:
+            return
+        for content in contents:
+            if not content.annotations:
+                continue
+            for annotation in content.annotations:
+                if not isinstance(annotation, dict):
+                    continue
+                if annotation.get("type") != "citation":
+                    continue
+                title = annotation.get("title")
+                doc_url = self._get_search_doc_url(title, get_urls)
+                if doc_url:
+                    annotation.setdefault("additional_properties", {})["get_url"] = doc_url
+
+    def _build_url_citation_content(
+        self, annotation_data: dict[str, Any], get_urls: list[str], raw_event: Any
+    ) -> Content:
+        """Build a Content with a citation Annotation from a url_citation streaming event.
+
+        The base class does not handle ``url_citation`` annotations in streaming, so this
+        method creates the appropriate framework content for them.
+
+        Args:
+            annotation_data: The raw annotation dict from the streaming event.
+            get_urls: Captured document URLs for enrichment.
+            raw_event: The raw streaming event for raw_representation.
+
+        Returns:
+            A Content object containing the citation annotation.
+        """
+        ann_title = str(annotation_data.get("title") or "")
+        ann_url = str(annotation_data.get("url") or "")
+        ann_start = annotation_data.get("start_index")
+        ann_end = annotation_data.get("end_index")
+
+        additional_props: dict[str, Any] = {
+            "annotation_index": raw_event.annotation_index,
+        }
+        doc_url = self._get_search_doc_url(ann_title, get_urls)
+        if doc_url:
+            additional_props["get_url"] = doc_url
+
+        annotation_obj = Annotation(
+            type="citation",
+            title=ann_title,
+            url=ann_url,
+            additional_properties=additional_props,
+            raw_representation=annotation_data,
+        )
+        if ann_start is not None and ann_end is not None:
+            annotation_obj["annotated_regions"] = [
+                TextSpanRegion(type="text_span", start_index=ann_start, end_index=ann_end)
+            ]
+
+        return Content.from_text(text="", annotations=[annotation_obj], raw_representation=raw_event)
+
+    @override
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
+        stream: bool = False,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        """Wrap base response to enrich Azure AI Search citation annotations.
+
+        For non-streaming responses, the ``ChatResponse.raw_representation`` carries the
+        full response including ``azure_ai_search_call_output`` items.  After the base class
+        parses the response, ``url_citation`` annotations are enriched with per-document URLs.
+
+        For streaming responses, a transform hook is registered on the ``ResponseStream`` to
+        capture ``get_urls`` from search output events and enrich ``url_citation`` annotations
+        as they arrive.  The captured URL state is local to the stream closure, so concurrent
+        streams do not interfere.
+        """
+        if not stream:
+
+            async def _enrich_response() -> ChatResponse:
+                response = await super(RawAzureAIClient, self)._inner_get_response(
+                    messages=messages, options=options, stream=False, **kwargs
+                )
+                get_urls = self._extract_azure_search_urls(response.raw_representation.output)  # type: ignore[union-attr]
+                if get_urls:
+                    for msg in response.messages:
+                        self._enrich_annotations_with_search_urls(list(msg.contents or []), get_urls)
+                return response
+
+            return _enrich_response()
+
+        # Streaming: use a closure-local list so concurrent streams don't interfere
+        stream_result = super()._inner_get_response(  # type: ignore[assignment]
+            messages=messages, options=options, stream=True, **kwargs
+        )
+        search_get_urls: list[str] = []
+
+        def _enrich_update(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raw = update.raw_representation
+            if raw is None:
+                return update
+            event_type = raw.type
+
+            # Capture get_urls from azure_ai_search_call_output items.
+            # Check both "added" and "done" events because the output data (including
+            # get_urls) may only be fully populated in the "done" event.
+            if event_type in ("response.output_item.added", "response.output_item.done"):
+                urls = self._extract_azure_search_urls([raw.item])
+                if urls:
+                    search_get_urls.extend(urls)
+
+            # Handle url_citation annotations (not handled by the base class in streaming)
+            if event_type == "response.output_text.annotation.added":
+                ann = raw.annotation
+                if ann.get("type") == "url_citation":
+                    citation_content = self._build_url_citation_content(ann, search_get_urls, raw)
+                    contents_list = list(update.contents or [])
+                    contents_list.append(citation_content)
+                    return ChatResponseUpdate(
+                        contents=contents_list,
+                        conversation_id=update.conversation_id,
+                        response_id=update.response_id,
+                        role=update.role,
+                        model_id=update.model_id,
+                        continuation_token=update.continuation_token,
+                        additional_properties=update.additional_properties,
+                        raw_representation=update.raw_representation,
+                    )
+
+            # Enrich any citation annotations already parsed by the base class
+            if update.contents and search_get_urls:
+                self._enrich_annotations_with_search_urls(list(update.contents), search_get_urls)
+
+            return update
+
+        stream_result.with_transform_hook(_enrich_update)  # type: ignore[union-attr]
+        return stream_result
+
+    # endregion
+
     # region Hosted Tool Factory Methods (Azure-specific overrides)
 
     @staticmethod
     def get_code_interpreter_tool(  # type: ignore[override]
         *,
-        file_ids: list[str] | None = None,
+        file_ids: list[str | Content] | None = None,
         container: Literal["auto"] | dict[str, Any] = "auto",
         **kwargs: Any,
     ) -> CodeInterpreterTool:
         """Create a code interpreter tool configuration for Azure AI Projects.
 
         Keyword Args:
-            file_ids: Optional list of file IDs to make available to the code interpreter.
+            file_ids: Optional list of file IDs or Content objects to make available to
+                the code interpreter. Accepts plain strings or Content.from_hosted_file()
+                instances.
             container: Container configuration. Use "auto" for automatic container management.
                 Note: Custom container settings from this parameter are not used by Azure AI Projects;
                 use file_ids instead.
@@ -648,7 +930,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         # Extract file_ids from container if provided as dict and file_ids not explicitly set
         if file_ids is None and isinstance(container, dict):
             file_ids = container.get("file_ids")
-        tool_container = CodeInterpreterToolAuto(file_ids=file_ids if file_ids else None)
+        resolved = resolve_file_ids(file_ids)
+        tool_container = CodeInterpreterContainerAuto(file_ids=resolved)
         return CodeInterpreterTool(container=tool_container, **kwargs)
 
     @staticmethod
@@ -950,7 +1233,7 @@ class AzureAIClient(
         conversation_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
-        credential: AsyncTokenCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
         use_latest_version: bool | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
@@ -972,7 +1255,8 @@ class AzureAIClient(
                 Ignored when a project_client is passed.
             model_deployment_name: The model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
-            credential: Azure async credential to use for authentication.
+            credential: Azure credential for authentication. Accepts a TokenCredential
+                or AsyncTokenCredential.
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
             middleware: Optional sequence of chat middlewares to include.

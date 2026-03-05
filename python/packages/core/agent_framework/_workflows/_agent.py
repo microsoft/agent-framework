@@ -29,7 +29,7 @@ from .._types import (
     UsageDetails,
     add_usage_details,
 )
-from ..exceptions import AgentExecutionException
+from ..exceptions import AgentInvalidRequestException, AgentInvalidResponseException
 from ._checkpoint import CheckpointStorage
 from ._events import (
     WorkflowEvent,
@@ -121,7 +121,7 @@ class WorkflowAgent(BaseAgent):
 
         resolved_context_providers = list(context_providers) if context_providers is not None else []
         if not resolved_context_providers:
-            resolved_context_providers.append(InMemoryHistoryProvider("memory"))
+            resolved_context_providers.append(InMemoryHistoryProvider())
 
         super().__init__(
             id=id,
@@ -237,23 +237,27 @@ class WorkflowAgent(BaseAgent):
             An AgentResponse representing the workflow execution results.
         """
         input_messages = normalize_messages_input(messages)
+        provider_session = session
+        if provider_session is None and self.context_providers:
+            provider_session = AgentSession()
 
         # run the context providers with the session
         session_context = SessionContext(
-            session_id=session.session_id if session else None,
-            service_session_id=session.service_session_id if session else None,
+            session_id=provider_session.session_id if provider_session else None,
+            service_session_id=provider_session.service_session_id if provider_session else None,
             input_messages=input_messages or [],
             options={},
         )
-        state = session.state if session else {}
         for provider in self.context_providers:
             if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
                 continue
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
                 agent=self,  # type: ignore[arg-type]
-                session=session,  # type: ignore[arg-type]
+                session=provider_session,
                 context=session_context,
-                state=state,
+                state=provider_session.state.setdefault(provider.source_id, {}),
             )
         # combine the messages
         session_messages: list[Message] = session_context.get_messages(include_input=True)
@@ -266,7 +270,12 @@ class WorkflowAgent(BaseAgent):
                 output_events.append(event)
 
         result = self._convert_workflow_events_to_agent_response(response_id, output_events)
-        await self._run_after_providers(session=session, context=session_context)
+
+        # Set the response on the context so after_run providers (e.g. InMemoryHistoryProvider)
+        # can persist the response messages alongside input messages.
+        session_context._response = result  # type: ignore[assignment]
+
+        await self._run_after_providers(session=provider_session, context=session_context)
         return result
 
     async def _run_stream_impl(
@@ -293,34 +302,46 @@ class WorkflowAgent(BaseAgent):
             AgentResponseUpdate objects representing the workflow execution progress.
         """
         input_messages = normalize_messages_input(messages)
+        provider_session = session
+        if provider_session is None and self.context_providers:
+            provider_session = AgentSession()
 
         # run the context providers with the session
         session_context = SessionContext(
-            session_id=session.session_id if session else None,
-            service_session_id=session.service_session_id if session else None,
+            session_id=provider_session.session_id if provider_session else None,
+            service_session_id=provider_session.service_session_id if provider_session else None,
             input_messages=input_messages or [],
             options={},
         )
-        state = session.state if session else {}
         for provider in self.context_providers:
             if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
                 continue
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
                 agent=self,  # type: ignore[arg-type]
-                session=session,  # type: ignore[arg-type]
+                session=provider_session,
                 context=session_context,
-                state=state,
+                state=provider_session.state.setdefault(provider.source_id, {}),
             )
         # combine the messages
 
         session_messages: list[Message] = session_context.get_messages(include_input=True)
+        all_updates: list[AgentResponseUpdate] = []
         async for event in self._run_core(
             session_messages, checkpoint_id, checkpoint_storage, streaming=True, **kwargs
         ):
             updates = self._convert_workflow_event_to_agent_response_updates(response_id, event)
             for update in updates:
+                all_updates.append(update)
                 yield update
-        await self._run_after_providers(session=session, context=session_context)
+
+        # Build the final response from collected updates so after_run providers
+        # (e.g. InMemoryHistoryProvider) can persist the response messages.
+        if all_updates:
+            session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
+
+        await self._run_after_providers(session=provider_session, context=session_context)
 
     async def _run_core(
         self,
@@ -448,7 +469,7 @@ class WorkflowAgent(BaseAgent):
                     # We cannot support AgentResponseUpdate in non-streaming mode. This is because the message
                     # sequence cannot be guaranteed when there are streaming updates in between non-streaming
                     # responses.
-                    raise AgentExecutionException(
+                    raise AgentInvalidRequestException(
                         "Output event with AgentResponseUpdate data cannot be emitted in non-streaming mode. "
                         "Please ensure executors emit AgentResponse for non-streaming workflows."
                     )
@@ -661,24 +682,24 @@ class WorkflowAgent(BaseAgent):
                         try:
                             parsed_args = self.RequestInfoFunctionArgs.from_json(arguments_payload)
                         except ValueError as exc:
-                            raise AgentExecutionException(
+                            raise AgentInvalidResponseException(
                                 "FunctionApprovalResponseContent arguments must decode to a mapping."
                             ) from exc
                     elif isinstance(arguments_payload, dict):
                         parsed_args = self.RequestInfoFunctionArgs.from_dict(arguments_payload)
                     else:
-                        raise AgentExecutionException(
+                        raise AgentInvalidResponseException(
                             "FunctionApprovalResponseContent arguments must be a mapping or JSON string."
                         )
 
                     request_id = parsed_args.request_id or content.id  # type: ignore[attr-defined]
                     if not content.approved:  # type: ignore[attr-defined]
-                        raise AgentExecutionException(f"Request '{request_id}' was not approved by the caller.")
+                        raise AgentInvalidResponseException(f"Request '{request_id}' was not approved by the caller.")
 
                     if request_id in self.pending_requests:
                         function_responses[request_id] = parsed_args.data
                     elif bool(self.pending_requests):
-                        raise AgentExecutionException(
+                        raise AgentInvalidRequestException(
                             "Only responses for pending requests are allowed when there are outstanding approvals."
                         )
                 elif content.type == "function_result":
@@ -687,12 +708,14 @@ class WorkflowAgent(BaseAgent):
                         response_data = content.result if hasattr(content, "result") else str(content)  # type: ignore[attr-defined]
                         function_responses[request_id] = response_data
                     elif bool(self.pending_requests):
-                        raise AgentExecutionException(
+                        raise AgentInvalidRequestException(
                             "Only function responses for pending requests are allowed while requests are outstanding."
                         )
                 else:
                     if bool(self.pending_requests):
-                        raise AgentExecutionException("Unexpected content type while awaiting request info responses.")
+                        raise AgentInvalidResponseException(
+                            "Unexpected content type while awaiting request info responses."
+                        )
         return function_responses
 
     def _extract_contents(self, data: Any) -> list[Content]:

@@ -8,18 +8,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from azure.identity import AzureCliCredential
-
-if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
-
-
-# NOTE: the Azure client imports above are real dependencies. When running this
-# sample outside of Azure-enabled environments you may wish to swap in the
-# `agent_framework.builtin` chat client or mock the writer executor. We keep the
-# concrete import here so readers can see an end-to-end configuration.
 from agent_framework import (
     AgentExecutor,
     AgentExecutorRequest,
@@ -34,6 +22,16 @@ from agent_framework import (
     response_handler,
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Checkpoint + human-in-the-loop quickstart.

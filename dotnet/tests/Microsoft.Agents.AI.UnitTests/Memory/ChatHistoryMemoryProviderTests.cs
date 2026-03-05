@@ -56,7 +56,7 @@ public class ChatHistoryMemoryProviderTests
     }
 
     [Fact]
-    public void StateKey_ReturnsDefaultKey_WhenNoOptionsProvided()
+    public void StateKeys_ReturnsDefaultKey_WhenNoOptionsProvided()
     {
         // Arrange & Act
         var provider = new ChatHistoryMemoryProvider(
@@ -66,11 +66,12 @@ public class ChatHistoryMemoryProviderTests
             _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }));
 
         // Assert
-        Assert.Equal("ChatHistoryMemoryProvider", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("ChatHistoryMemoryProvider", provider.StateKeys);
     }
 
     [Fact]
-    public void StateKey_ReturnsCustomKey_WhenSetViaOptions()
+    public void StateKeys_ReturnsCustomKey_WhenSetViaOptions()
     {
         // Arrange & Act
         var provider = new ChatHistoryMemoryProvider(
@@ -81,7 +82,8 @@ public class ChatHistoryMemoryProviderTests
             new ChatHistoryMemoryProviderOptions { StateKey = "custom-key" });
 
         // Assert
-        Assert.Equal("custom-key", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("custom-key", provider.StateKeys);
     }
 
     [Fact]
@@ -687,7 +689,7 @@ public class ChatHistoryMemoryProviderTests
             _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
             options: new ChatHistoryMemoryProviderOptions
             {
-                StorageInputMessageFilter = messages => messages // No filtering - store everything
+                StorageInputRequestMessageFilter = messages => messages // No filtering - store everything
             });
 
         var requestMessages = new List<ChatMessage>
@@ -706,6 +708,147 @@ public class ChatHistoryMemoryProviderTests
         Assert.Equal("External message", stored[0]["Content"]);
         Assert.Equal("From history", stored[1]["Content"]);
         Assert.Equal("Response", stored[2]["Content"]);
+    }
+
+    #endregion
+
+    #region MessageAIContextProvider.InvokingAsync Tests
+
+    [Fact]
+    public async Task MessageInvokingAsync_BeforeAIInvoke_SearchesAndReturnsMergedMessagesAsync()
+    {
+        // Arrange
+        var storedItems = new List<VectorSearchResult<Dictionary<string, object?>>>
+        {
+            new(
+                new Dictionary<string, object?>
+                {
+                    ["MessageId"] = "msg-1",
+                    ["Content"] = "Previous message",
+                    ["Role"] = ChatRole.User.ToString(),
+                    ["CreatedAt"] = "2023-01-01T00:00:00.0000000+00:00"
+                },
+                0.9f)
+        };
+
+        this._vectorStoreCollectionMock
+            .Setup(c => c.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerableAsync(storedItems));
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            options: new ChatHistoryMemoryProviderOptions
+            {
+                SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke
+            });
+
+        var inputMsg = new ChatMessage(ChatRole.User, "What was discussed?");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [inputMsg]);
+
+        // Act
+        var messages = (await provider.InvokingAsync(context)).ToList();
+
+        // Assert - input message + search result message, with stamping
+        Assert.Equal(2, messages.Count);
+        Assert.Equal("What was discussed?", messages[0].Text);
+        Assert.Contains("Previous message", messages[1].Text);
+        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, messages[1].GetAgentRequestMessageSourceType());
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_OnDemand_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            options: new ChatHistoryMemoryProviderOptions
+            {
+                SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.OnDemandFunctionCalling
+            });
+
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [new ChatMessage(ChatRole.User, "Q?")]);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.InvokingAsync(context).AsTask());
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_BeforeAIInvoke_NoResults_ReturnsOnlyInputMessagesAsync()
+    {
+        // Arrange
+        this._vectorStoreCollectionMock
+            .Setup(c => c.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerableAsync(new List<VectorSearchResult<Dictionary<string, object?>>>()));
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            options: new ChatHistoryMemoryProviderOptions
+            {
+                SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke
+            });
+
+        var inputMsg = new ChatMessage(ChatRole.User, "Hello");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [inputMsg]);
+
+        // Act
+        var messages = (await provider.InvokingAsync(context)).ToList();
+
+        // Assert
+        Assert.Single(messages);
+        Assert.Equal("Hello", messages[0].Text);
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_BeforeAIInvoke_DefaultFilter_ExcludesNonExternalMessagesAsync()
+    {
+        // Arrange
+        string? capturedQuery = null;
+        this._vectorStoreCollectionMock
+            .Setup(c => c.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, int, VectorSearchOptions<Dictionary<string, object?>>, CancellationToken>((query, _, _, _) => capturedQuery = query)
+            .Returns(ToAsyncEnumerableAsync(new List<VectorSearchResult<Dictionary<string, object?>>>()));
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            options: new ChatHistoryMemoryProviderOptions
+            {
+                SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke
+            });
+
+        var externalMsg = new ChatMessage(ChatRole.User, "External message");
+        var historyMsg = new ChatMessage(ChatRole.System, "From history")
+            .WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, "src");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [externalMsg, historyMsg]);
+
+        // Act
+        await provider.InvokingAsync(context);
+
+        // Assert - Only External message used for search query
+        Assert.Equal("External message", capturedQuery);
     }
 
     #endregion

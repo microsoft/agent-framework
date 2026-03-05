@@ -15,13 +15,13 @@ import os
 from random import randint
 from typing import Annotated
 
-import dotenv
 from agent_framework import Agent, tool
 from agent_framework.observability import create_resource, enable_instrumentation, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from azure.monitor.opentelemetry import configure_azure_monitor
+from dotenv import load_dotenv
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
@@ -36,12 +36,14 @@ So ensure you have the `azure-monitor-opentelemetry` package installed.
 """
 
 # For loading the `AZURE_AI_PROJECT_ENDPOINT` environment variable
-dotenv.load_dotenv()
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity.
+# Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 async def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Awaitable, Sequence
-from typing import Any
+from typing import Any, Literal, overload
 
 import pytest
 from typing_extensions import Never
@@ -578,6 +578,92 @@ class TestWorkflowAgent:
         assert "first message" in texts
         assert "second message" in texts
 
+    async def test_multi_turn_session_stores_responses(self) -> None:
+        """Test that WorkflowAgent stores response messages in session history (issue #1694).
+
+        Previously, session_context._response was not set before running after_run
+        providers, so InMemoryHistoryProvider never persisted response messages.
+        On subsequent runs the workflow only received prior user inputs, not prior
+        assistant responses, breaking multi-turn conversations.
+        """
+        capturing_executor = ConversationHistoryCapturingExecutor(id="multi_turn_test", streaming=False)
+        workflow = WorkflowBuilder(start_executor=capturing_executor).build()
+        agent = workflow.as_agent(name="Multi Turn Agent")
+        session = AgentSession()
+
+        # First turn
+        await agent.run("My name is Bob", session=session)
+
+        # Second turn — the executor should see prior user+assistant messages plus new input
+        await agent.run("What is my name?", session=session)
+
+        received = capturing_executor.received_messages
+        roles = [m.role for m in received]
+        texts = [m.text for m in received]
+
+        # History should include: user("My name is Bob"), assistant(response), user("What is my name?")
+        assert len(received) == 3, f"Expected 3 messages (user, assistant, user), got {len(received)}: {roles}"
+        assert roles[0] == "user"
+        assert "My name is Bob" in (texts[0] or "")
+        assert roles[1] == "assistant"
+        assert roles[2] == "user"
+        assert "What is my name?" in (texts[2] or "")
+
+    async def test_multi_turn_session_stores_responses_streaming(self) -> None:
+        """Streaming variant: WorkflowAgent stores response messages in session history."""
+        capturing_executor = ConversationHistoryCapturingExecutor(id="multi_turn_stream_test", streaming=True)
+        workflow = WorkflowBuilder(start_executor=capturing_executor).build()
+        agent = workflow.as_agent(name="Multi Turn Stream Agent")
+        session = AgentSession()
+
+        # First turn (streaming)
+        stream = agent.run("Hello", stream=True, session=session)
+        async for _ in stream:
+            pass
+        await stream.get_final_response()
+
+        # Second turn — should include prior history
+        stream2 = agent.run("Follow up", stream=True, session=session)
+        async for _ in stream2:
+            pass
+        await stream2.get_final_response()
+
+        received = capturing_executor.received_messages
+        roles = [m.role for m in received]
+
+        assert len(received) == 3, f"Expected 3 messages, got {len(received)}: {roles}"
+        assert roles[0] == "user"
+        assert roles[1] == "assistant"
+        assert roles[2] == "user"
+
+    async def test_multi_turn_session_roundtrip_serialization(self) -> None:
+        """Test that session can be serialized/deserialized and multi-turn still works."""
+        capturing_executor = ConversationHistoryCapturingExecutor(id="roundtrip_test", streaming=False)
+        workflow = WorkflowBuilder(start_executor=capturing_executor).build()
+        agent = workflow.as_agent(name="Roundtrip Agent")
+        session = AgentSession()
+
+        # First turn
+        await agent.run("My name is Bob", session=session)
+
+        # Serialize and deserialize the session
+        serialized = session.to_dict()
+        restored_session = AgentSession.from_dict(serialized)
+
+        # Second turn with restored session
+        await agent.run("What is my name?", session=restored_session)
+
+        received = capturing_executor.received_messages
+        roles = [m.role for m in received]
+        texts = [m.text for m in received]
+
+        assert len(received) == 3, f"Expected 3 messages, got {len(received)}: {roles}"
+        assert roles[0] == "user"
+        assert "My name is Bob" in (texts[0] or "")
+        assert roles[1] == "assistant"
+        assert roles[2] == "user"
+        assert "What is my name?" in (texts[2] or "")
+
     async def test_workflow_agent_keeps_explicit_context_providers(self) -> None:
         """Test that WorkflowAgent does not append defaults when context providers are explicitly provided."""
         workflow = WorkflowBuilder(
@@ -626,6 +712,14 @@ class TestWorkflowAgent:
 
             def create_session(self, **kwargs: Any) -> AgentSession:
                 return AgentSession()
+
+            def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+                return AgentSession()
+
+            @overload
+            def run(self, messages: str | Content | Message | Sequence[str | Content | Message] | None = ..., *, stream: Literal[False] = ..., session: AgentSession | None = ..., **kwargs: Any) -> Awaitable[AgentResponse[Any]]: ...
+            @overload
+            def run(self, messages: str | Content | Message | Sequence[str | Content | Message] | None = ..., *, stream: Literal[True], session: AgentSession | None = ..., **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
             def run(
                 self,
@@ -714,6 +808,14 @@ class TestWorkflowAgent:
 
             def create_session(self, **kwargs: Any) -> AgentSession:
                 return AgentSession()
+
+            def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+                return AgentSession()
+
+            @overload
+            def run(self, messages: str | Content | Message | Sequence[str | Content | Message] | None = ..., *, stream: Literal[False] = ..., session: AgentSession | None = ..., **kwargs: Any) -> Awaitable[AgentResponse[Any]]: ...
+            @overload
+            def run(self, messages: str | Content | Message | Sequence[str | Content | Message] | None = ..., *, stream: Literal[True], session: AgentSession | None = ..., **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
             def run(
                 self,
@@ -1121,7 +1223,7 @@ class TestWorkflowAgentMergeUpdates:
         ]
 
         # Compare using role.value for Role enum
-        actual_sequence_normalized = [(t, r.value if hasattr(r, "value") else r) for t, r in content_sequence]
+        actual_sequence_normalized = [(t, r.value if hasattr(r, "value") else r) for t, r in content_sequence]  # type: ignore[union-attr]
 
         assert actual_sequence_normalized == expected_sequence, (
             f"FunctionResultContent should come immediately after FunctionCallContent. "

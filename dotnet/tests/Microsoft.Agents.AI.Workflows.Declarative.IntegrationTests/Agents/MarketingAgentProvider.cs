@@ -7,6 +7,7 @@ using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
+using Shared.IntegrationTests;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 
@@ -36,7 +37,7 @@ internal sealed class MarketingAgentProvider(IConfiguration configuration) : Age
     }
 
     private PromptAgentDefinition DefineAnalystAgent() =>
-        new(this.GetSetting(Settings.FoundryModelFull))
+        new(this.GetSetting(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions =
                 """
@@ -54,7 +55,7 @@ internal sealed class MarketingAgentProvider(IConfiguration configuration) : Age
         };
 
     private PromptAgentDefinition DefineWriterAgent() =>
-        new(this.GetSetting(Settings.FoundryModelFull))
+        new(this.GetSetting(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions =
                 """
@@ -65,7 +66,7 @@ internal sealed class MarketingAgentProvider(IConfiguration configuration) : Age
         };
 
     private PromptAgentDefinition DefineEditorAgent() =>
-        new(this.GetSetting(Settings.FoundryModelFull))
+        new(this.GetSetting(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions =
                 """

@@ -13,6 +13,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionInvocationLayer,
+    InMemoryHistoryProvider,
     Message,
     ResponseStream,
 )
@@ -93,7 +94,9 @@ class EchoingChatClient(BaseChatClient[OptionsT]):
             response_text = f"{response_text} {suffix}"
         stream_delay_seconds = float(options.get("stream_delay_seconds", 0.05))
 
-        response_message = Message(role="assistant", contents=[Content.from_text(response_text)])
+        response_message = Message(
+            role="assistant", contents=[Content.from_text(response_text)]
+        )
 
         response = ChatResponse(
             messages=[response_message],
@@ -145,7 +148,7 @@ async def main() -> None:
     # Use the chat client directly
     print("Using chat client directly:")
     direct_response = await echo_client.get_response(
-        "Hello, custom chat client!",
+        [Message(role="user", text="Hello, custom chat client!")],
         options={
             "uppercase": True,
             "suffix": "(CUSTOM OPTIONS)",
@@ -195,7 +198,7 @@ async def main() -> None:
         print(f"Agent: {result.messages[0].text}\n")
 
     # Check conversation history
-    memory_state = session.state.get("memory", {})
+    memory_state = session.state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {})
     session_messages = memory_state.get("messages", [])
     if session_messages:
         print(f"Session contains {len(session_messages)} messages")

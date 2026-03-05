@@ -55,11 +55,7 @@ async def main():
     """Build a two-step sequential workflow and run it with streaming to observe events."""
     # Step 1: Build the workflow with the defined edges.
     # Order matters. upper_case_executor runs first, then reverse_text_executor.
-    workflow = (
-        WorkflowBuilder(start_executor=to_upper_case)
-        .add_edge(to_upper_case, reverse_text)
-        .build()
-    )
+    workflow = WorkflowBuilder(start_executor=to_upper_case).add_edge(to_upper_case, reverse_text).build()
 
     # Step 2: Run the workflow and stream events in real time.
     async for event in workflow.run("hello world", stream=True):

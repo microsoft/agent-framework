@@ -18,7 +18,11 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from typing_extensions import Never
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Sample: Agents in a workflow with AI functions requiring approval
@@ -196,12 +200,7 @@ class EmailPreprocessor(Executor):
     @handler
     async def preprocess(self, email: Email, ctx: WorkflowContext[str]) -> None:
         """Preprocess the incoming email."""
-        email_payload = (
-            f"Incoming email:\n"
-            f"From: {email.sender}\n"
-            f"Subject: {email.subject}\n"
-            f"Body: {email.body}"
-        )
+        email_payload = f"Incoming email:\nFrom: {email.sender}\nSubject: {email.subject}\nBody: {email.body}"
         message = email_payload
         if email.sender in self.special_email_addresses:
             note = (

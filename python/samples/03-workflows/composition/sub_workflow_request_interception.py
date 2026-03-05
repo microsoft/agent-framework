@@ -271,7 +271,9 @@ async def main() -> None:
     # Build the main workflow
     smart_email_orchestrator = SmartEmailOrchestrator(id="smart_email_orchestrator", approved_domains=approved_domains)
     email_delivery = EmailDelivery(id="email_delivery")
-    email_validation_workflow = WorkflowExecutor(build_email_address_validation_workflow(), id="email_validation_workflow")
+    email_validation_workflow = WorkflowExecutor(
+        build_email_address_validation_workflow(), id="email_validation_workflow"
+    )
 
     workflow = (
         WorkflowBuilder(start_executor=smart_email_orchestrator)

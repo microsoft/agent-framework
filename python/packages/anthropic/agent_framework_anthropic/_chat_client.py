@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
@@ -25,10 +25,11 @@ from agent_framework import (
     ResponseStream,
     TextSpanRegion,
     UsageDetails,
+    tool,
 )
 from agent_framework._settings import SecretString, load_settings
+from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
-from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropic
 from anthropic.types.beta import (
@@ -43,9 +44,11 @@ from anthropic.types.beta import (
 from anthropic.types.beta.beta_bash_code_execution_tool_result_error import (
     BetaBashCodeExecutionToolResultError,
 )
+from anthropic.types.beta.beta_code_execution_result_block import BetaCodeExecutionResultBlock
 from anthropic.types.beta.beta_code_execution_tool_result_error import (
     BetaCodeExecutionToolResultError,
 )
+from anthropic.types.beta.beta_encrypted_code_execution_result_block import BetaEncryptedCodeExecutionResultBlock
 from pydantic import BaseModel
 
 if sys.version_info >= (3, 11):
@@ -194,9 +197,9 @@ FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
 class AnthropicSettings(TypedDict, total=False):
     """Anthropic Project settings.
 
-    The settings are first loaded from environment variables with the prefix 'ANTHROPIC_'.
-    If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'ANTHROPIC_'.
 
     Keys:
         api_key: The Anthropic API key.
@@ -301,7 +304,7 @@ class AnthropicClient(
 
         if anthropic_client is None:
             if not anthropic_settings["api_key"]:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Anthropic API key is required. Set via 'api_key' parameter "
                     "or 'ANTHROPIC_API_KEY' environment variable."
                 )
@@ -322,8 +325,10 @@ class AnthropicClient(
         self.anthropic_client = anthropic_client
         self.additional_beta_flags = additional_beta_flags or []
         self.model_id = anthropic_settings["chat_model_id"]
-        # streaming requires tracking the last function call ID and name
+        # streaming requires tracking the last function call ID, name, and content type
         self._last_call_id_name: tuple[str, str] | None = None
+        self._last_call_content_type: str | None = None
+        self._tool_name_aliases: dict[str, str] = {}
 
     # region Static factory methods for hosted tools
 
@@ -331,11 +336,13 @@ class AnthropicClient(
     def get_code_interpreter_tool(
         *,
         type_name: str | None = None,
+        name: str = "code_execution",
     ) -> dict[str, Any]:
         """Create a code interpreter tool configuration for Anthropic.
 
         Keyword Args:
             type_name: Override the tool type name. Defaults to "code_execution_20250825".
+            name: The name for this tool. Defaults to "code_execution".
 
         Returns:
             A dict-based tool configuration ready to pass to ChatAgent.
@@ -348,17 +355,19 @@ class AnthropicClient(
                 tool = AnthropicClient.get_code_interpreter_tool()
                 agent = AnthropicClient().as_agent(tools=[tool])
         """
-        return {"type": type_name or "code_execution_20250825"}
+        return {"type": type_name or "code_execution_20250825", "name": name}
 
     @staticmethod
     def get_web_search_tool(
         *,
         type_name: str | None = None,
+        name: str = "web_search",
     ) -> dict[str, Any]:
         """Create a web search tool configuration for Anthropic.
 
         Keyword Args:
             type_name: Override the tool type name. Defaults to "web_search_20250305".
+            name: The name for this tool. Defaults to "web_search".
 
         Returns:
             A dict-based tool configuration ready to pass to ChatAgent.
@@ -371,7 +380,58 @@ class AnthropicClient(
                 tool = AnthropicClient.get_web_search_tool()
                 agent = AnthropicClient().as_agent(tools=[tool])
         """
-        return {"type": type_name or "web_search_20250305"}
+        return {"type": type_name or "web_search_20250305", "name": name}
+
+    @staticmethod
+    def get_shell_tool(
+        *,
+        func: Callable[..., Any] | FunctionTool,
+        description: str | None = None,
+        type_name: str | None = None,
+        approval_mode: Literal["always_require", "never_require"] | None = None,
+    ) -> FunctionTool:
+        """Create a local shell FunctionTool for Anthropic.
+
+        This helper wraps ``func`` as a shell-enabled ``FunctionTool`` for local
+        execution and configures Anthropic API declaration details via metadata.
+
+        Anthropic always exposes this tool to the model as ``name="bash"`` and
+        executes it using a ``bash_*`` tool type.
+
+        Keyword Args:
+            func: Python callable or ``FunctionTool`` that executes the requested shell command.
+            description: Optional tool description shown to the model.
+            type_name: Optional Anthropic shell tool type override.
+                Defaults to ``"bash_20250124"`` when omitted.
+            approval_mode: Optional approval mode for local execution.
+
+        Returns:
+            A shell-enabled ``FunctionTool`` suitable for ``ChatOptions.tools``.
+        """
+        base_tool: FunctionTool
+        if isinstance(func, FunctionTool):
+            base_tool = func
+            if description is not None:
+                base_tool.description = description
+            if approval_mode is not None:
+                base_tool.approval_mode = approval_mode
+        else:
+            base_tool = tool(
+                func=func,
+                description=description,
+                approval_mode=approval_mode,
+            )
+
+        additional_properties: dict[str, Any] = dict(base_tool.additional_properties or {})
+        if type_name:
+            additional_properties["type"] = type_name
+
+        if base_tool.func is None:
+            raise ValueError("Shell tool requires an executable function.")
+
+        base_tool.additional_properties = additional_properties
+        base_tool.kind = SHELL_TOOL_KIND_VALUE
+        return base_tool
 
     @staticmethod
     def get_mcp_tool(
@@ -488,6 +548,10 @@ class AnthropicClient(
         run_options: dict[str, Any] = {
             k: v for k, v in options.items() if v is not None and k not in {"instructions", "response_format"}
         }
+        # Framework-level options handled elsewhere; do not forward as raw Anthropic request kwargs.
+        run_options.pop("allow_multiple_tool_calls", None)
+        # Stream mode is controlled explicitly at call sites.
+        run_options.pop("stream", None)
 
         # Translation between options keys and Anthropic Messages API
         for old_key, new_key in OPTION_TRANSLATIONS.items():
@@ -655,8 +719,27 @@ class AnthropicClient(
                         "content": content.result if content.result is not None else "",
                         "is_error": content.exception is not None,
                     })
+                case "mcp_server_tool_call":
+                    mcp_call: dict[str, Any] = {
+                        "type": "mcp_tool_use",
+                        "id": content.call_id,
+                        "name": content.tool_name,
+                        "server_name": content.server_name or "",
+                        "input": content.parse_arguments() or {},
+                    }
+                    a_content.append(mcp_call)
+                case "mcp_server_tool_result":
+                    mcp_result: dict[str, Any] = {
+                        "type": "mcp_tool_result",
+                        "tool_use_id": content.call_id,
+                        "content": content.output if content.output is not None else "",
+                    }
+                    a_content.append(mcp_result)
                 case "text_reasoning":
-                    a_content.append({"type": "thinking", "thinking": content.text})
+                    thinking_block: dict[str, Any] = {"type": "thinking", "thinking": content.text}
+                    if content.protected_data:
+                        thinking_block["signature"] = content.protected_data
+                    a_content.append(thinking_block)
                 case _:
                     logger.debug(f"Ignoring unsupported content type: {content.type} for now")
 
@@ -686,8 +769,16 @@ class AnthropicClient(
         if tools:
             tool_list: list[Any] = []
             mcp_server_list: list[Any] = []
+            tool_name_aliases: dict[str, str] = {}
             for tool in tools:
-                if isinstance(tool, FunctionTool):
+                if isinstance(tool, FunctionTool) and tool.kind == SHELL_TOOL_KIND_VALUE:
+                    api_type = (tool.additional_properties or {}).get("type", "bash_20250124")
+                    tool_name_aliases["bash"] = tool.name
+                    tool_list.append({
+                        "type": api_type,
+                        "name": "bash",
+                    })
+                elif isinstance(tool, FunctionTool):
                     tool_list.append({
                         "type": "custom",
                         "name": tool.name,
@@ -715,6 +806,9 @@ class AnthropicClient(
                 result["tools"] = tool_list
             if mcp_server_list:
                 result["mcp_servers"] = mcp_server_list
+            self._tool_name_aliases = tool_name_aliases
+        else:
+            self._tool_name_aliases = {}
 
         # Process tool choice
         if options.get("tool_choice") is None:
@@ -731,9 +825,18 @@ class AnthropicClient(
                 result["tool_choice"] = tool_choice
             case "required":
                 if "required_function_name" in tool_mode:
+                    required_name = tool_mode["required_function_name"]
+                    api_tool_name = next(
+                        (
+                            api_name
+                            for api_name, local_name in self._tool_name_aliases.items()
+                            if local_name == required_name
+                        ),
+                        required_name,
+                    )
                     tool_choice = {
                         "type": "tool",
-                        "name": tool_mode["required_function_name"],
+                        "name": api_tool_name,
                     }
                 else:
                     tool_choice = {"type": "any"}
@@ -791,6 +894,7 @@ class AnthropicClient(
                     usage_details.append(Content.from_usage(usage_details=details))
 
                 return ChatResponseUpdate(
+                    role="assistant",
                     response_id=event.message.id,
                     contents=[
                         *self._parse_contents_from_anthropic(event.message.content),
@@ -860,12 +964,13 @@ class AnthropicClient(
                     )
                 case "tool_use" | "mcp_tool_use" | "server_tool_use":
                     self._last_call_id_name = (content_block.id, content_block.name)
+                    self._last_call_content_type = content_block.type
                     if content_block.type == "mcp_tool_use":
                         contents.append(
                             Content.from_mcp_server_tool_call(
                                 call_id=content_block.id,
                                 tool_name=content_block.name,
-                                server_name=None,
+                                server_name=getattr(content_block, "server_name", None),
                                 arguments=content_block.input,
                                 raw_representation=content_block,
                             )
@@ -884,10 +989,11 @@ class AnthropicClient(
                             )
                         )
                     else:
+                        resolved_tool_name = self._tool_name_aliases.get(content_block.name, content_block.name)
                         contents.append(
                             Content.from_function_call(
                                 call_id=content_block.id,
-                                name=content_block.name,
+                                name=resolved_tool_name,
                                 arguments=content_block.input,
                                 raw_representation=content_block,
                             )
@@ -934,10 +1040,23 @@ class AnthropicClient(
                                 )
                             )
                         else:
-                            if content_block.content.stdout:
+                            if (
+                                isinstance(content_block.content, BetaCodeExecutionResultBlock)
+                                and content_block.content.stdout
+                            ):
                                 code_outputs.append(
                                     Content.from_text(
                                         text=content_block.content.stdout,
+                                        raw_representation=content_block.content,
+                                    )
+                                )
+                            if (
+                                isinstance(content_block.content, BetaEncryptedCodeExecutionResultBlock)
+                                and content_block.content.encrypted_stdout
+                            ):
+                                code_outputs.append(
+                                    Content.from_text(
+                                        text=content_block.content.encrypted_stdout,
                                         raw_representation=content_block.content,
                                     )
                                 )
@@ -963,33 +1082,29 @@ class AnthropicClient(
                         )
                     )
                 case "bash_code_execution_tool_result":
-                    bash_outputs: list[Content] = []
+                    shell_outputs: list[Content] = []
                     if content_block.content:
                         if isinstance(
                             content_block.content,
                             BetaBashCodeExecutionToolResultError,
                         ):
-                            bash_outputs.append(
-                                Content.from_error(
-                                    message=content_block.content.error_code,
+                            shell_outputs.append(
+                                Content.from_shell_command_output(
+                                    stderr=content_block.content.error_code,
+                                    timed_out=content_block.content.error_code == "execution_time_exceeded",
                                     raw_representation=content_block.content,
                                 )
                             )
                         else:
-                            if content_block.content.stdout:
-                                bash_outputs.append(
-                                    Content.from_text(
-                                        text=content_block.content.stdout,
-                                        raw_representation=content_block.content,
-                                    )
+                            shell_outputs.append(
+                                Content.from_shell_command_output(
+                                    stdout=content_block.content.stdout or None,
+                                    stderr=content_block.content.stderr or None,
+                                    exit_code=int(content_block.content.return_code),
+                                    timed_out=False,
+                                    raw_representation=content_block.content,
                                 )
-                            if content_block.content.stderr:
-                                bash_outputs.append(
-                                    Content.from_error(
-                                        message=content_block.content.stderr,
-                                        raw_representation=content_block.content,
-                                    )
-                                )
+                            )
                             for bash_file_content in content_block.content.content:
                                 contents.append(
                                     Content.from_hosted_file(
@@ -998,9 +1113,9 @@ class AnthropicClient(
                                     )
                                 )
                     contents.append(
-                        Content.from_function_result(
+                        Content.from_shell_tool_result(
                             call_id=content_block.tool_use_id,
-                            result=bash_outputs,
+                            outputs=shell_outputs,
                             raw_representation=content_block,
                         )
                     )
@@ -1110,24 +1225,32 @@ class AnthropicClient(
                         )
                     )
                 case "input_json_delta":
-                    # For streaming argument deltas, only pass call_id and arguments.
-                    # Pass empty string for name - it causes ag-ui to emit duplicate ToolCallStartEvents
-                    # since it triggers on `if content.name:`. The initial tool_use event already
-                    # provides the name, so deltas should only carry incremental arguments.
-                    # This matches OpenAI's behavior where streaming chunks have name="".
-                    call_id, _name = self._last_call_id_name if self._last_call_id_name else ("", "")
-                    contents.append(
-                        Content.from_function_call(
-                            call_id=call_id,
-                            name="",
-                            arguments=content_block.partial_json,
-                            raw_representation=content_block,
+                    # Skip argument deltas for MCP tools — execution is handled server-side.
+                    if self._last_call_content_type == "mcp_tool_use":
+                        pass
+                    else:
+                        call_id = self._last_call_id_name[0] if self._last_call_id_name else ""
+                        contents.append(
+                            Content.from_function_call(
+                                call_id=call_id,
+                                name="",
+                                arguments=content_block.partial_json,
+                                raw_representation=content_block,
+                            )
                         )
-                    )
                 case "thinking" | "thinking_delta":
                     contents.append(
                         Content.from_text_reasoning(
                             text=content_block.thinking,
+                            protected_data=getattr(content_block, "signature", None),
+                            raw_representation=content_block,
+                        )
+                    )
+                case "signature_delta":
+                    contents.append(
+                        Content.from_text_reasoning(
+                            text=None,
+                            protected_data=content_block.signature,
                             raw_representation=content_block,
                         )
                     )
