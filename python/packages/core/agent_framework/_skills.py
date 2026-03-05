@@ -107,6 +107,15 @@ class SkillResource:
         self.content = content
         self.function = function
 
+        # Precompute whether the function accepts **kwargs to avoid
+        # repeated inspect.signature() calls on every invocation.
+        self._accepts_kwargs: bool = False
+        if function is not None:
+            sig = inspect.signature(function)
+            self._accepts_kwargs = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+
 
 class Skill:
     """A skill definition with optional resources.
@@ -550,19 +559,13 @@ class SkillsProvider(BaseContextProvider):
             return resource.content
 
         if resource.function is not None:
-            # Check if the resource function accepts **kwargs
-            forward_kwargs = False
-            sig = inspect.signature(resource.function)
-            for param in sig.parameters.values():
-                if param.kind == inspect.Parameter.VAR_KEYWORD:
-                    forward_kwargs = True
-                    break
-
             try:
                 if inspect.iscoroutinefunction(resource.function):
-                    result = await resource.function(**kwargs) if forward_kwargs else await resource.function()
+                    result = (
+                        await resource.function(**kwargs) if resource._accepts_kwargs else await resource.function()
+                    )
                 else:
-                    result = resource.function(**kwargs) if forward_kwargs else resource.function()
+                    result = resource.function(**kwargs) if resource._accepts_kwargs else resource.function()
                 return str(result)
             except Exception as exc:
                 logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
