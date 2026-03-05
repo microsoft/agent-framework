@@ -16,7 +16,7 @@ import copy
 import uuid
 from abc import abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from ._types import AgentResponse, Message
 
@@ -92,7 +92,7 @@ def _deserialize_value(value: Any) -> Any:
                 from pydantic import BaseModel
 
                 if issubclass(cls, BaseModel):
-                    data = {k: v for k, v in value.items() if k != "type"}
+                    data: dict[str, Any] = {str(k): v for k, v in value.items() if k != "type"}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
                     return cls.model_validate(data)
             except ImportError:
                 pass
@@ -229,8 +229,11 @@ class SessionContext:
             tools: The tools to add.
         """
         for tool in tools:
-            if hasattr(tool, "additional_properties") and isinstance(tool.additional_properties, dict):
-                tool.additional_properties["context_source"] = source_id
+            if hasattr(tool, "additional_properties"):
+                additional_properties_obj = tool.additional_properties
+                if isinstance(additional_properties_obj, dict):
+                    additional_properties = cast(dict[str, Any], additional_properties_obj)
+                    additional_properties["context_source"] = source_id
         self.tools.extend(tools)
 
     def get_messages(

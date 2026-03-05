@@ -1,0 +1,52 @@
+@host = http://localhost:8088
+@endpoint = {{host}}/responses
+
+### Health Check
+GET {{host}}/readiness
+
+### Simple hotel search - budget under $200
+POST {{endpoint}}
+Content-Type: application/json
+
+{
+    "input": "I need a hotel in Seattle from 2025-03-15 to 2025-03-18, budget under $200 per night",
+    "stream": false
+}
+
+### Hotel search with higher budget
+POST {{endpoint}}
+Content-Type: application/json
+
+{
+    "input": "Find me hotels in Seattle for March 20-23, 2025 under $250 per night",
+    "stream": false
+}
+
+### Ask for recommendations without dates (agent should ask for clarification)
+POST {{endpoint}}
+Content-Type: application/json
+
+{
+    "input": "What hotels do you recommend in Seattle?",
+    "stream": false
+}
+
+### Explicit input format
+POST {{endpoint}}
+Content-Type: application/json
+
+{
+    "input": [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "I'm looking for a hotel in Seattle from 2025-04-01 to 2025-04-05, my budget is $150 per night maximum"
+                }
+            ]
+        }
+    ],
+    "stream": false
+}

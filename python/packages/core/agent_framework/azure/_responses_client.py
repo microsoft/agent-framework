@@ -20,7 +20,7 @@ from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
-    _apply_azure_defaults,
+    _apply_azure_defaults,  # pyright: ignore[reportPrivateUsage]
 )
 
 if sys.version_info >= (3, 13):
@@ -180,7 +180,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
                 client: AzureOpenAIResponsesClient[MyOptions] = AzureOpenAIResponsesClient()
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        if model_id := kwargs.pop("model_id", None) and not deployment_name:
+        if (model_id := kwargs.pop("model_id", None)) and not deployment_name:
             deployment_name = str(model_id)
 
         # Project client path: create OpenAI client from an Azure AI Foundry project
@@ -207,27 +207,31 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         # TODO(peterychang): This is a temporary hack to ensure that the base_url is set correctly
         # while this feature is in preview.
         # But we should only do this if we're on azure. Private deployments may not need this.
+        endpoint_value = azure_openai_settings.get("endpoint")
         if (
             not azure_openai_settings.get("base_url")
-            and azure_openai_settings.get("endpoint")
-            and (hostname := urlparse(str(azure_openai_settings["endpoint"])).hostname)
+            and endpoint_value
+            and (hostname := urlparse(str(endpoint_value)).hostname)
             and hostname.endswith(".openai.azure.com")
         ):
-            azure_openai_settings["base_url"] = urljoin(str(azure_openai_settings["endpoint"]), "/openai/v1/")
+            azure_openai_settings["base_url"] = urljoin(str(endpoint_value), "/openai/v1/")
 
-        if not azure_openai_settings["responses_deployment_name"]:
+        responses_deployment_name = azure_openai_settings.get("responses_deployment_name")
+        if not responses_deployment_name:
             raise ValueError(
                 "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME' environment variable."
             )
 
+        api_key_secret = azure_openai_settings.get("api_key")
+
         super().__init__(
-            deployment_name=azure_openai_settings["responses_deployment_name"],
-            endpoint=azure_openai_settings["endpoint"],
-            base_url=azure_openai_settings["base_url"],
-            api_version=azure_openai_settings["api_version"],  # type: ignore
-            api_key=azure_openai_settings["api_key"].get_secret_value() if azure_openai_settings["api_key"] else None,
-            token_endpoint=azure_openai_settings["token_endpoint"],
+            deployment_name=responses_deployment_name,
+            endpoint=azure_openai_settings.get("endpoint"),
+            base_url=azure_openai_settings.get("base_url"),
+            api_version=azure_openai_settings.get("api_version") or "",
+            api_key=api_key_secret.get_secret_value() if api_key_secret else None,
+            token_endpoint=azure_openai_settings.get("token_endpoint"),
             credential=credential,
             default_headers=default_headers,
             client=async_client,

@@ -31,6 +31,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionTool,
     Message,
     SupportsChatGetResponse,
     tool,
@@ -38,6 +39,7 @@ from agent_framework import (
 from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
 from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
+from agent_framework.openai._responses_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
@@ -562,6 +564,386 @@ def test_response_content_creation_with_code_interpreter() -> None:
     assert result_content.outputs is not None
     assert any(out.type == "text" for out in result_content.outputs)
     assert any(out.type == "uri" for out in result_content.outputs)
+
+
+def test_get_shell_tool_basic() -> None:
+    """Test get_shell_tool returns hosted shell config with default auto environment."""
+    tool = OpenAIResponsesClient.get_shell_tool()
+    assert tool.type == "shell"
+    assert tool.environment.type == "container_auto"
+
+
+def test_get_shell_tool_rejects_local_without_func() -> None:
+    """Local environment requires a local function executor."""
+    with pytest.raises(ValueError, match="Local shell requires func"):
+        OpenAIResponsesClient.get_shell_tool(environment={"type": "local"})
+
+
+def test_get_shell_tool_rejects_environment_config_with_func() -> None:
+    """Environment config is hosted-only and must not be passed with func."""
+
+    def local_exec(command: str) -> str:
+        return command
+
+    with pytest.raises(ValueError, match="environment config is not supported"):
+        OpenAIResponsesClient.get_shell_tool(
+            func=local_exec,
+            environment={"type": "container_auto"},
+        )
+
+
+def test_get_shell_tool_local_executor_maps_to_shell_tool() -> None:
+    """Test local shell FunctionTool maps to OpenAI shell tool declaration."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIResponsesClient.get_shell_tool(
+        func=local_exec,
+        approval_mode="never_require",
+    )
+
+    assert isinstance(local_shell_tool, FunctionTool)
+    response_tools = client._prepare_tools_for_openai([local_shell_tool])
+    assert len(response_tools) == 1
+    assert response_tools[0].type == "shell"
+    assert response_tools[0].environment.type == "local"
+
+
+def test_get_shell_tool_reuses_function_tool_instance() -> None:
+    """Passing a FunctionTool should update and return the same tool instance."""
+
+    @tool(name="run_shell", approval_mode="never_require")
+    def run_shell(command: str) -> str:
+        return command
+
+    shell_tool = OpenAIResponsesClient.get_shell_tool(
+        func=run_shell,
+        description="Run local shell command",
+        approval_mode="always_require",
+    )
+
+    assert shell_tool is run_shell
+    assert shell_tool.kind == "shell"
+    assert shell_tool.description == "Run local shell command"
+    assert shell_tool.approval_mode == "always_require"
+    assert (shell_tool.additional_properties or {}).get("openai.responses.shell.environment") == {"type": "local"}
+
+
+def test_response_content_creation_with_local_shell_call_maps_to_function_call() -> None:
+    """Test local_shell_call is translated into function_call for invocation loop."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIResponsesClient.get_shell_tool(func=local_exec)
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.command = ["python", "--version"]
+    mock_action.timeout_ms = 30000
+
+    mock_local_shell_call = MagicMock()
+    mock_local_shell_call.type = "local_shell_call"
+    mock_local_shell_call.id = "local-shell-item-1"
+    mock_local_shell_call.call_id = "local-shell-call-1"
+    mock_local_shell_call.action = mock_action
+    mock_local_shell_call.status = "completed"
+
+    mock_response.output = [mock_local_shell_call]
+
+    response = client._parse_response_from_openai(mock_response, options={"tools": [local_shell_tool]})  # type: ignore[arg-type]
+    assert len(response.messages[0].contents) == 1
+    call_content = response.messages[0].contents[0]
+    assert call_content.type == "function_call"
+    assert call_content.call_id == "local-shell-call-1"
+    assert call_content.name == local_shell_tool.name
+    assert call_content.parse_arguments() == {"command": "python --version"}
+    assert call_content.additional_properties[OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY] == "local-shell-item-1"
+
+
+@pytest.mark.asyncio
+async def test_local_shell_tool_is_invoked_in_function_loop() -> None:
+    """Test local shell call executes executor and sends local_shell_call_output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    executed_commands: list[str] = []
+
+    def local_exec(command: str) -> str:
+        executed_commands.append(command)
+        return "Python 3.13.0"
+
+    local_shell_tool = OpenAIResponsesClient.get_shell_tool(
+        func=local_exec,
+        approval_mode="never_require",
+    )
+
+    mock_response1 = MagicMock()
+    mock_response1.output_parsed = None
+    mock_response1.metadata = {}
+    mock_response1.usage = None
+    mock_response1.id = "resp-1"
+    mock_response1.model = "test-model"
+    mock_response1.created_at = 1000000000
+    mock_response1.status = "completed"
+    mock_response1.finish_reason = "tool_calls"
+    mock_response1.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.command = ["python", "--version"]
+    mock_action.timeout_ms = 30000
+
+    mock_local_shell_call = MagicMock()
+    mock_local_shell_call.type = "local_shell_call"
+    mock_local_shell_call.id = "local-shell-item-1"
+    mock_local_shell_call.call_id = "local-shell-call-1"
+    mock_local_shell_call.action = mock_action
+    mock_local_shell_call.status = "completed"
+    mock_response1.output = [mock_local_shell_call]
+
+    mock_response2 = MagicMock()
+    mock_response2.output_parsed = None
+    mock_response2.metadata = {}
+    mock_response2.usage = None
+    mock_response2.id = "resp-2"
+    mock_response2.model = "test-model"
+    mock_response2.created_at = 1000000001
+    mock_response2.status = "completed"
+    mock_response2.finish_reason = "stop"
+    mock_response2.incomplete = None
+
+    mock_text_item = MagicMock()
+    mock_text_item.type = "message"
+    mock_text_content = MagicMock()
+    mock_text_content.type = "output_text"
+    mock_text_content.text = "Python 3.13.0"
+    mock_text_item.content = [mock_text_content]
+    mock_response2.output = [mock_text_item]
+
+    with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
+        await client.get_response(
+            messages=[Message(role="user", text="What Python version is available?")],
+            options={"tools": [local_shell_tool]},
+        )
+
+        assert executed_commands == ["python --version"]
+        assert mock_create.call_count == 2
+        second_call_input = mock_create.call_args_list[1].kwargs["input"]
+        local_shell_outputs = [item for item in second_call_input if item.get("type") == "local_shell_call_output"]
+        assert len(local_shell_outputs) == 1
+        output_payload = json.loads(local_shell_outputs[0]["output"])
+        assert output_payload["stdout"] == "Python 3.13.0"
+
+
+@pytest.mark.asyncio
+async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
+    """Test shell_call maps to local function invocation and returns shell_call_output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    executed_commands: list[str] = []
+
+    def local_exec(command: str) -> str:
+        executed_commands.append(command)
+        return "Python 3.13.0"
+
+    local_shell_tool = OpenAIResponsesClient.get_shell_tool(
+        func=local_exec,
+        approval_mode="never_require",
+    )
+
+    mock_response1 = MagicMock()
+    mock_response1.output_parsed = None
+    mock_response1.metadata = {}
+    mock_response1.usage = None
+    mock_response1.id = "resp-1"
+    mock_response1.model = "test-model"
+    mock_response1.created_at = 1000000000
+    mock_response1.status = "completed"
+    mock_response1.finish_reason = "tool_calls"
+    mock_response1.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.commands = ["python --version"]
+    mock_action.timeout_ms = 30000
+    mock_action.max_output_length = 4096
+
+    mock_shell_call = MagicMock()
+    mock_shell_call.type = "shell_call"
+    mock_shell_call.id = "sh_test_shell_call_1"
+    mock_shell_call.call_id = "shell-call-1"
+    mock_shell_call.action = mock_action
+    mock_shell_call.status = "completed"
+    mock_response1.output = [mock_shell_call]
+
+    mock_response2 = MagicMock()
+    mock_response2.output_parsed = None
+    mock_response2.metadata = {}
+    mock_response2.usage = None
+    mock_response2.id = "resp-2"
+    mock_response2.model = "test-model"
+    mock_response2.created_at = 1000000001
+    mock_response2.status = "completed"
+    mock_response2.finish_reason = "stop"
+    mock_response2.incomplete = None
+
+    mock_text_item = MagicMock()
+    mock_text_item.type = "message"
+    mock_text_content = MagicMock()
+    mock_text_content.type = "output_text"
+    mock_text_content.text = "Python 3.13.0"
+    mock_text_item.content = [mock_text_content]
+    mock_response2.output = [mock_text_item]
+
+    with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
+        await client.get_response(
+            messages=[Message(role="user", text="What Python version is available?")],
+            options={"tools": [local_shell_tool]},
+        )
+
+        assert executed_commands == ["python --version"]
+        assert mock_create.call_count == 2
+        second_call_input = mock_create.call_args_list[1].kwargs["input"]
+        shell_outputs = [item for item in second_call_input if item.get("type") == "shell_call_output"]
+        assert len(shell_outputs) == 1
+        assert shell_outputs[0]["call_id"] == "shell-call-1"
+        assert isinstance(shell_outputs[0]["output"], list)
+        assert shell_outputs[0]["output"][0]["stdout"] == "Python 3.13.0"
+        local_shell_outputs = [item for item in second_call_input if item.get("type") == "local_shell_call_output"]
+        assert len(local_shell_outputs) == 0
+
+
+def test_response_content_creation_with_shell_call() -> None:
+    """Test _parse_response_from_openai with shell_call output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.commands = ["ls -la", "pwd"]
+    mock_action.timeout_ms = 60000
+    mock_action.max_output_length = 4096
+
+    mock_shell_call = MagicMock()
+    mock_shell_call.type = "shell_call"
+    mock_shell_call.call_id = "shell-call-1"
+    mock_shell_call.action = mock_action
+    mock_shell_call.status = "completed"
+
+    mock_response.output = [mock_shell_call]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 1
+    call_content = response.messages[0].contents[0]
+    assert call_content.type == "shell_tool_call"
+    assert call_content.call_id == "shell-call-1"
+    assert call_content.commands == ["ls -la", "pwd"]
+    assert call_content.timeout_ms == 60000
+    assert call_content.max_output_length == 4096
+    assert call_content.status == "completed"
+
+
+def test_response_content_creation_with_shell_call_output() -> None:
+    """Test _parse_response_from_openai with shell_call_output output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_outcome = MagicMock()
+    mock_outcome.type = "exit"
+    mock_outcome.exit_code = 0
+
+    mock_output_entry = MagicMock()
+    mock_output_entry.stdout = "hello world\n"
+    mock_output_entry.stderr = ""
+    mock_output_entry.outcome = mock_outcome
+
+    mock_shell_output = MagicMock()
+    mock_shell_output.type = "shell_call_output"
+    mock_shell_output.call_id = "shell-call-1"
+    mock_shell_output.output = [mock_output_entry]
+    mock_shell_output.max_output_length = 4096
+
+    mock_response.output = [mock_shell_output]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 1
+    result_content = response.messages[0].contents[0]
+    assert result_content.type == "shell_tool_result"
+    assert result_content.call_id == "shell-call-1"
+    assert result_content.outputs is not None
+    assert len(result_content.outputs) == 1
+    assert result_content.outputs[0].type == "shell_command_output"
+    assert result_content.outputs[0].stdout == "hello world\n"
+    assert result_content.outputs[0].exit_code == 0
+    assert result_content.outputs[0].timed_out is False
+    assert result_content.max_output_length == 4096
+
+
+def test_response_content_creation_with_shell_call_timeout() -> None:
+    """Test _parse_response_from_openai with shell_call_output that timed out."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_outcome = MagicMock()
+    mock_outcome.type = "timeout"
+
+    mock_output_entry = MagicMock()
+    mock_output_entry.stdout = "partial output"
+    mock_output_entry.stderr = None
+    mock_output_entry.outcome = mock_outcome
+
+    mock_shell_output = MagicMock()
+    mock_shell_output.type = "shell_call_output"
+    mock_shell_output.call_id = "shell-call-t"
+    mock_shell_output.output = [mock_output_entry]
+    mock_shell_output.max_output_length = None
+
+    mock_response.output = [mock_shell_output]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    result_content = response.messages[0].contents[0]
+    assert result_content.type == "shell_tool_result"
+    assert result_content.outputs is not None
+    assert result_content.outputs[0].type == "shell_command_output"
+    assert result_content.outputs[0].timed_out is True
+    assert result_content.outputs[0].exit_code is None
 
 
 def test_response_content_creation_with_function_call() -> None:
@@ -1191,6 +1573,52 @@ def test_prepare_tools_for_openai_with_mcp() -> None:
     assert set(mcp["allowed_tools"]) == {"tool_a", "tool_b"}
     # approval mapping created from approval_mode dict
     assert "require_approval" in mcp
+
+
+def test_prepare_tools_for_openai_single_function_tool() -> None:
+    """Test that a single FunctionTool (not wrapped in a list) is handled correctly."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    @tool
+    def hello(name: str) -> str:
+        """Say hello."""
+        return name
+
+    resp_tools = client._prepare_tools_for_openai(hello)
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 1
+    tool_def = resp_tools[0]
+    assert tool_def["type"] == "function"
+    assert tool_def["name"] == "hello"
+    assert tool_def["strict"] is False
+    assert "parameters" in tool_def
+    params = tool_def["parameters"]
+    assert isinstance(params, dict)
+    assert params.get("type") == "object"
+    assert "properties" in params
+    assert "name" in params["properties"]
+    assert params["properties"]["name"]["type"] == "string"
+
+
+def test_prepare_tools_for_openai_single_dict_tool() -> None:
+    """Test that a single dict tool (not wrapped in a list) is handled correctly."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    web_tool = OpenAIResponsesClient.get_web_search_tool(search_context_size="low")
+    resp_tools = client._prepare_tools_for_openai(web_tool)
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 1
+    assert "type" in resp_tools[0]
+    assert resp_tools[0]["search_context_size"] == "low"
+
+
+def test_prepare_tools_for_openai_none() -> None:
+    """Test that passing None returns an empty list."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    resp_tools = client._prepare_tools_for_openai(None)
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 0
 
 
 def test_parse_response_from_openai_with_mcp_approval_request() -> None:

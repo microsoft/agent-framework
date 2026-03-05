@@ -1,0 +1,70 @@
+@host = http://localhost:8088
+@endpoint = {{host}}/responses
+
+### Health Check
+GET {{host}}/readiness
+
+###
+# HITL (Human-in-the-Loop) Flow
+#
+# This sample requires a multi-turn conversation to demonstrate the approval flow:
+# 1. Send a request that triggers a tool call (e.g., asking about the weather)
+# 2. The agent responds with a function_call named "__hosted_agent_adapter_hitl__"
+#    containing the call_id and the tool details
+# 3. Send a follow-up request with a function_call_output to approve or reject
+#
+# IMPORTANT: You must use the same conversation.id across all requests in a flow,
+# and update the call_id from step 2 into step 3.
+###
+
+### Step 1: Send initial request (triggers HITL approval)
+# @name initialRequest
+POST {{endpoint}}
+Content-Type: application/json
+
+{
+    "input": "What is the weather like in Vancouver?",
+    "stream": false,
+    "conversation": {
+        "id": "conv_test0000000000000000000000000000000000000000000000"
+    }
+}
+
+### Step 2: Approve the function call
+# Copy the call_id from the Step 1 response output and replace below.
+# The response will contain: "name": "__hosted_agent_adapter_hitl__" with a "call_id" value.
+POST {{endpoint}}
+Content-Type: application/json
+
+{
+    "input": [
+        {
+            "type": "function_call_output",
+            "call_id": "REPLACE_WITH_CALL_ID_FROM_STEP_1",
+            "output": "approve"
+        }
+    ],
+    "stream": false,
+    "conversation": {
+        "id": "conv_test0000000000000000000000000000000000000000000000"
+    }
+}
+
+### Step 3 (alternative): Reject the function call
+# Use this instead of Step 2 to deny the tool execution.
+POST {{endpoint}}
+Content-Type: application/json
+
+{
+    "input": [
+        {
+            "type": "function_call_output",
+            "call_id": "REPLACE_WITH_CALL_ID_FROM_STEP_1",
+            "output": "reject"
+        }
+    ],
+    "stream": false,
+    "conversation": {
+        "id": "conv_test0000000000000000000000000000000000000000000000"
+    }
+}

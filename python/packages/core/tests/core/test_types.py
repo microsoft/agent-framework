@@ -332,6 +332,120 @@ def test_mcp_server_tool_call_and_result():
     assert call2.call_id == ""
 
 
+# region: Shell tool content
+
+
+def test_shell_tool_call_content_creation():
+    call = Content.from_shell_tool_call(
+        call_id="shell-1",
+        commands=["ls -la", "pwd"],
+        timeout_ms=60000,
+        max_output_length=4096,
+        status="completed",
+    )
+
+    assert call.type == "shell_tool_call"
+    assert call.call_id == "shell-1"
+    assert call.commands == ["ls -la", "pwd"]
+    assert call.timeout_ms == 60000
+    assert call.max_output_length == 4096
+    assert call.status == "completed"
+
+
+def test_shell_tool_call_content_minimal():
+    call = Content.from_shell_tool_call(call_id="shell-2")
+
+    assert call.type == "shell_tool_call"
+    assert call.call_id == "shell-2"
+    assert call.commands is None
+    assert call.timeout_ms is None
+    assert call.max_output_length is None
+    assert call.status is None
+
+
+def test_shell_tool_result_content_creation():
+    result = Content.from_shell_tool_result(
+        call_id="shell-1",
+        outputs=[
+            Content.from_shell_command_output(stdout="hello world\n", stderr=None, exit_code=0, timed_out=False),
+            Content.from_shell_command_output(stderr="error msg", exit_code=1, timed_out=False),
+        ],
+        max_output_length=4096,
+    )
+
+    assert result.type == "shell_tool_result"
+    assert result.call_id == "shell-1"
+    assert result.outputs is not None
+    assert len(result.outputs) == 2
+    assert result.outputs[0].type == "shell_command_output"
+    assert result.outputs[0].stdout == "hello world\n"
+    assert result.outputs[0].exit_code == 0
+    assert result.outputs[0].timed_out is False
+    assert result.outputs[1].type == "shell_command_output"
+    assert result.outputs[1].stderr == "error msg"
+    assert result.outputs[1].exit_code == 1
+    assert result.max_output_length == 4096
+
+
+def test_shell_tool_result_with_timeout():
+    result = Content.from_shell_tool_result(
+        call_id="shell-t",
+        outputs=[Content.from_shell_command_output(stdout="partial", timed_out=True)],
+    )
+
+    assert result.type == "shell_tool_result"
+    assert result.outputs is not None
+    assert result.outputs[0].timed_out is True
+    assert result.outputs[0].exit_code is None
+
+
+def test_shell_command_output_content_creation():
+    output = Content.from_shell_command_output(
+        stdout="hello\n",
+        stderr="warn\n",
+        exit_code=0,
+        timed_out=False,
+    )
+
+    assert output.type == "shell_command_output"
+    assert output.stdout == "hello\n"
+    assert output.stderr == "warn\n"
+    assert output.exit_code == 0
+    assert output.timed_out is False
+
+
+def test_shell_content_serialization_roundtrip():
+    call = Content.from_shell_tool_call(
+        call_id="shell-r",
+        commands=["echo hello"],
+        timeout_ms=30000,
+        status="completed",
+    )
+    call_dict = call.to_dict()
+    restored_call = Content.from_dict(call_dict)
+    assert restored_call.type == "shell_tool_call"
+    assert restored_call.call_id == "shell-r"
+    assert restored_call.commands == ["echo hello"]
+    assert restored_call.timeout_ms == 30000
+    assert restored_call.status == "completed"
+
+    result = Content.from_shell_tool_result(
+        call_id="shell-r",
+        outputs=[Content.from_shell_command_output(stdout="hello\n", exit_code=0, timed_out=False)],
+        max_output_length=4096,
+    )
+    result_dict = result.to_dict()
+    restored_result = Content.from_dict(result_dict)
+    assert restored_result.type == "shell_tool_result"
+    assert restored_result.call_id == "shell-r"
+    assert restored_result.outputs is not None
+    assert len(restored_result.outputs) == 1
+    assert restored_result.outputs[0].type == "shell_command_output"
+    assert restored_result.outputs[0].stdout == "hello\n"
+    assert restored_result.outputs[0].exit_code == 0
+    assert restored_result.max_output_length == 4096
+
+
 # region: HostedVectorStoreContent
 
 
@@ -436,7 +550,6 @@ def test_usage_details():
     assert usage["input_token_count"] == 5
     assert usage["output_token_count"] == 10
     assert usage["total_token_count"] == 15
-    assert usage.get("additional_counts", {}) == {}
 
 
 def test_usage_details_addition():
@@ -467,8 +580,8 @@ def test_usage_details_addition():
 def test_usage_details_fail():
     # TypedDict doesn't validate types at runtime, so this test no longer applies
     # Creating UsageDetails with wrong types won't raise ValueError
-    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, wrong_type="42.923")  # type: ignore[typeddict-item]
-    assert usage["wrong_type"] == "42.923"  # type: ignore[typeddict-item]
+    usage = UsageDetails(input_token_count=5, output_token_count=10, total_token_count=15, wrong_type="42.923")
+    assert usage["wrong_type"] == "42.923"
 
 
 def test_usage_details_additional_counts():
@@ -485,6 +598,15 @@ def test_usage_details_add_with_none_and_type_errors():
     v2 = add_usage_details(None, u)
     assert v2 == u
     # TypedDict doesn't support + operator, use add_usage_details
+
+
+def test_usage_details_add_skips_non_int():
+    u1 = UsageDetails(input_token_count=10, other="test")
+    u2 = UsageDetails(input_token_count=10, another="test")
+    u3 = add_usage_details(u1, u2)
+    assert len(u3.keys()) == 1
+    assert "input_token_count" in u3
+    assert u3["input_token_count"] == 20
 
 
 # region UserInputRequest and Response
@@ -1591,7 +1713,7 @@ def test_chat_response_complex_serialization():
             {"role": "user", "contents": [{"type": "text", "text": "Hello"}]},
             {"role": "assistant", "contents": [{"type": "text", "text": "Hi there"}]},
         ],
-        "finish_reason": {"value": "stop"},
+        "finish_reason": "stop",
         "usage_details": {
             "type": "usage_details",
             "input_token_count": 5,
@@ -1717,7 +1839,7 @@ def test_agent_run_response_update_all_content_types():
             },
             {"type": "text_reasoning", "text": "reasoning"},
         ],
-        "role": {"value": "assistant"},  # Test role as dict
+        "role": "assistant",  # Test role as dict
     }
 
     update = AgentResponseUpdate.from_dict(update_data)
@@ -2280,7 +2402,7 @@ def test_content_add_usage_content_non_integer_values():
     result = usage1 + usage2
 
     # Non-integer "model" should take first non-None value
-    assert result.usage_details["model"] == "gpt-4"
+    assert "model" not in result.usage_details
     # Integer "count" should be summed
     assert result.usage_details["count"] == 30
 
@@ -3307,6 +3429,33 @@ class TestResponseStreamEdgeCases:
         await stream.get_final_response()
 
         assert events == ["transform", "cleanup", "finalizer", "result"]
+
+
+# endregion
+
+
+# region OAuth Consent Content
+
+
+def test_oauth_consent_request_creation():
+    """Test Content.from_oauth_consent_request creates the correct content."""
+    content = Content.from_oauth_consent_request(
+        consent_link="https://login.microsoftonline.com/common/oauth2/authorize?client_id=abc",
+    )
+    assert content.type == "oauth_consent_request"
+    assert content.consent_link == "https://login.microsoftonline.com/common/oauth2/authorize?client_id=abc"
+    assert content.user_input_request is True
+
+
+def test_oauth_consent_request_serialization_roundtrip():
+    """Test that oauth_consent_request content serializes and includes consent_link."""
+    content = Content.from_oauth_consent_request(
+        consent_link="https://login.microsoftonline.com/consent",
+    )
+    d = content.to_dict()
+    assert d["type"] == "oauth_consent_request"
+    assert d["consent_link"] == "https://login.microsoftonline.com/consent"
+    assert d["user_input_request"] is True
 
 
 # endregion

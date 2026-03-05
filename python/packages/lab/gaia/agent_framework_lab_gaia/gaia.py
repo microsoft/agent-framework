@@ -13,7 +13,7 @@ import time
 from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from opentelemetry.trace import NoOpTracer, SpanKind, get_tracer
 from tqdm import tqdm
@@ -163,7 +163,7 @@ def _normalize_str(s: str, remove_punct: bool = True) -> str:
     return no_spaces.lower()
 
 
-def gaia_scorer(model_answer: str, ground_truth: str) -> bool:
+def gaia_scorer(model_answer: str | None, ground_truth: str) -> bool:
     """Official GAIA scoring function.
 
     Args:
@@ -193,7 +193,7 @@ def gaia_scorer(model_answer: str, ground_truth: str) -> bool:
         ma_elems = _split_string(model_answer)
         if len(gt_elems) != len(ma_elems):
             return False
-        comparisons = []
+        comparisons: list[bool] = []
         for ma, gt in zip(ma_elems, gt_elems, strict=False):
             if is_float(gt):
                 comparisons.append(abs(_normalize_number_str(ma) - float(gt)) < 1e-6)
@@ -204,18 +204,39 @@ def gaia_scorer(model_answer: str, ground_truth: str) -> bool:
     return _normalize_str(model_answer) == _normalize_str(ground_truth)
 
 
+def _coerce_record(raw: object) -> dict[str, Any] | None:
+    if isinstance(raw, dict):
+        raw_dict = cast(dict[object, Any], raw)
+        if all(isinstance(key, str) for key in raw_dict):
+            return cast(dict[str, Any], raw_dict)
+    return None
+
+
+def _parse_level(level: object) -> int | None:
+    if isinstance(level, int):
+        return level
+    if isinstance(level, str) and level.isdigit():
+        return int(level)
+    return None
+
+
 def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
     """Read JSONL file and yield parsed records."""
     with path.open("rb") as f:
         for line in f:
             if not line.strip():
                 continue
+            parsed: object
             try:
                 import orjson
 
-                yield orjson.loads(line)
+                parsed = orjson.loads(line)
             except Exception:
-                yield json.loads(line)
+                parsed = json.loads(line)
+
+            record = _coerce_record(parsed)
+            if record is not None:
+                yield record
 
 
 def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max_n: int | None = None) -> list[Task]:
@@ -232,41 +253,43 @@ def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max
         try:
             import pyarrow.parquet as pq
 
-            table = pq.read_table(p)
-            for row in table.to_pylist():
+            pq_any = cast(Any, pq)
+            table: Any = pq_any.read_table(p)
+            rows = cast(list[object], table.to_pylist())
+            for row in rows:
+                record = _coerce_record(row)
+                if record is None:
+                    continue
+
                 # Robustly extract fields used across variants
-                q = row.get("Question") or row.get("question") or row.get("query") or row.get("prompt")
-                ans = row.get("Final answer") or row.get("answer") or row.get("final_answer")
+                q_obj = record.get("Question") or record.get("question") or record.get("query") or record.get("prompt")
+                ans = record.get("Final answer") or record.get("answer") or record.get("final_answer")
+                if not isinstance(q_obj, str):
+                    continue
+                q = q_obj
+
                 qid = str(
-                    row.get("task_id")
-                    or row.get("question_id")
-                    or row.get("id")
-                    or row.get("uuid")
+                    record.get("task_id")
+                    or record.get("question_id")
+                    or record.get("id")
+                    or record.get("uuid")
                     or f"{p.stem}:{len(tasks)}"
                 )
-                lvl = row.get("Level") or row.get("level")
-
-                # Convert level to int if it's a string
-                def _parse_level(lvl: Any) -> int | None:
-                    """Parse level value to integer if possible."""
-                    if isinstance(lvl, int):
-                        return lvl
-                    if isinstance(lvl, str) and lvl.isdigit():
-                        return int(lvl)
-                    return None
-
-                lvl = _parse_level(lvl)
-                fname = row.get("file_name") or row.get("filename") or None
+                lvl = _parse_level(record.get("Level") or record.get("level"))
+                fname_obj = record.get("file_name") or record.get("filename")
+                fname = fname_obj if isinstance(fname_obj, str) else None
 
                 # Only evaluate examples with public answers (dev/validation split)
                 # Skip if no question, no answer, or answer is placeholder like "?"
-                if not q or ans is None or str(ans).strip() in ["?", ""]:
+                if ans is None or str(ans).strip() in ["?", ""]:
                     continue
 
                 if wanted_levels and (lvl not in wanted_levels):
                     continue
 
-                tasks.append(Task(task_id=qid, question=q, answer=str(ans), level=lvl, file_name=fname, metadata=row))
+                tasks.append(
+                    Task(task_id=qid, question=q, answer=str(ans), level=lvl, file_name=fname, metadata=record)
+                )
         except ImportError:
             print("Warning: pyarrow not installed. Install with: pip install pyarrow")
             continue
@@ -279,8 +302,12 @@ def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max
         for p in repo_dir.rglob("metadata.jsonl"):
             for rec in _read_jsonl(p):
                 # Robustly extract fields used across variants
-                q = rec.get("Question") or rec.get("question") or rec.get("query") or rec.get("prompt")
+                q_obj = rec.get("Question") or rec.get("question") or rec.get("query") or rec.get("prompt")
                 ans = rec.get("Final answer") or rec.get("answer") or rec.get("final_answer")
+                if not isinstance(q_obj, str):
+                    continue
+                q = q_obj
+
                 qid = str(
                     rec.get("task_id")
                     or rec.get("question_id")
@@ -288,15 +315,13 @@ def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max
                     or rec.get("uuid")
                     or f"{p.stem}:{len(tasks)}"
                 )
-                lvl = rec.get("Level") or rec.get("level")
-                # Convert level to int if it's a string
-                if isinstance(lvl, str) and lvl.isdigit():
-                    lvl = int(lvl)
-                fname = rec.get("file_name") or rec.get("filename") or None
+                lvl = _parse_level(rec.get("Level") or rec.get("level"))
+                fname_obj = rec.get("file_name") or rec.get("filename")
+                fname = fname_obj if isinstance(fname_obj, str) else None
 
                 # Only evaluate examples with public answers (dev/validation split)
                 # Skip if no question, no answer, or answer is placeholder like "?"
-                if not q or ans is None or str(ans).strip() in ["?", ""]:
+                if ans is None or str(ans).strip() in ["?", ""]:
                     continue
 
                 if wanted_levels and (lvl not in wanted_levels):
@@ -366,9 +391,10 @@ class GAIA:
                 "with access to gaia-benchmark/GAIA."
             )
 
-        from huggingface_hub import snapshot_download
+        import huggingface_hub
 
-        local_dir = snapshot_download(  # type: ignore
+        hf_hub = cast(Any, huggingface_hub)
+        local_dir = hf_hub.snapshot_download(
             repo_id="gaia-benchmark/GAIA",
             repo_type="dataset",
             revision="682dd723ee1e1697e00360edccf2366dc8418dd9",
@@ -376,6 +402,8 @@ class GAIA:
             local_dir=str(self.data_dir),
             force_download=False,
         )
+        if not isinstance(local_dir, str):
+            raise TypeError("snapshot_download returned unexpected non-string path")
         return Path(local_dir)
 
     async def _run_single_task(
@@ -522,7 +550,7 @@ class GAIA:
 
             # Run tasks
             semaphore = asyncio.Semaphore(parallel)
-            results = []
+            results: list[TaskResult] = []
 
             tasks_coroutines = [self._run_single_task(task, task_runner, semaphore, timeout) for task in tasks]
 
@@ -561,7 +589,7 @@ class GAIA:
         with open(output_path, "w", encoding="utf-8") as f:
             for result in results:
                 # Convert messages to serializable format
-                serializable_messages = []
+                serializable_messages: list[dict[str, Any] | str] = []
                 if result.prediction.messages:
                     for msg in result.prediction.messages:
                         if hasattr(msg, "model_dump"):
@@ -569,7 +597,7 @@ class GAIA:
                             serializable_messages.append(msg.model_dump())
                         elif hasattr(msg, "__dict__"):
                             # Regular object with attributes
-                            serializable_messages.append(vars(msg))
+                            serializable_messages.append(cast(dict[str, Any], getattr(msg, "__dict__", {})))
                         else:
                             # Fallback to string representation
                             serializable_messages.append(str(msg))
@@ -614,16 +642,20 @@ def viewer_main() -> None:
     args = parser.parse_args()
 
     # Load results
-    results = []
+    results: list[dict[str, Any]] = []
     with open(args.results_file, encoding="utf-8") as f:
         for line in f:
             if line.strip():
                 try:
                     import orjson
 
-                    results.append(orjson.loads(line))
+                    parsed: object = orjson.loads(line)
                 except ImportError:
-                    results.append(json.loads(line))
+                    parsed = json.loads(line)
+
+                record = _coerce_record(parsed)
+                if record is not None:
+                    results.append(record)
 
     # Apply filters
     if args.level is not None:

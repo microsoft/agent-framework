@@ -303,7 +303,7 @@ class SerializationMixin:
                 # Handle lists containing SerializationProtocol objects
                 if isinstance(value, list):
                     value_as_list: list[Any] = []
-                    for item in value:
+                    for item in value:  # pyright: ignore[reportUnknownVariableType]
                         if isinstance(item, SerializationProtocol):
                             value_as_list.append(item.to_dict(exclude=exclude, exclude_none=exclude_none))
                             continue
@@ -311,7 +311,7 @@ class SerializationMixin:
                             value_as_list.append(item)
                             continue
                         logger.debug(
-                            f"Skipping non-serializable item in list attribute '{key}' of type {type(item).__name__}"
+                            f"Skipping non-serializable item in list attribute '{key}' of type {type(item).__name__}"  # pyright: ignore[reportUnknownArgumentType]
                         )
                     result[key] = value_as_list
                     continue
@@ -320,21 +320,22 @@ class SerializationMixin:
                     from datetime import date, datetime, time
 
                     serialized_dict: dict[str, Any] = {}
-                    for k, v in value.items():
+                    for raw_key, v in value.items():  # pyright: ignore[reportUnknownVariableType]
+                        dict_key = str(raw_key)  # pyright: ignore[reportUnknownArgumentType]
                         if isinstance(v, SerializationProtocol):
-                            serialized_dict[k] = v.to_dict(exclude=exclude, exclude_none=exclude_none)
+                            serialized_dict[dict_key] = v.to_dict(exclude=exclude, exclude_none=exclude_none)
                             continue
                         # Convert datetime objects to strings
                         if isinstance(v, (datetime, date, time)):
-                            serialized_dict[k] = str(v)
+                            serialized_dict[dict_key] = str(v)
                             continue
                         # Check if the value is JSON serializable
                         if is_serializable(v):
-                            serialized_dict[k] = v
+                            serialized_dict[dict_key] = v
                             continue
                         logger.debug(
-                            f"Skipping non-serializable value for key '{k}' in dict attribute '{key}' "
-                            f"of type {type(v).__name__}"
+                            f"Skipping non-serializable value for key '{dict_key}' in dict attribute '{key}' "
+                            f"of type {type(v).__name__}"  # pyright: ignore[reportUnknownArgumentType]
                         )
                     result[key] = serialized_dict
                     continue
@@ -505,7 +506,8 @@ class SerializationMixin:
                 # Only apply if the instance matches
                 if kwargs.get(field) == name and isinstance(dep_value, dict):
                     # Apply instance-specific dependencies
-                    for param_name, param_value in dep_value.items():
+                    for raw_param_name, param_value in dep_value.items():  # pyright: ignore[reportUnknownVariableType]
+                        param_name = str(raw_param_name)  # pyright: ignore[reportUnknownArgumentType]
                         if param_name not in cls.INJECTABLE:
                             logger.debug(
                                 f"Dependency '{param_name}' for type '{type_id}' is not in INJECTABLE set. "

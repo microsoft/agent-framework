@@ -75,8 +75,16 @@ public sealed class ChatHistoryMemoryProviderOptions
     /// When <see langword="null"/>, the provider defaults to including only
     /// <see cref="AgentRequestMessageSourceType.External"/> messages.
     /// </value>
-    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? StorageInputMessageFilter { get; set; }
+    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? StorageInputRequestMessageFilter { get; set; }
 
+    /// <summary>
+    /// Gets or sets an optional filter function applied to response messages when storing recent chat history
+    /// during <see cref="AIContextProvider.InvokedAsync"/>.
+    /// </summary>
+    /// <value>
+    /// When <see langword="null"/>, the provider does not apply any filtering and includes all response messages.
+    /// </value>
+    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? StorageInputResponseMessageFilter { get; set; }
     /// <summary>
     /// Behavior choices for the provider.
     /// </summary>

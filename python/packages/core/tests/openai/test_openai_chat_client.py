@@ -643,6 +643,110 @@ def test_prepare_message_with_text_reasoning_content(openai_unit_test_env: dict[
     assert prepared[0]["content"] == "The answer is 42."
 
 
+def test_prepare_message_with_only_text_reasoning_content(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that a message with only text_reasoning content does not raise IndexError.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/4384
+    Reasoning models (e.g. gpt-5-mini) may produce reasoning_details without text content,
+    which previously caused an IndexError when preparing messages.
+    """
+    client = OpenAIChatClient()
+
+    mock_reasoning_data = {
+        "effort": "high",
+        "summary": "Deep analysis of the problem",
+    }
+
+    reasoning_content = Content.from_text_reasoning(text=None, protected_data=json.dumps(mock_reasoning_data))
+
+    # Message with only reasoning content and no text
+    message = Message(
+        role="assistant",
+        contents=[reasoning_content],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    # Should have one message with reasoning_details
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "assistant"
+    assert "reasoning_details" in prepared[0]
+    assert prepared[0]["reasoning_details"] == mock_reasoning_data
+    # Message should also include a content field to be a valid Chat Completions payload
+    assert "content" in prepared[0]
+    assert prepared[0]["content"] == ""
+
+
+def test_prepare_message_with_text_reasoning_before_text(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that text_reasoning content appearing before text content is handled correctly.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/4384
+    """
+    client = OpenAIChatClient()
+
+    mock_reasoning_data = {
+        "effort": "medium",
+        "summary": "Quick analysis",
+    }
+
+    reasoning_content = Content.from_text_reasoning(text=None, protected_data=json.dumps(mock_reasoning_data))
+
+    # Reasoning appears before text content
+    message = Message(
+        role="assistant",
+        contents=[
+            reasoning_content,
+            Content.from_text(text="The answer is 42."),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    # Should produce exactly one message without raising IndexError
+    assert len(prepared) == 1
+
+    # Reasoning details should be present on the message
+    assert "reasoning_details" in prepared[0]
+    assert prepared[0]["reasoning_details"] == mock_reasoning_data
+    assert prepared[0]["content"] == "The answer is 42."
+
+
+def test_prepare_message_with_text_reasoning_before_function_call(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that text_reasoning content appearing before a function call is handled correctly.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/4384
+    """
+    client = OpenAIChatClient()
+
+    mock_reasoning_data = {
+        "effort": "medium",
+        "summary": "Deciding to call a function",
+    }
+
+    reasoning_content = Content.from_text_reasoning(text=None, protected_data=json.dumps(mock_reasoning_data))
+
+    # Reasoning appears before function call content
+    message = Message(
+        role="assistant",
+        contents=[
+            reasoning_content,
+            Content.from_function_call(call_id="call_abc", name="get_weather", arguments='{"city": "Seattle"}'),
+        ],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    # Should produce exactly one message
+    assert len(prepared) == 1
+
+    # The message should carry the reasoning details and tool_calls
+    assert "reasoning_details" in prepared[0]
+    assert prepared[0]["reasoning_details"] == mock_reasoning_data
+    assert "tool_calls" in prepared[0]
+    assert prepared[0]["tool_calls"][0]["function"]["name"] == "get_weather"
+    assert prepared[0]["role"] == "assistant"
+
+
 def test_function_approval_content_is_skipped_in_preparation(openai_unit_test_env: dict[str, str]) -> None:
     """Test that function approval request and response content are skipped."""
     client = OpenAIChatClient()

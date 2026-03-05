@@ -35,7 +35,7 @@ string userScope = $"user_{Environment.MachineName}";
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
 // Create the Memory Search tool configuration
-MemorySearchTool memorySearchTool = new(memoryStoreName, userScope)
+MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope)
 {
     // Optional: Configure how quickly new memories are indexed (in seconds)
     UpdateDelay = 1,

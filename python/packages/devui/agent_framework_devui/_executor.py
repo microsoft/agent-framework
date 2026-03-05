@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, cast
 
 from agent_framework import Content, SupportsAgentRun, Workflow
 
@@ -19,6 +19,14 @@ from .models import AgentFrameworkRequest, OpenAIResponse
 from .models._discovery_models import EntityInfo
 
 logger = logging.getLogger(__name__)
+
+
+def _get_event_type(event: Any) -> str | None:
+    """Safely get the type of an event, handling both objects and dicts."""
+    if isinstance(event, dict):
+        event_type = cast(dict[str, Any], event).get("type")
+        return event_type if isinstance(event_type, str) else None
+    return getattr(event, "type", None)
 
 
 class EntityNotFoundError(Exception):
@@ -64,7 +72,8 @@ class AgentFrameworkExecutor:
             from opentelemetry.sdk.trace import TracerProvider
 
             # Only set up if no provider exists yet
-            if not hasattr(trace, "_TRACER_PROVIDER") or trace._TRACER_PROVIDER is None:
+            current_provider = trace.get_tracer_provider()
+            if current_provider.__class__.__name__ == "ProxyTracerProvider":
                 resource = Resource.create({
                     "service.name": "agent-framework-server",
                     "service.version": "1.0.0",
@@ -87,20 +96,28 @@ class AgentFrameworkExecutor:
 
             # Configure if instrumentation is enabled (via enable_instrumentation() or env var)
             if OBSERVABILITY_SETTINGS.ENABLED:
-                # Only configure providers if not already executed
-                if not OBSERVABILITY_SETTINGS._executed_setup:
-                    # Call configure_otel_providers to set up exporters.
-                    # If OTEL_EXPORTER_OTLP_ENDPOINT is set, exporters will be created automatically.
-                    # If not set, no exporters are created (no console spam), but DevUI's
-                    # TracerProvider from _setup_instrumentation_provider() remains active for local capture.
-                    configure_otel_providers(enable_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED)
-                    logger.info("Enabled Agent Framework observability")
-                else:
-                    logger.debug("Agent Framework observability already configured")
+                # Call configure_otel_providers to set up exporters.
+                # If OTEL_EXPORTER_OTLP_ENDPOINT is set, exporters will be created automatically.
+                # If not set, no exporters are created (no console spam), but DevUI's
+                # TracerProvider from _setup_instrumentation_provider() remains active for local capture.
+                configure_otel_providers(enable_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED)
+                logger.info("Enabled Agent Framework observability")
             else:
                 logger.debug("Instrumentation not enabled, skipping observability setup")
         except Exception as e:
             logger.warning(f"Failed to enable Agent Framework observability: {e}")
+
+    def _get_request_conversation_id(self, request: AgentFrameworkRequest) -> str | None:
+        """Read conversation id using public request fields."""
+        if isinstance(request.conversation, str):
+            return request.conversation
+
+        if isinstance(request.conversation, dict):
+            conversation_id = request.conversation.get("id")
+            if isinstance(conversation_id, str):
+                return conversation_id
+
+        return None
 
     async def _ensure_mcp_connections(self, agent: Any) -> None:
         """Ensure MCP tool connections are healthy before agent execution.
@@ -264,7 +281,7 @@ class AgentFrameworkExecutor:
                 elif entity_info.type == "workflow":
                     async for event in self._execute_workflow(entity_obj, request, trace_collector):
                         # Log request_info event (type='request_info') for debugging HIL flow
-                        if event.type == "request_info":
+                        if _get_event_type(event) == "request_info":
                             logger.info(
                                 "🔔 [EXECUTOR] request_info event (type='request_info') detected from workflow!"
                             )
@@ -310,7 +327,7 @@ class AgentFrameworkExecutor:
 
             # Get session from conversation parameter (OpenAI standard!)
             session = None
-            conversation_id = request._get_conversation_id()
+            conversation_id = self._get_request_conversation_id(request)
             if conversation_id:
                 session = self.conversation_store.get_session(conversation_id)
                 if session:
@@ -330,19 +347,22 @@ class AgentFrameworkExecutor:
 
             # Agent must have run() method - use stream=True for streaming
             if hasattr(agent, "run") and callable(agent.run):
-                # Use Agent Framework's run() with stream=True for streaming
+                # Capture the stream reference so we can call get_final_response()
+                # after iteration. This triggers result hooks (after_run providers
+                # like InMemoryHistoryProvider) that persist conversation history.
+                run_kwargs: dict[str, Any] = {"stream": True}
                 if session:
-                    async for update in agent.run(user_message, stream=True, session=session):
-                        for trace_event in trace_collector.get_pending_events():
-                            yield trace_event
+                    run_kwargs["session"] = session
 
-                        yield update
-                else:
-                    async for update in agent.run(user_message, stream=True):
-                        for trace_event in trace_collector.get_pending_events():
-                            yield trace_event
+                stream = cast(Any, agent.run(user_message, **run_kwargs))
+                async for update in stream:
+                    for trace_event in trace_collector.get_pending_events():
+                        yield trace_event
 
-                        yield update
+                    yield update
+
+                # Finalize stream to trigger result hooks (saves conversation history)
+                await stream.get_final_response()
             else:
                 raise ValueError("Agent must implement run() method")
 
@@ -378,7 +398,7 @@ class AgentFrameworkExecutor:
             entity_id = request.get_entity_id() or "unknown"
 
             # Get or create session conversation for checkpoint storage
-            conversation_id = request._get_conversation_id()
+            conversation_id = self._get_request_conversation_id(request)
             if not conversation_id:
                 # Create default session if not provided
                 import time
@@ -453,11 +473,14 @@ class AgentFrameworkExecutor:
                 logger.info(f"Resuming workflow with HIL responses for {len(hil_responses)} request(s)")
 
                 # Unwrap primitive responses if they're wrapped in {response: value} format
-                unwrapped_responses = {}
+                unwrapped_responses: dict[str, Any] = {}
                 for request_id, response_value in hil_responses.items():
-                    if isinstance(response_value, dict) and "response" in response_value:
-                        response_value = response_value["response"]
-                    unwrapped_responses[request_id] = response_value
+                    normalized_response: Any = response_value
+                    if isinstance(response_value, dict):
+                        response_dict = cast(dict[str, Any], response_value)
+                        if "response" in response_dict:
+                            normalized_response = response_dict["response"]
+                    unwrapped_responses[request_id] = normalized_response
 
                 hil_responses = unwrapped_responses
 
@@ -471,7 +494,7 @@ class AgentFrameworkExecutor:
                         checkpoint_storage=checkpoint_storage,
                     ):
                         # Enrich new request_info events that may come from subsequent HIL requests
-                        if event.type == "request_info":
+                        if _get_event_type(event) == "request_info":
                             self._enrich_request_info_event_with_response_schema(event, workflow)
 
                         for trace_event in trace_collector.get_pending_events():
@@ -493,7 +516,7 @@ class AgentFrameworkExecutor:
                         checkpoint_id=checkpoint_id,
                         checkpoint_storage=checkpoint_storage,
                     ):
-                        if event.type == "request_info":
+                        if _get_event_type(event) == "request_info":
                             self._enrich_request_info_event_with_response_schema(event, workflow)
 
                         for trace_event in trace_collector.get_pending_events():
@@ -517,7 +540,7 @@ class AgentFrameworkExecutor:
                 parsed_input = await self._parse_workflow_input(workflow, request.input)
 
                 async for event in workflow.run(parsed_input, stream=True, checkpoint_storage=checkpoint_storage):
-                    if event.type == "request_info":
+                    if _get_event_type(event) == "request_info":
                         self._enrich_request_info_event_with_response_schema(event, workflow)
 
                     for trace_event in trace_collector.get_pending_events():
@@ -558,7 +581,8 @@ class AgentFrameworkExecutor:
 
         # Handle OpenAI ResponseInputParam (List[ResponseInputItemParam])
         if isinstance(input_data, list):
-            return self._convert_openai_input_to_chat_message(input_data, Message, Role)
+            input_items: Any = cast(Any, input_data)
+            return self._convert_openai_input_to_chat_message(input_items, Message, Role)
 
         # Fallback for other formats
         return self._extract_user_message_fallback(input_data)
@@ -583,27 +607,31 @@ class AgentFrameworkExecutor:
         for item in input_items:
             # Handle dict format (from JSON)
             if isinstance(item, dict):
-                item_type = item.get("type")
+                item_dict = cast(dict[str, Any], item)
+                item_type = item_dict.get("type")
                 if item_type == "message":
                     # Extract content from OpenAI message
-                    message_content = item.get("content", [])
+                    message_content = item_dict.get("content", [])
 
                     # Handle both string content and list content
                     if isinstance(message_content, str):
                         contents.append(Content.from_text(text=message_content))
                     elif isinstance(message_content, list):
-                        for content_item in message_content:
+                        message_content_items: Any = cast(Any, message_content)
+                        for content_item in message_content_items:
                             # Handle dict content items
                             if isinstance(content_item, dict):
-                                content_type = content_item.get("type")
+                                content_dict = cast(dict[str, Any], content_item)
+                                content_type = content_dict.get("type")
 
                                 if content_type == "input_text":
-                                    text = content_item.get("text", "")
-                                    contents.append(Content.from_text(text=text))
+                                    text = content_dict.get("text", "")
+                                    if isinstance(text, str):
+                                        contents.append(Content.from_text(text=text))
 
                                 elif content_type == "input_image":
-                                    image_url = content_item.get("image_url", "")
-                                    if image_url:
+                                    image_url = content_dict.get("image_url", "")
+                                    if isinstance(image_url, str) and image_url:
                                         # Extract media type from data URI if possible
                                         # Parse media type from data URL, fallback to image/png
                                         if image_url.startswith("data:"):
@@ -621,9 +649,12 @@ class AgentFrameworkExecutor:
 
                                 elif content_type == "input_file":
                                     # Handle file input
-                                    file_data = content_item.get("file_data")
-                                    file_url = content_item.get("file_url")
-                                    filename = content_item.get("filename", "")
+                                    file_data = content_dict.get("file_data")
+                                    file_url = content_dict.get("file_url")
+                                    filename = content_dict.get("filename", "")
+
+                                    if not isinstance(filename, str):
+                                        filename = ""
 
                                     # Determine media type from filename
                                     media_type = "application/octet-stream"  # default
@@ -646,8 +677,10 @@ class AgentFrameworkExecutor:
 
                                     # Use file_data or file_url
                                     # Include filename in additional_properties for OpenAI/Azure file handling
-                                    additional_props = {"filename": filename} if filename else None
-                                    if file_data:
+                                    additional_props: dict[str, Any] | None = (
+                                        {"filename": filename} if filename else None
+                                    )
+                                    if isinstance(file_data, str) and file_data:
                                         # Assume file_data is base64, create data URI
                                         data_uri = f"data:{media_type};base64,{file_data}"
                                         contents.append(
@@ -657,7 +690,7 @@ class AgentFrameworkExecutor:
                                                 additional_properties=additional_props,
                                             )
                                         )
-                                    elif file_url:
+                                    elif isinstance(file_url, str) and file_url:
                                         contents.append(
                                             Content.from_uri(
                                                 uri=file_url,
@@ -669,15 +702,35 @@ class AgentFrameworkExecutor:
                                 elif content_type == "function_approval_response":
                                     # Handle function approval response (DevUI extension)
                                     try:
-                                        request_id = content_item.get("request_id", "")
-                                        approved = content_item.get("approved", False)
-                                        function_call_data = content_item.get("function_call", {})
+                                        request_id = content_dict.get("request_id", "")
+                                        approved = content_dict.get("approved", False)
+                                        function_call_data = content_dict.get("function_call", {})
+
+                                        if not isinstance(request_id, str):
+                                            request_id = ""
+                                        if not isinstance(approved, bool):
+                                            approved = False
+                                        if not isinstance(function_call_data, dict):
+                                            function_call_data = {}
+
+                                        function_call_data_dict = cast(dict[str, Any], function_call_data)
+
+                                        function_call_id = function_call_data_dict.get("id", "")
+                                        function_call_name = function_call_data_dict.get("name", "")
+                                        function_call_args = function_call_data_dict.get("arguments", {})
+
+                                        if not isinstance(function_call_id, str):
+                                            function_call_id = ""
+                                        if not isinstance(function_call_name, str):
+                                            function_call_name = ""
+                                        if not isinstance(function_call_args, dict):
+                                            function_call_args = {}
 
                                         # Create FunctionCallContent from the function_call data
                                         function_call = Content.from_function_call(
-                                            call_id=function_call_data.get("id", ""),
-                                            name=function_call_data.get("name", ""),
-                                            arguments=function_call_data.get("arguments", {}),
+                                            call_id=function_call_id,
+                                            name=function_call_name,
+                                            arguments=cast(dict[str, Any], function_call_args),
                                         )
 
                                         # Create FunctionApprovalResponseContent with correct signature
@@ -729,12 +782,14 @@ class AgentFrameworkExecutor:
         if isinstance(input_data, str):
             return input_data
         if isinstance(input_data, dict):
+            typed_input_data = cast(dict[str, Any], input_data)
             # Try common field names
             for field in ["message", "text", "input", "content", "query"]:
-                if field in input_data:
-                    return str(input_data[field])
+                if field in typed_input_data:
+                    value = typed_input_data[field]
+                    return value if isinstance(value, str) else str(value)
             # Fallback to JSON string
-            return json.dumps(input_data)
+            return json.dumps(typed_input_data)
         return str(input_data)
 
     def _is_openai_multimodal_format(self, input_data: Any) -> bool:
@@ -748,8 +803,12 @@ class AgentFrameworkExecutor:
         """
         if not isinstance(input_data, list) or not input_data:
             return False
-        first_item = input_data[0]
-        return isinstance(first_item, dict) and first_item.get("type") == "message"
+        input_data_items: Any = cast(Any, input_data)
+        first_item = input_data_items[0]
+        if not isinstance(first_item, dict):
+            return False
+        first_type = cast(dict[str, Any], first_item).get("type")
+        return isinstance(first_type, str) and first_type == "message"
 
     async def _parse_workflow_input(self, workflow: Any, raw_input: Any) -> Any:
         """Parse input based on workflow's expected input type.
@@ -765,7 +824,7 @@ class AgentFrameworkExecutor:
             # Handle JSON string input (from frontend api.ts JSON.stringify)
             if isinstance(raw_input, str):
                 try:
-                    parsed = json.loads(raw_input)
+                    parsed: Any = json.loads(raw_input)
                     raw_input = parsed
                 except (json.JSONDecodeError, TypeError):
                     # Plain text string, continue with string handling
@@ -779,14 +838,14 @@ class AgentFrameworkExecutor:
 
             # Handle structured input (dict)
             if isinstance(raw_input, dict):
-                return self._parse_structured_workflow_input(workflow, raw_input)
+                return self._parse_structured_workflow_input(workflow, cast(dict[str, Any], raw_input))
 
             # Handle string input
             return self._parse_raw_workflow_input(workflow, str(raw_input))
 
         except Exception as e:
             logger.warning(f"Error parsing workflow input: {e}")
-            return raw_input
+            return cast(Any, raw_input)
 
     def _get_start_executor_message_types(self, workflow: Any) -> tuple[Any | None, list[Any]]:
         """Return start executor and its declared input types."""
@@ -813,7 +872,8 @@ class AgentFrameworkExecutor:
             try:
                 handlers = start_executor._handlers
                 if isinstance(handlers, dict):
-                    message_types = list(handlers.keys())
+                    handlers_dict: Any = cast(Any, handlers)
+                    message_types = list(handlers_dict.keys())
             except Exception as exc:  # pragma: no cover - defensive logging path
                 logger.debug(f"Failed to read executor handlers: {exc}")
 
@@ -837,7 +897,8 @@ class AgentFrameworkExecutor:
                 parsed = json.loads(input_data)
                 # Only use parsed value if it's a list (ResponseInputParam format expected for HIL)
                 if isinstance(parsed, list):
-                    input_data = parsed
+                    parsed_list: Any = cast(Any, parsed)
+                    input_data = parsed_list
                 else:
                     # Parsed to dict, string, or primitive - not HIL response format
                     return None
@@ -854,19 +915,32 @@ class AgentFrameworkExecutor:
         if not isinstance(input_data, list):
             return None
 
-        for item in input_data:
-            if isinstance(item, dict) and item.get("type") == "message":
-                message_content = item.get("content", [])
+        input_items: Any = cast(Any, input_data)
+        for item in input_items:
+            if isinstance(item, dict):
+                item_dict = cast(dict[str, Any], item)
+                if item_dict.get("type") != "message":
+                    continue
+                message_content = item_dict.get("content", [])
 
                 if isinstance(message_content, list):
-                    for content_item in message_content:
+                    message_content_items: Any = cast(Any, message_content)
+                    for content_item in message_content_items:
                         if isinstance(content_item, dict):
-                            content_type = content_item.get("type")
+                            content_dict = cast(dict[str, Any], content_item)
+                            content_type = content_dict.get("type")
 
                             if content_type == "workflow_hil_response":
                                 # Extract responses dict
-                                # dict.get() returns Any, so we explicitly type it
-                                responses: dict[str, Any] = content_item.get("responses", {})  # type: ignore[assignment]
+                                responses_raw = content_dict.get("responses", {})
+                                if not isinstance(responses_raw, dict):
+                                    continue
+
+                                responses_dict: Any = cast(Any, responses_raw)
+                                responses = {
+                                    str(response_key): response_value
+                                    for response_key, response_value in responses_dict.items()
+                                }
                                 logger.info(f"Found workflow HIL responses: {list(responses.keys())}")
                                 return responses
 
@@ -990,11 +1064,12 @@ class AgentFrameworkExecutor:
                 return
 
             # Find the source executor in the workflow
-            if not hasattr(workflow, "executors") or not isinstance(workflow.executors, dict):
+            executors = getattr(workflow, "executors", None)
+            if not isinstance(executors, dict):
                 logger.debug("Workflow doesn't have executors dict")
                 return
 
-            source_executor = workflow.executors.get(source_executor_id)
+            source_executor = cast(dict[str, Any], executors).get(source_executor_id)
             if not source_executor:
                 logger.debug(f"Could not find executor '{source_executor_id}' in workflow")
                 return
