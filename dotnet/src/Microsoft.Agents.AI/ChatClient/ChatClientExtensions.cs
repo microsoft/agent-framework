@@ -53,9 +53,16 @@ public static class ChatClientExtensions
     {
         var chatBuilder = chatClient.AsBuilder();
 
+        // Add compaction as the innermost middleware so it runs before every LLM call,
+        // including those triggered by tool call iterations within FunctionInvokingChatClient.
+        if (options?.CompactionStrategy is { } compactionStrategy)
+        {
+            chatBuilder.Use(innerClient => new CompactingChatClient(innerClient, compactionStrategy));
+        }
+
         if (chatClient.GetService<FunctionInvokingChatClient>() is null)
         {
-            _ = chatBuilder.Use((innerClient, services) =>
+            chatBuilder.Use((innerClient, services) =>
             {
                 var loggerFactory = services.GetService<ILoggerFactory>();
 

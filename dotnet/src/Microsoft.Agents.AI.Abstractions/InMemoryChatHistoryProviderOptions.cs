@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
@@ -72,6 +73,21 @@ public sealed class InMemoryChatHistoryProviderOptions
     /// When <see langword="null"/>, no filtering is applied to the output messages.
     /// </value>
     public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? ProvideOutputMessageFilter { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional <see cref="ICompactionStrategy"/> to apply to stored messages after new messages are added.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When set, this strategy is applied to the full stored message list after new messages have been appended.
+    /// This enables pre-write compaction to limit storage size.
+    /// </para>
+    /// <para>
+    /// The compaction strategy organizes messages into atomic groups (preserving tool-call/result pairings)
+    /// before applying the strategy logic. See <see cref="ICompactionStrategy"/> for details.
+    /// </para>
+    /// </remarks>
+    public ICompactionStrategy? CompactionStrategy { get; set; }
 
     /// <summary>
     /// Defines the events that can trigger a reducer in the <see cref="InMemoryChatHistoryProvider"/>.

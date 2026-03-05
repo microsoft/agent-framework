@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
@@ -44,6 +45,26 @@ public sealed class ChatClientAgentOptions
     /// Gets or sets the list of <see cref="AIContextProvider"/> instances to use for providing additional context for each agent run.
     /// </summary>
     public IEnumerable<AIContextProvider>? AIContextProviders { get; set; }
+
+    /// <summary>
+    /// Gets or sets the <see cref="ICompactionStrategy"/> to use for in-run context compaction.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When set, this strategy is applied to the message list before each call to the underlying
+    /// <see cref="IChatClient"/> during agent execution. This keeps the context within token limits
+    /// as tool calls accumulate during long-running agent invocations.
+    /// </para>
+    /// <para>
+    /// The strategy organizes messages into atomic groups (preserving tool-call/result pairings)
+    /// before applying compaction logic. See <see cref="ICompactionStrategy"/> for details.
+    /// </para>
+    /// <para>
+    /// This is separate from the compaction strategy on <see cref="InMemoryChatHistoryProviderOptions.CompactionStrategy"/>,
+    /// which applies pre-write compaction before storing messages. Both can be used together.
+    /// </para>
+    /// </remarks>
+    public ICompactionStrategy? CompactionStrategy { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether to use the provided <see cref="IChatClient"/> instance as is,
@@ -101,6 +122,7 @@ public sealed class ChatClientAgentOptions
             ChatOptions = this.ChatOptions?.Clone(),
             ChatHistoryProvider = this.ChatHistoryProvider,
             AIContextProviders = this.AIContextProviders is null ? null : new List<AIContextProvider>(this.AIContextProviders),
+            CompactionStrategy = this.CompactionStrategy,
             UseProvidedChatClientAsIs = this.UseProvidedChatClientAsIs,
             ClearOnChatHistoryProviderConflict = this.ClearOnChatHistoryProviderConflict,
             WarnOnChatHistoryProviderConflict = this.WarnOnChatHistoryProviderConflict,
