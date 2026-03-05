@@ -22,7 +22,6 @@
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0" />
     <!-- Azure.* -->
-    <PackageVersion Include="Azure.Core" Version="1.50.0" />
     <PackageVersion Include="Azure.AI.Projects" Version="2.0.0-beta.1" />
     <PackageVersion Include="Azure.AI.Projects.OpenAI" Version="2.0.0-beta.1" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.8" />

@@ -9,7 +9,6 @@
 
   <ItemGroup>
     <PackageReference Include="Aspire.Azure.AI.Inference" />
-    <PackageReference Include="Azure.Core" />
     <PackageReference Include="Azure.Identity" />
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
     <ProjectReference Include="..\..\..\src\Microsoft.Agents.AI.Hosting\Microsoft.Agents.AI.Hosting.csproj" />
