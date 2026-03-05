@@ -801,24 +801,24 @@ class Content:
             raw_representation: Optional raw representation from the provider.
         """
         if isinstance(result, list):
-            if not all(isinstance(c, Content) for c in result):
+            if not all(isinstance(c, Content) for c in result):  # type: ignore[reportUnknownVariableType]
                 return cls(
                     "function_result",
                     call_id=call_id,
-                    result=str(result),
+                    result=str(result),  # type: ignore[reportUnknownArgumentType]
                     items=list(items) if items else None,
                     exception=exception,
                     annotations=annotations,
                     additional_properties=additional_properties,
                     raw_representation=raw_representation,
                 )
-            text_parts = [c.text for c in result if c.type == "text" and c.text]
-            rich_items = [c for c in result if c.type in ("data", "uri")]
+            text_parts = [c.text for c in result if c.type == "text" and c.text]  # type: ignore[reportUnknownVariableType, reportUnknownMemberType]
+            rich_items = [c for c in result if c.type in ("data", "uri")]  # type: ignore[reportUnknownVariableType, reportUnknownMemberType]
             return cls(
                 "function_result",
                 call_id=call_id,
-                result="\n".join(text_parts) if text_parts else "",
-                items=rich_items or None,
+                result="\n".join(text_parts) if text_parts else "",  # type: ignore[reportUnknownArgumentType]
+                items=rich_items or None,  # type: ignore[reportUnknownArgumentType]
                 exception=exception,
                 annotations=annotations,
                 additional_properties=additional_properties,
