@@ -14,7 +14,7 @@ action definitions and creates a proper workflow graph with:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from agent_framework import (
     Workflow,
@@ -983,8 +983,9 @@ class DeclarativeWorkflowBuilder:
         last_executor = chain[-1]
 
         # Skip terminators — they handle their own control flow
-        action_def = getattr(last_executor, "_action_def", {})
-        if isinstance(action_def, dict) and action_def.get("kind", "") in TERMINATOR_ACTIONS:
+        action_def_obj = getattr(last_executor, "_action_def", {})
+        action_def = cast(dict[str, Any], action_def_obj) if isinstance(action_def_obj, dict) else {}
+        if action_def.get("kind", "") in TERMINATOR_ACTIONS:
             return None
 
         # Check if last executor is a structure with branch_exits

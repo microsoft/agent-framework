@@ -151,6 +151,7 @@ class Skill:
                 content="Use this skill for DB tasks.",
             )
 
+
             @skill.resource
             def get_schema() -> str:
                 return "CREATE TABLE ..."
@@ -972,9 +973,7 @@ def _load_skills(
 
     if skills:
         for code_skill in skills:
-            error = _validate_skill_metadata(
-                code_skill.name, code_skill.description, "code skill"
-            )
+            error = _validate_skill_metadata(code_skill.name, code_skill.description, "code skill")
             if error:
                 logger.warning(error)
                 continue

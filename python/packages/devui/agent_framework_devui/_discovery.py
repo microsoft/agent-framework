@@ -11,7 +11,7 @@ import logging
 import sys
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from dotenv import load_dotenv
 
@@ -141,7 +141,7 @@ class EntityDiscovery:
         self._loaded_objects[entity_id] = entity_obj
 
         # Check module-level registry for cleanup hooks
-        from . import _get_registered_cleanup_hooks
+        from . import _get_registered_cleanup_hooks  # type: ignore[reportPrivateUsage]
 
         registered_hooks = _get_registered_cleanup_hooks(entity_obj)
         if registered_hooks:
@@ -299,7 +299,7 @@ class EntityDiscovery:
         self._loaded_objects[entity_id] = entity_object
 
         # Check module-level registry for cleanup hooks
-        from . import _get_registered_cleanup_hooks
+        from . import _get_registered_cleanup_hooks  # type: ignore[reportPrivateUsage]
 
         registered_hooks = _get_registered_cleanup_hooks(entity_object)
         if registered_hooks:
@@ -379,6 +379,8 @@ class EntityDiscovery:
             deployment_supported = True
             deployment_reason = "Ready for deployment (pending path verification)"
 
+        class_name = type(entity_object).__name__
+
         # Create EntityInfo with Agent Framework specifics
         return EntityInfo(
             id=entity_id,
@@ -400,9 +402,7 @@ class EntityDiscovery:
             deployment_reason=deployment_reason,
             metadata={
                 "source": "agent_framework_object",
-                "class_name": entity_object.__class__.__name__
-                if hasattr(entity_object, "__class__")
-                else str(type(entity_object)),
+                "class_name": class_name,
             },
         )
 
@@ -854,7 +854,7 @@ class EntityDiscovery:
                     "module_path": module_path,
                     "entity_type": obj_type,
                     "source": source,
-                    "class_name": obj.__class__.__name__ if hasattr(obj, "__class__") else str(type(obj)),
+                    "class_name": type(obj).__name__,
                 },
             )
 
@@ -874,47 +874,63 @@ class EntityDiscovery:
         Returns:
             List of tool/executor names
         """
-        tools = []
+        tools: list[str] = []
 
         try:
             if obj_type == "agent":
-                # For agents, check default_options.get("tools")
                 chat_options = getattr(obj, "default_options", None)
-                chat_options_tools = None
-                if chat_options:
-                    chat_options_tools = chat_options.get("tools")
+                chat_options_tools: object | None = None
+                if isinstance(chat_options, dict):
+                    chat_options_dict = cast(dict[str, Any], chat_options)
+                    chat_options_tools = chat_options_dict.get("tools")
 
-                if chat_options_tools:
-                    for tool in chat_options_tools:
-                        if hasattr(tool, "__name__"):
-                            tools.append(tool.__name__)
-                        elif hasattr(tool, "name"):
-                            tools.append(tool.name)
+                if chat_options_tools is not None:
+                    tool_iterable: list[object] = (
+                        cast(list[object], chat_options_tools)
+                        if isinstance(chat_options_tools, list)
+                        else [chat_options_tools]
+                    )
+                    for tool_obj in tool_iterable:
+                        tool_name = getattr(tool_obj, "__name__", None)
+                        if isinstance(tool_name, str):
+                            tools.append(tool_name)
+                            continue
+
+                        named_tool = getattr(tool_obj, "name", None)
+                        if isinstance(named_tool, str):
+                            tools.append(named_tool)
                         else:
-                            tools.append(str(tool))
+                            tools.append(str(tool_obj))
                 else:
-                    # Fallback to direct tools attribute
                     agent_tools = getattr(obj, "tools", None)
-                    if agent_tools:
-                        for tool in agent_tools:
-                            if hasattr(tool, "__name__"):
-                                tools.append(tool.__name__)
-                            elif hasattr(tool, "name"):
-                                tools.append(tool.name)
+                    if isinstance(agent_tools, list):
+                        for tool_obj in cast(list[object], agent_tools):
+                            tool_name = getattr(tool_obj, "__name__", None)
+                            if isinstance(tool_name, str):
+                                tools.append(tool_name)
+                                continue
+
+                            named_tool = getattr(tool_obj, "name", None)
+                            if isinstance(named_tool, str):
+                                tools.append(named_tool)
                             else:
-                                tools.append(str(tool))
+                                tools.append(str(tool_obj))
 
             elif obj_type == "workflow":
-                # For workflows, extract executor names
                 if hasattr(obj, "get_executors_list"):
                     executor_objects = obj.get_executors_list()
-                    tools = [getattr(ex, "id", str(ex)) for ex in executor_objects]
+                    if isinstance(executor_objects, list):
+                        for executor_obj in cast(list[object], executor_objects):
+                            tools.append(str(getattr(executor_obj, "id", executor_obj)))
                 elif hasattr(obj, "executors"):
                     executors = obj.executors
                     if isinstance(executors, list):
-                        tools = [getattr(ex, "id", str(ex)) for ex in executors]
+                        for executor_obj in cast(list[object], executors):
+                            tools.append(str(getattr(executor_obj, "id", executor_obj)))
                     elif isinstance(executors, dict):
-                        tools = list(executors.keys())
+                        executors_dict = cast(dict[str, Any], executors)
+                        for key_obj in executors_dict:
+                            tools.append(str(key_obj))
 
         except Exception as e:
             logger.debug(f"Error extracting tools from {obj_type} {type(obj)}: {e}")

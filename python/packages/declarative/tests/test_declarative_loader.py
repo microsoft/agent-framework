@@ -560,8 +560,6 @@ instructions: You are a helpful assistant.
         """Test that outputSchema is passed as response_format in Agent.default_options."""
         from unittest.mock import MagicMock
 
-        from pydantic import BaseModel
-
         from agent_framework_declarative import AgentFactory
 
         agent_def = {
@@ -580,8 +578,10 @@ instructions: You are a helpful assistant.
         agent = factory.create_agent_from_dict(agent_def)
 
         assert "response_format" in agent.default_options
-        assert isinstance(agent.default_options["response_format"], type)
-        assert issubclass(agent.default_options["response_format"], BaseModel)
+        response_format = agent.default_options["response_format"]
+        assert isinstance(response_format, dict)
+        assert response_format["type"] == "object"
+        assert response_format["properties"]["answer"]["type"] == "string"
 
     def test_create_agent_from_dict_chat_options_in_default_options(self):
         """Test that chat options (temperature, top_p) are in Agent.default_options."""

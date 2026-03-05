@@ -15,9 +15,11 @@ import json
 import logging
 import uuid
 from abc import abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from inspect import isawaitable
-from typing import Any
+from typing import Any, cast
+from collections.abc import Callable
 
 from agent_framework import (
     Content,
@@ -127,7 +129,7 @@ class ToolInvocationResult:
     success: bool
     result: Any = None
     error: str | None = None
-    messages: list[Message] = field(default_factory=list)
+    messages: list[Message] = field(default_factory=cast(Callable[..., list[Message]], list))
     rejected: bool = False
     rejection_reason: str | None = None
 
@@ -267,15 +269,14 @@ class BaseToolExecutor(DeclarativeActionExecutor):
         Returns:
             Tuple of (messages_var, result_var, auto_send)
         """
-        output_config = self._action_def.get("output", {})
+        output_config: dict[str, str | bool] = self._action_def.get("output", {})
 
-        if not isinstance(output_config, dict):
+        if not isinstance(output_config, Mapping):
             return None, None, True
 
         messages_var = output_config.get("messages")
         result_var = output_config.get("result")
         auto_send = bool(output_config.get("autoSend", True))
-
         return (
             str(messages_var) if messages_var else None,
             str(result_var) if result_var else None,
@@ -494,7 +495,7 @@ class BaseToolExecutor(DeclarativeActionExecutor):
                 type(arguments_def).__name__,
             )
         elif isinstance(arguments_def, dict):
-            for key, value in arguments_def.items():
+            for key, value in arguments_def.items():  # type: ignore[reportUnknownVariableType]
                 arguments[key] = state.eval_if_expression(value)
 
         # Check if approval is required

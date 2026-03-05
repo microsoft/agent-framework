@@ -317,10 +317,13 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         updates: Sequence[ChatResponseUpdate],
         *,
         response_format: Any | None = None,
-    ) -> ChatResponse:
+    ) -> ChatResponse[Any]:
         """Finalize response updates into a single ChatResponse."""
         output_format_type = response_format if isinstance(response_format, type) else None
-        return ChatResponse.from_updates(updates, output_format_type=output_format_type)
+        return ChatResponse.from_updates(  # pyright: ignore[reportUnknownVariableType]
+            updates,
+            output_format_type=output_format_type,
+        )
 
     def _build_response_stream(
         self,
@@ -782,7 +785,7 @@ class BaseEmbeddingClient(SerializationMixin, ABC, Generic[EmbeddingInputT, Embe
         values: Sequence[EmbeddingInputT],
         *,
         options: EmbeddingOptionsT | None = None,
-    ) -> GeneratedEmbeddings[EmbeddingT]:
+    ) -> GeneratedEmbeddings[EmbeddingT, EmbeddingOptionsT]:
         """Generate embeddings for the given values.
 
         Args:

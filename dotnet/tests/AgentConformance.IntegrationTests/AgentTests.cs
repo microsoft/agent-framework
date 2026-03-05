@@ -15,11 +15,15 @@ public abstract class AgentTests<TAgentFixture>(Func<TAgentFixture> createAgentF
 {
     protected TAgentFixture Fixture { get; private set; } = default!;
 
-    public Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         this.Fixture = createAgentFixture();
-        return this.Fixture.InitializeAsync();
+        await this.Fixture.InitializeAsync();
     }
 
-    public Task DisposeAsync() => this.Fixture.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        await this.Fixture.DisposeAsync();
+    }
 }
