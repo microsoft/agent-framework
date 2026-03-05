@@ -33,16 +33,16 @@ Before you begin, ensure you have the following prerequisites:
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
-$env:BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>/connections/<connection-name>"
-$env:BING_CUSTOM_SEARCH_INSTANCE_NAME="your-configuration-name"
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
+$env:AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>/connections/<connection-name>"
+$env:AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME="your-configuration-name"
 ```
 
 ### Finding the connection ID and instance name
 
-- **Connection ID**: The full ARM resource path including the `/projects/<name>/connections/<connection-name>` segment. Find the connection name in your Foundry project under **Management center** → **Connected resources**.
-- **Instance Name**: The **configuration name** from the Bing Custom Search resource (Azure portal → your Bing Custom Search resource → **Configurations**). This is _not_ the Azure resource name.
+- **Connection ID** (`AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID`): The full ARM resource URI including the `/projects/<name>/connections/<connection-name>` segment. Find the connection name in your Foundry project under **Management center** → **Connected resources**.
+- **Instance Name** (`AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME`): The **configuration name** from your Bing Custom Search resource (Azure portal → your Bing Custom Search resource → **Configurations**). This is _not_ the Azure resource name or the connection name — it's the name of the specific search configuration that defines which domains/sites to search against.
 
 ## Run the sample
 

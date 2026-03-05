@@ -18,9 +18,16 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 FoundryAgentClient agent = new(
     endpoint: new Uri(endpoint),
     tokenProvider: new AzureCliCredential(),
-    model: deploymentName,
-    instructions: "You are a helpful assistant that extracts structured information about people.",
-    name: "StructuredOutputAssistant");
+    options: new ChatClientAgentOptions
+    {
+        Name = "StructuredOutputAssistant",
+        ChatOptions = new()
+        {
+            ModelId = deploymentName,
+            Instructions = "You are a helpful assistant that extracts structured information about people.",
+            ResponseFormat = Microsoft.Extensions.AI.ChatResponseFormat.ForJsonSchema<PersonInfo>()
+        }
+    });
 
 // Set PersonInfo as the type parameter of RunAsync method to specify the expected structured output.
 AgentResponse<PersonInfo> response = await agent.RunAsync<PersonInfo>("Please provide information about John Smith, who is a 35-year-old software engineer.");

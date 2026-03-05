@@ -24,6 +24,11 @@ $env:AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID="your-connection-id"  # The full ARM r
 $env:AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME="your-instance-name"  # The Bing Custom Search configuration name (from Azure portal)
 ```
 
+### Finding the connection ID and instance name
+
+- **Connection ID** (`AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID`): The full ARM resource URI including the `/projects/<name>/connections/<connection-name>` segment. Find the connection name in your Foundry project under **Management center** → **Connected resources**.
+- **Instance Name** (`AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME`): The **configuration name** from your Bing Custom Search resource (Azure portal → your Bing Custom Search resource → **Configurations**). This is _not_ the Azure resource name or the connection name — it's the name of the specific search configuration that defines which domains/sites to search against.
+
 ## Run the sample
 
 ```powershell

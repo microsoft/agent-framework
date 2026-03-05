@@ -60,8 +60,8 @@ memory_store = await project_client.memory_stores.create(
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 $env:AZURE_AI_MEMORY_STORE_NAME="your-memory-store-name"  # Required - name of pre-created memory store
 ```
 
