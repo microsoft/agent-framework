@@ -9,7 +9,6 @@ using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Shared.IntegrationTests;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 

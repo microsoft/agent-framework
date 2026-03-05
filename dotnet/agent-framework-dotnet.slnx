@@ -313,7 +313,6 @@
   </Folder>
   <Folder Name="/Solution Items/.github/workflows/">
     <File Path="../.github/workflows/dotnet-build-and-test.yml" />
-    <File Path="../.github/workflows/dotnet-check-coverage.ps1" />
     <File Path="../.github/workflows/dotnet-format.yml" />
   </Folder>
   <Folder Name="/Solution Items/demos/">
@@ -349,6 +348,10 @@
     <File Path="eng/MSBuild/LegacySupport.props" />
     <File Path="eng/MSBuild/Shared.props" />
     <File Path="eng/MSBuild/Shared.targets" />
+  </Folder>
+  <Folder Name="/Solution Items/eng/scripts/">
+    <File Path="eng/scripts/dotnet-check-coverage.ps1" />
+    <File Path="eng/scripts/New-FilteredSolution.ps1" />
   </Folder>
   <Folder Name="/Solution Items/nuget/">
     <File Path="nuget/icon.png" />

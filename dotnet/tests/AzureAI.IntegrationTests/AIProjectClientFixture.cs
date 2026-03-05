@@ -155,17 +155,19 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         }
     }
 
-    public Task DisposeAsync()
+    public ValueTask DisposeAsync()
     {
+        GC.SuppressFinalize(this);
+
         if (this._client is not null && this._agent is not null)
         {
-            return this._client.Agents.DeleteAgentAsync(this._agent.Name);
+            return new ValueTask(this._client.Agents.DeleteAgentAsync(this._agent.Name));
         }
 
-        return Task.CompletedTask;
+        return default;
     }
 
-    public virtual async Task InitializeAsync()
+    public virtual async ValueTask InitializeAsync()
     {
         this._client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
         this._agent = await this.CreateChatClientAgentAsync();
