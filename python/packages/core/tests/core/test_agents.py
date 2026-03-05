@@ -25,7 +25,7 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
-from agent_framework._agents import _merge_options, _sanitize_agent_name
+from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool
 
 
@@ -95,6 +95,58 @@ async def test_chat_client_agent_run_streaming(client: SupportsChatGetResponse) 
     result = await AgentResponse.from_update_generator(agent.run("Hello", stream=True))
 
     assert result.text == "test streaming response another update"
+
+
+async def test_chat_client_agent_streaming_response_format_from_default_options(
+    client: SupportsChatGetResponse,
+) -> None:
+    """AgentResponse.value must be parsed when response_format is set in default_options and streaming."""
+    from pydantic import BaseModel
+
+    class Greeting(BaseModel):
+        greeting: str
+
+    json_text = '{"greeting": "Hello"}'
+    client.streaming_responses.append(  # type: ignore[attr-defined]
+        [ChatResponseUpdate(contents=[Content.from_text(json_text)], role="assistant", finish_reason="stop")]
+    )
+
+    agent = Agent(client=client, default_options={"response_format": Greeting})
+    stream = agent.run("Hello", stream=True)
+    async for _ in stream:
+        pass
+    result = await stream.get_final_response()
+
+    assert result.text == json_text
+    assert result.value is not None
+    assert isinstance(result.value, Greeting)
+    assert result.value.greeting == "Hello"
+
+
+async def test_chat_client_agent_streaming_response_format_from_run_options(
+    client: SupportsChatGetResponse,
+) -> None:
+    """AgentResponse.value must be parsed when response_format is passed via run() options kwarg."""
+    from pydantic import BaseModel
+
+    class Greeting(BaseModel):
+        greeting: str
+
+    json_text = '{"greeting": "Hi"}'
+    client.streaming_responses.append(  # type: ignore[attr-defined]
+        [ChatResponseUpdate(contents=[Content.from_text(json_text)], role="assistant", finish_reason="stop")]
+    )
+
+    agent = Agent(client=client)
+    stream = agent.run("Hello", stream=True, options={"response_format": Greeting})
+    async for _ in stream:
+        pass
+    result = await stream.get_final_response()
+
+    assert result.text == json_text
+    assert result.value is not None
+    assert isinstance(result.value, Greeting)
+    assert result.value.greeting == "Hi"
 
 
 async def test_chat_client_agent_create_session(client: SupportsChatGetResponse) -> None:
@@ -655,6 +707,81 @@ async def test_chat_agent_as_tool_name_sanitization(client: SupportsChatGetRespo
         assert tool.name == expected_tool_name, f"Expected {expected_tool_name}, got {tool.name} for input {agent_name}"
 
 
+async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGetResponse) -> None:
+    """Test that propagate_session=True forwards the parent's session to the sub-agent."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+
+    parent_session = AgentSession(session_id="parent-session-123")
+    parent_session.state["shared_key"] = "shared_value"
+
+    # Spy on the agent's run method to capture the session argument
+    original_run = agent.run
+    captured_session = None
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_session
+        captured_session = kwargs.get("session")
+        return original_run(*args, **kwargs)
+
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+
+    await tool.invoke(arguments=tool.input_model(task="Hello"), session=parent_session)
+
+    assert captured_session is parent_session
+    assert captured_session.session_id == "parent-session-123"
+    assert captured_session.state["shared_key"] == "shared_value"
+
+
+async def test_chat_agent_as_tool_propagate_session_false_by_default(client: SupportsChatGetResponse) -> None:
+    """Test that propagate_session defaults to False and does not forward the session."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool()  # default: propagate_session=False
+
+    parent_session = AgentSession(session_id="parent-session-456")
+
+    original_run = agent.run
+    captured_session = None
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_session
+        captured_session = kwargs.get("session")
+        return original_run(*args, **kwargs)
+
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+
+    await tool.invoke(arguments=tool.input_model(task="Hello"), session=parent_session)
+
+    assert captured_session is None
+
+
+async def test_chat_agent_as_tool_propagate_session_shares_state(client: SupportsChatGetResponse) -> None:
+    """Test that shared session allows the sub-agent to read and write parent's state."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+
+    parent_session = AgentSession(session_id="shared-session")
+    parent_session.state["counter"] = 0
+
+    # The sub-agent receives the same session object, so mutations are shared
+    original_run = agent.run
+    captured_session = None
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_session
+        captured_session = kwargs.get("session")
+        if captured_session:
+            captured_session.state["counter"] += 1
+        return original_run(*args, **kwargs)
+
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+
+    await tool.invoke(arguments=tool.input_model(task="Hello"), session=parent_session)
+
+    # The parent's state should reflect the sub-agent's mutation
+    assert parent_session.state["counter"] == 1
+
+
 async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -> None:
     """Test basic as_mcp_server functionality."""
     agent = Agent(client=client, name="TestAgent", description="Test agent for MCP")
@@ -701,6 +828,49 @@ async def test_chat_agent_with_local_mcp_tools(client: SupportsChatGetResponse) 
         # Test async context manager with MCP tools
         async with agent:
             pass
+
+
+async def test_mcp_tools_not_duplicated_when_passed_as_runtime_tools(chat_client_base: Any) -> None:
+    """Test that MCP tool functions from self.mcp_tools are not duplicated when already present in runtime tools."""
+    captured_options: list[dict[str, Any]] = []
+
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        captured_options.append(dict(options))
+        return await original_inner(messages=messages, options=options, **kwargs)
+
+    chat_client_base._inner_get_response = capturing_inner
+
+    # Create FunctionTool instances that simulate expanded MCP functions
+    mcp_func_a = FunctionTool(func=lambda: "a", name="tool_a", description="Tool A")
+    mcp_func_b = FunctionTool(func=lambda: "b", name="tool_b", description="Tool B")
+
+    # Create a mock MCP tool that is already connected (simulates turn 2)
+    mock_mcp_tool = MagicMock(spec=MCPTool)
+    mock_mcp_tool.is_connected = True
+    mock_mcp_tool.functions = [mcp_func_a, mcp_func_b]
+    mock_mcp_tool.__aenter__ = AsyncMock(return_value=mock_mcp_tool)
+    mock_mcp_tool.__aexit__ = AsyncMock(return_value=None)
+
+    # Agent has the MCP tool in its constructor (stored in self.mcp_tools)
+    agent = Agent(client=chat_client_base, name="TestAgent", tools=[mock_mcp_tool])
+
+    # Simulate AG-UI turn 2: pass already-expanded MCP functions + a client tool as runtime tools
+    client_tool = FunctionTool(func=lambda: "client", name="client_tool", description="Client tool")
+    runtime_tools = [mcp_func_a, mcp_func_b, client_tool]
+
+    await agent.run("hello", tools=runtime_tools)
+
+    # Verify the chat client received each tool exactly once
+    assert len(captured_options) >= 1
+    tool_names = [t.name for t in captured_options[0]["tools"]]
+    assert tool_names.count("tool_a") == 1, f"tool_a duplicated: {tool_names}"
+    assert tool_names.count("tool_b") == 1, f"tool_b duplicated: {tool_names}"
+    assert "client_tool" in tool_names
+    assert len(tool_names) == 3
 
 
 async def test_agent_tool_receives_session_in_kwargs(chat_client_base: Any) -> None:
@@ -878,6 +1048,152 @@ def test_merge_options_tools_combined():
     tool_names = [t.name for t in result["tools"]]
     assert "tool1" in tool_names
     assert "tool2" in tool_names
+
+
+def test_merge_options_dict_tools_combined():
+    """Test _merge_options combines dict-defined tool lists without duplicates."""
+    base = {
+        "tools": [
+            {"type": "function", "function": {"name": "tool_a"}},
+        ]
+    }
+    override = {
+        "tools": [
+            {"type": "function", "function": {"name": "tool_b"}},
+        ]
+    }
+
+    result = _merge_options(base, override)
+
+    assert len(result["tools"]) == 2
+    names = [_get_tool_name(t) for t in result["tools"]]
+    assert "tool_a" in names
+    assert "tool_b" in names
+
+
+def test_merge_options_dict_tools_deduplicates():
+    """Test _merge_options deduplicates dict-defined tools by function name."""
+    base = {
+        "tools": [
+            {"type": "function", "function": {"name": "tool_a"}},
+        ]
+    }
+    override = {
+        "tools": [
+            {"type": "function", "function": {"name": "tool_a"}},
+            {"type": "function", "function": {"name": "tool_b"}},
+        ]
+    }
+
+    result = _merge_options(base, override)
+
+    assert len(result["tools"]) == 2
+    names = [_get_tool_name(t) for t in result["tools"]]
+    assert names.count("tool_a") == 1
+    assert "tool_b" in names
+
+
+def test_merge_options_mixed_tools_combined():
+    """Test _merge_options combines object and dict-defined tools."""
+
+    class MockTool:
+        def __init__(self, name):
+            self.name = name
+
+    base = {"tools": [MockTool("tool_a")]}
+    override = {
+        "tools": [
+            {"type": "function", "function": {"name": "tool_b"}},
+        ]
+    }
+
+    result = _merge_options(base, override)
+
+    assert len(result["tools"]) == 2
+    names = [_get_tool_name(t) for t in result["tools"]]
+    assert "tool_a" in names
+    assert "tool_b" in names
+
+
+def test_merge_options_mixed_tools_deduplicates():
+    """Test _merge_options deduplicates when a dict tool and object tool share the same name."""
+
+    class MockTool:
+        def __init__(self, name):
+            self.name = name
+
+    base = {"tools": [MockTool("tool_a")]}
+    override = {
+        "tools": [
+            {"type": "function", "function": {"name": "tool_a"}},
+        ]
+    }
+
+    result = _merge_options(base, override)
+
+    assert len(result["tools"]) == 1
+    assert _get_tool_name(result["tools"][0]) == "tool_a"
+
+
+def test_merge_options_nameless_tools_not_deduplicated():
+    """Test that tools with no extractable name (None) are not falsely deduplicated."""
+    base = {
+        "tools": [
+            {"type": "function"},  # no 'function.name' -> _get_tool_name returns None
+        ]
+    }
+    override = {
+        "tools": [
+            {"type": "function"},  # also returns None
+        ]
+    }
+
+    result = _merge_options(base, override)
+
+    # Both nameless tools should be kept (None is excluded from dedup set)
+    assert len(result["tools"]) == 2
+
+
+def test_get_tool_name_dict_no_function_key():
+    """_get_tool_name returns None for a dict without a 'function' key."""
+    assert _get_tool_name({"type": "function"}) is None
+
+
+def test_get_tool_name_dict_function_not_dict():
+    """_get_tool_name returns None when 'function' value is not a dict."""
+    assert _get_tool_name({"function": "not_a_dict"}) is None
+
+
+def test_get_tool_name_dict_function_no_name():
+    """_get_tool_name returns None when 'function' dict has no 'name' key."""
+    assert _get_tool_name({"function": {"description": "does stuff"}}) is None
+
+
+def test_get_tool_name_object_no_name_attr():
+    """_get_tool_name returns None for an object without a 'name' attribute."""
+    assert _get_tool_name(object()) is None
+
+
+def test_get_tool_name_non_dict_non_object():
+    """_get_tool_name returns None for non-dict inputs like int or string."""
+    assert _get_tool_name(42) is None
+    assert _get_tool_name("tool_name") is None
+
+
+def test_get_tool_name_valid_dict():
+    """_get_tool_name extracts name from a well-formed dict tool."""
+    tool_dict = {"type": "function", "function": {"name": "my_tool"}}
+    assert _get_tool_name(tool_dict) == "my_tool"
+
+
+def test_get_tool_name_valid_object():
+    """_get_tool_name extracts name from an object with a name attribute."""
+
+    class MockTool:
+        def __init__(self, name):
+            self.name = name
+
+    assert _get_tool_name(MockTool("my_tool")) == "my_tool"
 
 
 def test_merge_options_logit_bias_merged():

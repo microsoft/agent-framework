@@ -22,7 +22,7 @@ namespace Microsoft.Agents.AI.Workflows.InProc;
 internal sealed class InProcessRunnerContext : IRunnerContext
 {
     private int _runEnded;
-    private readonly string _runId;
+    private readonly string _sessionId;
     private readonly Workflow _workflow;
     private readonly object? _previousOwnership;
     private bool _ownsWorkflow;
@@ -40,7 +40,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     public InProcessRunnerContext(
         Workflow workflow,
-        string runId,
+        string sessionId,
         bool checkpointingEnabled,
         IEventSink outgoingEvents,
         IStepTracer? stepTracer,
@@ -61,7 +61,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
 
         this._workflow = workflow;
-        this._runId = runId;
+        this._sessionId = sessionId;
 
         this._edgeMap = new(this, this._workflow, stepTracer);
         this._outputFilter = new(workflow);
@@ -94,7 +94,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
                 throw new InvalidOperationException($"Executor with ID '{executorId}' is not registered.");
             }
 
-            Executor executor = await registration.CreateInstanceAsync(this._runId).ConfigureAwait(false);
+            Executor executor = await registration.CreateInstanceAsync(this._sessionId).ConfigureAwait(false);
             executor.AttachRequestContext(this.BindExternalRequestContext(executorId));
 
             await executor.InitializeAsync(this.BindWorkflowContext(executorId), cancellationToken: cancellationToken)
@@ -438,7 +438,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     {
         if (Volatile.Read(ref this._runEnded) == 1)
         {
-            throw new InvalidOperationException($"Workflow run '{this._runId}' has been ended. Please start a new Run or StreamingRun.");
+            throw new InvalidOperationException($"Workflow run for session '{this._sessionId}' has been ended. Please start a new Run or StreamingRun.");
         }
     }
 

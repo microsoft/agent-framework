@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import Callable, MutableMapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from typing import Any, Generic
 
 from agent_framework import (
@@ -19,13 +19,11 @@ from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
 from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
-from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
-    AgentReference,
     AgentVersionDetails,
     PromptAgentDefinition,
-    PromptAgentDefinitionText,
+    PromptAgentDefinitionTextOptions,
 )
 from azure.ai.projects.models import (
     FunctionTool as AzureFunctionTool,
@@ -123,7 +121,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             env_file_encoding: Encoding of the environment file.
 
         Raises:
-            ServiceInitializationError: If required parameters are missing or invalid.
+            ValueError: If required parameters are missing or invalid.
         """
         self._settings = load_settings(
             AzureAISettings,
@@ -140,13 +138,13 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         if project_client is None:
             resolved_endpoint = self._settings.get("project_endpoint")
             if not resolved_endpoint:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
                     "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
                 )
 
             if not credential:
-                raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
+                raise ValueError("Azure credential is required when project_client is not provided.")
 
             project_client = AIProjectClient(
                 endpoint=resolved_endpoint,
@@ -186,12 +184,12 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             Agent: A Agent instance configured with the created agent.
 
         Raises:
-            ServiceInitializationError: If required parameters are missing.
+            ValueError: If required parameters are missing.
         """
         # Resolve model from parameter or environment variable
         resolved_model = model or self._settings.get("model_deployment_name")
         if not resolved_model:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Model deployment name is required. Provide 'model' parameter "
                 "or set 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
             )
@@ -201,13 +199,14 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         response_format = opts.get("response_format")
         rai_config = opts.get("rai_config")
         reasoning = opts.get("reasoning")
+        foundry_features = opts.get("foundry_features")
 
         args: dict[str, Any] = {"model": resolved_model}
 
         if instructions:
             args["instructions"] = instructions
         if response_format and isinstance(response_format, (type, dict)):
-            args["text"] = PromptAgentDefinitionText(
+            args["text"] = PromptAgentDefinitionTextOptions(
                 format=create_text_format_config(response_format)  # type: ignore[arg-type]
             )
         if rai_config:
@@ -242,11 +241,15 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         if all_tools_for_azure:
             args["tools"] = to_azure_ai_tools(all_tools_for_azure)
 
-        created_agent = await self._project_client.agents.create_version(
-            agent_name=name,
-            definition=PromptAgentDefinition(**args),
-            description=description,
-        )
+        create_version_kwargs: dict[str, Any] = {
+            "agent_name": name,
+            "definition": PromptAgentDefinition(**args),
+            "description": description,
+        }
+        if foundry_features:
+            create_version_kwargs["foundry_features"] = foundry_features
+
+        created_agent = await self._project_client.agents.create_version(**create_version_kwargs)
 
         return self._to_chat_agent_from_details(
             created_agent,
@@ -260,7 +263,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         self,
         *,
         name: str | None = None,
-        reference: AgentReference | None = None,
+        reference: Mapping[str, str | None] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
@@ -273,7 +276,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
 
         Args:
             name: The name of the agent to retrieve (fetches latest version).
-            reference: Reference containing the agent's name and optionally a specific version.
+            reference: Mapping containing the agent's ``name`` and optionally a specific ``version``.
             tools: Tools to make available to the agent. Required if the agent has function tools.
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
@@ -288,12 +291,15 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         """
         existing_agent: AgentVersionDetails
 
-        if reference and reference.version:
+        reference_name = str(reference.get("name")) if reference and reference.get("name") else None
+        reference_version = str(reference.get("version")) if reference and reference.get("version") else None
+
+        if reference_name and reference_version:
             # Fetch specific version
             existing_agent = await self._project_client.agents.get_version(
-                agent_name=reference.name, agent_version=reference.version
+                agent_name=reference_name, agent_version=reference_version
             )
-        elif agent_name := (reference.name if reference else name):
+        elif agent_name := (reference_name if reference_name else name):
             # Fetch latest version
             details = await self._project_client.agents.get(agent_name=agent_name)
             existing_agent = details.versions.latest

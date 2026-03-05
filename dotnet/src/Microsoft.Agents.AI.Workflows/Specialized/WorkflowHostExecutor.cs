@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 internal class WorkflowHostExecutor : Executor, IAsyncDisposable
 {
-    private readonly string _runId;
+    private readonly string _sessionId;
     private readonly Workflow _workflow;
     private readonly ProtocolDescriptor _workflowProtocol;
     private readonly object _ownershipToken;
@@ -31,12 +31,11 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
     [MemberNotNullWhen(true, nameof(_checkpointManager))]
     private bool WithCheckpointing => this._checkpointManager != null;
 
-    public WorkflowHostExecutor(string id, Workflow workflow, ProtocolDescriptor workflowProtocol, string runId, object ownershipToken, ExecutorOptions? options = null) : base(id, options)
+    public WorkflowHostExecutor(string id, Workflow workflow, ProtocolDescriptor workflowProtocol, string sessionId, object ownershipToken, ExecutorOptions? options = null) : base(id, options)
     {
         this._options = options ?? new();
 
-        //Throw.IfNull(workflow);
-        this._runId = Throw.IfNull(runId);
+        this._sessionId = Throw.IfNull(sessionId);
         this._ownershipToken = Throw.IfNull(ownershipToken);
         this._workflow = Throw.IfNull(workflow);
         this._workflowProtocol = Throw.IfNull(workflowProtocol);
@@ -92,7 +91,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
 
             this._activeRunner = InProcessRunner.CreateSubworkflowRunner(this._workflow,
                                                                          this._checkpointManager,
-                                                                         this._runId,
+                                                                         this._sessionId,
                                                                          this._ownershipToken,
                                                                          this.JoinContext.ConcurrentRunsEnabled);
         }
@@ -122,7 +121,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
             if (resume)
             {
                 // Attempting to resume from checkpoint
-                if (!this._checkpointManager.TryGetLastCheckpoint(this._runId, out CheckpointInfo? lastCheckpoint))
+                if (!this._checkpointManager.TryGetLastCheckpoint(this._sessionId, out CheckpointInfo? lastCheckpoint))
                 {
                     throw new InvalidOperationException("No checkpoints available to resume from.");
                 }

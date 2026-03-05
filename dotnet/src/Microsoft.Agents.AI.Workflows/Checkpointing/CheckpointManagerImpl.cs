@@ -16,19 +16,19 @@ internal sealed class CheckpointManagerImpl<TStoreObject> : ICheckpointManager
         this._store = store;
     }
 
-    public ValueTask<CheckpointInfo> CommitCheckpointAsync(string runId, Checkpoint checkpoint)
+    public ValueTask<CheckpointInfo> CommitCheckpointAsync(string sessionId, Checkpoint checkpoint)
     {
         TStoreObject storeObject = this._marshaller.Marshal(checkpoint);
 
-        return this._store.CreateCheckpointAsync(runId, storeObject, checkpoint.Parent);
+        return this._store.CreateCheckpointAsync(sessionId, storeObject, checkpoint.Parent);
     }
 
-    public async ValueTask<Checkpoint> LookupCheckpointAsync(string runId, CheckpointInfo checkpointInfo)
+    public async ValueTask<Checkpoint> LookupCheckpointAsync(string sessionId, CheckpointInfo checkpointInfo)
     {
-        TStoreObject result = await this._store.RetrieveCheckpointAsync(runId, checkpointInfo).ConfigureAwait(false);
+        TStoreObject result = await this._store.RetrieveCheckpointAsync(sessionId, checkpointInfo).ConfigureAwait(false);
         return this._marshaller.Marshal<Checkpoint>(result);
     }
 
-    public ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string runId, CheckpointInfo? withParent = null)
-        => this._store.RetrieveIndexAsync(runId, withParent);
+    public ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent = null)
+        => this._store.RetrieveIndexAsync(sessionId, withParent);
 }

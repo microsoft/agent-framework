@@ -21,6 +21,7 @@ from ..agents.document_writer_agent import document_writer_agent
 from ..agents.human_in_the_loop_agent import human_in_the_loop_agent
 from ..agents.recipe_agent import recipe_agent
 from ..agents.simple_agent import simple_agent
+from ..agents.subgraphs_agent import subgraphs_agent
 from ..agents.task_steps_agent import task_steps_agent_wrapped
 from ..agents.ui_generator_agent import ui_generator_agent
 from ..agents.weather_agent import weather_agent
@@ -121,6 +122,13 @@ add_agent_framework_fastapi_endpoint(
     app=app,
     agent=ui_generator_agent(client),
     path="/tool_based_generative_ui",
+)
+
+# Subgraphs - deterministic travel planner with interrupt-driven selections
+add_agent_framework_fastapi_endpoint(
+    app=app,
+    agent=subgraphs_agent(),
+    path="/subgraphs",
 )
 
 

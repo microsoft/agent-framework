@@ -22,7 +22,7 @@ internal sealed class WorkflowHostAgent : AIAgent
     private readonly bool _includeWorkflowOutputsInResponse;
     private readonly Task<ProtocolDescriptor> _describeTask;
 
-    private readonly ConcurrentDictionary<string, string> _assignedRunIds = [];
+    private readonly ConcurrentDictionary<string, string> _assignedSessionIds = [];
 
     public WorkflowHostAgent(Workflow workflow, string? id = null, string? name = null, string? description = null, IWorkflowExecutionEnvironment? executionEnvironment = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
     {
@@ -62,7 +62,7 @@ internal sealed class WorkflowHostAgent : AIAgent
         do
         {
             result = Guid.NewGuid().ToString("N");
-        } while (!this._assignedRunIds.TryAdd(result, result));
+        } while (!this._assignedSessionIds.TryAdd(result, result));
 
         return result;
     }

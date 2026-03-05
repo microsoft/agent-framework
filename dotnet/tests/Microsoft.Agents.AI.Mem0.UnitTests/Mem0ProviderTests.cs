@@ -67,17 +67,18 @@ public sealed class Mem0ProviderTests : IDisposable
     }
 
     [Fact]
-    public void StateKey_ReturnsDefaultKey_WhenNoOptionsProvided()
+    public void StateKeys_ReturnsDefaultKey_WhenNoOptionsProvided()
     {
         // Arrange & Act
         var provider = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(new Mem0ProviderScope { ThreadId = "tid" }));
 
         // Assert
-        Assert.Equal("Mem0Provider", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("Mem0Provider", provider.StateKeys);
     }
 
     [Fact]
-    public void StateKey_ReturnsCustomKey_WhenSetViaOptions()
+    public void StateKeys_ReturnsCustomKey_WhenSetViaOptions()
     {
         // Arrange & Act
         var provider = new Mem0Provider(
@@ -86,7 +87,8 @@ public sealed class Mem0ProviderTests : IDisposable
             new Mem0ProviderOptions { StateKey = "custom-key" });
 
         // Assert
-        Assert.Equal("custom-key", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("custom-key", provider.StateKeys);
     }
 
     [Fact]
@@ -419,7 +421,7 @@ public sealed class Mem0ProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task StateKey_CanBeConfiguredViaOptionsAsync()
+    public async Task StateKeys_CanBeConfiguredViaOptionsAsync()
     {
         // Arrange
         this._handler.EnqueueJsonResponse("[]");
@@ -530,7 +532,7 @@ public sealed class Mem0ProviderTests : IDisposable
         var mockSession = new TestAgentSession();
         var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope), options: new Mem0ProviderOptions
         {
-            StorageInputMessageFilter = messages => messages // No filtering - store everything
+            StorageInputRequestMessageFilter = messages => messages // No filtering - store everything
         });
 
         var requestMessages = new List<ChatMessage>
@@ -546,6 +548,87 @@ public sealed class Mem0ProviderTests : IDisposable
         var memoryPosts = this._handler.Requests.Where(r => r.RequestMessage.RequestUri!.AbsolutePath == "/v1/memories/" && r.RequestMessage.Method == HttpMethod.Post).ToList();
         Assert.Equal(2, memoryPosts.Count);
     }
+
+    #region MessageAIContextProvider.InvokingAsync Tests
+
+    [Fact]
+    public async Task MessageInvokingAsync_SearchesAndReturnsMergedMessagesAsync()
+    {
+        // Arrange
+        this._handler.EnqueueJsonResponse("[ { \"id\": \"1\", \"memory\": \"Name is Caoimhe\", \"hash\": \"h\", \"metadata\": null, \"score\": 0.9, \"created_at\": \"2023-01-01T00:00:00Z\", \"updated_at\": null, \"user_id\": \"u\", \"app_id\": null, \"agent_id\": \"agent\", \"thread_id\": \"session\" } ]");
+        var storageScope = new Mem0ProviderScope
+        {
+            ApplicationId = "app",
+            AgentId = "agent",
+            ThreadId = "session",
+            UserId = "user"
+        };
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope));
+
+        var inputMsg = new ChatMessage(ChatRole.User, "What is my name?");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, mockSession, [inputMsg]);
+
+        // Act
+        var messages = (await sut.InvokingAsync(context)).ToList();
+
+        // Assert - input message + memory message, with stamping
+        Assert.Equal(2, messages.Count);
+        Assert.Equal("What is my name?", messages[0].Text);
+        Assert.Contains("Name is Caoimhe", messages[1].Text);
+        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, messages[1].GetAgentRequestMessageSourceType());
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_NoMemories_ReturnsOnlyInputMessagesAsync()
+    {
+        // Arrange
+        this._handler.EnqueueJsonResponse("[]");
+        var storageScope = new Mem0ProviderScope
+        {
+            UserId = "user"
+        };
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope));
+
+        var inputMsg = new ChatMessage(ChatRole.User, "Hello");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, mockSession, [inputMsg]);
+
+        // Act
+        var messages = (await sut.InvokingAsync(context)).ToList();
+
+        // Assert
+        Assert.Single(messages);
+        Assert.Equal("Hello", messages[0].Text);
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_DefaultFilter_ExcludesNonExternalMessagesAsync()
+    {
+        // Arrange
+        this._handler.EnqueueJsonResponse("[]");
+        var storageScope = new Mem0ProviderScope
+        {
+            UserId = "user"
+        };
+        var mockSession = new TestAgentSession();
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope));
+
+        var externalMsg = new ChatMessage(ChatRole.User, "External question");
+        var historyMsg = new ChatMessage(ChatRole.User, "History message")
+            .WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, "src");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, mockSession, [externalMsg, historyMsg]);
+
+        // Act
+        await sut.InvokingAsync(context);
+
+        // Assert - Only External message used for search query
+        var searchRequest = Assert.Single(this._handler.Requests, r => r.RequestMessage.Method == HttpMethod.Post && ContainsOrdinal(r.RequestMessage.RequestUri!.AbsoluteUri, "/v1/memories/search/"));
+        using JsonDocument doc = JsonDocument.Parse(searchRequest.RequestBody);
+        Assert.Equal("External question", doc.RootElement.GetProperty("query").GetString());
+    }
+
+    #endregion
 
     private static bool ContainsOrdinal(string source, string value) => source.IndexOf(value, StringComparison.Ordinal) >= 0;
 

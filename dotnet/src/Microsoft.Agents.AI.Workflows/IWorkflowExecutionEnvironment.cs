@@ -21,11 +21,11 @@ public interface IWorkflowExecutionEnvironment
     /// <see cref="Executor"/> will not be invoked until an input message is received.
     /// </summary>
     /// <param name="workflow">The workflow to execute. Cannot be null.</param>
-    /// <param name="runId">An optional identifier for the run. If null, a new run identifier will be generated.</param>
+    /// <param name="sessionId">An optional identifier for the session. If null, a new identifier will be generated.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the streaming operation.</param>
     /// <returns>A ValueTask that represents the asynchronous operation. The result contains a StreamingRun object for accessing
     /// the streamed workflow output.</returns>
-    ValueTask<StreamingRun> OpenStreamAsync(Workflow workflow, string? runId = null, CancellationToken cancellationToken = default);
+    ValueTask<StreamingRun> OpenStreamingAsync(Workflow workflow, string? sessionId = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Initiates an asynchronous streaming execution using the specified input.
@@ -36,11 +36,11 @@ public interface IWorkflowExecutionEnvironment
     /// <typeparam name="TInput">A type of input accepted by the workflow. Must be non-nullable.</typeparam>
     /// <param name="workflow">The workflow to be executed. Must not be <c>null</c>.</param>
     /// <param name="input">The input message to be processed as part of the streaming run.</param>
-    /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
+    /// <param name="sessionId">An optional unique identifier for the session. If not provided, a new identifier will be generated.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask{StreamingRun}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="StreamingRun"/> for managing and interacting with the streaming run.</returns>
-    ValueTask<StreamingRun> StreamAsync<TInput>(Workflow workflow, TInput input, string? runId = null, CancellationToken cancellationToken = default) where TInput : notnull;
+    ValueTask<StreamingRun> RunStreamingAsync<TInput>(Workflow workflow, TInput input, string? sessionId = null, CancellationToken cancellationToken = default) where TInput : notnull;
 
     /// <summary>
     /// Resumes an asynchronous streaming execution for the specified input from a checkpoint.
@@ -51,7 +51,7 @@ public interface IWorkflowExecutionEnvironment
     /// <param name="fromCheckpoint">The <see cref="CheckpointInfo"/> corresponding to the checkpoint from which to resume.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="StreamingRun"/> that provides access to the results of the streaming run.</returns>
-    ValueTask<StreamingRun> ResumeStreamAsync(Workflow workflow, CheckpointInfo fromCheckpoint, CancellationToken cancellationToken = default);
+    ValueTask<StreamingRun> ResumeStreamingAsync(Workflow workflow, CheckpointInfo fromCheckpoint, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Initiates a non-streaming execution of the workflow with the specified input.
@@ -61,11 +61,11 @@ public interface IWorkflowExecutionEnvironment
     /// <typeparam name="TInput">The type of input accepted by the workflow. Must be non-nullable.</typeparam>
     /// <param name="workflow">The workflow to be executed. Must not be <c>null</c>.</param>
     /// <param name="input">The input message to be processed as part of the run.</param>
-    /// <param name="runId">An optional unique identifier for the run. If not provided, a new identifier will be generated.</param>
+    /// <param name="sessionId">An optional unique identifier for the session. If not provided, a new identifier will be generated.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask{Run}"/> that represents the asynchronous operation. The result contains a <see
     /// cref="Run"/> for managing and interacting with the streaming run.</returns>
-    ValueTask<Run> RunAsync<TInput>(Workflow workflow, TInput input, string? runId = null, CancellationToken cancellationToken = default) where TInput : notnull;
+    ValueTask<Run> RunAsync<TInput>(Workflow workflow, TInput input, string? sessionId = null, CancellationToken cancellationToken = default) where TInput : notnull;
 
     /// <summary>
     /// Resumes a non-streaming execution of the workflow from a checkpoint.

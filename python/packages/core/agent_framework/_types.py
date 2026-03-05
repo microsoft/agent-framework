@@ -8,8 +8,18 @@ import logging
 import re
 import sys
 from asyncio import iscoroutine
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import (
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from copy import deepcopy
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
 from pydantic import BaseModel
@@ -83,12 +93,12 @@ def detect_media_type_from_base64(
             This will look at the actual data to determine the media_type and not at the URI prefix.
             Will also not compare those two values.
 
-    Raises:
-        ValueError: If not exactly 1 of data_bytes, data_str, or data_uri is provided, or if base64 decoding fails.
-
     Returns:
         The detected media type (e.g., 'image/png', 'audio/wav', 'application/pdf')
         or None if the format is not recognized.
+
+    Raises:
+        ValueError: If not exactly 1 of data_bytes, data_str, or data_uri is provided, or if base64 decoding fails.
 
     Examples:
         .. code-block:: python
@@ -272,7 +282,8 @@ def _serialize_value(value: Any, exclude_none: bool) -> Any:
 
 # region Constants and types
 _T = TypeVar("_T")
-EmbeddingT = TypeVar("EmbeddingT")
+EmbeddingT = TypeVar("EmbeddingT", default="list[float]")
+EmbeddingInputT = TypeVar("EmbeddingInputT", default="str")
 ChatResponseT = TypeVar("ChatResponseT", bound="ChatResponse")
 ToolModeT = TypeVar("ToolModeT", bound="ToolMode")
 AgentResponseT = TypeVar("AgentResponseT", bound="AgentResponse")
@@ -329,8 +340,12 @@ ContentType = Literal[
     "image_generation_tool_result",
     "mcp_server_tool_call",
     "mcp_server_tool_result",
+    "shell_tool_call",
+    "shell_tool_result",
+    "shell_command_output",
     "function_approval_request",
     "function_approval_response",
+    "oauth_consent_request",
 ]
 
 
@@ -366,6 +381,12 @@ class UsageDetails(TypedDict, total=False):
 
     This is a non-closed dictionary, so any specific provider fields can be added as needed.
     Whenever they can be mapped to standard fields, they will be.
+
+    Keys:
+        input_token_count: The number of input tokens used.
+        output_token_count: The number of output tokens generated.
+        total_token_count: The total number of tokens (input + output).
+
     """
 
     input_token_count: int | None
@@ -459,6 +480,16 @@ class Content:
         outputs: list[Content] | Any | None = None,
         # Image generation tool fields
         image_id: str | None = None,
+        # Shell tool fields
+        commands: list[str] | None = None,
+        timeout_ms: int | None = None,
+        max_output_length: int | None = None,
+        status: str | None = None,
+        # Shell command output fields
+        stdout: str | None = None,
+        stderr: str | None = None,
+        exit_code: int | None = None,
+        timed_out: bool | None = None,
         # MCP server tool fields
         tool_name: str | None = None,
         server_name: str | None = None,
@@ -468,6 +499,8 @@ class Content:
         function_call: Content | None = None,
         user_input_request: bool | None = None,
         approved: bool | None = None,
+        # OAuth consent fields
+        consent_link: str | None = None,
         # Common fields
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -501,6 +534,14 @@ class Content:
         self.inputs = inputs
         self.outputs = outputs
         self.image_id = image_id
+        self.commands = commands
+        self.timeout_ms = timeout_ms
+        self.max_output_length = max_output_length
+        self.status = status
+        self.stdout = stdout
+        self.stderr = stderr
+        self.exit_code = exit_code
+        self.timed_out = timed_out
         self.tool_name = tool_name
         self.server_name = server_name
         self.output = output
@@ -508,6 +549,7 @@ class Content:
         self.function_call = function_call
         self.user_input_request = user_input_request
         self.approved = approved
+        self.consent_link = consent_link
 
     @classmethod
     def from_text(
@@ -531,6 +573,7 @@ class Content:
     def from_text_reasoning(
         cls: type[ContentT],
         *,
+        id: str | None = None,
         text: str | None = None,
         protected_data: str | None = None,
         annotations: Sequence[Annotation] | None = None,
@@ -540,6 +583,7 @@ class Content:
         """Create text reasoning content."""
         return cls(
             "text_reasoning",
+            id=id,
             text=text,
             protected_data=protected_data,
             annotations=annotations,
@@ -651,6 +695,9 @@ class Content:
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from an underlying implementation.
 
+        Returns:
+            A Content instance with type="data" for data URIs or type="uri" for external URIs.
+
         Raises:
             ContentError: If the URI is not valid.
 
@@ -674,9 +721,6 @@ class Content:
                         raw_base64_string
                     }"
                 )
-
-        Returns:
-            A Content instance with type="data" for data URIs or type="uri" for external URIs.
         """
         return cls(
             **_validate_uri(uri, media_type),
@@ -890,6 +934,112 @@ class Content:
         )
 
     @classmethod
+    def from_shell_tool_call(
+        cls: type[ContentT],
+        *,
+        call_id: str | None = None,
+        commands: list[str] | None = None,
+        timeout_ms: int | None = None,
+        max_output_length: int | None = None,
+        status: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create shell tool call content.
+
+        This content represents the model's request to run one or more shell
+        commands. It is request metadata, not command output.
+
+        Keyword Args:
+            call_id: The unique identifier for this tool call.
+            commands: The list of commands to execute.
+            timeout_ms: The timeout in milliseconds for the shell command execution.
+            max_output_length: The maximum output length in characters.
+            status: The status of the shell call (e.g., "in_progress", "completed", "incomplete").
+            annotations: Optional annotations for this content.
+            additional_properties: Optional additional properties.
+            raw_representation: The raw provider-specific representation.
+        """
+        return cls(
+            "shell_tool_call",
+            call_id=call_id,
+            commands=commands,
+            timeout_ms=timeout_ms,
+            max_output_length=max_output_length,
+            status=status,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_shell_tool_result(
+        cls: type[ContentT],
+        *,
+        call_id: str | None = None,
+        outputs: Sequence[Content] | None = None,
+        max_output_length: int | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create shell tool result content.
+
+        This content represents the aggregate result for a shell tool call.
+        Use :meth:`from_shell_command_output` to build each per-command output
+        item and pass those objects via ``outputs``.
+
+        Keyword Args:
+            call_id: The function call ID for which this is the result.
+            outputs: The list of shell command output Content objects.
+            max_output_length: The maximum output length in characters.
+            annotations: Optional annotations for this content.
+            additional_properties: Optional additional properties.
+            raw_representation: The raw provider-specific representation.
+        """
+        return cls(
+            "shell_tool_result",
+            call_id=call_id,
+            outputs=list(outputs) if outputs is not None else None,
+            max_output_length=max_output_length,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_shell_command_output(
+        cls: type[ContentT],
+        *,
+        stdout: str | None = None,
+        stderr: str | None = None,
+        exit_code: int | None = None,
+        timed_out: bool | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create shell command output content for one command execution.
+
+        Keyword Args:
+            stdout: The standard output of the command.
+            stderr: The standard error output of the command.
+            exit_code: The exit code of the command, or None if the command timed out.
+            timed_out: Whether the command execution timed out.
+            additional_properties: Optional additional properties.
+            raw_representation: The raw provider-specific representation.
+        """
+        return cls(
+            "shell_command_output",
+            stdout=stdout,
+            stderr=stderr,
+            exit_code=exit_code,
+            timed_out=timed_out,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
     def from_mcp_server_tool_call(
         cls: type[ContentT],
         call_id: str,
@@ -976,6 +1126,37 @@ class Content:
             raw_representation=raw_representation,
         )
 
+    @classmethod
+    def from_oauth_consent_request(
+        cls: type[ContentT],
+        consent_link: str,
+        *,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create OAuth consent request content.
+
+        Args:
+            consent_link: The URL the user must visit to complete OAuth consent.
+
+        Keyword Args:
+            annotations: Optional annotations.
+            additional_properties: Optional additional properties.
+            raw_representation: Optional raw representation from the provider.
+
+        Returns:
+            A new Content instance with type ``oauth_consent_request``.
+        """
+        return cls(
+            "oauth_consent_request",
+            consent_link=consent_link,
+            user_input_request=True,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
     def to_function_approval_response(
         self,
         approved: bool,
@@ -1015,6 +1196,14 @@ class Content:
             "inputs",
             "outputs",
             "image_id",
+            "commands",
+            "timeout_ms",
+            "max_output_length",
+            "status",
+            "stdout",
+            "stderr",
+            "exit_code",
+            "timed_out",
             "tool_name",
             "server_name",
             "output",
@@ -1022,6 +1211,7 @@ class Content:
             "user_input_request",
             "approved",
             "id",
+            "consent_link",
             "additional_properties",
         )
 
@@ -2254,6 +2444,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: type[ResponseModelBoundT],
+        value: Any | None = None,
     ) -> AgentResponse[ResponseModelBoundT]: ...
 
     @overload
@@ -2263,6 +2454,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: None = None,
+        value: Any | None = None,
     ) -> AgentResponse[Any]: ...
 
     @classmethod
@@ -2271,6 +2463,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         updates: Sequence[AgentResponseUpdate],
         *,
         output_format_type: type[BaseModel] | None = None,
+        value: Any | None = None,
     ) -> AgentResponseT:
         """Joins multiple updates into a single AgentResponse.
 
@@ -2279,8 +2472,9 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type to parse the response text into structured data.
+            value: Optional pre-parsed structured output value to set directly on the response.
         """
-        msg = cls(messages=[], response_format=output_format_type)
+        msg = cls(messages=[], response_format=output_format_type, value=value)
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -3156,3 +3350,129 @@ def merge_chat_options(
             result[key] = value
 
     return result
+
+
+# region Embedding Types
+
+
+class EmbeddingGenerationOptions(TypedDict, total=False):
+    """Common request settings for embedding generation.
+
+    All fields are optional (total=False) to allow partial specification.
+    Provider-specific TypedDicts extend this with additional options.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import EmbeddingGenerationOptions
+
+            options: EmbeddingGenerationOptions = {
+                "model_id": "text-embedding-3-small",
+                "dimensions": 1536,
+            }
+    """
+
+    model_id: str
+    dimensions: int
+
+
+class Embedding(Generic[EmbeddingT]):
+    """A single embedding vector with metadata.
+
+    Generic over the embedding vector type, e.g. ``Embedding[list[float]]``,
+    ``Embedding[list[int]]``, or ``Embedding[bytes]``.
+
+    Args:
+        vector: The embedding vector data.
+        model_id: The model used to generate this embedding.
+        dimensions: Explicit dimension count (computed from vector length if omitted).
+        created_at: Timestamp of when the embedding was generated.
+        additional_properties: Additional metadata.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Embedding
+
+            embedding = Embedding(
+                vector=[0.1, 0.2, 0.3],
+                model_id="text-embedding-3-small",
+            )
+            assert embedding.dimensions == 3
+    """
+
+    def __init__(
+        self,
+        vector: EmbeddingT,
+        *,
+        model_id: str | None = None,
+        dimensions: int | None = None,
+        created_at: datetime | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ) -> None:
+        self.vector = vector
+        self._dimensions = dimensions
+        self.model_id = model_id
+        self.created_at = created_at
+        self.additional_properties = additional_properties or {}
+
+    @property
+    def dimensions(self) -> int | None:
+        """Return the number of dimensions in the embedding vector.
+
+        Uses the explicitly provided value if set, otherwise computes from vector length.
+        """
+        if self._dimensions is not None:
+            return self._dimensions
+        if isinstance(self.vector, (list, tuple, bytes)):
+            return len(self.vector)
+        return None
+
+
+EmbeddingOptionsT = TypeVar(
+    "EmbeddingOptionsT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="EmbeddingGenerationOptions",
+)
+
+
+class GeneratedEmbeddings(list[Embedding[EmbeddingT]], Generic[EmbeddingT, EmbeddingOptionsT]):
+    """A list of generated embeddings with usage metadata.
+
+    Extends list for direct iteration and indexing.
+    Generic over both the embedding vector type and the options type used for generation.
+
+    Args:
+        embeddings: Sequence of Embedding objects.
+        options: The options used to generate these embeddings.
+        usage: Token usage information (e.g. prompt_tokens, total_tokens).
+        additional_properties: Additional metadata.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Embedding, GeneratedEmbeddings
+
+            embeddings = GeneratedEmbeddings(
+                [Embedding(vector=[0.1, 0.2]), Embedding(vector=[0.3, 0.4])],
+                usage={"prompt_tokens": 10, "total_tokens": 10},
+            )
+            assert len(embeddings) == 2
+            assert embeddings.usage["prompt_tokens"] == 10
+    """
+
+    def __init__(
+        self,
+        embeddings: Iterable[Embedding[EmbeddingT]] | None = None,
+        *,
+        options: EmbeddingOptionsT | None = None,
+        usage: UsageDetails | None = None,
+        additional_properties: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(embeddings or [])
+        self.options = options
+        self.usage = usage
+        self.additional_properties = additional_properties or {}
+
+
+# endregion

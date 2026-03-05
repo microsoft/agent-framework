@@ -31,6 +31,9 @@ class UserMemoryProvider(BaseContextProvider):
 
     DEFAULT_SOURCE_ID = "user_memory"
 
+    def __init__(self):
+        super().__init__(self.DEFAULT_SOURCE_ID)
+
     async def before_run(
         self,
         *,

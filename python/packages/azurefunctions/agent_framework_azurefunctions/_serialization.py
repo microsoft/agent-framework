@@ -23,7 +23,7 @@ import logging
 from dataclasses import is_dataclass
 from typing import Any
 
-from agent_framework._workflows import decode_checkpoint_value, encode_checkpoint_value
+from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 
 logger = logging.getLogger(__name__)
 

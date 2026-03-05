@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Specialized;
+using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
@@ -16,6 +17,7 @@ public sealed class HandoffsWorkflowBuilder
     private readonly AIAgent _initialAgent;
     private readonly Dictionary<AIAgent, HashSet<HandoffTarget>> _targets = [];
     private readonly HashSet<AIAgent> _allAgents = new(AIAgentIDEqualityComparer.Instance);
+    private HandoffToolCallFilteringBehavior _toolCallFilteringBehavior = HandoffToolCallFilteringBehavior.HandoffOnly;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="HandoffsWorkflowBuilder"/> class with no handoff relationships.
@@ -34,13 +36,37 @@ public sealed class HandoffsWorkflowBuilder
     /// By default, simple instructions are included. This may be set to <see langword="null"/> to avoid including
     /// any additional instructions, or may be customized to provide more specific guidance.
     /// </remarks>
-    public string? HandoffInstructions { get; set; } =
-         $"""
+    public string? HandoffInstructions { get; private set; } = DefaultHandoffInstructions;
+
+    private const string DefaultHandoffInstructions =
+        $"""
               You are one agent in a multi-agent system. You can hand off the conversation to another agent if appropriate. Handoffs are achieved
               by calling a handoff function, named in the form `{FunctionPrefix}<agent_id>`; the description of the function provides details on the
               target agent of that handoff. Handoffs between agents are handled seamlessly in the background; never mention or narrate these handoffs
               in your conversation with the user.
               """;
+
+    /// <summary>
+    /// Sets additional instructions to provide to an agent that has handoffs about how and when to
+    /// perform them.
+    /// </summary>
+    /// <param name="instructions">The instructions to provide, or <see langword="null"/> to restore the default instructions.</param>
+    public HandoffsWorkflowBuilder WithHandoffInstructions(string? instructions)
+    {
+        this.HandoffInstructions = instructions ?? DefaultHandoffInstructions;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the behavior for filtering <see cref="FunctionCallContent"/> and <see cref="ChatRole.Tool"/> contents from
+    /// <see cref="ChatMessage"/>s flowing through the handoff workflow. Defaults to <see cref="HandoffToolCallFilteringBehavior.HandoffOnly"/>.
+    /// </summary>
+    /// <param name="behavior">The filtering behavior to apply.</param>
+    public HandoffsWorkflowBuilder WithToolCallFilteringBehavior(HandoffToolCallFilteringBehavior behavior)
+    {
+        this._toolCallFilteringBehavior = behavior;
+        return this;
+    }
 
     /// <summary>
     /// Adds handoff relationships from a source agent to one or more target agents.
@@ -149,8 +175,10 @@ public sealed class HandoffsWorkflowBuilder
         HandoffsEndExecutor end = new();
         WorkflowBuilder builder = new(start);
 
+        HandoffAgentExecutorOptions options = new(this.HandoffInstructions, this._toolCallFilteringBehavior);
+
         // Create an AgentExecutor for each again.
-        Dictionary<string, HandoffAgentExecutor> executors = this._allAgents.ToDictionary(a => a.Id, a => new HandoffAgentExecutor(a, this.HandoffInstructions));
+        Dictionary<string, HandoffAgentExecutor> executors = this._allAgents.ToDictionary(a => a.Id, a => new HandoffAgentExecutor(a, options));
 
         // Connect the start executor to the initial agent.
         builder.AddEdge(start, executors[this._initialAgent.Id]);

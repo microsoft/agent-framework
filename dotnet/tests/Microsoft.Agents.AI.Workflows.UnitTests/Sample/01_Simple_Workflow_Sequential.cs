@@ -28,8 +28,7 @@ internal static class Step1EntryPoint
 
     public static async ValueTask RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment)
     {
-        // TODO: Potentially normalize terminology viz Agent.RunStreamingAsync
-        StreamingRun run = await environment.StreamAsync(WorkflowInstance, input: "Hello, World!").ConfigureAwait(false);
+        StreamingRun run = await environment.RunStreamingAsync(WorkflowInstance, input: "Hello, World!").ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {

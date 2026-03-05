@@ -36,7 +36,10 @@ from agent_framework import (
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
 from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
+from agent_framework.exceptions import (
+    ChatClientException,
+    ChatClientInvalidRequestException,
+)
 from agent_framework.observability import ChatTelemetryLayer
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import (
@@ -84,10 +87,11 @@ from azure.ai.agents.models import (
     ToolApproval,
     ToolDefinition,
     ToolOutput,
+    VectorStoreDataSource,
 )
 from pydantic import BaseModel
 
-from ._shared import AzureAISettings, to_azure_ai_agent_tools
+from ._shared import AzureAISettings, resolve_file_ids, to_azure_ai_agent_tools
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -216,8 +220,20 @@ class AzureAIAgentClient(
     # region Hosted Tool Factory Methods
 
     @staticmethod
-    def get_code_interpreter_tool() -> CodeInterpreterTool:
+    def get_code_interpreter_tool(
+        *,
+        file_ids: list[str | Content] | None = None,
+        data_sources: list[VectorStoreDataSource] | None = None,
+    ) -> CodeInterpreterTool:
         """Create a code interpreter tool configuration for Azure AI Agents.
+
+        Keyword Args:
+            file_ids: List of uploaded file IDs or Content objects to make available to
+                the code interpreter. Accepts plain strings or Content.from_hosted_file()
+                instances. The underlying SDK raises ValueError if both file_ids and
+                data_sources are provided.
+            data_sources: List of vector store data sources for enterprise file search.
+                Mutually exclusive with file_ids.
 
         Returns:
             A CodeInterpreterTool instance ready to pass to ChatAgent.
@@ -227,10 +243,21 @@ class AzureAIAgentClient(
 
                 from agent_framework.azure import AzureAIAgentClient
 
+                # Basic code interpreter
                 tool = AzureAIAgentClient.get_code_interpreter_tool()
+
+                # With uploaded file IDs
+                tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=["file-abc123"])
+
+                # With Content objects
+                from agent_framework import Content
+
+                tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=[Content.from_hosted_file("file-abc123")])
+
                 agent = ChatAgent(client, tools=[tool])
         """
-        return CodeInterpreterTool()
+        resolved = resolve_file_ids(file_ids)
+        return CodeInterpreterTool(file_ids=resolved, data_sources=data_sources)
 
     @staticmethod
     def get_file_search_tool(
@@ -498,20 +525,20 @@ class AzureAIAgentClient(
         if agents_client is None:
             resolved_endpoint = azure_ai_settings.get("project_endpoint")
             if not resolved_endpoint:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
                     "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
                 )
 
             if agent_id is None and not azure_ai_settings.get("model_deployment_name"):
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Azure AI model deployment name is required. Set via 'model_deployment_name' parameter "
                     "or 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
                 )
 
             # Use provided credential
             if not credential:
-                raise ServiceInitializationError("Azure credential is required when agents_client is not provided.")
+                raise ValueError("Azure credential is required when agents_client is not provided.")
             agents_client = AgentsClient(
                 endpoint=resolved_endpoint,
                 credential=credential,  # type: ignore[arg-type]
@@ -606,7 +633,7 @@ class AzureAIAgentClient(
         # If no agent_id is provided, create a temporary agent
         if self.agent_id is None:
             if "model" not in run_options or not run_options["model"]:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Model deployment name is required for agent creation, "
                     "can also be passed to the get_response methods."
                 )
@@ -916,7 +943,7 @@ class AzureAIAgentClient(
                                             response_id=response_id,
                                         )
                             case AgentStreamEvent.THREAD_RUN_FAILED:
-                                raise ServiceResponseException(event_data.last_error.message)
+                                raise ChatClientException(event_data.last_error.message)
                             case _:
                                 yield ChatResponseUpdate(
                                     contents=[],
@@ -1159,7 +1186,7 @@ class AzureAIAgentClient(
                 # Runtime JSON schema dict - pass through as-is
                 run_options["response_format"] = response_format
             else:
-                raise ServiceInvalidRequestError(
+                raise ChatClientInvalidRequestException(
                     "response_format must be a Pydantic BaseModel class or a dict with runtime JSON schema."
                 )
 

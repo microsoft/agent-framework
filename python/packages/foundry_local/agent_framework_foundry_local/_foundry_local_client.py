@@ -14,7 +14,6 @@ from agent_framework import (
     FunctionInvocationLayer,
 )
 from agent_framework._settings import load_settings
-from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai._chat_client import RawOpenAIChatClient
 from foundry_local import FoundryLocalManager
@@ -236,7 +235,7 @@ class FoundryLocalClient(
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
 
         Raises:
-            ServiceInitializationError: If the specified model ID or alias is not found.
+            ValueError: If the specified model ID or alias is not found.
                 Sometimes a model might be available but if you have specified a device
                 type that is not supported by the model, it will not be found.
 
@@ -263,7 +262,7 @@ class FoundryLocalClient(
                     "not found in Foundry Local."
                 )
             )
-            raise ServiceInitializationError(message)
+            raise ValueError(message)
         if prepare_model:
             manager.download_model(alias_or_model_id=model_info.id, device=device)
             manager.load_model(alias_or_model_id=model_info.id, device=device)

@@ -22,7 +22,6 @@ from agent_framework import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
 )
-from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIChatOptions
 from agent_framework.openai._chat_client import RawOpenAIChatClient
@@ -262,7 +261,7 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         _apply_azure_defaults(azure_openai_settings)
 
         if not azure_openai_settings["chat_deployment_name"]:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_CHAT_DEPLOYMENT_NAME' environment variable."
             )

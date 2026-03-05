@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "Default": {
+      "commandName": "Project"
+    },
+    "Bus Stop": {
+      "commandName": "Project",
+      "commandLineArgs": "\"What is the closest bus-stop that is next to ISHONI YAKINIKU in Seattle?\""
+    }
+  }
+}

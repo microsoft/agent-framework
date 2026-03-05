@@ -8,9 +8,10 @@ from collections.abc import Mapping, MutableMapping, Sequence
 from typing import Any, cast
 
 from agent_framework import (
+    Content,
     FunctionTool,
 )
-from agent_framework.exceptions import ServiceInvalidRequestError
+from agent_framework.exceptions import IntegrationInvalidRequestException
 from azure.ai.agents.models import (
     CodeInterpreterToolDefinition,
     ToolDefinition,
@@ -18,9 +19,9 @@ from azure.ai.agents.models import (
 from azure.ai.projects.models import (
     CodeInterpreterTool,
     MCPTool,
-    ResponseTextFormatConfigurationJsonObject,
-    ResponseTextFormatConfigurationJsonSchema,
-    ResponseTextFormatConfigurationText,
+    TextResponseFormatConfigurationResponseFormatJsonObject,
+    TextResponseFormatConfigurationResponseFormatText,
+    TextResponseFormatJsonSchema,
     Tool,
     WebSearchPreviewTool,
 )
@@ -109,6 +110,47 @@ def _extract_project_connection_id(additional_properties: dict[str, Any] | None)
     return None
 
 
+def resolve_file_ids(file_ids: Sequence[str | Content] | None) -> list[str] | None:
+    """Resolve a list of file ID values that may include Content objects.
+
+    Accepts plain strings and Content objects with type "hosted_file", extracting
+    the file_id from each. This enables users to pass Content.from_hosted_file()
+    alongside plain file ID strings.
+
+    Args:
+        file_ids: Sequence of file ID strings or Content objects, or None.
+
+    Returns:
+        A list of resolved file ID strings, or None if input is None or empty.
+
+    Raises:
+        ValueError: If a Content object has an unsupported type (not "hosted_file").
+    """
+    if not file_ids:
+        return None
+
+    resolved: list[str] = []
+    for item in file_ids:
+        if isinstance(item, str):
+            if not item:
+                raise ValueError("file_ids must not contain empty strings.")
+            resolved.append(item)
+        elif isinstance(item, Content):
+            if item.type != "hosted_file":
+                raise ValueError(
+                    f"Unsupported Content type '{item.type}' for code interpreter file_ids. "
+                    "Only Content.from_hosted_file() is supported."
+                )
+            if item.file_id is None:
+                raise ValueError(
+                    "Content.from_hosted_file() item is missing a file_id. "
+                    "Ensure the Content object has a valid file_id before using it in file_ids."
+                )
+            resolved.append(item.file_id)
+
+    return resolved if resolved else None
+
+
 def to_azure_ai_agent_tools(
     tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
     run_options: dict[str, Any] | None = None,
@@ -125,7 +167,7 @@ def to_azure_ai_agent_tools(
         List of Azure AI V1 SDK tool definitions.
 
     Raises:
-        ServiceInitializationError: If tool configuration is invalid.
+        ValueError: If tool configuration is invalid.
     """
     if not tools:
         return []
@@ -421,9 +463,9 @@ def _prepare_mcp_tool_dict_for_azure_ai(tool_dict: dict[str, Any]) -> MCPTool:
 def create_text_format_config(
     response_format: type[BaseModel] | Mapping[str, Any],
 ) -> (
-    ResponseTextFormatConfigurationJsonSchema
-    | ResponseTextFormatConfigurationJsonObject
-    | ResponseTextFormatConfigurationText
+    TextResponseFormatJsonSchema
+    | TextResponseFormatConfigurationResponseFormatJsonObject
+    | TextResponseFormatConfigurationResponseFormatText
 ):
     """Convert response_format into Azure text format configuration."""
     if isinstance(response_format, type) and issubclass(response_format, BaseModel):
@@ -431,7 +473,7 @@ def create_text_format_config(
         # Ensure additionalProperties is explicitly false to satisfy Azure validation
         if isinstance(schema, dict):
             schema.setdefault("additionalProperties", False)
-        return ResponseTextFormatConfigurationJsonSchema(
+        return TextResponseFormatJsonSchema(
             name=response_format.__name__,
             schema=schema,
             strict=True,
@@ -452,13 +494,13 @@ def create_text_format_config(
                 config_kwargs["strict"] = format_config["strict"]
             if "description" in format_config:
                 config_kwargs["description"] = format_config["description"]
-            return ResponseTextFormatConfigurationJsonSchema(**config_kwargs)
+            return TextResponseFormatJsonSchema(**config_kwargs)
         if format_type == "json_object":
-            return ResponseTextFormatConfigurationJsonObject()
+            return TextResponseFormatConfigurationResponseFormatJsonObject()
         if format_type == "text":
-            return ResponseTextFormatConfigurationText()
+            return TextResponseFormatConfigurationResponseFormatText()
 
-    raise ServiceInvalidRequestError("response_format must be a Pydantic model or mapping.")
+    raise IntegrationInvalidRequestException("response_format must be a Pydantic model or mapping.")
 
 
 def _convert_response_format(response_format: Mapping[str, Any]) -> dict[str, Any]:
@@ -470,11 +512,11 @@ def _convert_response_format(response_format: Mapping[str, Any]) -> dict[str, An
     if format_type == "json_schema":
         schema_section = response_format.get("json_schema", response_format)
         if not isinstance(schema_section, Mapping):
-            raise ServiceInvalidRequestError("json_schema response_format must be a mapping.")
+            raise IntegrationInvalidRequestException("json_schema response_format must be a mapping.")
         schema_section_typed = cast("Mapping[str, Any]", schema_section)
         schema: Any = schema_section_typed.get("schema")
         if schema is None:
-            raise ServiceInvalidRequestError("json_schema response_format requires a schema.")
+            raise IntegrationInvalidRequestException("json_schema response_format requires a schema.")
         name: str = str(
             schema_section_typed.get("name")
             or schema_section_typed.get("title")
@@ -495,4 +537,4 @@ def _convert_response_format(response_format: Mapping[str, Any]) -> dict[str, An
     if format_type in {"json_object", "text"}:
         return {"type": format_type}
 
-    raise ServiceInvalidRequestError("Unsupported response_format provided for Azure AI client.")
+    raise IntegrationInvalidRequestException("Unsupported response_format provided for Azure AI client.")

@@ -44,38 +44,38 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
     /// <inheritdoc/>
     public bool IsCheckpointingEnabled => this.CheckpointManager != null;
 
-    internal ValueTask<AsyncRunHandle> BeginRunAsync(Workflow workflow, string? runId, IEnumerable<Type> knownValidInputTypes, CancellationToken cancellationToken)
+    internal ValueTask<AsyncRunHandle> BeginRunAsync(Workflow workflow, string? sessionId, IEnumerable<Type> knownValidInputTypes, CancellationToken cancellationToken)
     {
-        InProcessRunner runner = InProcessRunner.CreateTopLevelRunner(workflow, this.CheckpointManager, runId, this.EnableConcurrentRuns, knownValidInputTypes);
+        InProcessRunner runner = InProcessRunner.CreateTopLevelRunner(workflow, this.CheckpointManager, sessionId, this.EnableConcurrentRuns, knownValidInputTypes);
         return runner.BeginStreamAsync(this.ExecutionMode, cancellationToken);
     }
 
     internal ValueTask<AsyncRunHandle> ResumeRunAsync(Workflow workflow, CheckpointInfo fromCheckpoint, IEnumerable<Type> knownValidInputTypes, CancellationToken cancellationToken)
     {
-        InProcessRunner runner = InProcessRunner.CreateTopLevelRunner(workflow, this.CheckpointManager, fromCheckpoint.RunId, this.EnableConcurrentRuns, knownValidInputTypes);
+        InProcessRunner runner = InProcessRunner.CreateTopLevelRunner(workflow, this.CheckpointManager, fromCheckpoint.SessionId, this.EnableConcurrentRuns, knownValidInputTypes);
         return runner.ResumeStreamAsync(this.ExecutionMode, fromCheckpoint, cancellationToken);
     }
 
     /// <inheritdoc/>
-    public async ValueTask<StreamingRun> OpenStreamAsync(
+    public async ValueTask<StreamingRun> OpenStreamingAsync(
         Workflow workflow,
-        string? runId = null,
+        string? sessionId = null,
         CancellationToken cancellationToken = default)
     {
-        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, runId, [], cancellationToken)
+        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, sessionId, [], cancellationToken)
                                              .ConfigureAwait(false);
 
         return new(runHandle);
     }
 
     /// <inheritdoc/>
-    public async ValueTask<StreamingRun> StreamAsync<TInput>(
+    public async ValueTask<StreamingRun> RunStreamingAsync<TInput>(
         Workflow workflow,
         TInput input,
-        string? runId = null,
+        string? sessionId = null,
         CancellationToken cancellationToken = default) where TInput : notnull
     {
-        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, runId, [], cancellationToken)
+        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, sessionId, [], cancellationToken)
                                              .ConfigureAwait(false);
 
         return await runHandle.EnqueueAndStreamAsync(input, cancellationToken).ConfigureAwait(false);
@@ -91,7 +91,7 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
     }
 
     /// <inheritdoc/>
-    public async ValueTask<StreamingRun> ResumeStreamAsync(
+    public async ValueTask<StreamingRun> ResumeStreamingAsync(
         Workflow workflow,
         CheckpointInfo fromCheckpoint,
         CancellationToken cancellationToken = default)
@@ -106,11 +106,11 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
 
     private async ValueTask<AsyncRunHandle> BeginRunHandlingChatProtocolAsync<TInput>(Workflow workflow,
         TInput input,
-        string? runId = null,
+        string? sessionId = null,
         CancellationToken cancellationToken = default)
     {
         ProtocolDescriptor descriptor = await workflow.DescribeProtocolAsync(cancellationToken).ConfigureAwait(false);
-        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, runId, descriptor.Accepts, cancellationToken)
+        AsyncRunHandle runHandle = await this.BeginRunAsync(workflow, sessionId, descriptor.Accepts, cancellationToken)
                                              .ConfigureAwait(false);
 
         await runHandle.EnqueueMessageAsync(input, cancellationToken).ConfigureAwait(false);
@@ -127,13 +127,13 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
     public async ValueTask<Run> RunAsync<TInput>(
         Workflow workflow,
         TInput input,
-        string? runId = null,
+        string? sessionId = null,
         CancellationToken cancellationToken = default) where TInput : notnull
     {
         AsyncRunHandle runHandle = await this.BeginRunHandlingChatProtocolAsync(
                                                 workflow,
                                                 input,
-                                                runId,
+                                                sessionId,
                                                 cancellationToken)
                                              .ConfigureAwait(false);
 

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_framework import AgentResponse, AgentResponseUpdate, AgentSession, Content, Message
-from agent_framework.exceptions import ServiceException, ServiceInitializationError
+from agent_framework.exceptions import AgentException
 from microsoft_agents.copilotstudio.client import CopilotClient
 
 from agent_framework_copilotstudio import CopilotStudioAgent
@@ -48,7 +48,7 @@ class TestCopilotStudioAgent:
             "agentappid": "test-client",
         }
 
-        with pytest.raises(ServiceInitializationError, match="environment ID is required"):
+        with pytest.raises(ValueError, match="environment ID is required"):
             CopilotStudioAgent()
 
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
@@ -62,7 +62,7 @@ class TestCopilotStudioAgent:
             "agentappid": "test-client",
         }
 
-        with pytest.raises(ServiceInitializationError, match="agent identifier"):
+        with pytest.raises(ValueError, match="agent identifier"):
             CopilotStudioAgent()
 
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
@@ -76,7 +76,7 @@ class TestCopilotStudioAgent:
             "agentappid": "test-client",
         }
 
-        with pytest.raises(ServiceInitializationError, match="tenant ID is required"):
+        with pytest.raises(ValueError, match="tenant ID is required"):
             CopilotStudioAgent()
 
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
@@ -90,7 +90,7 @@ class TestCopilotStudioAgent:
             "agentappid": None,
         }
 
-        with pytest.raises(ServiceInitializationError, match="client ID is required"):
+        with pytest.raises(ValueError, match="client ID is required"):
             CopilotStudioAgent()
 
     def test_init_with_client(self, mock_copilot_client: MagicMock) -> None:
@@ -109,7 +109,7 @@ class TestCopilotStudioAgent:
                 "agentappid": "test-client",
             }
 
-            with pytest.raises(ServiceInitializationError, match="environment ID is required"):
+            with pytest.raises(ValueError, match="environment ID is required"):
                 CopilotStudioAgent()
 
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
@@ -123,7 +123,7 @@ class TestCopilotStudioAgent:
                 "agentappid": "test-client",
             }
 
-            with pytest.raises(ServiceInitializationError, match="agent identifier"):
+            with pytest.raises(ValueError, match="agent identifier"):
                 CopilotStudioAgent()
 
     async def test_run_with_string_message(self, mock_copilot_client: MagicMock, mock_activity: MagicMock) -> None:
@@ -188,7 +188,7 @@ class TestCopilotStudioAgent:
 
         mock_copilot_client.start_conversation.return_value = create_async_generator([])
 
-        with pytest.raises(ServiceException, match="Failed to start a new conversation"):
+        with pytest.raises(AgentException, match="Failed to start a new conversation"):
             await agent.run("test message")
 
     async def test_run_streaming_with_string_message(self, mock_copilot_client: MagicMock) -> None:
@@ -315,6 +315,6 @@ class TestCopilotStudioAgent:
 
         mock_copilot_client.start_conversation.return_value = create_async_generator([])
 
-        with pytest.raises(ServiceException, match="Failed to start a new conversation"):
+        with pytest.raises(AgentException, match="Failed to start a new conversation"):
             async for _ in agent.run("test message", stream=True):
                 pass

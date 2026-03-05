@@ -9,7 +9,6 @@ from agent_framework import (
     Agent,
     tool,
 )
-from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.agents.models import (
     Agent as AzureAgent,
 )
@@ -30,13 +29,9 @@ from agent_framework_azure_ai._shared import (
 )
 
 skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/"),
-    reason="No real AZURE_AI_PROJECT_ENDPOINT provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/"),
+    reason="No real AZURE_AI_PROJECT_ENDPOINT provided; skipping integration tests.",
 )
-
 
 # region Provider Initialization Tests
 
@@ -90,7 +85,7 @@ def test_provider_init_missing_endpoint_raises(
     with patch("agent_framework_azure_ai._agent_provider.load_settings") as mock_load_settings:
         mock_load_settings.return_value = {"project_endpoint": None, "model_deployment_name": "test-model"}
 
-        with pytest.raises(ServiceInitializationError) as exc_info:
+        with pytest.raises(ValueError) as exc_info:
             AzureAIAgentsProvider(credential=mock_azure_credential)
 
         assert "project endpoint is required" in str(exc_info.value).lower()
@@ -98,14 +93,13 @@ def test_provider_init_missing_endpoint_raises(
 
 def test_provider_init_missing_credential_raises(azure_ai_unit_test_env: dict[str, str]) -> None:
     """Test AzureAIAgentsProvider raises error when credential is missing."""
-    with pytest.raises(ServiceInitializationError) as exc_info:
+    with pytest.raises(ValueError) as exc_info:
         AzureAIAgentsProvider()
 
     assert "credential is required" in str(exc_info.value).lower()
 
 
 # endregion
-
 
 # region Context Manager Tests
 
@@ -141,7 +135,6 @@ async def test_provider_context_manager_does_not_close_external_client(mock_agen
 
 
 # endregion
-
 
 # region create_agent Tests
 
@@ -272,14 +265,13 @@ async def test_create_agent_missing_model_raises(
 
         provider = AzureAIAgentsProvider(agents_client=mock_agents_client)
 
-        with pytest.raises(ServiceInitializationError) as exc_info:
+        with pytest.raises(ValueError) as exc_info:
             await provider.create_agent(name="TestAgent")
 
         assert "model deployment name is required" in str(exc_info.value).lower()
 
 
 # endregion
-
 
 # region get_agent Tests
 
@@ -332,7 +324,7 @@ async def test_get_agent_with_function_tools(
 
     provider = AzureAIAgentsProvider(agents_client=mock_agents_client)
 
-    with pytest.raises(ServiceInitializationError) as exc_info:
+    with pytest.raises(ValueError) as exc_info:
         await provider.get_agent("agent-with-tools")
 
     assert "get_weather" in str(exc_info.value)
@@ -373,7 +365,6 @@ async def test_get_agent_with_provided_function_tools(
 
 
 # endregion
-
 
 # region as_agent Tests
 
@@ -427,7 +418,7 @@ def test_as_agent_with_function_tools_validates(
 
     provider = AzureAIAgentsProvider(agents_client=mock_agents_client)
 
-    with pytest.raises(ServiceInitializationError) as exc_info:
+    with pytest.raises(ValueError) as exc_info:
         provider.as_agent(mock_agent)
 
     assert "my_function" in str(exc_info.value)
@@ -489,7 +480,7 @@ def test_as_agent_with_dict_function_tools_validates(
 
     provider = AzureAIAgentsProvider(agents_client=mock_agents_client)
 
-    with pytest.raises(ServiceInitializationError) as exc_info:
+    with pytest.raises(ValueError) as exc_info:
         provider.as_agent(mock_agent)
 
     assert "dict_based_function" in str(exc_info.value)
@@ -533,7 +524,6 @@ def test_as_agent_with_dict_function_tools_provided(
 
 
 # endregion
-
 
 # region Tool Conversion Tests - to_azure_ai_agent_tools
 
@@ -659,7 +649,6 @@ def test_to_azure_ai_agent_tools_unsupported_type() -> None:
 
 # endregion
 
-
 # region Tool Conversion Tests - from_azure_ai_agent_tools
 
 
@@ -784,10 +773,11 @@ def test_from_azure_ai_agent_tools_unknown_dict() -> None:
 
 # endregion
 
-
 # region Integration Tests
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_integration_create_agent() -> None:
     """Integration test: Create an agent using the provider."""
@@ -810,6 +800,8 @@ async def test_integration_create_agent() -> None:
                 await provider._agents_client.delete_agent(agent.id)  # type: ignore
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_integration_get_agent() -> None:
     """Integration test: Get an existing agent using the provider."""
@@ -834,6 +826,8 @@ async def test_integration_get_agent() -> None:
             await provider._agents_client.delete_agent(created.id)  # type: ignore
 
 
+@pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_integration_create_and_run() -> None:
     """Integration test: Create an agent and run a conversation."""

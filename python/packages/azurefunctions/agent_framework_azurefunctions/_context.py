@@ -19,7 +19,7 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowMessage,
 )
-from agent_framework._workflows import State
+from agent_framework._workflows._state import State
 
 
 class CapturingRunnerContext(RunnerContext):

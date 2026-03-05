@@ -36,9 +36,9 @@ public sealed class Run : CheckpointableRunBase, IAsyncDisposable
     }
 
     /// <summary>
-    /// A unique identifier for the run. Can be provided at the start of the run, or auto-generated.
+    /// A unique identifier for the session. Can be provided at the start of the session, or auto-generated.
     /// </summary>
-    public string RunId => this._runHandle.RunId;
+    public string SessionId => this._runHandle.SessionId;
 
     /// <summary>
     /// Gets the current execution status of the workflow run.

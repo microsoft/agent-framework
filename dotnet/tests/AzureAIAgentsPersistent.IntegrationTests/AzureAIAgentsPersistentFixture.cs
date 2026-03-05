@@ -6,7 +6,6 @@ using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
 using Azure;
 using Azure.AI.Agents.Persistent;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Shared.IntegrationTests;
@@ -15,8 +14,6 @@ namespace AzureAIAgentsPersistent.IntegrationTests;
 
 public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 {
-    private static readonly AzureAIConfiguration s_config = TestConfiguration.LoadSection<AzureAIConfiguration>();
-
     private ChatClientAgent _agent = null!;
     private PersistentAgentsClient _persistentAgentsClient = null!;
 
@@ -57,7 +54,7 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
         IList<AITool>? aiTools = null)
     {
         var persistentAgentResponse = await this._persistentAgentsClient.Administration.CreateAgentAsync(
-            model: s_config.DeploymentName,
+            model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
             name: name,
             instructions: instructions);
 
@@ -98,7 +95,7 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 
     public async Task InitializeAsync()
     {
-        this._persistentAgentsClient = new(s_config.Endpoint, new AzureCliCredential());
+        this._persistentAgentsClient = new(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint), TestAzureCliCredentials.CreateAzureCliCredential());
         this._agent = await this.CreateChatClientAgentAsync();
     }
 }

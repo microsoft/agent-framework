@@ -272,7 +272,7 @@ class AgentFunctionApp(DFAppBase):
             Note: We use str type annotations instead of dict to work around
             Azure Functions worker type validation issues with dict[str, Any].
             """
-            from agent_framework._workflows import State
+            from agent_framework._workflows._state import State
 
             data = json.loads(inputData)
             message_data = data["message"]
@@ -612,11 +612,11 @@ class AgentFunctionApp(DFAppBase):
             context: Durable Functions orchestration context invoking the agent.
             agent_name: Name of the agent registered on this app.
 
-        Raises:
-            ValueError: If the requested agent has not been registered.
-
         Returns:
             DurableAIAgent[AgentTask] wrapper bound to the orchestration context.
+
+        Raises:
+            ValueError: If the requested agent has not been registered.
         """
         normalized_name = str(agent_name)
 

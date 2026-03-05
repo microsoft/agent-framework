@@ -13,7 +13,6 @@ from openai.lib.azure import AsyncAzureOpenAI
 
 from .._settings import SecretString
 from .._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
-from ..exceptions import ServiceInitializationError
 from ..openai._shared import OpenAIBase
 from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider, resolve_credential_to_token_provider
 
@@ -54,6 +53,8 @@ class AzureOpenAISettings(TypedDict, total=False):
             Resource Management > Deployments in the Azure portal or, alternatively,
             under Management > Deployments in Azure AI Foundry.
             Can be set via environment variable AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
+        embedding_deployment_name: The name of the Azure Embedding deployment.
+            Can be set via environment variable AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME.
         api_key: The API key for the Azure deployment. This value can be
             found in the Keys & Endpoint section when examining your resource in
             the Azure portal. You can use either KEY1 or KEY2.
@@ -96,6 +97,7 @@ class AzureOpenAISettings(TypedDict, total=False):
 
     chat_deployment_name: str | None
     responses_deployment_name: str | None
+    embedding_deployment_name: str | None
     endpoint: str | None
     base_url: str | None
     api_key: SecretString | None
@@ -175,10 +177,10 @@ class AzureOpenAIConfigMixin(OpenAIBase):
                 ad_token_provider = resolve_credential_to_token_provider(credential, token_endpoint)
 
             if not api_key and not ad_token_provider:
-                raise ServiceInitializationError("Please provide either api_key, credential, or a client.")
+                raise ValueError("Please provide either api_key, credential, or a client.")
 
             if not endpoint and not base_url:
-                raise ServiceInitializationError("Please provide an endpoint or a base_url")
+                raise ValueError("Please provide an endpoint or a base_url")
 
             args: dict[str, Any] = {
                 "default_headers": merged_headers,

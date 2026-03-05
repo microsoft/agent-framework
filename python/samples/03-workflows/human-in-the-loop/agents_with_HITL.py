@@ -123,7 +123,8 @@ class Coordinator(Executor):
         )
         conversation.append(Message("user", text=instruction))
         await ctx.send_message(
-            AgentExecutorRequest(messages=conversation, should_respond=True), target_id=self.writer_name
+            AgentExecutorRequest(messages=conversation, should_respond=True),
+            target_id=self.writer_name,
         )
 
 

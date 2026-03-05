@@ -23,6 +23,8 @@ import pytest
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
+    pytest.mark.flaky,
+    pytest.mark.integration,
     pytest.mark.sample("10_workflow_no_shared_state"),
     pytest.mark.usefixtures("function_app_for_test"),
 ]

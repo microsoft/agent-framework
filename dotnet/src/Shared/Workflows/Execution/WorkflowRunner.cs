@@ -68,7 +68,7 @@ internal sealed class WorkflowRunner
             checkpointManager = CheckpointManager.CreateInMemory();
         }
 
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager).ConfigureAwait(false);
+        StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input, checkpointManager).ConfigureAwait(false);
 
         bool isComplete = false;
         ExternalResponse? requestResponse = null;
@@ -95,7 +95,7 @@ internal sealed class WorkflowRunner
                 Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
                 Notify("WORKFLOW: Restore", ConsoleColor.DarkYellow);
 
-                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager).ConfigureAwait(false);
+                run = await InProcessExecution.ResumeStreamingAsync(workflow, this.LastCheckpoint, checkpointManager).ConfigureAwait(false);
             }
             else
             {
@@ -272,9 +272,10 @@ internal sealed class WorkflowRunner
     /// </summary>
     private async ValueTask<ExternalInputResponse> HandleExternalRequestAsync(ExternalRequest request)
     {
-        ExternalInputRequest inputRequest =
-            request.DataAs<ExternalInputRequest>() ??
-            throw new InvalidOperationException($"Expected external request type: {request.GetType().Name}.");
+        if (!request.TryGetDataAs<ExternalInputRequest>(out var inputRequest))
+        {
+            throw new InvalidOperationException($"Expected external request type: {request.PortInfo.RequestType}.");
+        }
 
         List<ChatMessage> responseMessages = [];
 

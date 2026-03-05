@@ -31,24 +31,19 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionTool,
     Message,
     SupportsChatGetResponse,
     tool,
 )
-from agent_framework.exceptions import (
-    ServiceInitializationError,
-    ServiceInvalidRequestError,
-    ServiceResponseException,
-)
+from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
 from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
+from agent_framework.openai._responses_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
-    reason="No real OPENAI_API_KEY provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
+    reason="No real OPENAI_API_KEY provided; skipping integration tests.",
 )
 
 
@@ -106,7 +101,7 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
 
 def test_init_validation_fail() -> None:
     # Test successful initialization
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         OpenAIResponsesClient(api_key="34523", model_id={"test": "dict"})  # type: ignore
 
 
@@ -138,7 +133,7 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_RESPONSES_MODEL_ID"]], indirect=True)
 def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         OpenAIResponsesClient()
 
 
@@ -146,7 +141,7 @@ def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
     model_id = "test_model_id"
 
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         OpenAIResponsesClient(
             model_id=model_id,
         )
@@ -192,8 +187,8 @@ async def test_get_response_with_invalid_input() -> None:
 
     client = OpenAIResponsesClient(model_id="invalid-model", api_key="test-key")
 
-    # Test with empty messages which should trigger ServiceInvalidRequestError
-    with pytest.raises(ServiceInvalidRequestError, match="Messages are required"):
+    # Test with empty messages which should trigger ChatClientInvalidRequestException
+    with pytest.raises(ChatClientInvalidRequestException, match="Messages are required"):
         await client.get_response(messages=[])
 
 
@@ -201,7 +196,7 @@ async def test_get_response_with_all_parameters() -> None:
     """Test get_response with all possible parameters to cover parameter handling logic."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     # Test with comprehensive parameter set - should fail due to invalid API key
-    with pytest.raises(ServiceResponseException):
+    with pytest.raises(ChatClientException):
         await client.get_response(
             messages=[Message(role="user", text="Test message")],
             options={
@@ -244,7 +239,7 @@ async def test_web_search_tool_with_location() -> None:
     )
 
     # Should raise an authentication error due to invalid API key
-    with pytest.raises(ServiceResponseException):
+    with pytest.raises(ChatClientException):
         await client.get_response(
             messages=[Message(role="user", text="What's the weather?")],
             options={"tools": [web_search_tool], "tool_choice": "auto"},
@@ -258,7 +253,7 @@ async def test_code_interpreter_tool_variations() -> None:
     # Test code interpreter using static method
     code_tool = OpenAIResponsesClient.get_code_interpreter_tool()
 
-    with pytest.raises(ServiceResponseException):
+    with pytest.raises(ChatClientException):
         await client.get_response(
             messages=[Message("user", ["Run some code"])],
             options={"tools": [code_tool]},
@@ -267,7 +262,7 @@ async def test_code_interpreter_tool_variations() -> None:
     # Test code interpreter with files using static method
     code_tool_with_files = OpenAIResponsesClient.get_code_interpreter_tool(file_ids=["file1", "file2"])
 
-    with pytest.raises(ServiceResponseException):
+    with pytest.raises(ChatClientException):
         await client.get_response(
             messages=[Message(role="user", text="Process these files")],
             options={"tools": [code_tool_with_files]},
@@ -303,7 +298,7 @@ async def test_hosted_file_search_tool_validation() -> None:
     file_search_tool = OpenAIResponsesClient.get_file_search_tool(vector_store_ids=["vs_123"])
 
     # Test using file search tool - may raise various exceptions depending on API response
-    with pytest.raises((ValueError, ServiceInvalidRequestError, ServiceResponseException)):
+    with pytest.raises((ValueError, ChatClientInvalidRequestException, ChatClientException)):
         await client.get_response(
             messages=[Message("user", ["Test"])],
             options={"tools": [file_search_tool]},
@@ -331,7 +326,7 @@ async def test_chat_message_parsing_with_function_calls() -> None:
     ]
 
     # This should exercise the message parsing logic - will fail due to invalid API key
-    with pytest.raises(ServiceResponseException):
+    with pytest.raises(ChatClientException):
         await client.get_response(messages=messages)
 
 
@@ -401,7 +396,7 @@ async def test_bad_request_error_non_content_filter() -> None:
     mock_error.code = "invalid_request"
 
     with patch.object(client.client.responses, "parse", side_effect=mock_error):
-        with pytest.raises(ServiceResponseException) as exc_info:
+        with pytest.raises(ChatClientException) as exc_info:
             await client.get_response(
                 messages=[Message(role="user", text="Test message")],
                 options={"response_format": OutputStruct},
@@ -569,6 +564,386 @@ def test_response_content_creation_with_code_interpreter() -> None:
     assert result_content.outputs is not None
     assert any(out.type == "text" for out in result_content.outputs)
     assert any(out.type == "uri" for out in result_content.outputs)
+
+
+def test_get_shell_tool_basic() -> None:
+    """Test get_shell_tool returns hosted shell config with default auto environment."""
+    tool = OpenAIResponsesClient.get_shell_tool()
+    assert tool.type == "shell"
+    assert tool.environment.type == "container_auto"
+
+
+def test_get_shell_tool_rejects_local_without_func() -> None:
+    """Local environment requires a local function executor."""
+    with pytest.raises(ValueError, match="Local shell requires func"):
+        OpenAIResponsesClient.get_shell_tool(environment={"type": "local"})
+
+
+def test_get_shell_tool_rejects_environment_config_with_func() -> None:
+    """Environment config is hosted-only and must not be passed with func."""
+
+    def local_exec(command: str) -> str:
+        return command
+
+    with pytest.raises(ValueError, match="environment config is not supported"):
+        OpenAIResponsesClient.get_shell_tool(
+            func=local_exec,
+            environment={"type": "container_auto"},
+        )
+
+
+def test_get_shell_tool_local_executor_maps_to_shell_tool() -> None:
+    """Test local shell FunctionTool maps to OpenAI shell tool declaration."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIResponsesClient.get_shell_tool(
+        func=local_exec,
+        approval_mode="never_require",
+    )
+
+    assert isinstance(local_shell_tool, FunctionTool)
+    response_tools = client._prepare_tools_for_openai([local_shell_tool])
+    assert len(response_tools) == 1
+    assert response_tools[0].type == "shell"
+    assert response_tools[0].environment.type == "local"
+
+
+def test_get_shell_tool_reuses_function_tool_instance() -> None:
+    """Passing a FunctionTool should update and return the same tool instance."""
+
+    @tool(name="run_shell", approval_mode="never_require")
+    def run_shell(command: str) -> str:
+        return command
+
+    shell_tool = OpenAIResponsesClient.get_shell_tool(
+        func=run_shell,
+        description="Run local shell command",
+        approval_mode="always_require",
+    )
+
+    assert shell_tool is run_shell
+    assert shell_tool.kind == "shell"
+    assert shell_tool.description == "Run local shell command"
+    assert shell_tool.approval_mode == "always_require"
+    assert (shell_tool.additional_properties or {}).get("openai.responses.shell.environment") == {"type": "local"}
+
+
+def test_response_content_creation_with_local_shell_call_maps_to_function_call() -> None:
+    """Test local_shell_call is translated into function_call for invocation loop."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIResponsesClient.get_shell_tool(func=local_exec)
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.command = ["python", "--version"]
+    mock_action.timeout_ms = 30000
+
+    mock_local_shell_call = MagicMock()
+    mock_local_shell_call.type = "local_shell_call"
+    mock_local_shell_call.id = "local-shell-item-1"
+    mock_local_shell_call.call_id = "local-shell-call-1"
+    mock_local_shell_call.action = mock_action
+    mock_local_shell_call.status = "completed"
+
+    mock_response.output = [mock_local_shell_call]
+
+    response = client._parse_response_from_openai(mock_response, options={"tools": [local_shell_tool]})  # type: ignore[arg-type]
+    assert len(response.messages[0].contents) == 1
+    call_content = response.messages[0].contents[0]
+    assert call_content.type == "function_call"
+    assert call_content.call_id == "local-shell-call-1"
+    assert call_content.name == local_shell_tool.name
+    assert call_content.parse_arguments() == {"command": "python --version"}
+    assert call_content.additional_properties[OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY] == "local-shell-item-1"
+
+
+@pytest.mark.asyncio
+async def test_local_shell_tool_is_invoked_in_function_loop() -> None:
+    """Test local shell call executes executor and sends local_shell_call_output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    executed_commands: list[str] = []
+
+    def local_exec(command: str) -> str:
+        executed_commands.append(command)
+        return "Python 3.13.0"
+
+    local_shell_tool = OpenAIResponsesClient.get_shell_tool(
+        func=local_exec,
+        approval_mode="never_require",
+    )
+
+    mock_response1 = MagicMock()
+    mock_response1.output_parsed = None
+    mock_response1.metadata = {}
+    mock_response1.usage = None
+    mock_response1.id = "resp-1"
+    mock_response1.model = "test-model"
+    mock_response1.created_at = 1000000000
+    mock_response1.status = "completed"
+    mock_response1.finish_reason = "tool_calls"
+    mock_response1.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.command = ["python", "--version"]
+    mock_action.timeout_ms = 30000
+
+    mock_local_shell_call = MagicMock()
+    mock_local_shell_call.type = "local_shell_call"
+    mock_local_shell_call.id = "local-shell-item-1"
+    mock_local_shell_call.call_id = "local-shell-call-1"
+    mock_local_shell_call.action = mock_action
+    mock_local_shell_call.status = "completed"
+    mock_response1.output = [mock_local_shell_call]
+
+    mock_response2 = MagicMock()
+    mock_response2.output_parsed = None
+    mock_response2.metadata = {}
+    mock_response2.usage = None
+    mock_response2.id = "resp-2"
+    mock_response2.model = "test-model"
+    mock_response2.created_at = 1000000001
+    mock_response2.status = "completed"
+    mock_response2.finish_reason = "stop"
+    mock_response2.incomplete = None
+
+    mock_text_item = MagicMock()
+    mock_text_item.type = "message"
+    mock_text_content = MagicMock()
+    mock_text_content.type = "output_text"
+    mock_text_content.text = "Python 3.13.0"
+    mock_text_item.content = [mock_text_content]
+    mock_response2.output = [mock_text_item]
+
+    with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
+        await client.get_response(
+            messages=[Message(role="user", text="What Python version is available?")],
+            options={"tools": [local_shell_tool]},
+        )
+
+        assert executed_commands == ["python --version"]
+        assert mock_create.call_count == 2
+        second_call_input = mock_create.call_args_list[1].kwargs["input"]
+        local_shell_outputs = [item for item in second_call_input if item.get("type") == "local_shell_call_output"]
+        assert len(local_shell_outputs) == 1
+        output_payload = json.loads(local_shell_outputs[0]["output"])
+        assert output_payload["stdout"] == "Python 3.13.0"
+
+
+@pytest.mark.asyncio
+async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
+    """Test shell_call maps to local function invocation and returns shell_call_output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    executed_commands: list[str] = []
+
+    def local_exec(command: str) -> str:
+        executed_commands.append(command)
+        return "Python 3.13.0"
+
+    local_shell_tool = OpenAIResponsesClient.get_shell_tool(
+        func=local_exec,
+        approval_mode="never_require",
+    )
+
+    mock_response1 = MagicMock()
+    mock_response1.output_parsed = None
+    mock_response1.metadata = {}
+    mock_response1.usage = None
+    mock_response1.id = "resp-1"
+    mock_response1.model = "test-model"
+    mock_response1.created_at = 1000000000
+    mock_response1.status = "completed"
+    mock_response1.finish_reason = "tool_calls"
+    mock_response1.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.commands = ["python --version"]
+    mock_action.timeout_ms = 30000
+    mock_action.max_output_length = 4096
+
+    mock_shell_call = MagicMock()
+    mock_shell_call.type = "shell_call"
+    mock_shell_call.id = "sh_test_shell_call_1"
+    mock_shell_call.call_id = "shell-call-1"
+    mock_shell_call.action = mock_action
+    mock_shell_call.status = "completed"
+    mock_response1.output = [mock_shell_call]
+
+    mock_response2 = MagicMock()
+    mock_response2.output_parsed = None
+    mock_response2.metadata = {}
+    mock_response2.usage = None
+    mock_response2.id = "resp-2"
+    mock_response2.model = "test-model"
+    mock_response2.created_at = 1000000001
+    mock_response2.status = "completed"
+    mock_response2.finish_reason = "stop"
+    mock_response2.incomplete = None
+
+    mock_text_item = MagicMock()
+    mock_text_item.type = "message"
+    mock_text_content = MagicMock()
+    mock_text_content.type = "output_text"
+    mock_text_content.text = "Python 3.13.0"
+    mock_text_item.content = [mock_text_content]
+    mock_response2.output = [mock_text_item]
+
+    with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
+        await client.get_response(
+            messages=[Message(role="user", text="What Python version is available?")],
+            options={"tools": [local_shell_tool]},
+        )
+
+        assert executed_commands == ["python --version"]
+        assert mock_create.call_count == 2
+        second_call_input = mock_create.call_args_list[1].kwargs["input"]
+        shell_outputs = [item for item in second_call_input if item.get("type") == "shell_call_output"]
+        assert len(shell_outputs) == 1
+        assert shell_outputs[0]["call_id"] == "shell-call-1"
+        assert isinstance(shell_outputs[0]["output"], list)
+        assert shell_outputs[0]["output"][0]["stdout"] == "Python 3.13.0"
+        local_shell_outputs = [item for item in second_call_input if item.get("type") == "local_shell_call_output"]
+        assert len(local_shell_outputs) == 0
+
+
+def test_response_content_creation_with_shell_call() -> None:
+    """Test _parse_response_from_openai with shell_call output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.commands = ["ls -la", "pwd"]
+    mock_action.timeout_ms = 60000
+    mock_action.max_output_length = 4096
+
+    mock_shell_call = MagicMock()
+    mock_shell_call.type = "shell_call"
+    mock_shell_call.call_id = "shell-call-1"
+    mock_shell_call.action = mock_action
+    mock_shell_call.status = "completed"
+
+    mock_response.output = [mock_shell_call]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 1
+    call_content = response.messages[0].contents[0]
+    assert call_content.type == "shell_tool_call"
+    assert call_content.call_id == "shell-call-1"
+    assert call_content.commands == ["ls -la", "pwd"]
+    assert call_content.timeout_ms == 60000
+    assert call_content.max_output_length == 4096
+    assert call_content.status == "completed"
+
+
+def test_response_content_creation_with_shell_call_output() -> None:
+    """Test _parse_response_from_openai with shell_call_output output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_outcome = MagicMock()
+    mock_outcome.type = "exit"
+    mock_outcome.exit_code = 0
+
+    mock_output_entry = MagicMock()
+    mock_output_entry.stdout = "hello world\n"
+    mock_output_entry.stderr = ""
+    mock_output_entry.outcome = mock_outcome
+
+    mock_shell_output = MagicMock()
+    mock_shell_output.type = "shell_call_output"
+    mock_shell_output.call_id = "shell-call-1"
+    mock_shell_output.output = [mock_output_entry]
+    mock_shell_output.max_output_length = 4096
+
+    mock_response.output = [mock_shell_output]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 1
+    result_content = response.messages[0].contents[0]
+    assert result_content.type == "shell_tool_result"
+    assert result_content.call_id == "shell-call-1"
+    assert result_content.outputs is not None
+    assert len(result_content.outputs) == 1
+    assert result_content.outputs[0].type == "shell_command_output"
+    assert result_content.outputs[0].stdout == "hello world\n"
+    assert result_content.outputs[0].exit_code == 0
+    assert result_content.outputs[0].timed_out is False
+    assert result_content.max_output_length == 4096
+
+
+def test_response_content_creation_with_shell_call_timeout() -> None:
+    """Test _parse_response_from_openai with shell_call_output that timed out."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_outcome = MagicMock()
+    mock_outcome.type = "timeout"
+
+    mock_output_entry = MagicMock()
+    mock_output_entry.stdout = "partial output"
+    mock_output_entry.stderr = None
+    mock_output_entry.outcome = mock_outcome
+
+    mock_shell_output = MagicMock()
+    mock_shell_output.type = "shell_call_output"
+    mock_shell_output.call_id = "shell-call-t"
+    mock_shell_output.output = [mock_output_entry]
+    mock_shell_output.max_output_length = None
+
+    mock_response.output = [mock_shell_output]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    result_content = response.messages[0].contents[0]
+    assert result_content.type == "shell_tool_result"
+    assert result_content.outputs is not None
+    assert result_content.outputs[0].type == "shell_command_output"
+    assert result_content.outputs[0].timed_out is True
+    assert result_content.outputs[0].exit_code is None
 
 
 def test_response_content_creation_with_function_call() -> None:
@@ -825,8 +1200,9 @@ def test_prepare_message_for_openai_includes_reasoning_with_function_call() -> N
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     reasoning = Content.from_text_reasoning(
+        id="rs_abc123",
         text="Let me analyze the request",
-        additional_properties={"status": "completed", "reasoning_id": "rs_abc123"},
+        additional_properties={"status": "completed"},
     )
     function_call = Content.from_function_call(
         call_id="call_123",
@@ -845,7 +1221,7 @@ def test_prepare_message_for_openai_includes_reasoning_with_function_call() -> N
     assert "function_call" in types
 
     reasoning_item = next(item for item in result if item["type"] == "reasoning")
-    assert reasoning_item["summary"]["text"] == "Let me analyze the request"
+    assert reasoning_item["summary"][0]["text"] == "Let me analyze the request"
     assert reasoning_item["id"] == "rs_abc123", "Reasoning id must be preserved for the API"
 
 
@@ -864,8 +1240,9 @@ def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
             role="assistant",
             contents=[
                 Content.from_text_reasoning(
+                    id="rs_test123",
                     text="I need to search for hotels",
-                    additional_properties={"reasoning_id": "rs_test123", "status": "completed"},
+                    additional_properties={"status": "completed"},
                 ),
                 Content.from_function_call(
                     call_id="call_1",
@@ -996,7 +1373,7 @@ def test_response_format_with_conflicting_definitions() -> None:
     response_format = {"type": "json_schema", "format": {"type": "json_schema", "name": "Test", "schema": {}}}
     text_config = {"format": {"type": "json_object"}}
 
-    with pytest.raises(ServiceInvalidRequestError, match="Conflicting response_format definitions"):
+    with pytest.raises(ChatClientInvalidRequestException, match="Conflicting response_format definitions"):
         client._prepare_response_and_text_format(response_format=response_format, text_config=text_config)
 
 
@@ -1092,7 +1469,7 @@ def test_response_format_json_schema_missing_schema() -> None:
 
     response_format = {"type": "json_schema", "json_schema": {"name": "NoSchema"}}
 
-    with pytest.raises(ServiceInvalidRequestError, match="json_schema response_format requires a schema"):
+    with pytest.raises(ChatClientInvalidRequestException, match="json_schema response_format requires a schema"):
         client._prepare_response_and_text_format(response_format=response_format, text_config=None)
 
 
@@ -1102,7 +1479,7 @@ def test_response_format_unsupported_type() -> None:
 
     response_format = {"type": "unsupported_format"}
 
-    with pytest.raises(ServiceInvalidRequestError, match="Unsupported response_format"):
+    with pytest.raises(ChatClientInvalidRequestException, match="Unsupported response_format"):
         client._prepare_response_and_text_format(response_format=response_format, text_config=None)
 
 
@@ -1112,7 +1489,7 @@ def test_response_format_invalid_type() -> None:
 
     response_format = "invalid"  # Not a Pydantic model or mapping
 
-    with pytest.raises(ServiceInvalidRequestError, match="response_format must be a Pydantic model or mapping"):
+    with pytest.raises(ChatClientInvalidRequestException, match="response_format must be a Pydantic model or mapping"):
         client._prepare_response_and_text_format(response_format=response_format, text_config=None)  # type: ignore
 
 
@@ -1196,6 +1573,52 @@ def test_prepare_tools_for_openai_with_mcp() -> None:
     assert set(mcp["allowed_tools"]) == {"tool_a", "tool_b"}
     # approval mapping created from approval_mode dict
     assert "require_approval" in mcp
+
+
+def test_prepare_tools_for_openai_single_function_tool() -> None:
+    """Test that a single FunctionTool (not wrapped in a list) is handled correctly."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    @tool
+    def hello(name: str) -> str:
+        """Say hello."""
+        return name
+
+    resp_tools = client._prepare_tools_for_openai(hello)
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 1
+    tool_def = resp_tools[0]
+    assert tool_def["type"] == "function"
+    assert tool_def["name"] == "hello"
+    assert tool_def["strict"] is False
+    assert "parameters" in tool_def
+    params = tool_def["parameters"]
+    assert isinstance(params, dict)
+    assert params.get("type") == "object"
+    assert "properties" in params
+    assert "name" in params["properties"]
+    assert params["properties"]["name"]["type"] == "string"
+
+
+def test_prepare_tools_for_openai_single_dict_tool() -> None:
+    """Test that a single dict tool (not wrapped in a list) is handled correctly."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    web_tool = OpenAIResponsesClient.get_web_search_tool(search_context_size="low")
+    resp_tools = client._prepare_tools_for_openai(web_tool)
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 1
+    assert "type" in resp_tools[0]
+    assert resp_tools[0]["search_context_size"] == "low"
+
+
+def test_prepare_tools_for_openai_none() -> None:
+    """Test that passing None returns an empty list."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    resp_tools = client._prepare_tools_for_openai(None)
+    assert isinstance(resp_tools, list)
+    assert len(resp_tools) == 0
 
 
 def test_parse_response_from_openai_with_mcp_approval_request() -> None:
@@ -1689,7 +2112,7 @@ def test_streaming_annotation_added_with_unknown_type() -> None:
 
 
 async def test_service_response_exception_includes_original_error_details() -> None:
-    """Test that ServiceResponseException messages include original error details in the new format."""
+    """Test that ChatClientException messages include original error details in the new format."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     messages = [Message(role="user", text="test message")]
 
@@ -1704,7 +2127,7 @@ async def test_service_response_exception_includes_original_error_details() -> N
 
     with (
         patch.object(client.client.responses, "parse", side_effect=mock_error),
-        pytest.raises(ServiceResponseException) as exc_info,
+        pytest.raises(ChatClientException) as exc_info,
     ):
         await client.get_response(messages=messages, options={"response_format": OutputStruct})
 
@@ -1719,7 +2142,7 @@ async def test_get_response_streaming_with_response_format() -> None:
     messages = [Message(role="user", text="Test streaming with format")]
 
     # It will fail due to invalid API key, but exercises the code path
-    with pytest.raises(ServiceResponseException):
+    with pytest.raises(ChatClientException):
 
         async def run_streaming():
             async for _ in client.get_response(
@@ -1899,6 +2322,7 @@ def test_prepare_content_for_openai_text_reasoning_comprehensive() -> None:
 
     # Test TextReasoningContent with all additional properties
     comprehensive_reasoning = Content.from_text_reasoning(
+        id="rs_comprehensive",
         text="Comprehensive reasoning summary",
         additional_properties={
             "status": "in_progress",
@@ -1908,10 +2332,11 @@ def test_prepare_content_for_openai_text_reasoning_comprehensive() -> None:
     )
     result = client._prepare_content_for_openai("assistant", comprehensive_reasoning, {})  # type: ignore
     assert result["type"] == "reasoning"
-    assert result["summary"]["text"] == "Comprehensive reasoning summary"
+    assert result["id"] == "rs_comprehensive"
+    assert result["summary"][0]["text"] == "Comprehensive reasoning summary"
     assert result["status"] == "in_progress"
-    assert result["content"]["type"] == "reasoning_text"
-    assert result["content"]["text"] == "Step-by-step analysis"
+    assert result["content"][0]["type"] == "reasoning_text"
+    assert result["content"][0]["text"] == "Step-by-step analysis"
     assert result["encrypted_content"] == "secure_data_456"
 
 
@@ -1935,6 +2360,7 @@ def test_streaming_reasoning_text_delta_event() -> None:
 
         assert len(response.contents) == 1
         assert response.contents[0].type == "text_reasoning"
+        assert response.contents[0].id == "reasoning_123"
         assert response.contents[0].text == "reasoning delta"
         assert response.contents[0].raw_representation == event
         mock_metadata.assert_called_once_with(event)
@@ -2361,6 +2787,7 @@ def test_with_callable_api_key() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 @pytest.mark.parametrize(
     "option_name,option_value,needs_validation",
@@ -2499,6 +2926,7 @@ async def test_integration_options(
 
 @pytest.mark.timeout(300)
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_integration_web_search() -> None:
     client = OpenAIResponsesClient(model_id="gpt-5")
@@ -2552,6 +2980,7 @@ async def test_integration_web_search() -> None:
     "race condition. See https://github.com/microsoft/agent-framework/issues/1669"
 )
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_integration_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()
@@ -2585,6 +3014,7 @@ async def test_integration_file_search() -> None:
     "potential race condition. See https://github.com/microsoft/agent-framework/issues/1669"
 )
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_integration_streaming_file_search() -> None:
     openai_responses_client = OpenAIResponsesClient()

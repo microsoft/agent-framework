@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+# ruff: noqa: E305
+# fmt: off
 from typing import Any
 
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
@@ -32,6 +34,8 @@ def _create_agent() -> Any:
         name="HostedAgent",
         instructions="You are a helpful assistant hosted in Azure Functions.",
     )
+
+
 # </create_agent>
 
 # <host_agent>
