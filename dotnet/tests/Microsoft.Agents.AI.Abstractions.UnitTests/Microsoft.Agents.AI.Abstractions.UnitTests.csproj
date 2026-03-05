@@ -16,4 +16,8 @@
     <PackageReference Include="System.Linq.AsyncEnumerable" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Moq" />
+  </ItemGroup>
+
 </Project>

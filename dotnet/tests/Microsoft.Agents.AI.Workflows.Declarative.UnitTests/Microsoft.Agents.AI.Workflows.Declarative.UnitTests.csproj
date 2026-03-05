@@ -10,8 +10,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Moq" />
     <PackageReference Include="Azure.Identity" />
-    <PackageReference Include="FluentAssertions" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="System.Linq.AsyncEnumerable" />

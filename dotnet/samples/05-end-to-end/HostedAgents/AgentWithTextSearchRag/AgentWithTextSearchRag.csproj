@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -16,23 +16,6 @@
     -->
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
   </PropertyGroup>
-
-  <!-- 
-    Remove analyzer PackageReference items inherited from Directory.Packages.props.
-    Note: ManagePackageVersionsCentrally only controls PackageVersion items, not PackageReference items.
-    Directory.Packages.props contains both PackageVersion and PackageReference entries for analyzers,
-    and the PackageReference items are always inherited through MSBuild imports regardless of the 
-    ManagePackageVersionsCentrally setting. We must explicitly remove them before adding our own versions.
-  -->
-  <ItemGroup>
-    <PackageReference Remove="Microsoft.CodeAnalysis.NetAnalyzers" />
-    <PackageReference Remove="Microsoft.VisualStudio.Threading.Analyzers" />
-    <PackageReference Remove="xunit.analyzers" />
-    <PackageReference Remove="Moq.Analyzers" />
-    <PackageReference Remove="Roslynator.Analyzers" />
-    <PackageReference Remove="Roslynator.CodeAnalysis.Analyzers" />
-    <PackageReference Remove="Roslynator.Formatting.Analyzers" />
-  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Azure.AI.AgentServer.AgentFramework" Version="1.0.0-beta.5" />

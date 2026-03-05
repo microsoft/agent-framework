@@ -10,10 +10,12 @@
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Generators\Microsoft.Agents.AI.Workflows.Generators.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="true"
+                      TreatAsUsed="true"
                       />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Moq" />
     <PackageReference Include="FluentAssertions" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="System.Linq.AsyncEnumerable" />
