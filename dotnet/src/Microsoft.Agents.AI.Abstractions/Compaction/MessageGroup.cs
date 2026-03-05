@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Compaction;
@@ -21,8 +22,8 @@ namespace Microsoft.Agents.AI.Compaction;
 /// </para>
 /// <para>
 /// Each group tracks its <see cref="MessageCount"/>, <see cref="ByteCount"/>, and <see cref="TokenCount"/>
-/// so that <see cref="MessageGroups"/> can efficiently aggregate totals across all or only included groups.
-/// These values are computed by <see cref="MessageGroups.Create"/> and passed into the constructor.
+/// so that <see cref="MessageIndex"/> can efficiently aggregate totals across all or only included groups.
+/// These values are computed by <see cref="MessageIndex.Create"/> and passed into the constructor.
 /// </para>
 /// </remarks>
 public sealed class MessageGroup
@@ -32,7 +33,7 @@ public sealed class MessageGroup
     /// </summary>
     /// <remarks>
     /// When this key is present with a value of <see langword="true"/>, the message is classified as
-    /// <see cref="MessageGroupKind.Summary"/> by <see cref="MessageGroups.Create"/>.
+    /// <see cref="MessageGroupKind.Summary"/> by <see cref="MessageIndex.Create"/>.
     /// </remarks>
     public static readonly string SummaryPropertyKey = "_is_summary";
 
@@ -47,6 +48,7 @@ public sealed class MessageGroup
     /// The zero-based user turn this group belongs to, or <see langword="null"/> for groups that precede
     /// the first user message (e.g., system messages).
     /// </param>
+    [JsonConstructor]
     public MessageGroup(MessageGroupKind kind, IReadOnlyList<ChatMessage> messages, int byteCount, int tokenCount, int? turnIndex = null)
     {
         this.Kind = kind;
@@ -97,7 +99,7 @@ public sealed class MessageGroup
     /// </summary>
     /// <remarks>
     /// Excluded groups are preserved in the collection for diagnostics or storage purposes
-    /// but are not included when calling <see cref="MessageGroups.GetIncludedMessages"/>.
+    /// but are not included when calling <see cref="MessageIndex.GetIncludedMessages"/>.
     /// </remarks>
     public bool IsExcluded { get; set; }
 

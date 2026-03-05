@@ -44,7 +44,7 @@ public sealed class TruncationCompactionStrategy : ICompactionStrategy
     public bool PreserveSystemMessages { get; }
 
     /// <inheritdoc/>
-    public Task<bool> CompactAsync(MessageGroups groups, CancellationToken cancellationToken = default)
+    public Task<bool> CompactAsync(MessageIndex groups, CancellationToken cancellationToken = default)
     {
         int includedCount = groups.IncludedGroupCount;
         if (includedCount <= this.MaxGroups)

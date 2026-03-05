@@ -6,7 +6,6 @@ using System.Linq;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -47,7 +46,6 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
             options?.JsonSerializerOptions);
         this.ChatReducer = options?.ChatReducer;
         this.ReducerTriggerEvent = options?.ReducerTriggerEvent ?? InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval;
-        this.CompactionStrategy = options?.CompactionStrategy;
     }
 
     /// <inheritdoc />
@@ -62,11 +60,6 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     /// Gets the event that triggers the reducer invocation in this provider.
     /// </summary>
     public InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent ReducerTriggerEvent { get; }
-
-    /// <summary>
-    /// Gets the compaction strategy used to compact stored messages. If <see langword="null"/>, no compaction is applied.
-    /// </summary>
-    public ICompactionStrategy? CompactionStrategy { get; }
 
     /// <summary>
     /// Gets the chat messages stored for the specified session.
@@ -84,20 +77,21 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     /// <exception cref="ArgumentNullException"><paramref name="messages"/> is <see langword="null"/>.</exception>
     public void SetMessages(AgentSession? session, List<ChatMessage> messages)
     {
-        _ = Throw.IfNull(messages);
+        Throw.IfNull(messages);
 
-        var state = this._sessionState.GetOrInitializeState(session);
+        State state = this._sessionState.GetOrInitializeState(session);
         state.Messages = messages;
     }
 
     /// <inheritdoc />
     protected override async ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
-        var state = this._sessionState.GetOrInitializeState(context.Session);
+        State state = this._sessionState.GetOrInitializeState(context.Session);
 
         if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval && this.ChatReducer is not null)
         {
-            state.Messages = (await this.ChatReducer.ReduceAsync(state.Messages, cancellationToken).ConfigureAwait(false)).ToList();
+            // Apply pre-invocation compaction strategy if configured
+            await this.CompactMessagesAsync(state, cancellationToken).ConfigureAwait(false);
         }
 
         return state.Messages;
@@ -106,46 +100,29 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     /// <inheritdoc />
     protected override async ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        var state = this._sessionState.GetOrInitializeState(context.Session);
+        State state = this._sessionState.GetOrInitializeState(context.Session);
 
         // Add request and response messages to the provider
         var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);
         state.Messages.AddRange(allNewMessages);
 
-        if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded && this.ChatReducer is not null)
+        if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded)
         {
-            state.Messages = (await this.ChatReducer.ReduceAsync(state.Messages, cancellationToken).ConfigureAwait(false)).ToList();
-        }
-
-        // Apply compaction strategy if configured (pre-write compaction)
-        if (this.CompactionStrategy is not null)
-        {
-            await CompactMessagesAsync(state.Messages, this.CompactionStrategy, cancellationToken).ConfigureAwait(false);
+            // Apply pre-write compaction strategy if configured
+            await this.CompactMessagesAsync(state, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    /// <summary>
-    /// Compacts the stored messages for the specified session using the given or configured compaction strategy.
-    /// </summary>
-    /// <param name="session">The agent session whose stored messages should be compacted.</param>
-    /// <param name="compactionStrategy">
-    /// An optional compaction strategy to use. If <see langword="null"/>, the provider's configured
-    /// <see cref="CompactionStrategy"/> is used. If neither is available, an <see cref="InvalidOperationException"/> is thrown.
-    /// </param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
-    /// <returns>A task representing the asynchronous operation. The task result is <see langword="true"/> if compaction occurred.</returns>
-    /// <exception cref="InvalidOperationException">No compaction strategy is configured or provided.</exception>
-    /// <remarks>
-    /// This method enables on-demand compaction of stored history, for example as a maintenance operation.
-    /// It reads the full stored history, applies the compaction strategy, and writes the compacted result back.
-    /// </remarks>
-    public async Task<bool> CompactStorageAsync(AgentSession? session, ICompactionStrategy? compactionStrategy = null, CancellationToken cancellationToken = default)
+    private async Task CompactMessagesAsync(State state, CancellationToken cancellationToken = default)
     {
-        ICompactionStrategy strategy = compactionStrategy ?? this.CompactionStrategy
-            ?? throw new InvalidOperationException("No compaction strategy is configured or provided.");
+        if (this.ChatReducer is not null)
+        {
+            // ChatReducer takes precedence, if configured
+            state.Messages = [.. await this.ChatReducer.ReduceAsync(state.Messages, cancellationToken).ConfigureAwait(false)];
+            return;
+        }
 
-        var state = this._sessionState.GetOrInitializeState(session);
-        return await CompactMessagesAsync(state.Messages, strategy, cancellationToken).ConfigureAwait(false);
+        // %%% TODO: CONSIDER COMPACTION
     }
 
     /// <summary>

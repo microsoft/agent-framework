@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -269,35 +268,6 @@ public abstract class ChatHistoryProvider
     /// </remarks>
     protected virtual ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default) =>
         default;
-
-    /// <summary>
-    /// Compacts the messages in place using the specified compaction strategy before they are stored.
-    /// </summary>
-    /// <param name="messages">The messages to compact. This list is mutated in place.</param>
-    /// <param name="compactionStrategy">The compaction strategy to apply.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
-    /// <returns>A task representing the asynchronous operation. The task result is <see langword="true"/> if compaction occurred.</returns>
-    /// <remarks>
-    /// <para>
-    /// This method organizes the messages into atomic <see cref="MessageGroup"/> units,
-    /// applies the compaction strategy, and replaces the contents of the list with the compacted result.
-    /// Tool call groups (assistant message + tool results) are treated as atomic units.
-    /// </para>
-    /// </remarks>
-    protected static async Task<bool> CompactMessagesAsync(List<ChatMessage> messages, ICompactionStrategy compactionStrategy, CancellationToken cancellationToken = default)
-    {
-        MessageGroups groups = MessageGroups.Create(messages);
-
-        bool compacted = await compactionStrategy.CompactAsync(groups, cancellationToken).ConfigureAwait(false);
-
-        if (compacted)
-        {
-            messages.Clear();
-            messages.AddRange(groups.GetIncludedMessages());
-        }
-
-        return compacted;
-    }
 
     /// <summary>Asks the <see cref="ChatHistoryProvider"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>

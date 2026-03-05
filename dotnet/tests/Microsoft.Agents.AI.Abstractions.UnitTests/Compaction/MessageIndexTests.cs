@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using Microsoft.Agents.AI.Compaction;
@@ -7,9 +7,9 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Abstractions.UnitTests.Compaction;
 
 /// <summary>
-/// Contains tests for the <see cref="MessageGroups"/> class.
+/// Contains tests for the <see cref="MessageIndex"/> class.
 /// </summary>
-public class MessageGroupsTests
+public class MessageIndexTests
 {
     [Fact]
     public void Create_EmptyList_ReturnsEmptyGroups()
@@ -18,7 +18,7 @@ public class MessageGroupsTests
         List<ChatMessage> messages = [];
 
         // Act
-        MessageGroups groups = MessageGroups.Create(messages);
+        MessageIndex groups = MessageIndex.Create(messages);
 
         // Assert
         Assert.Empty(groups.Groups);
@@ -34,7 +34,7 @@ public class MessageGroupsTests
         ];
 
         // Act
-        MessageGroups groups = MessageGroups.Create(messages);
+        MessageIndex groups = MessageIndex.Create(messages);
 
         // Assert
         Assert.Single(groups.Groups);
@@ -52,7 +52,7 @@ public class MessageGroupsTests
         ];
 
         // Act
-        MessageGroups groups = MessageGroups.Create(messages);
+        MessageIndex groups = MessageIndex.Create(messages);
 
         // Assert
         Assert.Single(groups.Groups);
@@ -69,7 +69,7 @@ public class MessageGroupsTests
         ];
 
         // Act
-        MessageGroups groups = MessageGroups.Create(messages);
+        MessageIndex groups = MessageIndex.Create(messages);
 
         // Assert
         Assert.Single(groups.Groups);
@@ -86,7 +86,7 @@ public class MessageGroupsTests
         List<ChatMessage> messages = [assistantMessage, toolResult];
 
         // Act
-        MessageGroups groups = MessageGroups.Create(messages);
+        MessageIndex groups = MessageIndex.Create(messages);
 
         // Assert
         Assert.Single(groups.Groups);
@@ -109,7 +109,7 @@ public class MessageGroupsTests
         List<ChatMessage> messages = [systemMsg, userMsg, assistantToolCall, toolResult, assistantText];
 
         // Act
-        MessageGroups groups = MessageGroups.Create(messages);
+        MessageIndex groups = MessageIndex.Create(messages);
 
         // Assert
         Assert.Equal(4, groups.Groups.Count);
@@ -134,7 +134,7 @@ public class MessageGroupsTests
         List<ChatMessage> messages = [assistantToolCall, toolResult1, toolResult2];
 
         // Act
-        MessageGroups groups = MessageGroups.Create(messages);
+        MessageIndex groups = MessageIndex.Create(messages);
 
         // Assert
         Assert.Single(groups.Groups);
@@ -150,7 +150,7 @@ public class MessageGroupsTests
         ChatMessage msg2 = new(ChatRole.Assistant, "Response");
         ChatMessage msg3 = new(ChatRole.User, "Second");
 
-        MessageGroups groups = MessageGroups.Create([msg1, msg2, msg3]);
+        MessageIndex groups = MessageIndex.Create([msg1, msg2, msg3]);
         groups.Groups[1].IsExcluded = true;
 
         // Act
@@ -169,7 +169,7 @@ public class MessageGroupsTests
         ChatMessage msg1 = new(ChatRole.User, "First");
         ChatMessage msg2 = new(ChatRole.Assistant, "Response");
 
-        MessageGroups groups = MessageGroups.Create([msg1, msg2]);
+        MessageIndex groups = MessageIndex.Create([msg1, msg2]);
         groups.Groups[0].IsExcluded = true;
 
         // Act
@@ -183,7 +183,7 @@ public class MessageGroupsTests
     public void IncludedGroupCount_ReflectsExclusions()
     {
         // Arrange
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "A"),
             new ChatMessage(ChatRole.Assistant, "B"),
@@ -207,7 +207,7 @@ public class MessageGroupsTests
         List<ChatMessage> messages = [summaryMessage];
 
         // Act
-        MessageGroups groups = MessageGroups.Create(messages);
+        MessageIndex groups = MessageIndex.Create(messages);
 
         // Assert
         Assert.Single(groups.Groups);
@@ -227,7 +227,7 @@ public class MessageGroupsTests
         List<ChatMessage> messages = [systemMsg, summaryMsg, userMsg];
 
         // Act
-        MessageGroups groups = MessageGroups.Create(messages);
+        MessageIndex groups = MessageIndex.Create(messages);
 
         // Assert
         Assert.Equal(3, groups.Groups.Count);
@@ -264,7 +264,7 @@ public class MessageGroupsTests
     public void Create_ComputesByteCount_Utf8()
     {
         // Arrange — "Hello" is 5 UTF-8 bytes
-        MessageGroups groups = MessageGroups.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
 
         // Assert
         Assert.Equal(5, groups.Groups[0].ByteCount);
@@ -274,7 +274,7 @@ public class MessageGroupsTests
     public void Create_ComputesByteCount_MultiByteChars()
     {
         // Arrange — "café" has a multi-byte 'é' (2 bytes in UTF-8) → 5 bytes total
-        MessageGroups groups = MessageGroups.Create([new ChatMessage(ChatRole.User, "café")]);
+        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "café")]);
 
         // Assert
         Assert.Equal(5, groups.Groups[0].ByteCount);
@@ -286,7 +286,7 @@ public class MessageGroupsTests
         // Arrange — ToolCall group: assistant (tool call, null text) + tool result "OK" (2 bytes)
         ChatMessage assistantMsg = new(ChatRole.Assistant, [new FunctionCallContent("call1", "fn")]);
         ChatMessage toolResult = new(ChatRole.Tool, "OK");
-        MessageGroups groups = MessageGroups.Create([assistantMsg, toolResult]);
+        MessageIndex groups = MessageIndex.Create([assistantMsg, toolResult]);
 
         // Assert — single ToolCall group with 2 messages
         Assert.Single(groups.Groups);
@@ -298,7 +298,7 @@ public class MessageGroupsTests
     public void Create_DefaultTokenCount_IsHeuristic()
     {
         // Arrange — "Hello world test data!" = 22 UTF-8 bytes → 22 / 4 = 5 estimated tokens
-        MessageGroups groups = MessageGroups.Create([new ChatMessage(ChatRole.User, "Hello world test data!")]);
+        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello world test data!")]);
 
         // Assert
         Assert.Equal(22, groups.Groups[0].ByteCount);
@@ -311,7 +311,7 @@ public class MessageGroupsTests
         // Arrange — message with no text (e.g., pure function call)
         ChatMessage msg = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather")]);
         ChatMessage tool = new(ChatRole.Tool, string.Empty);
-        MessageGroups groups = MessageGroups.Create([msg, tool]);
+        MessageIndex groups = MessageIndex.Create([msg, tool]);
 
         // Assert
         Assert.Equal(2, groups.Groups[0].MessageCount);
@@ -323,7 +323,7 @@ public class MessageGroupsTests
     public void TotalAggregates_SumAllGroups()
     {
         // Arrange
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "AAAA"),       // 4 bytes
             new ChatMessage(ChatRole.Assistant, "BBBB"),   // 4 bytes
@@ -342,7 +342,7 @@ public class MessageGroupsTests
     public void IncludedAggregates_ExcludeMarkedGroups()
     {
         // Arrange
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "AAAA"),       // 4 bytes
             new ChatMessage(ChatRole.Assistant, "BBBB"),   // 4 bytes
@@ -369,7 +369,7 @@ public class MessageGroupsTests
         ChatMessage assistantMsg = new(ChatRole.Assistant, [new FunctionCallContent("call1", "fn")]);
         ChatMessage toolResult = new(ChatRole.Tool, "OK");
 
-        MessageGroups groups = MessageGroups.Create([assistantMsg, toolResult]);
+        MessageIndex groups = MessageIndex.Create([assistantMsg, toolResult]);
 
         // Assert — single group with 2 messages
         Assert.Single(groups.Groups);
@@ -383,7 +383,7 @@ public class MessageGroupsTests
     public void Create_AssignsTurnIndices_SingleTurn()
     {
         // Arrange — System (no turn), User + Assistant = turn 1
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "You are helpful."),
             new ChatMessage(ChatRole.User, "Hello"),
@@ -402,7 +402,7 @@ public class MessageGroupsTests
     public void Create_AssignsTurnIndices_MultiTurn()
     {
         // Arrange — 3 user turns
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "System prompt."),
             new ChatMessage(ChatRole.User, "Q1"),
@@ -429,7 +429,7 @@ public class MessageGroupsTests
         ChatMessage assistantToolCall = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather")]);
         ChatMessage toolResult = new(ChatRole.Tool, "Sunny");
 
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "What's the weather?"),
             assistantToolCall,
@@ -449,7 +449,7 @@ public class MessageGroupsTests
     public void GetTurnGroups_ReturnsGroupsForSpecificTurn()
     {
         // Arrange
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "System."),
             new ChatMessage(ChatRole.User, "Q1"),
@@ -475,7 +475,7 @@ public class MessageGroupsTests
     public void IncludedTurnCount_ReflectsExclusions()
     {
         // Arrange — 2 turns, exclude all groups in turn 1
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -495,7 +495,7 @@ public class MessageGroupsTests
     public void TotalTurnCount_ZeroWhenNoUserMessages()
     {
         // Arrange — only system messages
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "System."),
         ]);
@@ -509,7 +509,7 @@ public class MessageGroupsTests
     public void IncludedTurnCount_PartialExclusion_StillCountsTurn()
     {
         // Arrange — turn 1 has 2 groups, only one excluded
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),

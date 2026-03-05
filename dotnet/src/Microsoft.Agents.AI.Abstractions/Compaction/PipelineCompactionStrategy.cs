@@ -9,7 +9,7 @@ namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
 /// A compaction strategy that executes a sequential pipeline of <see cref="ICompactionStrategy"/> instances
-/// against the same <see cref="MessageGroups"/>.
+/// against the same <see cref="MessageIndex"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -28,7 +28,8 @@ public sealed class PipelineCompactionStrategy : ICompactionStrategy
     /// Initializes a new instance of the <see cref="PipelineCompactionStrategy"/> class.
     /// </summary>
     /// <param name="strategies">The ordered sequence of strategies to execute. Must not be empty.</param>
-    public PipelineCompactionStrategy(params IEnumerable<ICompactionStrategy> strategies)
+    ///// <param name="cache">An optional cache for <see cref="MessageIndex"/> instances. When <see langword="null"/>, a default <see cref="InMemoryMessageIndexCache"/> is created.</param>
+    public PipelineCompactionStrategy(params IEnumerable<ICompactionStrategy> strategies/*, IMessageIndexCache? cache = null*/)
     {
         this.Strategies = [.. Throw.IfNull(strategies)];
     }
@@ -58,7 +59,7 @@ public sealed class PipelineCompactionStrategy : ICompactionStrategy
     public int? TargetIncludedGroupCount { get; set; }
 
     /// <inheritdoc/>
-    public async Task<bool> CompactAsync(MessageGroups groups, CancellationToken cancellationToken = default)
+    public async Task<bool> CompactAsync(MessageIndex groups, CancellationToken cancellationToken = default)
     {
         bool anyCompacted = false;
 

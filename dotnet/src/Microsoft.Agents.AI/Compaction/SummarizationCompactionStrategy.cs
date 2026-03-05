@@ -58,7 +58,7 @@ public sealed class SummarizationCompactionStrategy : ICompactionStrategy
     public string SummarizationPrompt { get; }
 
     /// <inheritdoc/>
-    public async Task<bool> CompactAsync(MessageGroups groups, CancellationToken cancellationToken = default)
+    public async Task<bool> CompactAsync(MessageIndex groups, CancellationToken cancellationToken = default)
     {
         int includedCount = groups.IncludedGroupCount;
         if (includedCount <= this.MaxGroupsBeforeSummary)

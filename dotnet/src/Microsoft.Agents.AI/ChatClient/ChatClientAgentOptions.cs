@@ -59,10 +59,6 @@ public sealed class ChatClientAgentOptions
     /// The strategy organizes messages into atomic groups (preserving tool-call/result pairings)
     /// before applying compaction logic. See <see cref="ICompactionStrategy"/> for details.
     /// </para>
-    /// <para>
-    /// This is separate from the compaction strategy on <see cref="InMemoryChatHistoryProviderOptions.CompactionStrategy"/>,
-    /// which applies pre-write compaction before storing messages. Both can be used together.
-    /// </para>
     /// </remarks>
     public ICompactionStrategy? CompactionStrategy { get; set; }
 

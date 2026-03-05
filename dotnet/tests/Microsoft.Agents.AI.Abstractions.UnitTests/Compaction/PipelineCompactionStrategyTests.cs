@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Threading;
@@ -20,17 +20,17 @@ public class PipelineCompactionStrategyTests
         // Arrange
         List<string> executionOrder = [];
         Mock<ICompactionStrategy> strategy1 = new();
-        strategy1.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
+        strategy1.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
             .Callback(() => executionOrder.Add("first"))
             .ReturnsAsync(false);
 
         Mock<ICompactionStrategy> strategy2 = new();
-        strategy2.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
+        strategy2.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
             .Callback(() => executionOrder.Add("second"))
             .ReturnsAsync(false);
 
-        PipelineCompactionStrategy pipeline = new(strategy1.Object, strategy2.Object);
-        MessageGroups groups = MessageGroups.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        PipelineCompactionStrategy pipeline = new([strategy1.Object, strategy2.Object]);
+        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
 
         // Act
         await pipeline.CompactAsync(groups);
@@ -44,11 +44,11 @@ public class PipelineCompactionStrategyTests
     {
         // Arrange
         Mock<ICompactionStrategy> strategy1 = new();
-        strategy1.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
+        strategy1.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
-        PipelineCompactionStrategy pipeline = new(strategy1.Object);
-        MessageGroups groups = MessageGroups.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        PipelineCompactionStrategy pipeline = new([strategy1.Object]);
+        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
 
         // Act
         bool result = await pipeline.CompactAsync(groups);
@@ -62,15 +62,15 @@ public class PipelineCompactionStrategyTests
     {
         // Arrange
         Mock<ICompactionStrategy> strategy1 = new();
-        strategy1.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
+        strategy1.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         Mock<ICompactionStrategy> strategy2 = new();
-        strategy2.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
+        strategy2.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
-        PipelineCompactionStrategy pipeline = new(strategy1.Object, strategy2.Object);
-        MessageGroups groups = MessageGroups.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        PipelineCompactionStrategy pipeline = new([strategy1.Object, strategy2.Object]);
+        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
 
         // Act
         bool result = await pipeline.CompactAsync(groups);
@@ -84,22 +84,22 @@ public class PipelineCompactionStrategyTests
     {
         // Arrange
         Mock<ICompactionStrategy> strategy1 = new();
-        strategy1.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
+        strategy1.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         Mock<ICompactionStrategy> strategy2 = new();
-        strategy2.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
+        strategy2.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
-        PipelineCompactionStrategy pipeline = new(strategy1.Object, strategy2.Object);
-        MessageGroups groups = MessageGroups.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        PipelineCompactionStrategy pipeline = new([strategy1.Object, strategy2.Object]);
+        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
 
         // Act
         await pipeline.CompactAsync(groups);
 
         // Assert — both strategies were called
-        strategy1.Verify(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()), Times.Once);
-        strategy2.Verify(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()), Times.Once);
+        strategy1.Verify(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()), Times.Once);
+        strategy2.Verify(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -107,8 +107,8 @@ public class PipelineCompactionStrategyTests
     {
         // Arrange — first strategy reduces to target
         Mock<ICompactionStrategy> strategy1 = new();
-        strategy1.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
-            .Callback<MessageGroups, CancellationToken>((groups, _) =>
+        strategy1.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
+            .Callback<MessageIndex, CancellationToken>((groups, _) =>
             {
                 // Exclude the first group to bring count down
                 groups.Groups[0].IsExcluded = true;
@@ -116,16 +116,16 @@ public class PipelineCompactionStrategyTests
             .ReturnsAsync(true);
 
         Mock<ICompactionStrategy> strategy2 = new();
-        strategy2.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
+        strategy2.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
-        PipelineCompactionStrategy pipeline = new(strategy1.Object, strategy2.Object)
+        PipelineCompactionStrategy pipeline = new([strategy1.Object, strategy2.Object])
         {
             EarlyStop = true,
             TargetIncludedGroupCount = 2,
         };
 
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "First"),
             new ChatMessage(ChatRole.Assistant, "Response"),
@@ -137,8 +137,8 @@ public class PipelineCompactionStrategyTests
 
         // Assert — strategy2 should not have been called
         Assert.True(result);
-        strategy1.Verify(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()), Times.Once);
-        strategy2.Verify(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()), Times.Never);
+        strategy1.Verify(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()), Times.Once);
+        strategy2.Verify(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -146,20 +146,20 @@ public class PipelineCompactionStrategyTests
     {
         // Arrange — first strategy does NOT bring count to target
         Mock<ICompactionStrategy> strategy1 = new();
-        strategy1.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
+        strategy1.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         Mock<ICompactionStrategy> strategy2 = new();
-        strategy2.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
+        strategy2.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
-        PipelineCompactionStrategy pipeline = new(strategy1.Object, strategy2.Object)
+        PipelineCompactionStrategy pipeline = new([strategy1.Object, strategy2.Object])
         {
             EarlyStop = true,
             TargetIncludedGroupCount = 1,
         };
 
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "First"),
             new ChatMessage(ChatRole.User, "Second"),
@@ -170,8 +170,8 @@ public class PipelineCompactionStrategyTests
         await pipeline.CompactAsync(groups);
 
         // Assert — both strategies were called since target was never reached
-        strategy1.Verify(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()), Times.Once);
-        strategy2.Verify(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()), Times.Once);
+        strategy1.Verify(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()), Times.Once);
+        strategy2.Verify(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -179,27 +179,27 @@ public class PipelineCompactionStrategyTests
     {
         // Arrange
         Mock<ICompactionStrategy> strategy1 = new();
-        strategy1.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
+        strategy1.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         Mock<ICompactionStrategy> strategy2 = new();
-        strategy2.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
+        strategy2.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
-        PipelineCompactionStrategy pipeline = new(strategy1.Object, strategy2.Object)
+        PipelineCompactionStrategy pipeline = new([strategy1.Object, strategy2.Object])
         {
             EarlyStop = true,
             // TargetIncludedGroupCount is null
         };
 
-        MessageGroups groups = MessageGroups.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
 
         // Act
         await pipeline.CompactAsync(groups);
 
         // Assert — both strategies called because no target to check against
-        strategy1.Verify(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()), Times.Once);
-        strategy2.Verify(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()), Times.Once);
+        strategy1.Verify(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()), Times.Once);
+        strategy2.Verify(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -207,8 +207,8 @@ public class PipelineCompactionStrategyTests
     {
         // Arrange — pipeline: first exclude oldest 2 non-system groups, then exclude 2 more
         Mock<ICompactionStrategy> phase1 = new();
-        phase1.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
-            .Callback<MessageGroups, CancellationToken>((groups, _) =>
+        phase1.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
+            .Callback<MessageIndex, CancellationToken>((groups, _) =>
             {
                 int excluded = 0;
                 foreach (MessageGroup group in groups.Groups)
@@ -223,8 +223,8 @@ public class PipelineCompactionStrategyTests
             .ReturnsAsync(true);
 
         Mock<ICompactionStrategy> phase2 = new();
-        phase2.Setup(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()))
-            .Callback<MessageGroups, CancellationToken>((groups, _) =>
+        phase2.Setup(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()))
+            .Callback<MessageIndex, CancellationToken>((groups, _) =>
             {
                 int excluded = 0;
                 foreach (MessageGroup group in groups.Groups)
@@ -238,9 +238,9 @@ public class PipelineCompactionStrategyTests
             })
             .ReturnsAsync(true);
 
-        PipelineCompactionStrategy pipeline = new(phase1.Object, phase2.Object);
+        PipelineCompactionStrategy pipeline = new([phase1.Object, phase2.Object]);
 
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "You are helpful."),
             new ChatMessage(ChatRole.User, "Q1"),
@@ -262,8 +262,8 @@ public class PipelineCompactionStrategyTests
         Assert.Equal("You are helpful.", included[0].Text);
         Assert.Equal("Q3", included[1].Text);
 
-        phase1.Verify(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()), Times.Once);
-        phase2.Verify(s => s.CompactAsync(It.IsAny<MessageGroups>(), It.IsAny<CancellationToken>()), Times.Once);
+        phase1.Verify(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()), Times.Once);
+        phase2.Verify(s => s.CompactAsync(It.IsAny<MessageIndex>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -271,7 +271,7 @@ public class PipelineCompactionStrategyTests
     {
         // Arrange
         PipelineCompactionStrategy pipeline = new(new List<ICompactionStrategy>());
-        MessageGroups groups = MessageGroups.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
 
         // Act
         bool result = await pipeline.CompactAsync(groups);

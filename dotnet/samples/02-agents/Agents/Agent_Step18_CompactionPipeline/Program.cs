@@ -1,0 +1,109 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+// This sample demonstrates how to use a ChatHistoryCompactionPipeline as the ChatReducer for an agent's
+// in-memory chat history. The pipeline chains multiple compaction strategies from gentle to aggressive:
+//   1. ToolResultCompactionStrategy - Collapses old tool-call groups into concise summaries
+//   2. SummarizationCompactionStrategy - LLM-compresses older conversation spans
+//   3. SlidingWindowCompactionStrategy - Keeps only the most recent N user turns
+//   4. TruncationCompactionStrategy - Emergency token-budget backstop
+
+using System.ComponentModel;
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Compaction;
+using Microsoft.Extensions.AI;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AzureOpenAIClient openAIClient = new(new Uri(endpoint), new DefaultAzureCredential());
+
+// Create a chat client for the agent and a separate one for the summarization strategy.
+// Using the same model for simplicity; in production, use a smaller/cheaper model for summarization.
+IChatClient agentChatClient = openAIClient.GetChatClient(deploymentName).AsIChatClient();
+IChatClient summarizerChatClient = openAIClient.GetChatClient(deploymentName).AsIChatClient();
+
+// Define a tool the agent can use, so we can see tool-result compaction in action.
+[Description("Look up the current price of a product by name.")]
+static string LookupPrice([Description("The product name to look up.")] string productName) =>
+    productName.ToUpperInvariant() switch
+    {
+        "LAPTOP" => "The laptop costs $999.99.",
+        "KEYBOARD" => "The keyboard costs $79.99.",
+        "MOUSE" => "The mouse costs $29.99.",
+        _ => $"Sorry, I don't have pricing for '{productName}'."
+    };
+
+// Configure the compaction pipeline with one of each strategy, ordered least to most aggressive.
+//const int MaxTokens = 512;
+//const int MaxTurns = 4;
+const int MaxGroups = 2;
+
+PipelineCompactionStrategy compactionPipeline =
+    new(// 1. Gentle: collapse old tool-call groups into short summaries like "[Tool calls: LookupPrice]"
+        //new ToolResultCompactionStrategy(MaxTokens, preserveRecentGroups: 2),
+
+        // 2. Moderate: use an LLM to summarize older conversation spans into a concise message
+        new SummarizationCompactionStrategy(summarizerChatClient, MaxGroups)
+
+        // 3. Aggressive: keep only the last N user turns and their responses
+        //new SlidingWindowCompactionStrategy(MaxTurns),
+
+        // 4. Emergency: drop oldest groups until under the token budget
+        //new TruncationCompactionStrategy(MaxGroups)
+        );
+
+// Create the agent with an in-memory chat history provider whose reducer is the compaction pipeline.
+AIAgent agent =
+    agentChatClient.AsAIAgent(
+        new ChatClientAgentOptions
+        {
+            Name = "ShoppingAssistant",
+            ChatOptions = new()
+            {
+                Instructions =
+                    """
+                    You are a helpful, but long winded, shopping assistant.
+                    Help the user look up prices and compare products.
+                    When responding, Be sure to be extra descriptive and use as
+                    many words as possible without sounding ridiculous.
+                    """,
+                Tools = [AIFunctionFactory.Create(LookupPrice)],
+            },
+            CompactionStrategy = compactionPipeline,
+        });
+
+AgentSession session = await agent.CreateSessionAsync();
+
+// Helper to print chat history size
+void PrintChatHistory()
+{
+    if (session.TryGetInMemoryChatHistory(out var history))
+    {
+        Console.WriteLine($"  [Chat history: {history.Count} messages]\n");
+    }
+}
+
+// Run a multi-turn conversation with tool calls to exercise the pipeline.
+string[] prompts =
+[
+    "What's the price of a laptop?",
+    "How about a keyboard?",
+    "And a mouse?",
+    "Which product is the cheapest?",
+    "Can you compare the laptop and the keyboard for me?",
+    "What was the first product I asked about?",
+    "Thank you!",
+];
+
+foreach (string prompt in prompts)
+{
+    Console.WriteLine($"User: {prompt}");
+    Console.WriteLine($"Agent: {await agent.RunAsync(prompt, session)}");
+
+    PrintChatHistory();
+}

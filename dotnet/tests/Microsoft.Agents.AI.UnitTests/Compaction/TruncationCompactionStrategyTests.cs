@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Compaction;
@@ -16,7 +16,7 @@ public class TruncationCompactionStrategyTests
     {
         // Arrange
         TruncationCompactionStrategy strategy = new(maxGroups: 5);
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -35,7 +35,7 @@ public class TruncationCompactionStrategyTests
     {
         // Arrange
         TruncationCompactionStrategy strategy = new(maxGroups: 2);
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -58,7 +58,7 @@ public class TruncationCompactionStrategyTests
         ChatMessage msg3 = new(ChatRole.User, "Second");
         ChatMessage msg4 = new(ChatRole.Assistant, "Response 2");
 
-        MessageGroups groups = MessageGroups.Create([msg1, msg2, msg3, msg4]);
+        MessageIndex groups = MessageIndex.Create([msg1, msg2, msg3, msg4]);
 
         // Act
         bool result = await strategy.CompactAsync(groups);
@@ -82,7 +82,7 @@ public class TruncationCompactionStrategyTests
         ChatMessage msg2 = new(ChatRole.Assistant, "Response 1");
         ChatMessage msg3 = new(ChatRole.User, "Second");
 
-        MessageGroups groups = MessageGroups.Create([systemMsg, msg1, msg2, msg3]);
+        MessageIndex groups = MessageIndex.Create([systemMsg, msg1, msg2, msg3]);
 
         // Act
         bool result = await strategy.CompactAsync(groups);
@@ -109,7 +109,7 @@ public class TruncationCompactionStrategyTests
         ChatMessage msg2 = new(ChatRole.Assistant, "Response");
         ChatMessage msg3 = new(ChatRole.User, "Second");
 
-        MessageGroups groups = MessageGroups.Create([systemMsg, msg1, msg2, msg3]);
+        MessageIndex groups = MessageIndex.Create([systemMsg, msg1, msg2, msg3]);
 
         // Act
         bool result = await strategy.CompactAsync(groups);
@@ -133,7 +133,7 @@ public class TruncationCompactionStrategyTests
         ChatMessage toolResult = new(ChatRole.Tool, "Sunny");
         ChatMessage finalResponse = new(ChatRole.User, "Thanks!");
 
-        MessageGroups groups = MessageGroups.Create([assistantToolCall, toolResult, finalResponse]);
+        MessageIndex groups = MessageIndex.Create([assistantToolCall, toolResult, finalResponse]);
 
         // Act
         bool result = await strategy.CompactAsync(groups);
@@ -152,7 +152,7 @@ public class TruncationCompactionStrategyTests
     {
         // Arrange
         TruncationCompactionStrategy strategy = new(maxGroups: 1);
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Old"),
             new ChatMessage(ChatRole.User, "New"),
@@ -171,7 +171,7 @@ public class TruncationCompactionStrategyTests
     {
         // Arrange
         TruncationCompactionStrategy strategy = new(maxGroups: 1);
-        MessageGroups groups = MessageGroups.Create(
+        MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Already excluded"),
             new ChatMessage(ChatRole.User, "Included 1"),

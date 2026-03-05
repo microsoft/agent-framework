@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <see cref="MessageGroups"/> provides structural grouping of messages into logical units that
+/// <see cref="MessageIndex"/> provides structural grouping of messages into logical units that
 /// respect the atomic group preservation constraint: tool call assistant messages and their corresponding
 /// tool result messages are always grouped together.
 /// </para>
@@ -27,9 +27,16 @@ namespace Microsoft.Agents.AI.Compaction;
 /// and <see cref="MessageGroup.TokenCount"/>. The collection provides aggregate properties for both
 /// the total (all groups) and included (non-excluded groups only) counts.
 /// </para>
+/// <para>
+/// Instances created via <see cref="Create"/> track internal state that enables efficient incremental
+/// updates via <see cref="Update"/>. This allows caching a <see cref="MessageIndex"/> instance and
+/// appending only new messages without reprocessing the entire history.
+/// </para>
 /// </remarks>
-public sealed class MessageGroups
+public sealed class MessageIndex
 {
+    private int _currentTurn;
+
     /// <summary>
     /// Gets the list of message groups in this collection.
     /// </summary>
@@ -41,25 +48,43 @@ public sealed class MessageGroups
     public Tokenizer? Tokenizer { get; }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="MessageGroups"/> class with the specified groups.
+    /// Gets the number of raw messages that have been processed into groups.
+    /// </summary>
+    /// <remarks>
+    /// This value is set by <see cref="Create"/> and updated by <see cref="Update"/>.
+    /// It is used by <see cref="Update"/> to determine which messages are new and need processing.
+    /// </remarks>
+    public int ProcessedMessageCount { get; private set; }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="MessageIndex"/> class with the specified groups.
     /// </summary>
     /// <param name="groups">The message groups.</param>
     /// <param name="tokenizer">An optional tokenizer retained for computing token counts when adding new groups.</param>
-    public MessageGroups(IList<MessageGroup> groups, Tokenizer? tokenizer = null)
+    public MessageIndex(IList<MessageGroup> groups, Tokenizer? tokenizer = null)
     {
         this.Groups = groups;
         this.Tokenizer = tokenizer;
+
+        for (int index = groups.Count - 1; index >= 0; --index)
+        {
+            if (this.Groups[0].TurnIndex.HasValue)
+            {
+                this._currentTurn = this.Groups[0].TurnIndex!.Value;
+                break;
+            }
+        }
     }
 
     /// <summary>
-    /// Creates a <see cref="MessageGroups"/> from a flat list of <see cref="ChatMessage"/> instances.
+    /// Creates a <see cref="MessageIndex"/> from a flat list of <see cref="ChatMessage"/> instances.
     /// </summary>
     /// <param name="messages">The messages to group.</param>
     /// <param name="tokenizer">
     /// An optional <see cref="Tokenizer"/> for computing token counts on each group.
     /// When <see langword="null"/>, token counts are estimated as <c>ByteCount / 4</c>.
     /// </param>
-    /// <returns>A new <see cref="MessageGroups"/> with messages organized into logical groups.</returns>
+    /// <returns>A new <see cref="MessageIndex"/> with messages organized into logical groups.</returns>
     /// <remarks>
     /// The grouping algorithm:
     /// <list type="bullet">
@@ -70,11 +95,61 @@ public sealed class MessageGroups
     /// <item><description>Assistant messages without tool calls become <see cref="MessageGroupKind.AssistantText"/> groups.</description></item>
     /// </list>
     /// </remarks>
-    public static MessageGroups Create(IList<ChatMessage> messages, Tokenizer? tokenizer = null)
+    public static MessageIndex Create(IList<ChatMessage> messages, Tokenizer? tokenizer = null)
     {
-        List<MessageGroup> groups = [];
-        int index = 0;
-        int currentTurn = 0;
+        MessageIndex instance = new(new List<MessageGroup>(), tokenizer);
+        instance.AppendFromMessages(messages, 0);
+        return instance;
+    }
+
+    /// <summary>
+    /// Incrementally updates the groups with new messages from the conversation.
+    /// </summary>
+    /// <param name="allMessages">
+    /// The full list of messages for the conversation. This must be the same list (or a replacement with the same
+    /// prefix) that was used to create or last update this instance.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// If the message count exceeds <see cref="ProcessedMessageCount"/>, only the new (delta) messages
+    /// are processed and appended as new groups. Existing groups and their compaction state (exclusions)
+    /// are preserved, allowing compaction strategies to build on previous results.
+    /// </para>
+    /// <para>
+    /// If the message count is less than <see cref="ProcessedMessageCount"/> (e.g., after storage compaction
+    /// replaced messages with summaries), all groups are cleared and rebuilt from scratch.
+    /// </para>
+    /// <para>
+    /// If the message count equals <see cref="ProcessedMessageCount"/>, no work is performed.
+    /// </para>
+    /// </remarks>
+    public void Update(IList<ChatMessage> allMessages)
+    {
+        if (allMessages.Count == this.ProcessedMessageCount)
+        {
+            return; // No new messages
+        }
+
+        if (allMessages.Count < this.ProcessedMessageCount)
+        {
+            // Message list shrank (e.g., after storage compaction). Rebuild from scratch.
+            this.ProcessedMessageCount = 0;
+        }
+
+        if (this.ProcessedMessageCount == 0)
+        {
+            // First update on a manually constructed instance — clear any pre-existing groups
+            this.Groups.Clear();
+            this._currentTurn = 0;
+        }
+
+        // Process only the delta messages
+        this.AppendFromMessages(allMessages, this.ProcessedMessageCount);
+    }
+
+    private void AppendFromMessages(IList<ChatMessage> messages, int startIndex)
+    {
+        int index = startIndex;
 
         while (index < messages.Count)
         {
@@ -83,13 +158,13 @@ public sealed class MessageGroups
             if (message.Role == ChatRole.System)
             {
                 // System messages are not part of any turn
-                groups.Add(CreateGroup(MessageGroupKind.System, [message], tokenizer, turnIndex: null));
+                this.Groups.Add(CreateGroup(MessageGroupKind.System, [message], this.Tokenizer, turnIndex: null));
                 index++;
             }
             else if (message.Role == ChatRole.User)
             {
-                currentTurn++;
-                groups.Add(CreateGroup(MessageGroupKind.User, [message], tokenizer, currentTurn));
+                this._currentTurn++;
+                this.Groups.Add(CreateGroup(MessageGroupKind.User, [message], this.Tokenizer, this._currentTurn));
                 index++;
             }
             else if (message.Role == ChatRole.Assistant && HasToolCalls(message))
@@ -104,21 +179,21 @@ public sealed class MessageGroups
                     index++;
                 }
 
-                groups.Add(CreateGroup(MessageGroupKind.ToolCall, groupMessages, tokenizer, currentTurn));
+                this.Groups.Add(CreateGroup(MessageGroupKind.ToolCall, groupMessages, this.Tokenizer, this._currentTurn));
             }
             else if (message.Role == ChatRole.Assistant && IsSummaryMessage(message))
             {
-                groups.Add(CreateGroup(MessageGroupKind.Summary, [message], tokenizer, currentTurn));
+                this.Groups.Add(CreateGroup(MessageGroupKind.Summary, [message], this.Tokenizer, this._currentTurn));
                 index++;
             }
             else
             {
-                groups.Add(CreateGroup(MessageGroupKind.AssistantText, [message], tokenizer, currentTurn));
+                this.Groups.Add(CreateGroup(MessageGroupKind.AssistantText, [message], this.Tokenizer, this._currentTurn));
                 index++;
             }
         }
 
-        return new MessageGroups(groups, tokenizer);
+        this.ProcessedMessageCount = messages.Count;
     }
 
     /// <summary>
