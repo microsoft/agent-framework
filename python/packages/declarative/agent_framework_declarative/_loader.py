@@ -15,7 +15,6 @@ from agent_framework import (
 from agent_framework import (
     FunctionTool as AFFunctionTool,
 )
-from agent_framework._tools import _create_model_from_json_schema  # type: ignore
 from agent_framework.exceptions import AgentException
 from dotenv import load_dotenv
 
@@ -445,7 +444,7 @@ class AgentFactory:
         if tools := self._parse_tools(prompt_agent.tools):
             chat_options["tools"] = tools
         if output_schema := prompt_agent.outputSchema:
-            chat_options["response_format"] = _create_model_from_json_schema("agent", output_schema.to_json_schema())
+            chat_options["response_format"] = output_schema.to_json_schema()
         # Step 3: Create the agent instance
         return Agent(
             client=client,
@@ -563,7 +562,7 @@ class AgentFactory:
         if tools := self._parse_tools(prompt_agent.tools):
             chat_options["tools"] = tools
         if output_schema := prompt_agent.outputSchema:
-            chat_options["response_format"] = _create_model_from_json_schema("agent", output_schema.to_json_schema())
+            chat_options["response_format"] = output_schema.to_json_schema()
         return Agent(
             client=client,
             name=prompt_agent.name,
@@ -611,8 +610,7 @@ class AgentFactory:
         # Parse response format into default_options
         default_options: dict[str, Any] | None = None
         if prompt_agent.outputSchema:
-            response_format = _create_model_from_json_schema("agent", prompt_agent.outputSchema.to_json_schema())
-            default_options = {"response_format": response_format}
+            default_options = {"response_format": prompt_agent.outputSchema.to_json_schema()}
 
         # Create the agent using the provider
         # The provider's create_agent returns a Agent directly

@@ -27,7 +27,6 @@ from typing import (
     Literal,
     TypeAlias,
     TypedDict,
-    Union,
     cast,
     get_args,
     get_origin,
@@ -687,16 +686,13 @@ def normalize_tools(
     if not tools:
         return []
 
-    tool_items: list[object]
-    if isinstance(tools, Sequence) and not isinstance(tools, (str, bytes, bytearray, Mapping)):
-        sequence_tools = cast(Sequence[object], tools)
-        tool_items = list(sequence_tools)
-    else:
-        tool_items = [tools]
+    if isinstance(tools, (str, bytes, bytearray, Mapping)) or not isinstance(tools, Sequence):
+        tools = cast(list[ToolTypes | Callable[..., Any]], [tools])
+
     from ._mcp import MCPTool
 
     normalized: list[ToolTypes] = []
-    for tool_item in tool_items:
+    for tool_item in tools:
         # check known types, these are also callable, so we need to do that first
         if isinstance(tool_item, FunctionTool):
             normalized.append(tool_item)
@@ -810,33 +806,28 @@ def _validate_arguments_against_schema(
     """Run lightweight argument checks for schema-supplied tools."""
     parsed_arguments = dict(arguments)
 
-    required_raw = schema.get("required", [])
-    required_fields = [field for field in required_raw if isinstance(field, str)]
+    required_fields = [field for field in schema.get("required", []) if isinstance(field, str)]
     missing_fields = [field for field in required_fields if field not in parsed_arguments]
     if missing_fields:
         raise TypeError(f"Missing required argument(s) for '{tool_name}': {', '.join(sorted(missing_fields))}")
 
-    properties_raw = schema.get("properties")
-    properties: Mapping[str, Any] = properties_raw if isinstance(properties_raw, dict) else {}
-
+    properties: Mapping[str, Any] = schema.get("properties", {})
     if schema.get("additionalProperties") is False:
         unexpected_fields = sorted(field for field in parsed_arguments if field not in properties)
         if unexpected_fields:
             raise TypeError(f"Unexpected argument(s) for '{tool_name}': {', '.join(unexpected_fields)}")
 
     for field_name, field_value in parsed_arguments.items():
-        field_schema_raw = properties.get(field_name)
-        if not isinstance(field_schema_raw, dict):
+        if not isinstance(properties.get(field_name), dict):
             continue
-        field_schema = field_schema_raw
 
-        enum_values = field_schema.get("enum")
+        enum_values = properties.get(field_name, {}).get("enum")  # type: ignore
         if isinstance(enum_values, list) and enum_values and field_value not in enum_values:
             raise TypeError(
                 f"Invalid value for '{field_name}' in '{tool_name}': {field_value!r} is not in {enum_values!r}"
             )
 
-        schema_type = field_schema.get("type")
+        schema_type = properties.get(field_name, {}).get("type")  # type: ignore
         if isinstance(schema_type, str):
             if not _matches_json_schema_type(field_value, schema_type):
                 raise TypeError(
@@ -845,10 +836,8 @@ def _validate_arguments_against_schema(
                 )
             continue
 
-        schema_type_obj: object = schema_type
-        if isinstance(schema_type_obj, list):
-            schema_type_list = cast(list[object], schema_type_obj)
-            allowed_types: list[str] = [item for item in schema_type_list if isinstance(item, str)]
+        if isinstance(schema_type, list):
+            allowed_types: list[str] = [item for item in schema_type if isinstance(item, str)]
             if allowed_types and not any(_matches_json_schema_type(field_value, item) for item in allowed_types):
                 raise TypeError(
                     f"Invalid type for '{field_name}' in '{tool_name}': expected one of "
@@ -856,275 +845,6 @@ def _validate_arguments_against_schema(
                 )
 
     return parsed_arguments
-
-
-# Map JSON Schema types to Pydantic types
-TYPE_MAPPING = {
-    "string": str,
-    "integer": int,
-    "number": float,
-    "boolean": bool,
-    "array": list,
-    "object": dict,
-    "null": type(None),
-}
-
-
-def _build_pydantic_model_from_json_schema(
-    model_name: str,
-    schema: Mapping[str, Any],
-) -> type[BaseModel]:
-    """Creates a Pydantic model from JSON Schema with support for $refs, nested objects, and typed arrays.
-
-    Args:
-        model_name: The name of the model to be created.
-        schema: The JSON Schema definition (should contain 'properties', 'required', '$defs', etc.).
-
-    Returns:
-        The dynamically created Pydantic model class.
-    """
-    properties_raw = schema.get("properties")
-    properties = properties_raw if isinstance(properties_raw, dict) else None
-    required_raw = schema.get("required", [])
-    required_obj: object = required_raw
-    required: list[str] = (
-        [item for item in cast(list[object], required_obj) if isinstance(item, str)]
-        if isinstance(required_obj, list)
-        else []
-    )
-    defs_raw = schema.get("$defs", {})
-    definitions: Mapping[str, Any] = defs_raw if isinstance(defs_raw, dict) else {}
-
-    # Check if 'properties' is missing or not a dictionary
-    if not properties:
-        return create_model(f"{model_name}_input")
-
-    def _resolve_literal_type(prop_details: Mapping[str, Any]) -> type | None:
-        """Check if property should be a Literal type (const or enum).
-
-        Args:
-            prop_details: The JSON Schema property details
-
-        Returns:
-            Literal type if const or enum is present, None otherwise
-        """
-        # const → Literal["value"]
-        if "const" in prop_details:
-            return Literal[prop_details["const"]]  # type: ignore
-
-        # enum → Literal["a", "b", ...]
-        enum_raw: object = prop_details.get("enum")
-        if isinstance(enum_raw, list):
-            enum_values = cast(list[object], enum_raw)
-            if enum_values:
-                return Literal[tuple(enum_values)]  # type: ignore
-
-        return None
-
-    def _resolve_type(prop_details: Mapping[str, Any], parent_name: str = "") -> type:
-        """Resolve JSON Schema type to Python type, handling $ref, nested objects, and typed arrays.
-
-        Args:
-            prop_details: The JSON Schema property details
-            parent_name: Name to use for creating nested models (for uniqueness)
-
-        Returns:
-            Python type annotation (could be int, str, list[str], or a nested Pydantic model)
-        """
-        # Handle oneOf + discriminator (polymorphic objects)
-        if "oneOf" in prop_details and "discriminator" in prop_details:
-            discriminator_raw = prop_details["discriminator"]
-            discriminator: Mapping[str, Any] = discriminator_raw if isinstance(discriminator_raw, dict) else {}
-            disc_field_raw = discriminator.get("propertyName")
-            disc_field = disc_field_raw if isinstance(disc_field_raw, str) else None
-
-            variants: list[type] = []
-            one_of_raw = prop_details["oneOf"]
-            one_of: list[object] = cast(list[object], one_of_raw) if isinstance(one_of_raw, list) else []
-            for variant_raw in one_of:
-                if not isinstance(variant_raw, dict):
-                    continue
-                variant = variant_raw
-                if "$ref" in variant:
-                    ref_raw = variant["$ref"]
-                    if not isinstance(ref_raw, str):
-                        continue
-                    ref = ref_raw
-                    if ref.startswith("#/$defs/"):
-                        def_name = ref.split("/")[-1]
-                        resolved = definitions.get(def_name)
-                        if resolved:
-                            variant_model = _resolve_type(
-                                resolved,
-                                parent_name=f"{parent_name}_{def_name}",
-                            )
-                            variants.append(variant_model)
-
-            if variants and disc_field:
-                return Annotated[
-                    Union[tuple(variants)],  # type: ignore
-                    Field(discriminator=disc_field),
-                ]
-
-        # Handle $ref by resolving the reference
-        if "$ref" in prop_details:
-            ref = prop_details["$ref"]
-            # Extract the reference path (e.g., "#/$defs/CustomerIdParam" -> "CustomerIdParam")
-            if ref.startswith("#/$defs/"):
-                def_name = ref.split("/")[-1]
-                if def_name in definitions:
-                    # Resolve the reference and use its type
-                    resolved = definitions[def_name]
-                    return _resolve_type(resolved, def_name)
-            # If we can't resolve the ref, default to dict for safety
-            return dict
-
-        # Map JSON Schema types to Python types
-        json_type = prop_details.get("type", "string")
-        match json_type:
-            case "integer":
-                return int
-            case "number":
-                return float
-            case "boolean":
-                return bool
-            case "array":
-                # Handle typed arrays
-                items_schema = prop_details.get("items")
-                if isinstance(items_schema, dict):
-                    # Recursively resolve the item type
-                    item_type = _resolve_type(items_schema, f"{parent_name}_item")
-                    # Return list[ItemType] instead of bare list
-                    return list[item_type]  # type: ignore
-                # If no items schema or invalid, return bare list
-                return list
-            case "object":
-                # Handle nested objects by creating a nested Pydantic model
-                nested_properties_raw = prop_details.get("properties")
-                nested_properties = nested_properties_raw if isinstance(nested_properties_raw, dict) else None
-                nested_required_raw = prop_details.get("required", [])
-                nested_required_obj: object = nested_required_raw
-                nested_required: set[str] = (
-                    {item for item in cast(list[object], nested_required_obj) if isinstance(item, str)}
-                    if isinstance(nested_required_obj, list)
-                    else set()
-                )
-
-                if nested_properties:
-                    # Create the name for the nested model
-                    nested_model_name = f"{parent_name}_nested" if parent_name else "NestedModel"
-
-                    # Recursively build field definitions for the nested model
-                    nested_field_definitions: dict[str, Any] = {}
-                    for nested_prop_name, nested_prop_details_raw in nested_properties.items():
-                        nested_prop_details_candidate = (
-                            json.loads(nested_prop_details_raw)
-                            if isinstance(nested_prop_details_raw, str)
-                            else nested_prop_details_raw
-                        )
-                        if not isinstance(nested_prop_details_candidate, dict):
-                            continue
-                        nested_prop_details = nested_prop_details_candidate
-
-                        # Check for Literal types first (const/enum)
-                        literal_type = _resolve_literal_type(nested_prop_details)
-                        if literal_type is not None:
-                            nested_python_type = literal_type
-                        else:
-                            nested_python_type = _resolve_type(
-                                nested_prop_details,
-                                f"{nested_model_name}_{nested_prop_name}",
-                            )
-                        nested_description = nested_prop_details.get("description", "")
-
-                        # Build field kwargs for nested property
-                        nested_field_kwargs: dict[str, Any] = {}
-                        if nested_description:
-                            nested_field_kwargs["description"] = nested_description
-
-                        # Create field definition
-                        if nested_prop_name in nested_required:
-                            nested_field_definitions[nested_prop_name] = (
-                                (
-                                    nested_python_type,
-                                    Field(**nested_field_kwargs),
-                                )
-                                if nested_field_kwargs
-                                else (nested_python_type, ...)
-                            )
-                        else:
-                            nested_field_kwargs["default"] = nested_prop_details.get("default", None)
-                            nested_field_definitions[nested_prop_name] = (
-                                nested_python_type,
-                                Field(**nested_field_kwargs),
-                            )
-
-                    # Create and return the nested Pydantic model
-                    return create_model(nested_model_name, **nested_field_definitions)  # type: ignore
-
-                # If no properties defined, return bare dict
-                return dict
-            case _:
-                return str  # default
-
-    field_definitions: dict[str, Any] = {}
-
-    for prop_name, prop_details_raw in properties.items():
-        prop_details_candidate = json.loads(prop_details_raw) if isinstance(prop_details_raw, str) else prop_details_raw
-        if not isinstance(prop_details_candidate, dict):
-            continue
-        prop_details = prop_details_candidate
-
-        # Check for Literal types first (const/enum)
-        literal_type = _resolve_literal_type(prop_details)
-        if literal_type is not None:
-            python_type = literal_type
-        else:
-            python_type = _resolve_type(prop_details, f"{model_name}_{prop_name}")
-        description = prop_details.get("description", "")
-
-        # Build field kwargs (description, etc.)
-        field_kwargs: dict[str, Any] = {}
-        if description:
-            field_kwargs["description"] = description
-
-        # Create field definition for create_model
-        if prop_name in required:
-            if field_kwargs:
-                field_definitions[prop_name] = (python_type, Field(**field_kwargs))
-            else:
-                field_definitions[prop_name] = (python_type, ...)
-        else:
-            default_value = prop_details.get("default", None)
-            field_kwargs["default"] = default_value
-            if field_kwargs and any(k != "default" for k in field_kwargs):
-                field_definitions[prop_name] = (python_type, Field(**field_kwargs))
-            else:
-                field_definitions[prop_name] = (python_type, default_value)
-
-    return create_model(f"{model_name}_input", **field_definitions)
-
-
-def _create_model_from_json_schema(  # pyright: ignore[reportUnusedFunction]
-    tool_name: str, schema_json: Mapping[str, Any]
-) -> type[BaseModel]:
-    """Creates a Pydantic model from a given JSON Schema.
-
-    Args:
-      tool_name: The name of the model to be created.
-      schema_json: The JSON Schema definition.
-
-    Returns:
-      The dynamically created Pydantic model class.
-    """
-    # Validate that 'properties' exists and is a dict
-    if "properties" not in schema_json or not isinstance(schema_json["properties"], dict):
-        raise ValueError(
-            f"JSON schema for tool '{tool_name}' must contain a 'properties' key of type dict. "
-            f"Got: {schema_json.get('properties', None)}"
-        )
-
-    return _build_pydantic_model_from_json_schema(tool_name, schema_json)
 
 
 @overload
