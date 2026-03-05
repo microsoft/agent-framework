@@ -9,6 +9,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Moq" />
     <PackageReference Include="Microsoft.Agents.ObjectModel" />
     <PackageReference Include="Microsoft.Agents.ObjectModel.Json" />
     <PackageReference Include="Microsoft.Agents.ObjectModel.PowerFx" />

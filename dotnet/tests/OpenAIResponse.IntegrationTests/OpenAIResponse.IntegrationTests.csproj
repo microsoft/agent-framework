@@ -10,7 +10,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" />
     <ProjectReference Include="..\AgentConformance.IntegrationTests\AgentConformance.IntegrationTests.csproj" />
   </ItemGroup>
 

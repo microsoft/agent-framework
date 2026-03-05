@@ -5,6 +5,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Moq" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Anthropic\Microsoft.Agents.AI.Anthropic.csproj" />
   </ItemGroup>
 
