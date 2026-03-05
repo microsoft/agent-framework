@@ -747,9 +747,15 @@ public sealed partial class ChatClientAgent : AIAgent
             {
                 // The agent has a ChatHistoryProvider configured, but the service returned a conversation id,
                 // meaning the service manages chat history server-side. Both cannot be used simultaneously.
-                if (this._agentOptions?.WarnOnChatHistoryProviderConflict is true)
+                if (this._agentOptions?.WarnOnChatHistoryProviderConflict is true
+                    && this._logger.IsEnabled(LogLevel.Warning))
                 {
-                    this._logger.LogAgentChatClientHistoryProviderConflict(nameof(ChatClientAgentSession.ConversationId), nameof(this.ChatHistoryProvider), this.Id, this.GetLoggingAgentName());
+                    var loggingAgentName = this.GetLoggingAgentName();
+                    this._logger.LogAgentChatClientHistoryProviderConflict(
+                        nameof(ChatClientAgentSession.ConversationId),
+                        nameof(this.ChatHistoryProvider),
+                        this.Id,
+                        loggingAgentName);
                 }
 
                 if (this._agentOptions?.ThrowOnChatHistoryProviderConflict is true)
