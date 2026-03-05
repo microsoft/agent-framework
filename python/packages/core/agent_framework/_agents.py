@@ -1083,7 +1083,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         # Merge runtime kwargs into additional_function_arguments so they're available
         # in function middleware context and tool invocation.
-        existing_additional_args = opts.pop("additional_function_arguments", None) or {}
+        existing_additional_args: dict[str, Any] = opts.pop("additional_function_arguments", None) or {}
         additional_function_arguments = {**kwargs, **existing_additional_args}
         # Include session so as_tool() wrappers with propagate_session=True can access it.
         if active_session is not None:

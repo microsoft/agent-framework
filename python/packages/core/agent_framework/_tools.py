@@ -692,21 +692,21 @@ def normalize_tools(
     from ._mcp import MCPTool
 
     normalized: list[ToolTypes] = []
-    for tool_item in tools:
+    for tool_item in tools:  # type: ignore[reportUnknownVariableType]
         # check known types, these are also callable, so we need to do that first
         if isinstance(tool_item, FunctionTool):
             normalized.append(tool_item)
             continue
         if isinstance(tool_item, dict):
-            normalized.append(tool_item)
+            normalized.append(tool_item)  # type: ignore[reportUnknownArgumentType]
             continue
         if isinstance(tool_item, MCPTool):
             normalized.append(tool_item)
             continue
-        if callable(tool_item):
+        if callable(tool_item):  # type: ignore[reportUnknownArgumentType]
             normalized.append(tool(tool_item))
             continue
-        normalized.append(tool_item)
+        normalized.append(tool_item)  # type: ignore[reportUnknownArgumentType]
     return normalized
 
 
@@ -734,7 +734,7 @@ def _tools_to_dict(  # pyright: ignore[reportUnusedFunction]
             results.append(tool_item.to_dict())
             continue
         if isinstance(tool_item, dict):
-            results.append(tool_item)
+            results.append(tool_item)  # type: ignore[reportUnknownArgumentType]
             continue
         logger.warning("Can't parse tool.")
     return results
@@ -837,7 +837,7 @@ def _validate_arguments_against_schema(
             continue
 
         if isinstance(schema_type, list):
-            allowed_types: list[str] = [item for item in schema_type if isinstance(item, str)]
+            allowed_types: list[str] = [item for item in schema_type if isinstance(item, str)]  # type: ignore[reportUnknownVariableType]
             if allowed_types and not any(_matches_json_schema_type(field_value, item) for item in allowed_types):
                 raise TypeError(
                     f"Invalid type for '{field_name}' in '{tool_name}': expected one of "
@@ -2031,11 +2031,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     mutable_options["tool_choice"] = "none"
                     return
 
-                inner_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = super_get_response(
-                    messages=prepped_messages,
-                    stream=True,
-                    options=mutable_options,
-                    **filtered_kwargs,
+                inner_stream = cast(
+                    ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
+                    super_get_response(
+                        messages=prepped_messages,
+                        stream=True,
+                        options=mutable_options,
+                        **filtered_kwargs,
+                    ),
                 )
                 await inner_stream
                 # Collect result hooks from the inner stream to run later
@@ -2120,11 +2123,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS),
                 )
             mutable_options["tool_choice"] = "none"
-            final_inner_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = super_get_response(
-                messages=prepped_messages,
-                stream=True,
-                options=mutable_options,
-                **filtered_kwargs,
+            final_inner_stream = cast(
+                ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
+                super_get_response(
+                    messages=prepped_messages,
+                    stream=True,
+                    options=mutable_options,
+                    **filtered_kwargs,
+                ),
             )
             await final_inner_stream
             async for update in final_inner_stream:

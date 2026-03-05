@@ -1154,7 +1154,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Trace chat responses with OpenTelemetry spans and metrics."""
-        from ._types import ChatResponse, ChatResponseUpdate, ResponseStream
+        from ._types import ChatResponse, ChatResponseUpdate, ResponseStream  # type: ignore[reportUnusedImport]
 
         global OBSERVABILITY_SETTINGS
         super_get_response = super().get_response  # type: ignore[misc]
@@ -1260,11 +1260,14 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     )
                 start_time_stamp = perf_counter()
                 try:
-                    response: ChatResponse[Any] = await super_get_response(
-                        messages=messages,
-                        stream=False,
-                        options=opts,
-                        **kwargs,
+                    response = cast(
+                        ChatResponse[Any],
+                        await super_get_response(
+                            messages=messages,
+                            stream=False,
+                            options=opts,
+                            **kwargs,
+                        ),
                     )
                 except Exception as exception:
                     capture_exception(span=span, exception=exception, timestamp=time_ns())
@@ -1341,8 +1344,9 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.REQUEST_MODEL) as span:
             start_time_stamp = perf_counter()
             try:
-                result: GeneratedEmbeddings[EmbeddingT, EmbeddingOptionsT] = await super_get_embeddings(
-                    values, options=options
+                result = cast(
+                    GeneratedEmbeddings[EmbeddingT, EmbeddingOptionsT],
+                    await super_get_embeddings(values, options=options),
                 )
             except Exception as exception:
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
