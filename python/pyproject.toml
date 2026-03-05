@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0rc2"
+version = "1.0.0rc3"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.0.0rc2",
+    "agent-framework-core[all]==1.0.0rc3",
 ]
 
 [dependency-groups]
@@ -76,6 +76,7 @@ agent-framework-core = { workspace = true }
 agent-framework-a2a = { workspace = true }
 agent-framework-ag-ui = { workspace = true }
 agent-framework-azure-ai-search = { workspace = true }
+agent-framework-azure-cosmos = { workspace = true }
 agent-framework-anthropic = { workspace = true }
 agent-framework-azure-ai = { workspace = true }
 agent-framework-azurefunctions = { workspace = true }
@@ -183,7 +184,6 @@ omit = [
 
 [tool.pyright]
 include = ["agent_framework*"]
-exclude = ["**/tests/**", "**/.venv/**", "packages/devui/frontend/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
@@ -238,6 +238,7 @@ check = ["check-packages", "samples-lint", "samples-syntax", "test", "markdown-c
 [tool.poe.tasks.all-tests-cov]
 cmd = """
 pytest --import-mode=importlib
+-m "not integration"
 --cov=agent_framework
 --cov=agent_framework_core
 --cov=agent_framework_a2a
@@ -265,6 +266,7 @@ pytest --import-mode=importlib
 [tool.poe.tasks.all-tests]
 cmd = """
 pytest --import-mode=importlib
+-m "not integration"
 --ignore-glob=packages/lab/**
 --ignore-glob=packages/devui/**
 -rs

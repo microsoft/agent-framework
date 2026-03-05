@@ -388,11 +388,15 @@ class DeclarativeWorkflowState:
             from System.Globalization import CultureInfo
 
             original_culture = CultureInfo.CurrentCulture
-            CultureInfo.CurrentCulture = CultureInfo("en-US")
+            original_ui_culture = CultureInfo.CurrentUICulture
+            en_us_culture = CultureInfo("en-US")
+            CultureInfo.CurrentCulture = en_us_culture
+            CultureInfo.CurrentUICulture = en_us_culture
             try:
                 return engine.eval(formula, symbols=symbols)
             finally:
                 CultureInfo.CurrentCulture = original_culture
+                CultureInfo.CurrentUICulture = original_ui_culture
         except ValueError as e:
             error_msg = str(e)
             # Handle undefined variable errors gracefully by returning None

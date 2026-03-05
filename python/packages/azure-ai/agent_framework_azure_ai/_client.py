@@ -37,12 +37,13 @@ from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
+    CodeInterpreterContainerAuto,
     CodeInterpreterTool,
-    CodeInterpreterToolAuto,
+    FoundryFeaturesOptInKeys,
     ImageGenTool,
     MCPTool,
     PromptAgentDefinition,
-    PromptAgentDefinitionText,
+    PromptAgentDefinitionTextOptions,
     RaiConfig,
     Reasoning,
     WebSearchPreviewTool,
@@ -50,7 +51,7 @@ from azure.ai.projects.models import (
 from azure.ai.projects.models import FileSearchTool as ProjectsFileSearchTool
 from azure.core.exceptions import ResourceNotFoundError
 
-from ._shared import AzureAISettings, create_text_format_config
+from ._shared import AzureAISettings, create_text_format_config, resolve_file_ids
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -77,6 +78,9 @@ class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):
 
     reasoning: Reasoning  # type: ignore[misc]
     """Configuration for enabling reasoning capabilities (requires azure.ai.projects.models.Reasoning)."""
+
+    foundry_features: FoundryFeaturesOptInKeys | str
+    """Optional Foundry preview feature opt-in for agent version creation."""
 
 
 AzureAIClientOptionsT = TypeVar(
@@ -392,7 +396,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             # response_format is accessed from chat_options or additional_properties
             # since the base class excludes it from run_options
             if chat_options and (response_format := chat_options.get("response_format")):
-                args["text"] = PromptAgentDefinitionText(format=create_text_format_config(response_format))
+                args["text"] = PromptAgentDefinitionTextOptions(format=create_text_format_config(response_format))
 
             # Combine instructions from messages and options
             # instructions is accessed from chat_options since the base class excludes it from run_options
@@ -404,11 +408,15 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             if combined_instructions:
                 args["instructions"] = "".join(combined_instructions)
 
-            created_agent = await self.project_client.agents.create_version(
-                agent_name=self.agent_name,
-                definition=PromptAgentDefinition(**args),
-                description=self.agent_description,
-            )
+            create_version_kwargs: dict[str, Any] = {
+                "agent_name": self.agent_name,
+                "definition": PromptAgentDefinition(**args),
+                "description": self.agent_description,
+            }
+            if foundry_features := run_options.get("foundry_features"):
+                create_version_kwargs["foundry_features"] = foundry_features
+
+            created_agent = await self.project_client.agents.create_version(**create_version_kwargs)
 
             self.agent_version = created_agent.version
             self.warn_runtime_tools_and_structure_changed = True
@@ -500,6 +508,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             "temperature": ("temperature",),
             "top_p": ("top_p",),
             "reasoning": ("reasoning",),
+            "foundry_features": ("foundry_features",),
         }
 
         for run_keys in agent_level_option_to_run_keys.values():
@@ -526,9 +535,9 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             run_options["input"] = self._transform_input_for_azure_ai(cast(list[dict[str, Any]], run_options["input"]))
 
         if not self._is_application_endpoint:
-            # Application-scoped response APIs do not support "agent" property.
+            # Application-scoped response APIs do not support "agent_reference" property.
             agent_reference = await self._get_agent_reference_or_create(run_options, instructions, options)
-            run_options["extra_body"] = {"agent": agent_reference}
+            run_options["extra_body"] = {"agent_reference": agent_reference}
 
         # Remove only keys that map to this client's declared options TypedDict.
         self._remove_agent_level_run_options(run_options, options)
@@ -587,6 +596,68 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
     def _get_current_conversation_id(self, options: Mapping[str, Any], **kwargs: Any) -> str | None:
         """Get the current conversation ID from chat options or kwargs."""
         return options.get("conversation_id") or kwargs.get("conversation_id") or self.conversation_id
+
+    @override
+    def _parse_response_from_openai(
+        self,
+        response: Any,
+        options: dict[str, Any],
+    ) -> ChatResponse:
+        """Parse an Azure AI Responses API response, handling Azure-specific output item types."""
+        result = super()._parse_response_from_openai(response, options)
+
+        if result.messages:
+            for item in response.output:
+                if item.type == "oauth_consent_request":
+                    consent_link = item.consent_link
+                    if consent_link and not consent_link.startswith("https://"):
+                        logger.warning("Skipping oauth_consent_request with non-HTTPS consent_link: %s", item)
+                        consent_link = ""
+                    if consent_link:
+                        result.messages[0].contents.append(
+                            Content.from_oauth_consent_request(
+                                consent_link=consent_link,
+                                raw_representation=item,
+                            )
+                        )
+                    else:
+                        logger.warning("Received oauth_consent_request output without consent_link: %s", item)
+
+        return result
+
+    @override
+    def _parse_chunk_from_openai(
+        self,
+        event: Any,
+        options: dict[str, Any],
+        function_call_ids: dict[int, tuple[str, str]],
+    ) -> ChatResponseUpdate:
+        """Parse an Azure AI streaming event, handling Azure-specific event types."""
+        # Intercept output_item.added events for Azure-specific item types
+        if event.type == "response.output_item.added" and event.item.type == "oauth_consent_request":
+            event_item = event.item
+            consent_link = event_item.consent_link
+            if consent_link and not consent_link.startswith("https://"):
+                logger.warning("Skipping oauth_consent_request with non-HTTPS consent_link: %s", event_item)
+                consent_link = ""
+            contents: list[Content] = []
+            if consent_link:
+                contents.append(
+                    Content.from_oauth_consent_request(
+                        consent_link=consent_link,
+                        raw_representation=event_item,
+                    )
+                )
+            else:
+                logger.warning("Received oauth_consent_request output without consent_link: %s", event_item)
+            return ChatResponseUpdate(
+                contents=contents,
+                role="assistant",
+                model_id=self.model_id,
+                raw_representation=event,
+            )
+
+        return super()._parse_chunk_from_openai(event, options, function_call_ids)
 
     def _prepare_messages_for_azure_ai(self, messages: Sequence[Message]) -> tuple[list[Message], str | None]:
         """Prepare input from messages and convert system/developer messages to instructions."""
@@ -830,14 +901,16 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
     @staticmethod
     def get_code_interpreter_tool(  # type: ignore[override]
         *,
-        file_ids: list[str] | None = None,
+        file_ids: list[str | Content] | None = None,
         container: Literal["auto"] | dict[str, Any] = "auto",
         **kwargs: Any,
     ) -> CodeInterpreterTool:
         """Create a code interpreter tool configuration for Azure AI Projects.
 
         Keyword Args:
-            file_ids: Optional list of file IDs to make available to the code interpreter.
+            file_ids: Optional list of file IDs or Content objects to make available to
+                the code interpreter. Accepts plain strings or Content.from_hosted_file()
+                instances.
             container: Container configuration. Use "auto" for automatic container management.
                 Note: Custom container settings from this parameter are not used by Azure AI Projects;
                 use file_ids instead.
@@ -857,7 +930,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         # Extract file_ids from container if provided as dict and file_ids not explicitly set
         if file_ids is None and isinstance(container, dict):
             file_ids = container.get("file_ids")
-        tool_container = CodeInterpreterToolAuto(file_ids=file_ids if file_ids else None)
+        resolved = resolve_file_ids(file_ids)
+        tool_container = CodeInterpreterContainerAuto(file_ids=resolved)
         return CodeInterpreterTool(container=tool_container, **kwargs)
 
     @staticmethod

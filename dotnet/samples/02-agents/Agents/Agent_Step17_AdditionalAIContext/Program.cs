@@ -49,11 +49,11 @@ AIAgent agent = new AzureOpenAIClient(
         """ },
         ChatHistoryProvider = new InMemoryChatHistoryProvider(new InMemoryChatHistoryProviderOptions
         {
-            // Use StorageInputMessageFilter to provide a custom filter for messages stored in chat history.
+            // Use StorageInputRequestMessageFilter to provide a custom filter for request messages stored in chat history.
             // By default the chat history provider will store all messages, except for those that came from chat history in the first place.
             // In this case, we want to also exclude messages that came from AI context providers.
             // You may want to store these messages, depending on their content and your requirements.
-            StorageInputMessageFilter = messages => messages.Where(m => m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.AIContextProvider && m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory)
+            StorageInputRequestMessageFilter = messages => messages.Where(m => m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.AIContextProvider && m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory)
         }),
         // Add multiple AI context providers: one that maintains a todo list and one that provides upcoming calendar entries.
         // The agent will call each provider in sequence, accumulating context from each.

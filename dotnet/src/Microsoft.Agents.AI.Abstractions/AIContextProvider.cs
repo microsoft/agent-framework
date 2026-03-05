@@ -33,18 +33,25 @@ public abstract class AIContextProvider
 {
     private static IEnumerable<ChatMessage> DefaultExternalOnlyFilter(IEnumerable<ChatMessage> messages)
         => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External);
+    private static IEnumerable<ChatMessage> DefaultNoopFilter(IEnumerable<ChatMessage> messages)
+        => messages;
+
+    private IReadOnlyList<string>? _stateKeys;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AIContextProvider"/> class.
     /// </summary>
     /// <param name="provideInputMessageFilter">An optional filter function to apply to input messages before providing context via <see cref="ProvideAIContextAsync"/>. If not set, defaults to including only <see cref="AgentRequestMessageSourceType.External"/> messages.</param>
-    /// <param name="storeInputMessageFilter">An optional filter function to apply to request messages before storing context via <see cref="StoreAIContextAsync"/>. If not set, defaults to including only <see cref="AgentRequestMessageSourceType.External"/> messages.</param>
+    /// <param name="storeInputRequestMessageFilter">An optional filter function to apply to request messages before storing context via <see cref="StoreAIContextAsync"/>. If not set, defaults to including only <see cref="AgentRequestMessageSourceType.External"/> messages.</param>
+    /// <param name="storeInputResponseMessageFilter">An optional filter function to apply to response messages before storing context via <see cref="StoreAIContextAsync"/>. If not set, defaults to a no-op filter that includes all response messages.</param>
     protected AIContextProvider(
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideInputMessageFilter = null,
-        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputMessageFilter = null)
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
     {
         this.ProvideInputMessageFilter = provideInputMessageFilter ?? DefaultExternalOnlyFilter;
-        this.StoreInputMessageFilter = storeInputMessageFilter ?? DefaultExternalOnlyFilter;
+        this.StoreInputRequestMessageFilter = storeInputRequestMessageFilter ?? DefaultExternalOnlyFilter;
+        this.StoreInputResponseMessageFilter = storeInputResponseMessageFilter ?? DefaultNoopFilter;
     }
 
     /// <summary>
@@ -55,17 +62,23 @@ public abstract class AIContextProvider
     /// <summary>
     /// Gets the filter function to apply to request messages before storing context via <see cref="StoreAIContextAsync"/>.
     /// </summary>
-    protected Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> StoreInputMessageFilter { get; }
+    protected Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> StoreInputRequestMessageFilter { get; }
 
     /// <summary>
-    /// Gets the key used to store the provider state in the <see cref="AgentSession.StateBag"/>.
+    /// Gets the filter function to apply to response messages before storing context via <see cref="StoreAIContextAsync"/>.
+    /// </summary>
+    protected Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> StoreInputResponseMessageFilter { get; }
+
+    /// <summary>
+    /// Gets the set of keys used to store the provider state in the <see cref="AgentSession.StateBag"/>.
     /// </summary>
     /// <remarks>
-    /// The default value is the name of the concrete type (e.g. <c>"TextSearchProvider"</c>).
-    /// Implementations may override this to provide a custom key, for example when multiple
-    /// instances of the same provider type are used in the same session.
+    /// The default value is a single-element set containing the name of the concrete type (e.g. <c>"TextSearchProvider"</c>).
+    /// Implementations may override this to provide custom keys, for example when multiple
+    /// instances of the same provider type are used in the same session, or when a provider
+    /// stores state under more than one key.
     /// </remarks>
-    public virtual string StateKey => this.GetType().Name;
+    public virtual IReadOnlyList<string> StateKeys => this._stateKeys ??= [this.GetType().Name];
 
     /// <summary>
     /// Called at the start of agent invocation to provide additional context.
@@ -245,8 +258,10 @@ public abstract class AIContextProvider
     /// </para>
     /// <para>
     /// The default implementation of this method skips execution for any invocation failures,
-    /// filters the request messages using the configured store-input message filter
+    /// filters the request messages using the configured store-input request message filter
     /// (which defaults to including only <see cref="AgentRequestMessageSourceType.External"/> messages),
+    /// filters the response messages using the configured store-input response message filter
+    /// (which defaults to a no-op, so all response messages are processed),
     /// and calls <see cref="StoreAIContextAsync"/> to process the invocation results.
     /// For most scenarios, overriding <see cref="StoreAIContextAsync"/> is sufficient to process invocation results,
     /// while still benefiting from the default error handling and filtering behavior.
@@ -261,7 +276,7 @@ public abstract class AIContextProvider
             return default;
         }
 
-        var subContext = new InvokedContext(context.Agent, context.Session, this.StoreInputMessageFilter(context.RequestMessages), context.ResponseMessages!);
+        var subContext = new InvokedContext(context.Agent, context.Session, this.StoreInputRequestMessageFilter(context.RequestMessages), this.StoreInputResponseMessageFilter(context.ResponseMessages!));
         return this.StoreAIContextAsync(subContext, cancellationToken);
     }
 

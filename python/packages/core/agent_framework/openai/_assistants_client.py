@@ -639,9 +639,15 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                                         additional_properties=props,
                                         raw_representation=completed_annotation,
                                     )
-                                    if completed_annotation.file_citation and completed_annotation.file_citation.file_id:
+                                    if (
+                                        completed_annotation.file_citation
+                                        and completed_annotation.file_citation.file_id
+                                    ):
                                         ann["file_id"] = completed_annotation.file_citation.file_id
-                                    if completed_annotation.start_index is not None and completed_annotation.end_index is not None:
+                                    if (
+                                        completed_annotation.start_index is not None
+                                        and completed_annotation.end_index is not None
+                                    ):
                                         ann["annotated_regions"] = [
                                             TextSpanRegion(
                                                 type="text_span",
@@ -660,7 +666,10 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                                     )
                                     if completed_annotation.file_path and completed_annotation.file_path.file_id:
                                         ann["file_id"] = completed_annotation.file_path.file_id
-                                    if completed_annotation.start_index is not None and completed_annotation.end_index is not None:
+                                    if (
+                                        completed_annotation.start_index is not None
+                                        and completed_annotation.end_index is not None
+                                    ):
                                         ann["annotated_regions"] = [
                                             TextSpanRegion(
                                                 type="text_span",
