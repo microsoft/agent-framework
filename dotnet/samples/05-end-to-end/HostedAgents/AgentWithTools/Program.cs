@@ -13,6 +13,9 @@ var openAiEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 var toolConnectionId = Environment.GetEnvironmentVariable("MCP_TOOL_CONNECTION_ID") ?? throw new InvalidOperationException("MCP_TOOL_CONNECTION_ID is not set.");
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 var credential = new DefaultAzureCredential();
 
 var chatClient = new AzureOpenAIClient(new Uri(openAiEndpoint), credential)

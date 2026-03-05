@@ -22,6 +22,9 @@ static string GetWeather([Description("The location to get the weather for.")] s
 // Create the chat client and agent.
 // Note: ApprovalRequiredAIFunction wraps the tool to require user approval before invocation.
 // User should reply with 'approve' or 'reject' when prompted.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 #pragma warning disable MEAI001 // Type is for evaluation purposes only
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
