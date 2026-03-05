@@ -2,9 +2,9 @@
 
 using System.Linq;
 using System.Threading.Tasks;
-using Azure.Identity;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 using Microsoft.Extensions.AI;
+using Shared.IntegrationTests;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 
@@ -14,7 +14,7 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : Integrati
     public async Task ConversationTestAsync()
     {
         // Arrange
-        AzureAgentProvider provider = new(this.TestEndpoint, new AzureCliCredential());
+        AzureAgentProvider provider = new(this.TestEndpoint, TestAzureCliCredentials.CreateAzureCliCredential());
         // Act
         string conversationId = await provider.CreateConversationAsync();
         // Assert

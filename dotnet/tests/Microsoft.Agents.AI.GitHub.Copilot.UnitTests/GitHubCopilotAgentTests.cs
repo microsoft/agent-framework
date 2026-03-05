@@ -221,4 +221,26 @@ public sealed class GitHubCopilotAgentTests
         Assert.Null(result.ConfigDir);
         Assert.True(result.Streaming);
     }
+
+    [Fact]
+    public void ConvertToAgentResponseUpdate_AssistantMessageEvent_DoesNotEmitTextContent()
+    {
+        var assistantMessage = new AssistantMessageEvent
+        {
+            Data = new AssistantMessageData
+            {
+                MessageId = "msg-456",
+                Content = "Some streamed content that was already delivered via delta events"
+            }
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions { AutoStart = false });
+        const string TestId = "agent-id";
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, id: TestId, tools: null);
+        AgentResponseUpdate result = agent.ConvertToAgentResponseUpdate(assistantMessage);
+
+        // result.Text need to be empty because the content was already delivered via delta events, and we want to avoid emitting duplicate content in the response update.
+        // The content should be delivered through TextContent in the Contents collection instead.
+        Assert.Empty(result.Text);
+        Assert.DoesNotContain(result.Contents, c => c is TextContent);
+    }
 }
