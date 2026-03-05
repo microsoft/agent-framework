@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, MutableMapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic
 
 from openai.lib.azure import AsyncAzureOpenAI
@@ -281,6 +281,33 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
             function_invocation_configuration=function_invocation_configuration,
             **kwargs,
         )
+
+    @override
+    def _prepare_tools_for_openai(self, tools: Sequence[Any]) -> dict[str, Any]:
+        """Prepare tools for the Azure OpenAI Chat Completions API.
+
+        Overrides the base implementation to filter out web search tools,
+        since Azure OpenAI's Chat Completions API does not support the
+        ``web_search_options`` parameter. Web search tools are silently
+        removed with a warning logged.
+
+        Args:
+            tools: Sequence of tools to prepare.
+
+        Returns:
+            Dict containing prepared tools, with web search tools filtered out.
+        """
+        filtered_tools: list[Any] = []
+        for tool in tools:
+            if isinstance(tool, MutableMapping) and tool.get("type") == "web_search":
+                logger.warning(
+                    "Web search tools are not supported by Azure OpenAI's Chat Completions API "
+                    "and will be skipped. Use OpenAIChatClient or AzureOpenAIResponsesClient "
+                    "for web search support."
+                )
+                continue
+            filtered_tools.append(tool)
+        return super()._prepare_tools_for_openai(filtered_tools)
 
     @override
     def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
