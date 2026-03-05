@@ -39,7 +39,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <exception cref="InvalidOperationException">The agent with the specified name was not found.</exception>
     /// <remarks>
     /// When instantiating a <see cref="ChatClientAgent"/> by using an <see cref="AgentReference"/>, minimal information will be available about the agent in the instance level, and any logic that relies
-    /// on <see cref="AIAgent.GetService(Type, object?)"/> to retrieve information about the agent like <see cref="AgentVersion" /> will receive <see langword="null"/> as the result.
+    /// on <see cref="AIAgent.GetService{TService}(object?)"/> to retrieve information about the agent like <see cref="AgentVersion" /> will receive <see langword="null"/> as the result.
     /// </remarks>
     public static ChatClientAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
@@ -355,28 +355,27 @@ public static partial class AzureAIProjectChatClientExtensions
     private static readonly ModelReaderWriterOptions s_modelWriterOptionsWire = new("W");
 
     /// <summary>
-    /// Asynchronously retrieves an agent record by name using the Protocol method with user-agent header.
+    /// Asynchronously retrieves an agent record by name using the protocol method to inject user-agent headers.
     /// </summary>
     private static async Task<AgentRecord> GetAgentRecordByNameAsync(AIProjectClient aiProjectClient, string agentName, CancellationToken cancellationToken)
     {
         ClientResult protocolResponse = await aiProjectClient.Agents.GetAgentAsync(agentName, cancellationToken.ToRequestOptions(false)).ConfigureAwait(false);
         var rawResponse = protocolResponse.GetRawResponse();
         AgentRecord? result = ModelReaderWriter.Read<AgentRecord>(rawResponse.Content, s_modelWriterOptionsWire, AzureAIProjectsOpenAIContext.Default);
-        return ClientResult.FromOptionalValue(result, rawResponse).Value!
-            ?? throw new InvalidOperationException($"Agent with name '{agentName}' not found.");
+        return result ?? throw new InvalidOperationException($"Agent with name '{agentName}' not found.");
     }
 
     /// <summary>
-    /// Asynchronously creates an agent version using the Protocol method with user-agent header.
+    /// Asynchronously creates an agent version using the protocol method to inject user-agent headers.
     /// </summary>
     private static async Task<AgentVersion> CreateAgentVersionWithProtocolAsync(AIProjectClient aiProjectClient, string agentName, AgentVersionCreationOptions creationOptions, CancellationToken cancellationToken)
     {
-        using BinaryContent protocolRequest = BinaryContent.Create(ModelReaderWriter.Write(creationOptions, ModelReaderWriterOptions.Json, AzureAIProjectsContext.Default));
-        ClientResult protocolResponse = await aiProjectClient.Agents.CreateAgentVersionAsync(agentName, protocolRequest, cancellationToken.ToRequestOptions(false)).ConfigureAwait(false);
-
+        BinaryData serializedOptions = ModelReaderWriter.Write(creationOptions, s_modelWriterOptionsWire, AzureAIProjectsContext.Default);
+        BinaryContent content = BinaryContent.Create(serializedOptions);
+        ClientResult protocolResponse = await aiProjectClient.Agents.CreateAgentVersionAsync(agentName, content, foundryFeatures: null, cancellationToken.ToRequestOptions(false)).ConfigureAwait(false);
         var rawResponse = protocolResponse.GetRawResponse();
         AgentVersion? result = ModelReaderWriter.Read<AgentVersion>(rawResponse.Content, s_modelWriterOptionsWire, AzureAIProjectsOpenAIContext.Default);
-        return ClientResult.FromValue(result, rawResponse).Value!;
+        return result ?? throw new InvalidOperationException($"Failed to create agent version for agent '{agentName}'.");
     }
 
     private static async Task<ChatClientAgent> CreateAIAgentAsync(

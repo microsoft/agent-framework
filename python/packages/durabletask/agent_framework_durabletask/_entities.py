@@ -206,9 +206,7 @@ class AgentEntity:
                 request_message=request_message,
             )
 
-        run_callable = getattr(self.agent, "run", None)
-        if run_callable is None or not callable(run_callable):
-            raise AttributeError("Agent does not implement run() method")
+        run_callable = self.agent.run
 
         # Try streaming first with run(stream=True)
         try:

@@ -460,14 +460,13 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         for tool_item in tools_list:
             if isinstance(tool_item, FunctionTool) and tool_item.kind == SHELL_TOOL_KIND_VALUE:
                 shell_env = (tool_item.additional_properties or {}).get(OPENAI_SHELL_ENVIRONMENT_KEY)
-                if isinstance(shell_env, Mapping):
-                    response_tools.append(
-                        FunctionShellTool(
-                            type="shell",
-                            environment=dict(shell_env),
-                        )
+                response_tools.append(
+                    FunctionShellTool(
+                        type="shell",
+                        environment=shell_env,  # type: ignore[typeddict-item]
                     )
-                    continue
+                )
+                continue
             if isinstance(tool_item, FunctionTool):
                 params = tool_item.parameters()
                 params["additionalProperties"] = False
@@ -496,7 +495,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             if tool_item.kind != SHELL_TOOL_KIND_VALUE:
                 continue
             shell_env = (tool_item.additional_properties or {}).get(OPENAI_SHELL_ENVIRONMENT_KEY)
-            if isinstance(shell_env, Mapping) and shell_env.get("type") == "local":
+            if isinstance(shell_env, Mapping) and shell_env.get("type") == "local":  # type: ignore[typeddict-item]
                 return tool_item.name
         return None
 
@@ -714,7 +713,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             )
             if env_config.get("type") == "local":
                 raise ValueError("Local shell requires func. Provide func for local execution.")
-            return FunctionShellTool(type="shell", environment=env_config)
+            return FunctionShellTool(type="shell", environment=env_config)  # type: ignore[typeddict-item]
 
         if isinstance(environment, dict):
             raise ValueError("When func is provided, environment config is not supported.")
@@ -1226,7 +1225,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         """Convert function tool output to the local shell JSON payload format."""
         payload: dict[str, Any]
         if isinstance(content.result, Mapping):
-            payload = dict(content.result)
+            payload = dict(content.result)  # type: ignore[assignment]
         else:
             payload = {
                 "stdout": "" if content.result is None else str(content.result),
@@ -1242,7 +1241,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         """Convert function tool output to shell_call_output payload format."""
         payload: dict[str, Any]
         if isinstance(content.result, Mapping):
-            payload = dict(content.result)
+            payload = dict(content.result)  # type: ignore[assignment]
         else:
             payload = {
                 "stdout": "" if content.result is None else str(content.result),
@@ -1252,8 +1251,8 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
         # Pass through native payload shape when tool already returns shell output entries.
         direct_output = payload.get("output")
-        if isinstance(direct_output, list) and all(isinstance(item, Mapping) for item in direct_output):
-            return [dict(item) for item in direct_output]
+        if isinstance(direct_output, list) and all(isinstance(item, Mapping) for item in direct_output):  # type: ignore[reportUnknownMemberType]
+            return [dict(item) for item in direct_output]  # type: ignore[reportUnknownMemberType]
 
         stdout = str(payload.get("stdout", ""))
         stderr = str(payload.get("stderr", ""))
@@ -2293,24 +2292,26 @@ class OpenAIResponsesClient(  # type: ignore[misc]
             env_file_encoding=env_file_encoding,
         )
 
-        if not async_client and not openai_settings["api_key"]:
+        api_key_setting = openai_settings.get("api_key")
+        if not async_client and not api_key_setting:
             raise ValueError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
-        if not openai_settings["responses_model_id"]:
+        responses_model_id = openai_settings.get("responses_model_id")
+        if not responses_model_id:
             raise ValueError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_RESPONSES_MODEL_ID' environment variable."
             )
 
         super().__init__(
-            model_id=openai_settings["responses_model_id"],
-            api_key=self._get_api_key(openai_settings["api_key"]),
-            org_id=openai_settings["org_id"],
+            model_id=responses_model_id,
+            api_key=self._get_api_key(api_key_setting),
+            org_id=openai_settings.get("org_id"),
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
-            base_url=openai_settings["base_url"],
+            base_url=openai_settings.get("base_url"),
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
             **kwargs,

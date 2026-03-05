@@ -88,7 +88,7 @@ public sealed partial class FileAgentSkillsProvider : AIContextProvider
 
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<FileAgentSkillsProvider>();
 
-        this._loader = new FileAgentSkillLoader(this._logger);
+        this._loader = new FileAgentSkillLoader(this._logger, options?.AllowedResourceExtensions);
         this._skills = this._loader.DiscoverAndLoadSkills(skillPaths);
 
         this._skillsInstructionPrompt = BuildSkillsInstructionPrompt(options, this._skills);

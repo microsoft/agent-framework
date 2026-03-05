@@ -4,18 +4,15 @@ import asyncio
 import os
 from pathlib import Path
 
-from agent_framework import Agent, FileAgentSkillsProvider
+from agent_framework import Agent, SkillsProvider
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
-
 """
 Agent Skills Sample
 
-This sample demonstrates how to use file-based Agent Skills with a FileAgentSkillsProvider.
+This sample demonstrates how to use file-based Agent Skills with a SkillsProvider.
 Agent Skills are modular packages of instructions and resources that extend an agent's
 capabilities. They follow the progressive disclosure pattern:
 
@@ -26,6 +23,9 @@ capabilities. They follow the progressive disclosure pattern:
 This sample includes the expense-report skill:
   - Policy-based expense filing with references and assets
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:
@@ -44,7 +44,7 @@ async def main() -> None:
     # --- 2. Create the skills provider ---
     # Discovers skills from the 'skills' directory and makes them available to the agent
     skills_dir = Path(__file__).parent / "skills"
-    skills_provider = FileAgentSkillsProvider(skill_paths=str(skills_dir))
+    skills_provider = SkillsProvider(skill_paths=str(skills_dir))
 
     # --- 3. Create the agent with skills ---
     async with Agent(

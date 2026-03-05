@@ -4,7 +4,7 @@ description = "Azure Cosmos DB history provider integration for Microsoft Agent 
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260219"
+version = "1.0.0b260304"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc1",
+    "agent-framework-core>=1.0.0rc3",
     "azure-cosmos>=4.9.0",
 ]
 
@@ -61,6 +61,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_azure_cosmos"]
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
@@ -85,7 +86,7 @@ executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azure_cosmos"
-test = "pytest --cov=agent_framework_azure_cosmos --cov-report=term-missing:skip-covered tests"
+test = "pytest -m \"not integration\" --cov=agent_framework_azure_cosmos --cov-report=term-missing:skip-covered tests"
 integration-tests = "pytest tests/test_cosmos_history_provider.py -m integration"
 
 [build-system]

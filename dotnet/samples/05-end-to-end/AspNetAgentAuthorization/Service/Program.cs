@@ -75,10 +75,15 @@ string apiKey = builder.Configuration["OPENAI_API_KEY"]
     ?? throw new InvalidOperationException("Set the OPENAI_API_KEY environment variable.");
 string model = builder.Configuration["OPENAI_MODEL"] ?? "gpt-4.1-mini";
 
+// Here we are using Singleton lifetime, since none of the services, function tools and user context classes in the sample have state that are per request.
+// You should evaluate the appropriate lifetime for your own services and tools based on their behavior and dependencies.
+// E.g. if any of the service instances or tools maintain state that is specific to a user, and each request may be from a different user,
+// you should use Scoped lifetime instead, so that a new instance is created for each request.
+// Note that if you use Scoped lifetime for any dependencies, you must also use Scoped lifetime for any class that uses it, including the agent itself.
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddScoped<IUserContext, KeycloakUserContext>();
-builder.Services.AddScoped<ExpenseService>();
-builder.Services.AddScoped<AIAgent>(sp =>
+builder.Services.AddSingleton<IUserContext, KeycloakUserContext>();
+builder.Services.AddSingleton<ExpenseService>();
+builder.Services.AddSingleton<AIAgent>(sp =>
 {
     var expenseService = sp.GetRequiredService<ExpenseService>();
 

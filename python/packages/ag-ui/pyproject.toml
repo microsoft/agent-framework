@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-ag-ui"
-version = "1.0.0b260225"
+version = "1.0.0b260304"
 description = "AG-UI protocol integration for Agent Framework"
 readme = "README.md"
 license-files = ["LICENSE"]
@@ -22,7 +22,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc2",
+    "agent-framework-core>=1.0.0rc3",
     "ag-ui-protocol>=0.1.9",
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0"
@@ -64,6 +64,7 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 
 [tool.pyright]
+include = ["agent_framework_ag_ui"]
 exclude = ["tests", "tests/ag_ui", "examples"]
 typeCheckingMode = "basic"
 
@@ -73,4 +74,4 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_ag_ui"
-test = "pytest --cov=agent_framework_ag_ui --cov-report=term-missing:skip-covered -n auto --dist worksteal tests/ag_ui"
+test = "pytest -m \"not integration\" --cov=agent_framework_ag_ui --cov-report=term-missing:skip-covered -n auto --dist worksteal tests/ag_ui"

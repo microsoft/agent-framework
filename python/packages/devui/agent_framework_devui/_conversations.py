@@ -11,12 +11,14 @@ from __future__ import annotations
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import MutableSequence
 from typing import Any, Literal, cast
 
 from agent_framework import AgentSession, Message
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage, WorkflowCheckpoint
 from openai.types.conversations import Conversation, ConversationDeletedResource
 from openai.types.conversations.conversation_item import ConversationItem
+from openai.types.conversations.message import Content as OpenAIContent
 from openai.types.conversations.message import Message as OpenAIMessage
 from openai.types.conversations.text_content import TextContent
 from openai.types.responses import (
@@ -300,12 +302,17 @@ class InMemoryConversationStore(ConversationStore):
         stored_messages: list[Message] = conv_data["messages"]
 
         # Convert items to Messages and add to storage
-        chat_messages = []
+        chat_messages: list[Message] = []
         for item in items:
             # Simple conversion - assume text content for now
             role = item.get("role", "user")
             content = item.get("content", [])
-            text = content[0].get("text", "") if content else ""
+            first_content = cast(
+                dict[str, Any],
+                content[0] if content and isinstance(content, list) and isinstance(content[0], dict) else {},
+            )
+            text_obj = first_content.get("text", "")
+            text = text_obj if isinstance(text_obj, str) else str(text_obj)
 
             chat_msg = Message(role=role, text=text)  # type: ignore[arg-type]
             chat_messages.append(chat_msg)
@@ -318,23 +325,18 @@ class InMemoryConversationStore(ConversationStore):
         for msg in chat_messages:
             item_id = f"item_{uuid.uuid4().hex}"
 
-            # Extract role - handle both string and enum
-            role_str = msg.role if hasattr(msg.role, "value") else str(msg.role)
-            role = cast(MessageRole, role_str)  # Safe: Agent Framework roles match OpenAI roles
-
             # Convert Message contents to OpenAI TextContent format
-            message_content = []
+            message_content: MutableSequence[OpenAIContent] = []
             for content_item in msg.contents:
                 if content_item.type == "text":
                     # Extract text from TextContent object
-                    text_value = getattr(content_item, "text", "")
-                    message_content.append(TextContent(type="text", text=text_value))
+                    message_content.append(TextContent(type="text", text=content_item.text or ""))
 
             # Create Message object (concrete type from ConversationItem union)
             message = OpenAIMessage(
                 id=item_id,
                 type="message",  # Required discriminator for union
-                role=role,
+                role=cast(MessageRole, msg.role),  # Safe: Agent Framework roles match OpenAI roles,
                 content=message_content,
                 status="completed",  # Required field
             )
@@ -383,8 +385,8 @@ class InMemoryConversationStore(ConversationStore):
             # A single Message may produce multiple ConversationItems
             # (e.g., a message with both text and a function call)
             message_contents: list[TextContent | ResponseInputImage | ResponseInputFile] = []
-            function_calls = []
-            function_results = []
+            function_calls: list[ResponseFunctionToolCallItem] = []
+            function_results: list[ResponseFunctionToolCallOutputItem] = []
 
             for content in msg.contents:
                 content_type = getattr(content, "type", None)
@@ -628,7 +630,7 @@ class InMemoryConversationStore(ConversationStore):
 
     async def list_conversations_by_metadata(self, metadata_filter: dict[str, str]) -> list[Conversation]:
         """Filter conversations by metadata (e.g., agent_id)."""
-        results = []
+        results: list[Conversation] = []
         for conv_data in self._conversations.values():
             conv_meta = conv_data.get("metadata", {}).copy()  # Copy to avoid mutating original
 
@@ -704,7 +706,8 @@ class CheckpointConversationManager:
             ValueError: If conversation not found
         """
         # Access internal conversations dict (we know it's InMemoryConversationStore)
-        conv_data = self._store._conversations.get(conversation_id)
+        conversations_dict = cast(dict[str, dict[str, Any]], getattr(self._store, "_conversations", {}))
+        conv_data = conversations_dict.get(conversation_id)
         if not conv_data:
             raise ValueError(f"Conversation {conversation_id} not found")
 

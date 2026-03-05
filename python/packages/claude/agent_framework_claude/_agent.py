@@ -58,7 +58,10 @@ if TYPE_CHECKING:
         PermissionMode,
         SandboxSettings,
         SdkBeta,
+        SdkPluginConfig,
+        SettingSource,
     )
+    from claude_agent_sdk.types import ThinkingConfig
 
 
 logger = logging.getLogger("agent_framework.claude")
@@ -118,9 +121,6 @@ class ClaudeAgentOptions(TypedDict, total=False):
     fallback_model: str
     """Fallback model if primary fails."""
 
-    max_thinking_tokens: int
-    """Maximum tokens for thinking blocks."""
-
     allowed_tools: list[str]
     """Allowlist of tools. If set, Claude can ONLY use tools in this list."""
 
@@ -162,6 +162,18 @@ class ClaudeAgentOptions(TypedDict, total=False):
 
     betas: list[SdkBeta]
     """Beta features to enable."""
+
+    plugins: list[SdkPluginConfig]
+    """Plugin configurations for custom commands and capabilities."""
+
+    setting_sources: list[SettingSource]
+    """Which Claude settings files to load ("user", "project", "local")."""
+
+    thinking: ThinkingConfig
+    """Extended thinking configuration (adaptive, enabled, or disabled)."""
+
+    effort: Literal["low", "medium", "high", "max"]
+    """Effort level for thinking depth."""
 
 
 OptionsT = TypeVar(
@@ -299,21 +311,17 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         if tools is None:
             return
 
-        # Normalize to sequence
-        if isinstance(tools, str):
-            tools_list: Sequence[Any] = [tools]
-        elif isinstance(tools, Sequence):
-            tools_list = list(tools)
-        else:
-            tools_list = [tools]
-
-        for tool in tools_list:
+        non_builtin_tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] = []
+        if not isinstance(tools, list):
+            tools = [tools]  # type: ignore[assignment, reportUnknownVariableType]
+        for tool in tools:  # type: ignore[reportUnknownVariableType]
             if isinstance(tool, str):
                 self._builtin_tools.append(tool)
             else:
-                # Use normalize_tools for custom tools
-                normalized = normalize_tools(tool)
-                self._custom_tools.extend(normalized)
+                non_builtin_tools.append(tool)  # type: ignore[union-attr, reportUnknownArgumentType]
+        if not non_builtin_tools:
+            return
+        self._custom_tools.extend(normalize_tools(non_builtin_tools))  # type: ignore[reportUnknownVariableType]
 
     async def __aenter__(self) -> RawClaudeAgent[OptionsT]:
         """Start the agent when entering async context."""

@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import AsyncIterable, Awaitable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import pytest
 
@@ -10,11 +10,13 @@ from agent_framework import (
     AgentExecutor,
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     AgentSession,
     BaseAgent,
     Content,
     Message,
     ResponseStream,
+    WorkflowEvent,
     WorkflowRunState,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
@@ -32,14 +34,33 @@ class _CountingAgent(BaseAgent):
         super().__init__(**kwargs)
         self.call_count = 0
 
+    @overload
     def run(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         self.call_count += 1
         if stream:
 
@@ -63,13 +84,33 @@ class _StreamingHookAgent(BaseAgent):
         super().__init__(**kwargs)
         self.result_hook_called = False
 
+    @overload
     def run(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
+        session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         if stream:
 
             async def _stream() -> AsyncIterable[AgentResponseUpdate]:
@@ -78,7 +119,9 @@ class _StreamingHookAgent(BaseAgent):
                     role="assistant",
                 )
 
-            async def _mark_result_hook_called(response: AgentResponse) -> AgentResponse:
+            async def _mark_result_hook_called(
+                response: AgentResponse,
+            ) -> AgentResponse:
                 self.result_hook_called = True
                 return response
 
@@ -278,7 +321,7 @@ async def test_agent_executor_run_streaming_with_stream_kwarg_does_not_raise() -
     workflow = SequentialBuilder(participants=[executor]).build()
 
     # stream=True at workflow level triggers streaming mode (returns async iterable)
-    events = []
+    events: list[WorkflowEvent] = []
     async for event in workflow.run("hello", stream=True):
         events.append(event)
     assert len(events) > 0
@@ -288,10 +331,13 @@ async def test_agent_executor_run_streaming_with_stream_kwarg_does_not_raise() -
 @pytest.mark.parametrize("reserved_kwarg", ["session", "stream", "messages"])
 async def test_prepare_agent_run_args_strips_reserved_kwargs(reserved_kwarg: str, caplog: "LogCaptureFixture") -> None:
     """_prepare_agent_run_args must remove reserved kwargs and log a warning."""
-    raw = {reserved_kwarg: "should-be-stripped", "custom_key": "keep-me"}
+    raw: dict[str, Any] = {
+        reserved_kwarg: "should-be-stripped",
+        "custom_key": "keep-me",
+    }
 
     with caplog.at_level(logging.WARNING):
-        run_kwargs, options = AgentExecutor._prepare_agent_run_args(raw)
+        run_kwargs, options = AgentExecutor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
 
     assert reserved_kwarg not in run_kwargs
     assert "custom_key" in run_kwargs
@@ -302,8 +348,8 @@ async def test_prepare_agent_run_args_strips_reserved_kwargs(reserved_kwarg: str
 
 async def test_prepare_agent_run_args_preserves_non_reserved_kwargs() -> None:
     """Non-reserved workflow kwargs should pass through unchanged."""
-    raw = {"custom_param": "value", "another": 42}
-    run_kwargs, options = AgentExecutor._prepare_agent_run_args(raw)
+    raw: dict[str, Any] = {"custom_param": "value", "another": 42}
+    run_kwargs, _options = AgentExecutor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
     assert run_kwargs["custom_param"] == "value"
     assert run_kwargs["another"] == 42
 
@@ -312,10 +358,10 @@ async def test_prepare_agent_run_args_strips_all_reserved_kwargs_at_once(
     caplog: "LogCaptureFixture",
 ) -> None:
     """All reserved kwargs should be stripped when supplied together, each emitting a warning."""
-    raw = {"session": "x", "stream": True, "messages": [], "custom": 1}
+    raw: dict[str, Any] = {"session": "x", "stream": True, "messages": [], "custom": 1}
 
     with caplog.at_level(logging.WARNING):
-        run_kwargs, options = AgentExecutor._prepare_agent_run_args(raw)
+        run_kwargs, options = AgentExecutor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
 
     assert "session" not in run_kwargs
     assert "stream" not in run_kwargs

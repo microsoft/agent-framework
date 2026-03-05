@@ -4,7 +4,7 @@ description = "Mem0 integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260225"
+version = "1.0.0b260304"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc2",
+    "agent-framework-core>=1.0.0rc3",
     "mem0ai>=1.0.0",
 ]
 
@@ -61,6 +61,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_mem0"]
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
@@ -86,7 +87,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_mem0"
-test = "pytest --cov=agent_framework_mem0 --cov-report=term-missing:skip-covered tests"
+test = "pytest -m \"not integration\" --cov=agent_framework_mem0 --cov-report=term-missing:skip-covered tests"
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]

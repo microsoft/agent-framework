@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
@@ -302,15 +302,18 @@ class AnthropicClient(
             env_file_encoding=env_file_encoding,
         )
 
+        api_key_secret = anthropic_settings.get("api_key")
+        model_id_setting = anthropic_settings.get("chat_model_id")
+
         if anthropic_client is None:
-            if not anthropic_settings["api_key"]:
+            if api_key_secret is None:
                 raise ValueError(
                     "Anthropic API key is required. Set via 'api_key' parameter "
                     "or 'ANTHROPIC_API_KEY' environment variable."
                 )
 
             anthropic_client = AsyncAnthropic(
-                api_key=anthropic_settings["api_key"].get_secret_value(),
+                api_key=api_key_secret.get_secret_value(),
                 default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
             )
 
@@ -324,7 +327,7 @@ class AnthropicClient(
         # Initialize instance variables
         self.anthropic_client = anthropic_client
         self.additional_beta_flags = additional_beta_flags or []
-        self.model_id = anthropic_settings["chat_model_id"]
+        self.model_id = model_id_setting
         # streaming requires tracking the last function call ID, name, and content type
         self._last_call_id_name: tuple[str, str] | None = None
         self._last_call_content_type: str | None = None
@@ -785,18 +788,22 @@ class AnthropicClient(
                         "description": tool.description,
                         "input_schema": tool.parameters(),
                     })
-                elif isinstance(tool, MutableMapping) and tool.get("type") == "mcp":
+                elif isinstance(tool, Mapping) and tool.get("type") == "mcp":  # type: ignore[reportUnknownMemberType]
                     # MCP servers must be routed to separate mcp_servers parameter
                     server_def: dict[str, Any] = {
                         "type": "url",
-                        "name": tool.get("server_label", ""),
-                        "url": tool.get("server_url", ""),
+                        "name": tool.get("server_label", ""),  # type: ignore[reportUnknownMemberType]
+                        "url": tool.get("server_url", ""),  # type: ignore[reportUnknownMemberType]
                     }
-                    if allowed_tools := tool.get("allowed_tools"):
-                        server_def["tool_configuration"] = {"allowed_tools": list(allowed_tools)}
-                    headers = tool.get("headers")
-                    if isinstance(headers, dict) and (auth := headers.get("authorization")):
-                        server_def["authorization_token"] = auth
+                    allowed_tools = tool.get("allowed_tools")  # type: ignore[reportUnknownMemberType]
+                    if isinstance(allowed_tools, Sequence) and not isinstance(allowed_tools, str):
+                        server_def["tool_configuration"] = {
+                            "allowed_tools": [str(item) for item in allowed_tools]  # pyright: ignore[reportUnknownArgumentType,reportUnknownVariableType]
+                        }
+                    headers = tool.get("headers")  # type: ignore[reportUnknownMemberType]
+                    authorization = headers.get("authorization") if isinstance(headers, Mapping) else None  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+                    if isinstance(authorization, str):
+                        server_def["authorization_token"] = authorization
                     mcp_server_list.append(server_def)
                 else:
                     # Pass through all other tools (dicts, SDK types) unchanged
@@ -894,6 +901,7 @@ class AnthropicClient(
                     usage_details.append(Content.from_usage(usage_details=details))
 
                 return ChatResponseUpdate(
+                    role="assistant",
                     response_id=event.message.id,
                     contents=[
                         *self._parse_contents_from_anthropic(event.message.content),
