@@ -33,6 +33,7 @@ from agent_framework import Agent, AgentSession, Message, SupportsAgentRun
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
+from agent_framework._workflows._events import OrchestrationComplete
 from agent_framework._workflows._executor import Executor
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
@@ -537,7 +538,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
                 agent_orchestration_output.final_message or "The conversation has been terminated by the agent."
             )
             self._append_messages([self._create_completion_message(final_message)])
-            await ctx.yield_output(self._full_conversation)
+            await ctx.yield_output(OrchestrationComplete(self._full_conversation))
             return True
 
         return False

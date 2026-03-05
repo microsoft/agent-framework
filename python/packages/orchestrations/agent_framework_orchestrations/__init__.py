@@ -65,6 +65,9 @@ from ._orchestration_state import OrchestrationState
 from ._orchestrator_helpers import clean_conversation_for_handoff, create_completion_message
 from ._sequential import SequentialBuilder
 
+# Re-export OrchestrationComplete from core for convenience
+from agent_framework import OrchestrationComplete
+
 __all__ = [
     "MAGENTIC_MANAGER_NAME",
     "ORCH_MSG_KIND_INSTRUCTION",
@@ -101,6 +104,7 @@ __all__ = [
     "MagenticProgressLedgerItem",
     "MagenticResetSignal",
     "OrchestrationState",
+    "OrchestrationComplete",
     "SequentialBuilder",
     "StandardMagenticManager",
     "TerminationCondition",

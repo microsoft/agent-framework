@@ -32,6 +32,7 @@ from .._types import (
 from ..exceptions import AgentInvalidRequestException, AgentInvalidResponseException
 from ._checkpoint import CheckpointStorage
 from ._events import (
+    OrchestrationComplete,
     WorkflowEvent,
 )
 from ._message_utils import normalize_messages_input
@@ -328,19 +329,11 @@ class WorkflowAgent(BaseAgent):
 
         session_messages: list[Message] = session_context.get_messages(include_input=True)
         all_updates: list[AgentResponseUpdate] = []
-        emitted_message_ids: set[str] = set()
         async for event in self._run_core(
             session_messages, checkpoint_id, checkpoint_storage, streaming=True, **kwargs
         ):
             updates = self._convert_workflow_event_to_agent_response_updates(response_id, event)
             for update in updates:
-                # Deduplicate: orchestrations (e.g. HandoffBuilder) may yield the full
-                # conversation at termination, re-emitting messages that were already
-                # streamed individually. Skip updates whose message_id was already sent.
-                if update.message_id and update.message_id in emitted_message_ids:
-                    continue
-                if update.message_id:
-                    emitted_message_ids.add(update.message_id)
                 all_updates.append(update)
                 yield update
 
@@ -457,7 +450,7 @@ class WorkflowAgent(BaseAgent):
         raw_representations: list[object] = []
         merged_usage: UsageDetails | None = None
         latest_created_at: str | None = None
-        seen_message_ids: set[str] = set()
+        orchestration_complete: OrchestrationComplete | None = None
 
         for output_event in output_events:
             if output_event.type == "request_info":
@@ -474,6 +467,12 @@ class WorkflowAgent(BaseAgent):
                 raw_representations.append(output_event)
             else:
                 data = output_event.data
+                if isinstance(data, OrchestrationComplete):
+                    # Save for fallback: some orchestrations (e.g. group_chat) only emit
+                    # OrchestrationComplete without separate per-agent output events.
+                    orchestration_complete = data
+                    continue
+
                 if isinstance(data, AgentResponseUpdate):
                     # We cannot support AgentResponseUpdate in non-streaming mode. This is because the message
                     # sequence cannot be guaranteed when there are streaming updates in between non-streaming
@@ -484,14 +483,7 @@ class WorkflowAgent(BaseAgent):
                     )
 
                 if isinstance(data, AgentResponse):
-                    non_user_messages = [
-                        msg for msg in data.messages
-                        if msg.role != "user"
-                        and not (msg.message_id and msg.message_id in seen_message_ids)
-                    ]
-                    for msg in non_user_messages:
-                        if msg.message_id:
-                            seen_message_ids.add(msg.message_id)
+                    non_user_messages = [msg for msg in data.messages if msg.role != "user"]
                     messages.extend(non_user_messages)
                     if non_user_messages:
                         raw_representations.append(data.raw_representation)
@@ -504,21 +496,12 @@ class WorkflowAgent(BaseAgent):
                         else latest_created_at
                     )
                 elif isinstance(data, Message):
-                    if data.role != "user" and not (data.message_id and data.message_id in seen_message_ids):
-                        if data.message_id:
-                            seen_message_ids.add(data.message_id)
+                    if data.role != "user":
                         messages.append(data)
                         raw_representations.append(data.raw_representation)
                 elif is_instance_of(data, list[Message]):
                     chat_messages = cast(list[Message], data)
-                    non_user_messages = [
-                        msg for msg in chat_messages
-                        if msg.role != "user"
-                        and not (msg.message_id and msg.message_id in seen_message_ids)
-                    ]
-                    for msg in non_user_messages:
-                        if msg.message_id:
-                            seen_message_ids.add(msg.message_id)
+                    non_user_messages = [msg for msg in chat_messages if msg.role != "user"]
                     messages.extend(non_user_messages)
                     if non_user_messages:
                         raw_representations.append(data)
@@ -537,6 +520,16 @@ class WorkflowAgent(BaseAgent):
                         )
                     )
                     raw_representations.append(data)
+
+        # Fallback: if no messages were collected from other output events but an
+        # OrchestrationComplete was emitted, use its messages. This covers orchestrations
+        # (e.g. group_chat) where the orchestrator runs agents internally and only
+        # emits OrchestrationComplete as a workflow output.
+        if not messages and orchestration_complete is not None:
+            non_user_messages = [msg for msg in orchestration_complete.messages if msg.role != "user"]
+            messages.extend(non_user_messages)
+            if non_user_messages:
+                raw_representations.append(orchestration_complete)
 
         return AgentResponse(
             messages=messages,
@@ -599,6 +592,11 @@ class WorkflowAgent(BaseAgent):
             # Handle different data types appropriately.
             data = event.data
             executor_id = event.executor_id
+
+            if isinstance(data, OrchestrationComplete):
+                # OrchestrationComplete carries the full conversation for direct
+                # workflow consumers but should not be included in streaming output.
+                return []
 
             if isinstance(data, AgentResponseUpdate):
                 # Pass through AgentResponseUpdate directly (streaming from AgentExecutor).

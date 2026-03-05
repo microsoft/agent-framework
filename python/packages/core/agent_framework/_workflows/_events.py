@@ -22,6 +22,27 @@ else:
 DataT = TypeVar("DataT", default=Any)
 
 
+@dataclass
+class OrchestrationComplete:
+    """Signals that an orchestration has finished and provides the full conversation.
+
+    Orchestrations yield this at termination so direct workflow consumers can access
+    the complete conversation history. When the workflow is used via ``WorkflowAgent``
+    (i.e. ``.as_agent()``), this event is filtered out and does not appear in the
+    ``AgentResponse`` or ``AgentResponseUpdate`` output.
+    """
+
+    messages: list[Any]
+    """The full conversation messages accumulated during the orchestration."""
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore[import] # pragma: no cover
+
+DataT = TypeVar("DataT", default=Any)
+
+
 class WorkflowEventSource(str, Enum):
     """Identifies whether a workflow event came from the framework or an executor.
 

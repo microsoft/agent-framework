@@ -14,6 +14,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     Message,
+    OrchestrationComplete,
     ResponseStream,
     WorkflowEvent,
     resolve_agent_id,
@@ -828,8 +829,8 @@ async def test_autonomous_mode_yields_output_without_user_request():
     assert outputs, "Autonomous mode should yield a workflow output"
 
     final_conversation = outputs[-1].data
-    assert isinstance(final_conversation, list)
-    conversation_list = cast(list[Message], final_conversation)
+    assert isinstance(final_conversation, OrchestrationComplete)
+    conversation_list = final_conversation.messages
     assert any(msg.role == "assistant" and (msg.text or "").startswith("specialist reply") for msg in conversation_list)
 
 
@@ -898,8 +899,8 @@ async def test_handoff_async_termination_condition() -> None:
     assert len(outputs) == 1
 
     final_conversation = outputs[0].data
-    assert isinstance(final_conversation, list)
-    final_conv_list = cast(list[Message], final_conversation)
+    assert isinstance(final_conversation, OrchestrationComplete)
+    final_conv_list = final_conversation.messages
     user_messages = [msg for msg in final_conv_list if msg.role == "user"]
     assert len(user_messages) == 2
     assert termination_call_count > 0
@@ -956,7 +957,7 @@ async def test_handoff_terminates_without_request_info_when_latest_response_meet
 
     outputs = [event for event in events if event.type == "output"]
     assert outputs
-    conversation_outputs = [event for event in outputs if isinstance(event.data, list)]
+    conversation_outputs = [event for event in outputs if isinstance(event.data, OrchestrationComplete)]
     assert len(conversation_outputs) == 1
 
 

@@ -16,6 +16,7 @@ from agent_framework import (
     Executor,
     InMemoryHistoryProvider,
     Message,
+    OrchestrationComplete,
     ResponseStream,
     SupportsAgentRun,
     UsageDetails,
@@ -552,12 +553,12 @@ class TestWorkflowAgent:
         assert updates[0].role == "assistant"
         assert updates[0].contents[0].text == "assistant reply"
 
-    async def test_workflow_as_agent_deduplicates_streaming_messages(self) -> None:
-        """Test that duplicate messages are deduplicated in streaming mode.
+    async def test_workflow_as_agent_filters_orchestration_complete_streaming(self) -> None:
+        """Test that OrchestrationComplete events are filtered out in streaming mode.
 
-        Orchestrations like HandoffBuilder emit messages individually during streaming
-        then re-emit the full conversation at termination. The WorkflowAgent should
-        deduplicate so the caller doesn't see repeated messages.
+        Orchestrations emit OrchestrationComplete at termination to provide the full
+        conversation for direct workflow consumers. The WorkflowAgent should filter
+        these out so they don't appear as AgentResponseUpdate output.
         """
         msg_id_1 = str(uuid.uuid4())
         msg_id_2 = str(uuid.uuid4())
@@ -585,13 +586,14 @@ class TestWorkflowAgent:
                     created_at="2026-01-01T00:00:01Z",
                 )
             )
-            # Simulate termination: re-emit the full conversation as list[Message]
-            # (this is what HandoffBuilder._check_terminate_and_yield does)
-            await ctx.yield_output([
-                Message(role="user", text="user input", message_id="user-msg-1"),
-                Message(role="assistant", text="first reply", message_id=msg_id_1),
-                Message(role="assistant", text="second reply", message_id=msg_id_2),
-            ])
+            # Simulate termination: emit OrchestrationComplete with full conversation
+            await ctx.yield_output(
+                OrchestrationComplete([
+                    Message(role="user", text="user input", message_id="user-msg-1"),
+                    Message(role="assistant", text="first reply", message_id=msg_id_1),
+                    Message(role="assistant", text="second reply", message_id=msg_id_2),
+                ])
+            )
 
         workflow = WorkflowBuilder(start_executor=dedup_executor).build()
         agent = workflow.as_agent("dedup-agent")
@@ -600,13 +602,13 @@ class TestWorkflowAgent:
         async for update in agent.run("test", stream=True):
             updates.append(update)
 
-        # Should have exactly 2 assistant updates — no duplicates from the list[Message] yield
+        # Should have exactly 2 assistant updates — OrchestrationComplete is filtered out
         assert len(updates) == 2
         assert updates[0].contents[0].text == "first reply"
         assert updates[1].contents[0].text == "second reply"
 
-    async def test_workflow_as_agent_deduplicates_non_streaming_messages(self) -> None:
-        """Test that duplicate messages are deduplicated in non-streaming mode."""
+    async def test_workflow_as_agent_filters_orchestration_complete_non_streaming(self) -> None:
+        """Test that OrchestrationComplete events are filtered out in non-streaming mode."""
         msg_id_1 = str(uuid.uuid4())
         msg_id_2 = str(uuid.uuid4())
 
@@ -629,19 +631,21 @@ class TestWorkflowAgent:
                     response_id="resp-2",
                 )
             )
-            # Re-emit the full conversation at termination
-            await ctx.yield_output([
-                Message(role="user", text="user input", message_id="user-msg-1"),
-                Message(role="assistant", text="first reply", message_id=msg_id_1),
-                Message(role="assistant", text="second reply", message_id=msg_id_2),
-            ])
+            # Emit OrchestrationComplete at termination
+            await ctx.yield_output(
+                OrchestrationComplete([
+                    Message(role="user", text="user input", message_id="user-msg-1"),
+                    Message(role="assistant", text="first reply", message_id=msg_id_1),
+                    Message(role="assistant", text="second reply", message_id=msg_id_2),
+                ])
+            )
 
         workflow = WorkflowBuilder(start_executor=dedup_executor).build()
         agent = workflow.as_agent("dedup-agent")
 
         result = await agent.run("test")
 
-        # Should have exactly 2 assistant messages — no duplicates from the list[Message] yield
+        # Should have exactly 2 assistant messages — OrchestrationComplete is filtered out
         assert len(result.messages) == 2
         assert result.messages[0].text == "first reply"
         assert result.messages[1].text == "second reply"

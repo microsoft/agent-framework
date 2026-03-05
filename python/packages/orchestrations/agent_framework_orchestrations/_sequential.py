@@ -47,6 +47,7 @@ from agent_framework._workflows._agent_executor import (
 )
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
+from agent_framework._workflows._events import OrchestrationComplete
 from agent_framework._workflows._executor import (
     Executor,
     handler,
@@ -84,25 +85,25 @@ class _EndWithConversation(Executor):
     async def end_with_messages(
         self,
         conversation: list[Message],
-        ctx: WorkflowContext[Any, list[Message]],
+        ctx: WorkflowContext[Any, OrchestrationComplete],
     ) -> None:
         """Handler for ending with a list of Message.
 
         This is used when the last participant is a custom executor.
         """
-        await ctx.yield_output(list(conversation))
+        await ctx.yield_output(OrchestrationComplete(list(conversation)))
 
     @handler
     async def end_with_agent_executor_response(
         self,
         response: AgentExecutorResponse,
-        ctx: WorkflowContext[Any, list[Message] | None],
+        ctx: WorkflowContext[Any, OrchestrationComplete],
     ) -> None:
         """Handle case where last participant is an agent.
 
         The agent is wrapped by AgentExecutor and emits AgentExecutorResponse.
         """
-        await ctx.yield_output(response.full_conversation)
+        await ctx.yield_output(OrchestrationComplete(response.full_conversation))
 
 
 class SequentialBuilder:

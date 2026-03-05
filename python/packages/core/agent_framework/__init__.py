@@ -144,6 +144,7 @@ from ._workflows._edge import (
 )
 from ._workflows._edge_runner import create_edge_runner
 from ._workflows._events import (
+    OrchestrationComplete,
     WorkflowErrorDetails,
     WorkflowEvent,
     WorkflowEventSource,
@@ -261,6 +262,7 @@ __all__ = [
     "MiddlewareTermination",
     "MiddlewareType",
     "MiddlewareTypes",
+    "OrchestrationComplete",
     "OuterFinalT",
     "OuterUpdateT",
     "RawAgent",

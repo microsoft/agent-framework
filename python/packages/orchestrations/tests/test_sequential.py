@@ -13,6 +13,7 @@ from agent_framework import (
     Content,
     Executor,
     Message,
+    OrchestrationComplete,
     TypeCompatibilityError,
     WorkflowContext,
     WorkflowRunState,
@@ -84,7 +85,7 @@ async def test_sequential_agents_append_to_context() -> None:
     wf = SequentialBuilder(participants=[a1, a2]).build()
 
     completed = False
-    output: list[Message] | None = None
+    output: OrchestrationComplete | None = None
     async for ev in wf.run("hello sequential", stream=True):
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
@@ -95,8 +96,8 @@ async def test_sequential_agents_append_to_context() -> None:
 
     assert completed
     assert output is not None
-    assert isinstance(output, list)
-    msgs: list[Message] = output
+    assert isinstance(output, OrchestrationComplete)
+    msgs: list[Message] = output.messages
     assert len(msgs) == 3
     assert msgs[0].role == "user" and "hello sequential" in msgs[0].text
     assert msgs[1].role == "assistant" and (msgs[1].author_name == "A1" or True)
@@ -112,7 +113,7 @@ async def test_sequential_with_custom_executor_summary() -> None:
     wf = SequentialBuilder(participants=[a1, summarizer]).build()
 
     completed = False
-    output: list[Message] | None = None
+    output: OrchestrationComplete | None = None
     async for ev in wf.run("topic X", stream=True):
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
@@ -123,7 +124,7 @@ async def test_sequential_with_custom_executor_summary() -> None:
 
     assert completed
     assert output is not None
-    msgs: list[Message] = output
+    msgs: list[Message] = output.messages
     # Expect: [user, A1 reply, summary]
     assert len(msgs) == 3
     assert msgs[0].role == "user"
@@ -137,7 +138,7 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
     initial_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf = SequentialBuilder(participants=list(initial_agents), checkpoint_storage=storage).build()
 
-    baseline_output: list[Message] | None = None
+    baseline_output: OrchestrationComplete | None = None
     async for ev in wf.run("checkpoint sequential", stream=True):
         if ev.type == "output":
             baseline_output = ev.data  # type: ignore[assignment]
@@ -154,7 +155,7 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
     resumed_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf_resume = SequentialBuilder(participants=list(resumed_agents), checkpoint_storage=storage).build()
 
-    resumed_output: list[Message] | None = None
+    resumed_output: OrchestrationComplete | None = None
     async for ev in wf_resume.run(checkpoint_id=resume_checkpoint.checkpoint_id, stream=True):
         if ev.type == "output":
             resumed_output = ev.data  # type: ignore[assignment]
@@ -165,8 +166,8 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
             break
 
     assert resumed_output is not None
-    assert [m.role for m in resumed_output] == [m.role for m in baseline_output]
-    assert [m.text for m in resumed_output] == [m.text for m in baseline_output]
+    assert [m.role for m in resumed_output.messages] == [m.role for m in baseline_output.messages]
+    assert [m.text for m in resumed_output.messages] == [m.text for m in baseline_output.messages]
 
 
 async def test_sequential_checkpoint_runtime_only() -> None:
@@ -176,7 +177,7 @@ async def test_sequential_checkpoint_runtime_only() -> None:
     agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf = SequentialBuilder(participants=list(agents)).build()
 
-    baseline_output: list[Message] | None = None
+    baseline_output: OrchestrationComplete | None = None
     async for ev in wf.run("runtime checkpoint test", checkpoint_storage=storage, stream=True):
         if ev.type == "output":
             baseline_output = ev.data  # type: ignore[assignment]
@@ -193,7 +194,7 @@ async def test_sequential_checkpoint_runtime_only() -> None:
     resumed_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf_resume = SequentialBuilder(participants=list(resumed_agents)).build()
 
-    resumed_output: list[Message] | None = None
+    resumed_output: OrchestrationComplete | None = None
     async for ev in wf_resume.run(
         checkpoint_id=resume_checkpoint.checkpoint_id, checkpoint_storage=storage, stream=True
     ):
@@ -206,8 +207,8 @@ async def test_sequential_checkpoint_runtime_only() -> None:
             break
 
     assert resumed_output is not None
-    assert [m.role for m in resumed_output] == [m.role for m in baseline_output]
-    assert [m.text for m in resumed_output] == [m.text for m in baseline_output]
+    assert [m.role for m in resumed_output.messages] == [m.role for m in baseline_output.messages]
+    assert [m.text for m in resumed_output.messages] == [m.text for m in baseline_output.messages]
 
 
 async def test_sequential_checkpoint_runtime_overrides_buildtime() -> None:
@@ -223,7 +224,7 @@ async def test_sequential_checkpoint_runtime_overrides_buildtime() -> None:
         agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
         wf = SequentialBuilder(participants=list(agents), checkpoint_storage=buildtime_storage).build()
 
-        baseline_output: list[Message] | None = None
+        baseline_output: OrchestrationComplete | None = None
         async for ev in wf.run("override test", checkpoint_storage=runtime_storage, stream=True):
             if ev.type == "output":
                 baseline_output = ev.data  # type: ignore[assignment]

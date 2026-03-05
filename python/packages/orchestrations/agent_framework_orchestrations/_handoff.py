@@ -45,7 +45,7 @@ from agent_framework._types import AgentResponse, AgentResponseUpdate, Content, 
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
-from agent_framework._workflows._events import WorkflowEvent
+from agent_framework._workflows._events import OrchestrationComplete, WorkflowEvent
 from agent_framework._workflows._request_info_mixin import response_handler
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
@@ -588,7 +588,9 @@ class HandoffAgentExecutor(AgentExecutor):
         If the response is empty, it indicates termination of the handoff workflow.
         """
         if not response:
-            await cast(WorkflowContext[Never, list[Message]], ctx).yield_output(self._full_conversation)
+            await cast(WorkflowContext[Never, OrchestrationComplete], ctx).yield_output(
+                OrchestrationComplete(self._full_conversation)
+            )
             return
 
         # Broadcast the user response to all other agents
@@ -647,7 +649,7 @@ class HandoffAgentExecutor(AgentExecutor):
 
         return None
 
-    async def _check_terminate_and_yield(self, ctx: WorkflowContext[Never, list[Message]]) -> bool:
+    async def _check_terminate_and_yield(self, ctx: WorkflowContext[Never, OrchestrationComplete]) -> bool:
         """Check termination conditions and yield completion if met.
 
         Args:
@@ -664,7 +666,7 @@ class HandoffAgentExecutor(AgentExecutor):
             terminated = await terminated
 
         if terminated:
-            await ctx.yield_output(self._full_conversation)
+            await ctx.yield_output(OrchestrationComplete(self._full_conversation))
             return True
 
         return False
