@@ -475,8 +475,10 @@ class WorkflowAgent(BaseAgent):
                     )
 
                 if isinstance(data, AgentResponse):
-                    messages.extend(msg for msg in data.messages if msg.role != "user")
-                    raw_representations.append(data.raw_representation)
+                    non_user_messages = [msg for msg in data.messages if msg.role != "user"]
+                    messages.extend(non_user_messages)
+                    if non_user_messages:
+                        raw_representations.append(data.raw_representation)
                     merged_usage = add_usage_details(merged_usage, data.usage_details)
                     latest_created_at = (
                         data.created_at
@@ -491,8 +493,10 @@ class WorkflowAgent(BaseAgent):
                         raw_representations.append(data.raw_representation)
                 elif is_instance_of(data, list[Message]):
                     chat_messages = cast(list[Message], data)
-                    messages.extend(msg for msg in chat_messages if msg.role != "user")
-                    raw_representations.append(data)
+                    non_user_messages = [msg for msg in chat_messages if msg.role != "user"]
+                    messages.extend(non_user_messages)
+                    if non_user_messages:
+                        raw_representations.append(data)
                 else:
                     contents = self._extract_contents(data)
                     if not contents:
@@ -572,7 +576,9 @@ class WorkflowAgent(BaseAgent):
             executor_id = event.executor_id
 
             if isinstance(data, AgentResponseUpdate):
-                # Pass through AgentResponseUpdate directly (streaming from AgentExecutor)
+                # Pass through AgentResponseUpdate directly (streaming from AgentExecutor).
+                # Filter user-role updates: orchestrations (e.g. HandoffBuilder) may emit the
+                # full conversation including user messages, which should not be echoed back.
                 if data.role == "user":
                     return []
                 if not data.author_name:

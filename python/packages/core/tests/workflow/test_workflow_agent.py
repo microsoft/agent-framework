@@ -512,6 +512,85 @@ class TestWorkflowAgent:
         texts = [message.text for message in result.messages]
         assert texts == ["second message", "third fourth"]
 
+    async def test_workflow_as_agent_filters_user_role_agent_response_update(self) -> None:
+        """Test that AgentResponseUpdate with role='user' is dropped from the stream."""
+
+        @executor
+        async def user_update_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:
+            # Emit a user-role AgentResponseUpdate directly
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text="echoed user input")],
+                    role="user",
+                    author_name="test",
+                    response_id="resp-1",
+                    message_id="msg-1",
+                    created_at="2026-01-01T00:00:00Z",
+                )
+            )
+            # Emit a valid assistant-role update
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text="assistant reply")],
+                    role="assistant",
+                    author_name="test",
+                    response_id="resp-1",
+                    message_id="msg-2",
+                    created_at="2026-01-01T00:00:00Z",
+                )
+            )
+
+        workflow = WorkflowBuilder(start_executor=user_update_executor).build()
+        agent = workflow.as_agent("user-update-agent")
+
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("test", stream=True):
+            updates.append(update)
+
+        # User-role update should be filtered out
+        assert len(updates) == 1
+        assert updates[0].role == "assistant"
+        assert updates[0].contents[0].text == "assistant reply"
+
+    async def test_workflow_as_agent_agent_response_raw_repr_consistency(self) -> None:
+        """Test that AgentResponse with only user messages does not add orphan raw_representations."""
+
+        @executor
+        async def mixed_response_executor(
+            messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]
+        ) -> None:
+            # Emit an AgentResponse with only user messages
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[Message(role="user", text="user only")],
+                    response_id="resp-user-only",
+                )
+            )
+            # Emit an AgentResponse with mixed messages
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[
+                        Message(role="user", text="user msg"),
+                        Message(role="assistant", text="assistant msg"),
+                    ],
+                    response_id="resp-mixed",
+                )
+            )
+
+        workflow = WorkflowBuilder(start_executor=mixed_response_executor).build()
+        agent = workflow.as_agent("mixed-response-agent")
+
+        result = await agent.run("test")
+
+        # Only the assistant message from the mixed response should appear
+        assert len(result.messages) == 1
+        assert result.messages[0].text == "assistant msg"
+
+        # raw_representation should only contain the mixed response's raw_representation,
+        # not the user-only response's (which produced no output messages)
+        assert isinstance(result.raw_representation, list)
+        assert len(result.raw_representation) == 1
+
     async def test_session_conversation_history_included_in_workflow_run(self) -> None:
         """Test that messages provided to agent.run() are passed through to the workflow."""
         # Create an executor that captures all received messages
