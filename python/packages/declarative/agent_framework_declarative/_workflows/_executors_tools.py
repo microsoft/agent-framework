@@ -19,6 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from inspect import isawaitable
 from typing import Any, cast
+from collections.abc import Callable
 
 from agent_framework import (
     Content,
@@ -112,10 +113,6 @@ class ToolApprovalState:
 # ============================================================================
 
 
-def _empty_messages() -> list[Message]:
-    return []
-
-
 @dataclass
 class ToolInvocationResult:
     """Result from a tool invocation.
@@ -132,7 +129,7 @@ class ToolInvocationResult:
     success: bool
     result: Any = None
     error: str | None = None
-    messages: list[Message] = field(default_factory=_empty_messages)
+    messages: list[Message] = field(default_factory=cast(Callable[..., list[Message]], list))
     rejected: bool = False
     rejection_reason: str | None = None
 
@@ -272,20 +269,19 @@ class BaseToolExecutor(DeclarativeActionExecutor):
         Returns:
             Tuple of (messages_var, result_var, auto_send)
         """
-        output_config_obj = self._action_def.get("output", {})
+        output_config: dict[str, str | bool] = self._action_def.get("output", {})
 
-        if not isinstance(output_config_obj, Mapping):
+        if not isinstance(output_config, Mapping):
             return None, None, True
 
-        output_config = cast(Mapping[str, Any], output_config_obj)
-        messages_var_obj = output_config.get("messages")
-        result_var_obj = output_config.get("result")
+        messages_var = output_config.get("messages")
+        result_var = output_config.get("result")
         auto_send = bool(output_config.get("autoSend", True))
-
-        messages_var = messages_var_obj if isinstance(messages_var_obj, str) else None
-        result_var = result_var_obj if isinstance(result_var_obj, str) else None
-
-        return (messages_var, result_var, auto_send)
+        return (
+            str(messages_var) if messages_var else None,
+            str(result_var) if result_var else None,
+            auto_send,
+        )
 
     def _store_result(
         self,
@@ -499,8 +495,7 @@ class BaseToolExecutor(DeclarativeActionExecutor):
                 type(arguments_def).__name__,
             )
         elif isinstance(arguments_def, dict):
-            arguments_map = cast(dict[str, Any], arguments_def)
-            for key, value in arguments_map.items():
+            for key, value in arguments_def.items():  # type: ignore[reportUnknownVariableType]
                 arguments[key] = state.eval_if_expression(value)
 
         # Check if approval is required

@@ -141,9 +141,9 @@ class EntityDiscovery:
         self._loaded_objects[entity_id] = entity_obj
 
         # Check module-level registry for cleanup hooks
-        from . import get_registered_cleanup_hooks
+        from . import _get_registered_cleanup_hooks  # type: ignore[reportPrivateUsage]
 
-        registered_hooks = get_registered_cleanup_hooks(entity_obj)
+        registered_hooks = _get_registered_cleanup_hooks(entity_obj)
         if registered_hooks:
             if entity_id not in self._cleanup_hooks:
                 self._cleanup_hooks[entity_id] = []
@@ -299,9 +299,9 @@ class EntityDiscovery:
         self._loaded_objects[entity_id] = entity_object
 
         # Check module-level registry for cleanup hooks
-        from . import get_registered_cleanup_hooks
+        from . import _get_registered_cleanup_hooks  # type: ignore[reportPrivateUsage]
 
-        registered_hooks = get_registered_cleanup_hooks(entity_object)
+        registered_hooks = _get_registered_cleanup_hooks(entity_object)
         if registered_hooks:
             if entity_id not in self._cleanup_hooks:
                 self._cleanup_hooks[entity_id] = []

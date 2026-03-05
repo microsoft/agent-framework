@@ -73,7 +73,7 @@ def register_cleanup(entity: Any, *hooks: Callable[[], Any]) -> None:
     )
 
 
-def get_registered_cleanup_hooks(entity: Any) -> list[Callable[[], Any]]:
+def _get_registered_cleanup_hooks(entity: Any) -> list[Callable[[], Any]]:  # type: ignore[reportUnusedFunction]
     """Get cleanup hooks registered for an entity (internal use).
 
     Args:
@@ -84,10 +84,6 @@ def get_registered_cleanup_hooks(entity: Any) -> list[Callable[[], Any]]:
     """
     entity_id = id(entity)
     return _cleanup_registry.get(entity_id, [])
-
-
-# Backward-compatible private alias
-_get_registered_cleanup_hooks = get_registered_cleanup_hooks
 
 
 def serve(
@@ -265,7 +261,6 @@ __all__ = [
     "OpenAIError",
     "OpenAIResponse",
     "ResponseStreamEvent",
-    "get_registered_cleanup_hooks",
     "main",
     "register_cleanup",
     "serve",

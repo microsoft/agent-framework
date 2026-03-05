@@ -30,8 +30,7 @@ def _get_variable_path(action_def: dict[str, Any], key: str = "variable") -> str
     if isinstance(variable, str):
         return variable
     if isinstance(variable, Mapping):
-        variable_map = cast(Mapping[str, Any], variable)
-        path = variable_map.get("path")
+        path = variable.get("path")  # type: ignore[reportUnknownVariableType]
         return path if isinstance(path, str) else None
 
     fallback_path = action_def.get("path")
@@ -155,19 +154,19 @@ class SetMultipleVariablesExecutor(DeclarativeActionExecutor):
         """Handle the SetMultipleVariables action."""
         state = await self._ensure_state_initialized(ctx, trigger)
 
-        assignments_obj = self._action_def.get("assignments", [])
-        assignments = cast(list[Any], assignments_obj) if isinstance(assignments_obj, list) else []  # type: ignore[redundant-cast]
-        for assignment_obj in assignments:
-            if not isinstance(assignment_obj, Mapping):
+        assignments = cast(
+            list[Mapping[str, Any]],
+            self._action_def.get("assignments") if isinstance(self._action_def.get("assignments"), list) else [],
+        )
+        for assignment in assignments:
+            if not isinstance(assignment, Mapping):
                 continue
-            assignment = cast(Mapping[str, Any], assignment_obj)
             variable = assignment.get("variable")
             path: str | None
             if isinstance(variable, str):
                 path = variable
             elif isinstance(variable, Mapping):
-                variable_map = cast(Mapping[str, Any], variable)
-                path_value = variable_map.get("path")
+                path_value = variable.get("path")  # type: ignore[reportUnknownMemberType]
                 path = path_value if isinstance(path_value, str) else None
             else:
                 fallback_path = assignment.get("path")
@@ -262,8 +261,7 @@ class SendActivityExecutor(DeclarativeActionExecutor):
 
         # Activity can be a string directly or a dict with a "text" field
         if isinstance(activity, Mapping):
-            activity_map = cast(Mapping[str, Any], activity)
-            text: Any = activity_map.get("text", "")
+            text: Any = activity.get("text", "")  # type: ignore[reportUnknownMemberType]
         else:
             text = activity
 
@@ -276,7 +274,7 @@ class SendActivityExecutor(DeclarativeActionExecutor):
 
         # Yield the text as workflow output
         if text:
-            await ctx.yield_output(str(text))
+            await ctx.yield_output(str(text))  # type: ignore[reportUnknownArgumentType]
 
         await ctx.send_message(ActionComplete())
 
@@ -357,7 +355,7 @@ class EditTableExecutor(DeclarativeActionExecutor):
             if current_table_value is None:
                 current_table = []
             elif isinstance(current_table_value, list):
-                current_table = list(cast(list[Any], current_table_value))  # type: ignore[redundant-cast]
+                current_table = list(current_table_value)  # type: ignore[reportUnknownArgumentType]
             else:
                 current_table = [current_table_value]
 
@@ -437,7 +435,7 @@ class EditTableV2Executor(DeclarativeActionExecutor):
             if current_table_value is None:
                 current_table = []
             elif isinstance(current_table_value, list):
-                current_table = list(cast(list[Any], current_table_value))  # type: ignore[redundant-cast]
+                current_table = list(current_table_value)  # type: ignore[reportUnknownArgumentType]
             else:
                 current_table = [current_table_value]
 
@@ -476,8 +474,7 @@ class EditTableV2Executor(DeclarativeActionExecutor):
             elif operation == "addorupdate":
                 evaluated_item = state.eval_if_expression(item)
                 if key_field and isinstance(evaluated_item, dict):
-                    evaluated_item_dict = cast(dict[str, Any], evaluated_item)
-                    key_value = evaluated_item_dict.get(key_field)
+                    key_value = evaluated_item.get(key_field)  # type: ignore[reportUnknownArgumentType]
                     # Find existing item with same key
                     found_idx = -1
                     for i, r in enumerate(current_table):
@@ -502,8 +499,7 @@ class EditTableV2Executor(DeclarativeActionExecutor):
                     if 0 <= idx < len(current_table):
                         current_table[idx] = evaluated_item
                 elif key_field and isinstance(evaluated_item, dict):
-                    evaluated_item_dict = cast(dict[str, Any], evaluated_item)
-                    key_value = evaluated_item_dict.get(key_field)
+                    key_value = evaluated_item.get(key_field)  # type: ignore[reportUnknownArgumentType]
                     for i, r in enumerate(current_table):
                         if isinstance(r, dict) and cast(dict[str, Any], r).get(key_field) == key_value:
                             current_table[i] = evaluated_item

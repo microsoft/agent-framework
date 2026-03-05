@@ -62,14 +62,10 @@ EventType = Union[
 
 
 def _to_str_dict(value: Any) -> dict[str, Any] | None:
-    """Convert arbitrary dict-like payload to a string-keyed dictionary."""
+    """Cast arbitrary dict-like payload to a string-keyed dictionary."""
     if not isinstance(value, dict):
         return None
-    source: dict[str, Any] = cast(dict[str, Any], value)
-    result: dict[str, Any] = {}
-    for key_obj, val_obj in source.items():
-        result[str(key_obj)] = val_obj
-    return result
+    return cast(dict[str, Any], value)
 
 
 def _stringify_name(value: Any) -> str:

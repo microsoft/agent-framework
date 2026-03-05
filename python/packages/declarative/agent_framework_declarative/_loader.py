@@ -33,7 +33,7 @@ from ._models import (
     RemoteConnection,
     Tool,
     WebSearchTool,
-    _safe_mode_context,  # pyright: ignore[reportPrivateUsage]
+    _safe_mode_context,  # type: ignore[reportPrivateUsage]
     agent_schema_dispatch,
 )
 

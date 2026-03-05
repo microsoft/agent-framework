@@ -11,12 +11,14 @@ from __future__ import annotations
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import MutableSequence
 from typing import Any, Literal, cast
 
 from agent_framework import AgentSession, Message
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage, WorkflowCheckpoint
 from openai.types.conversations import Conversation, ConversationDeletedResource
 from openai.types.conversations.conversation_item import ConversationItem
+from openai.types.conversations.message import Content as OpenAIContent
 from openai.types.conversations.message import Message as OpenAIMessage
 from openai.types.conversations.text_content import TextContent
 from openai.types.responses import (
@@ -304,9 +306,11 @@ class InMemoryConversationStore(ConversationStore):
         for item in items:
             # Simple conversion - assume text content for now
             role = item.get("role", "user")
-            content_obj = item.get("content", [])
-            content = cast(list[dict[str, Any]], content_obj) if isinstance(content_obj, list) else []
-            first_content = content[0] if content and isinstance(content[0], dict) else {}
+            content = item.get("content", [])
+            first_content = cast(
+                dict[str, Any],
+                content[0] if content and isinstance(content, list) and isinstance(content[0], dict) else {},
+            )
             text_obj = first_content.get("text", "")
             text = text_obj if isinstance(text_obj, str) else str(text_obj)
 
@@ -321,26 +325,19 @@ class InMemoryConversationStore(ConversationStore):
         for msg in chat_messages:
             item_id = f"item_{uuid.uuid4().hex}"
 
-            # Extract role - handle both string and enum
-            msg_role_obj: object = getattr(msg, "role", "user")
-            role_str = str(getattr(msg_role_obj, "value", msg_role_obj))
-            role = cast(MessageRole, role_str)  # Safe: Agent Framework roles match OpenAI roles
-
             # Convert Message contents to OpenAI TextContent format
-            message_content: list[TextContent] = []
-            for content_item in cast(list[Any], msg.contents):
-                if getattr(content_item, "type", None) == "text":
+            message_content: MutableSequence[OpenAIContent] = []
+            for content_item in msg.contents:
+                if content_item.type == "text":
                     # Extract text from TextContent object
-                    text_value_obj = getattr(content_item, "text", "")
-                    text_value = text_value_obj if isinstance(text_value_obj, str) else str(text_value_obj)
-                    message_content.append(TextContent(type="text", text=text_value))
+                    message_content.append(TextContent(type="text", text=content_item.text or ""))
 
             # Create Message object (concrete type from ConversationItem union)
             message = OpenAIMessage(
                 id=item_id,
                 type="message",  # Required discriminator for union
-                role=role,
-                content=cast(Any, message_content),
+                role=cast(MessageRole, msg.role),  # Safe: Agent Framework roles match OpenAI roles,
+                content=message_content,
                 status="completed",  # Required field
             )
             conv_items.append(message)

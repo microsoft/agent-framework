@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from agent_framework import Skill, SkillResource, SkillsProvider, SessionContext
+from agent_framework import SessionContext, Skill, SkillResource, SkillsProvider
 from agent_framework._skills import (
     DEFAULT_RESOURCE_EXTENSIONS,
     _create_instructions,
@@ -1348,9 +1348,7 @@ class TestReadAndParseSkillFile:
     def test_valid_file(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text(
-            "---\nname: my-skill\ndescription: A skill.\n---\nBody.", encoding="utf-8"
-        )
+        (skill_dir / "SKILL.md").write_text("---\nname: my-skill\ndescription: A skill.\n---\nBody.", encoding="utf-8")
         result = _read_and_parse_skill_file(str(skill_dir))
         assert result is not None
         name, desc, content = result
@@ -1393,7 +1391,7 @@ class TestCreateResourceElement:
     def test_xml_escapes_name(self) -> None:
         r = SkillResource(name='ref"special', content="data")
         elem = _create_resource_element(r)
-        assert '&quot;' in elem
+        assert "&quot;" in elem
 
     def test_xml_escapes_description(self) -> None:
         r = SkillResource(name="ref", description='Uses <tags> & "quotes"', content="data")

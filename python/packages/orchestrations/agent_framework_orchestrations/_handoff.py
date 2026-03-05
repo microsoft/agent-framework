@@ -356,15 +356,17 @@ class HandoffAgentExecutor(AgentExecutor):
         # so we need to recombine them here to pass the complete tools list to the constructor.
         # This makes sure MCP tools are preserved when cloning agents for handoff workflows.
         tools_from_options = options.pop("tools", [])
-        if agent.mcp_tools:
-            tools_from_options.extend(agent.mcp_tools)
+        new_tools = [*tools_from_options, *(agent.mcp_tools if agent.mcp_tools else [])]
 
         # this ensures all options (including custom ones) are kept
         cloned_options = deepcopy(options)
         # Disable parallel tool calls to prevent the agent from invoking multiple handoff tools at once.
         cloned_options["allow_multiple_tool_calls"] = False
         cloned_options["store"] = False
-        cloned_options["tools"] = tools_from_options
+        cloned_options["tools"] = new_tools
+
+        # restore the original tools, in case they are shared between agents
+        options["tools"] = tools_from_options
 
         return Agent(
             client=agent.client,

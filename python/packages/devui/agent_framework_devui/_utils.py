@@ -15,11 +15,10 @@ logger = logging.getLogger(__name__)
 
 
 def _string_key_dict(value: object) -> dict[str, Any] | None:
+    """Cast value to a dict."""
     if not isinstance(value, dict):
         return None
-
-    source: dict[str, Any] = cast(dict[str, Any], value)
-    return {str(k): v for k, v in source.items()}
+    return cast(dict[str, Any], value)
 
 
 # ============================================================================

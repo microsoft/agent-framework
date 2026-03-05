@@ -195,12 +195,8 @@ def is_blank(value: Any) -> bool:
         return True
     if isinstance(value, str) and not value.strip():
         return True
-    if isinstance(value, list):
-        value_list = cast(list[Any], value)  # type: ignore[redundant-cast]
-        return len(value_list) == 0
-    if isinstance(value, dict):
-        value_dict = cast(dict[Any, Any], value)  # type: ignore[redundant-cast]
-        return len(value_dict) == 0
+    if isinstance(value, (list, dict)):
+        return len(value) == 0  # type: ignore[reportUnknownArgumentType]
     return False
 
 

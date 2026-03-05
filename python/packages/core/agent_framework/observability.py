@@ -1060,8 +1060,8 @@ def configure_otel_providers(
         OBSERVABILITY_SETTINGS.vs_code_extension_port = updated_settings.vs_code_extension_port
         OBSERVABILITY_SETTINGS.env_file_path = updated_settings.env_file_path
         OBSERVABILITY_SETTINGS.env_file_encoding = updated_settings.env_file_encoding
-        OBSERVABILITY_SETTINGS._resource = updated_settings._resource  # pyright: ignore[reportPrivateUsage]
-        OBSERVABILITY_SETTINGS._executed_setup = False  # pyright: ignore[reportPrivateUsage]
+        OBSERVABILITY_SETTINGS._resource = updated_settings._resource  # type: ignore[reportPrivateUsage]
+        OBSERVABILITY_SETTINGS._executed_setup = False  # type: ignore[reportPrivateUsage]
     else:
         # Update the observability settings with the provided values
         OBSERVABILITY_SETTINGS.enable_instrumentation = True
@@ -1154,6 +1154,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Trace chat responses with OpenTelemetry spans and metrics."""
+        from ._types import ChatResponse, ChatResponseUpdate, ResponseStream
+
         global OBSERVABILITY_SETTINGS
         super_get_response = super().get_response  # type: ignore[misc]
 
@@ -1628,8 +1630,8 @@ def _get_instructions_from_options(options: Any) -> str | list[str] | None:
         instructions = cast(Mapping[str, Any], options).get("instructions")
         if isinstance(instructions, str):
             return instructions
-        if isinstance(instructions, list) and all(isinstance(item, str) for item in cast(list[object], instructions)):
-            return cast("list[str]", instructions)
+        if isinstance(instructions, list) and all(isinstance(item, str) for item in instructions):  # type: ignore[reportUnknownVariableType]
+            return instructions  # type: ignore[reportUnknownVariableType]
         return None
     return None
 

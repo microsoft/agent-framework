@@ -2,14 +2,13 @@
 
 """Discovery API models for entity information."""
 
+from __future__ import annotations
+
 import re
-from typing import Any
+from typing import Any, cast
+from collections.abc import Callable
 
 from pydantic import BaseModel, Field, field_validator
-
-
-def _default_entities() -> list["EntityInfo"]:
-    return []
 
 
 class EnvVarRequirement(BaseModel):
@@ -61,7 +60,7 @@ class EntityInfo(BaseModel):
 class DiscoveryResponse(BaseModel):
     """Response model for entity discovery."""
 
-    entities: list[EntityInfo] = Field(default_factory=_default_entities)
+    entities: list[EntityInfo] = Field(default_factory=cast(Callable[..., list[EntityInfo]], list))
 
 
 # ============================================================================

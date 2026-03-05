@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import AsyncGenerator
-from typing import Any, cast
+from typing import Any
 
 from openai import APIStatusError, AsyncOpenAI, AsyncStream, AuthenticationError, PermissionDeniedError, RateLimitError
 from openai.types.responses import Response, ResponseStreamEvent
@@ -22,17 +22,15 @@ from ..models import AgentFrameworkRequest, OpenAIResponse
 logger = logging.getLogger(__name__)
 
 
-def _extract_error_details(body: object) -> tuple[str | None, str | None, str | None]:
+def _extract_error_details(body: Any) -> tuple[str | None, str | None, str | None]:
     """Extract typed OpenAI error fields from error body payload."""
     if not isinstance(body, dict):
         return None, None, None
 
-    body_dict = cast(dict[str, object], body)
-    error_obj = body_dict.get("error")
-    if not isinstance(error_obj, dict):
+    error_dict: dict[str, Any] = body.get("error")  # type: ignore[assignment, reportUnknownVariableType]
+    if not isinstance(error_dict, dict):
         return None, None, None
 
-    error_dict = cast(dict[str, object], error_obj)
     message = error_dict.get("message")
     error_type = error_dict.get("type")
     code = error_dict.get("code")

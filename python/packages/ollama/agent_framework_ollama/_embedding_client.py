@@ -107,9 +107,9 @@ class RawOllamaEmbeddingClient(
             env_file_encoding=env_file_encoding,
         )
 
-        self.model_id = ollama_settings["embedding_model_id"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
+        self.model_id = ollama_settings["embedding_model_id"]  # type: ignore[assignment,reportTypedDictNotRequiredAccess]
         self.client = client or AsyncClient(host=ollama_settings.get("host"))
-        self.host = str(self.client._client.base_url)  # pyright: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
+        self.host = str(self.client._client.base_url)  # type: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
         super().__init__(**kwargs)
 
     def service_url(self) -> str:

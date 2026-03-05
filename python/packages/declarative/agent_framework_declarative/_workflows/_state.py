@@ -615,11 +615,9 @@ class WorkflowState:
         if isinstance(value, str):
             return self.eval(value)
         if isinstance(value, dict):
-            value_dict = cast(dict[Any, Any], value)  # type: ignore[redundant-cast]
-            return {str(k): self.eval_if_expression(v) for k, v in value_dict.items()}
+            return {str(k): self.eval_if_expression(v) for k, v in value.items()}  # type: ignore[reportUnknownVariableType]
         if isinstance(value, list):
-            value_list = cast(list[Any], value)  # type: ignore[redundant-cast]
-            return [self.eval_if_expression(item) for item in value_list]
+            return [self.eval_if_expression(item) for item in value]  # type: ignore[reportUnknownVariableType]
         return value
 
     def reset_local(self) -> None:
