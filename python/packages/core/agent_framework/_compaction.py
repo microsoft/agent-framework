@@ -240,6 +240,27 @@ def _first_untokenized_index(messages: Sequence[Message]) -> int | None:
     return None
 
 
+def _first_annotation_gaps(
+    messages: Sequence[Message],
+    *,
+    include_tokens: bool,
+) -> tuple[int | None, int | None]:
+    first_unannotated: int | None = None
+    first_untokenized: int | None = None
+    for index, message in enumerate(messages):
+        if first_unannotated is None and not isinstance(message.additional_properties.get(GROUP_ID_KEY), str):
+            first_unannotated = index
+        if (
+            include_tokens
+            and first_untokenized is None
+            and not isinstance(message.additional_properties.get(TOKEN_COUNT_KEY), int)
+        ):
+            first_untokenized = index
+        if first_unannotated is not None and (not include_tokens or first_untokenized is not None):
+            break
+    return first_unannotated, first_untokenized
+
+
 def _reannotation_start(messages: Sequence[Message], index: int) -> int:
     if index <= 0:
         return 0
@@ -277,12 +298,18 @@ def annotate_message_groups(
     elif from_index is not None:
         start_index = max(0, min(from_index, len(messages) - 1))
     else:
-        first_unannotated_index = _first_unannotated_index(messages)
-        if first_unannotated_index is None:
-            if tokenizer is not None:
-                annotate_token_counts(messages, tokenizer=tokenizer)
+        first_unannotated_index, first_untokenized_index = _first_annotation_gaps(
+            messages,
+            include_tokens=tokenizer is not None,
+        )
+        candidate_starts = [
+            index
+            for index in (first_unannotated_index, first_untokenized_index)
+            if index is not None
+        ]
+        if not candidate_starts:
             return _ordered_group_ids_from_annotations(messages)
-        start_index = first_unannotated_index
+        start_index = min(candidate_starts)
 
     start_index = _reannotation_start(messages, start_index)
 
@@ -291,12 +318,6 @@ def annotate_message_groups(
         previous_group_index = messages[start_index - 1].additional_properties.get(GROUP_INDEX_KEY)
         if isinstance(previous_group_index, int):
             group_index_offset = previous_group_index + 1
-
-    for message in messages[start_index:]:
-        message.additional_properties.pop(GROUP_ID_KEY, None)
-        message.additional_properties.pop(GROUP_KIND_KEY, None)
-        message.additional_properties.pop(GROUP_INDEX_KEY, None)
-        message.additional_properties.pop(GROUP_HAS_REASONING_KEY, None)
 
     spans = group_messages(messages[start_index:])
     for span_index, span in enumerate(spans):
@@ -312,8 +333,13 @@ def annotate_message_groups(
             message.additional_properties[GROUP_INDEX_KEY] = group_index_offset + span_index
             message.additional_properties[GROUP_HAS_REASONING_KEY] = has_reasoning
             message.additional_properties.setdefault(EXCLUDED_KEY, False)
-    if tokenizer is not None:
-        annotate_token_counts(messages, tokenizer=tokenizer)
+            if (
+                tokenizer is not None
+                and not isinstance(message.additional_properties.get(TOKEN_COUNT_KEY), int)
+            ):
+                message.additional_properties[TOKEN_COUNT_KEY] = tokenizer.count_tokens(
+                    _serialize_message(message)
+                )
     return _ordered_group_ids_from_annotations(messages)
 
 
