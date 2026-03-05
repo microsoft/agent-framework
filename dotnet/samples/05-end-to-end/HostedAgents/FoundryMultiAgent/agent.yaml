@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/ContainerAgent.yaml
+
+name: FoundryMultiAgent
+displayName: "Foundry Multi-Agent Workflow"
+description: >
+  A multi-agent workflow featuring a Writer and Reviewer that collaborate
+  to create and refine content using Azure AI Foundry PersistentAgentsClient.
+metadata:
+  authors:
+    - Microsoft Agent Framework Team
+  tags:
+    - Azure AI AgentServer
+    - Microsoft Agent Framework
+    - Multi-Agent Workflow
+    - Writer-Reviewer
+    - Content Creation
+template:
+  kind: hosted
+  name: FoundryMultiAgent
+  protocols:
+    - protocol: responses
+      version: v1
+  environment_variables:
+    - name: AZURE_AI_PROJECT_ENDPOINT
+      value: ${AZURE_AI_PROJECT_ENDPOINT}
+    - name: MODEL_DEPLOYMENT_NAME
+      value: gpt-4o-mini
+resources:
+  - name: "gpt-4o-mini"
+    kind: model
+    id: gpt-4o-mini
