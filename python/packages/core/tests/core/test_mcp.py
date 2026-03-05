@@ -981,11 +981,7 @@ async def test_mcp_tool_call_tool_succeeds_when_is_error_false():
 
 
 async def test_mcp_tool_is_error_propagates_through_function_middleware():
-    """Test that MCP isError=True propagates correctly through function middleware.
-
-    This validates the scenario from issue #1811: when an MCP tool returns isError=True,
-    function middleware should be able to detect and handle the error.
-    """
+    """Test that MCP isError=True propagates as ToolExecutionException through function middleware."""
     error_seen_in_middleware = False
 
     class ErrorCheckMiddleware(FunctionMiddleware):
