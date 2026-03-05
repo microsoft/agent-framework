@@ -1323,6 +1323,8 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
         options: EmbeddingOptionsT | None = None,
     ) -> GeneratedEmbeddings[EmbeddingT, EmbeddingOptionsT]:
         """Trace embedding generation with OpenTelemetry spans and metrics."""
+        from ._types import EmbeddingOptionsT, EmbeddingT, GeneratedEmbeddings  # type: ignore[reportUnusedImport]
+
         global OBSERVABILITY_SETTINGS
         super_get_embeddings = super().get_embeddings  # type: ignore[misc]
 
