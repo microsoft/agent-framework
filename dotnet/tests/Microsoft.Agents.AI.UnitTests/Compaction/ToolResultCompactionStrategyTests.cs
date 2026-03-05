@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.UnitTests.Compaction;
 public class ToolResultCompactionStrategyTests
 {
     [Fact]
-    public async Task CompactAsync_TriggerNotMet_ReturnsFalseAsync()
+    public async Task CompactAsyncTriggerNotMetReturnsFalseAsync()
     {
         // Arrange — trigger requires > 1000 tokens
         ToolResultCompactionStrategy strategy = new(CompactionTriggers.TokensExceed(1000));
@@ -37,7 +37,7 @@ public class ToolResultCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_CollapsesOldToolGroupsAsync()
+    public async Task CompactAsyncCollapsesOldToolGroupsAsync()
     {
         // Arrange — always trigger
         ToolResultCompactionStrategy strategy = new(
@@ -67,7 +67,7 @@ public class ToolResultCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_PreservesRecentToolGroupsAsync()
+    public async Task CompactAsyncPreservesRecentToolGroupsAsync()
     {
         // Arrange — protect 2 recent non-system groups (the tool group + Q2)
         ToolResultCompactionStrategy strategy = new(
@@ -90,7 +90,7 @@ public class ToolResultCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_PreservesSystemMessagesAsync()
+    public async Task CompactAsyncPreservesSystemMessagesAsync()
     {
         // Arrange
         ToolResultCompactionStrategy strategy = new(
@@ -115,7 +115,7 @@ public class ToolResultCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_ExtractsMultipleToolNamesAsync()
+    public async Task CompactAsyncExtractsMultipleToolNamesAsync()
     {
         // Arrange — assistant calls two tools
         ToolResultCompactionStrategy strategy = new(
@@ -148,7 +148,7 @@ public class ToolResultCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_NoToolGroups_ReturnsFalseAsync()
+    public async Task CompactAsyncNoToolGroupsReturnsFalseAsync()
     {
         // Arrange — trigger fires but no tool groups to collapse
         ToolResultCompactionStrategy strategy = new(
@@ -169,7 +169,7 @@ public class ToolResultCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_CompoundTrigger_RequiresTokensAndToolCallsAsync()
+    public async Task CompactAsyncCompoundTriggerRequiresTokensAndToolCallsAsync()
     {
         // Arrange — compound: tokens > 0 AND has tool calls
         ToolResultCompactionStrategy strategy = new(

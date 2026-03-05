@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.UnitTests.Compaction;
 public class CompactionTriggersTests
 {
     [Fact]
-    public void TokensExceed_ReturnsTrueWhenAboveThreshold()
+    public void TokensExceedReturnsTrueWhenAboveThreshold()
     {
         // Arrange — use a long message to guarantee tokens > 0
         CompactionTrigger trigger = CompactionTriggers.TokensExceed(0);
@@ -22,7 +22,7 @@ public class CompactionTriggersTests
     }
 
     [Fact]
-    public void TokensExceed_ReturnsFalseWhenBelowThreshold()
+    public void TokensExceedReturnsFalseWhenBelowThreshold()
     {
         CompactionTrigger trigger = CompactionTriggers.TokensExceed(999_999);
         MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hi")]);
@@ -31,7 +31,7 @@ public class CompactionTriggersTests
     }
 
     [Fact]
-    public void MessagesExceed_ReturnsExpectedResult()
+    public void MessagesExceedReturnsExpectedResult()
     {
         CompactionTrigger trigger = CompactionTriggers.MessagesExceed(2);
         MessageIndex small = MessageIndex.Create(
@@ -51,7 +51,7 @@ public class CompactionTriggersTests
     }
 
     [Fact]
-    public void TurnsExceed_ReturnsExpectedResult()
+    public void TurnsExceedReturnsExpectedResult()
     {
         CompactionTrigger trigger = CompactionTriggers.TurnsExceed(1);
         MessageIndex oneTurn = MessageIndex.Create(
@@ -71,7 +71,7 @@ public class CompactionTriggersTests
     }
 
     [Fact]
-    public void GroupsExceed_ReturnsExpectedResult()
+    public void GroupsExceedReturnsExpectedResult()
     {
         CompactionTrigger trigger = CompactionTriggers.GroupsExceed(2);
         MessageIndex index = MessageIndex.Create(
@@ -85,7 +85,7 @@ public class CompactionTriggersTests
     }
 
     [Fact]
-    public void HasToolCalls_ReturnsTrueWhenToolCallGroupExists()
+    public void HasToolCallsReturnsTrueWhenToolCallGroupExists()
     {
         CompactionTrigger trigger = CompactionTriggers.HasToolCalls();
         MessageIndex index = MessageIndex.Create(
@@ -99,7 +99,7 @@ public class CompactionTriggersTests
     }
 
     [Fact]
-    public void HasToolCalls_ReturnsFalseWhenNoToolCallGroup()
+    public void HasToolCallsReturnsFalseWhenNoToolCallGroup()
     {
         CompactionTrigger trigger = CompactionTriggers.HasToolCalls();
         MessageIndex index = MessageIndex.Create(
@@ -112,7 +112,7 @@ public class CompactionTriggersTests
     }
 
     [Fact]
-    public void All_RequiresAllConditions()
+    public void AllRequiresAllConditions()
     {
         CompactionTrigger trigger = CompactionTriggers.All(
             CompactionTriggers.TokensExceed(0),
@@ -125,7 +125,7 @@ public class CompactionTriggersTests
     }
 
     [Fact]
-    public void Any_RequiresAtLeastOneCondition()
+    public void AnyRequiresAtLeastOneCondition()
     {
         CompactionTrigger trigger = CompactionTriggers.Any(
             CompactionTriggers.TokensExceed(999_999),
@@ -138,7 +138,7 @@ public class CompactionTriggersTests
     }
 
     [Fact]
-    public void All_EmptyTriggers_ReturnsTrue()
+    public void AllEmptyTriggersReturnsTrue()
     {
         CompactionTrigger trigger = CompactionTriggers.All();
         MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "A")]);
@@ -146,7 +146,7 @@ public class CompactionTriggersTests
     }
 
     [Fact]
-    public void Any_EmptyTriggers_ReturnsFalse()
+    public void AnyEmptyTriggersReturnsFalse()
     {
         CompactionTrigger trigger = CompactionTriggers.Any();
         MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "A")]);

@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.UnitTests.Compaction;
 public class PipelineCompactionStrategyTests
 {
     [Fact]
-    public async Task CompactAsync_ExecutesAllStrategiesInOrderAsync()
+    public async Task CompactAsyncExecutesAllStrategiesInOrderAsync()
     {
         // Arrange
         List<string> executionOrder = [];
@@ -44,7 +44,7 @@ public class PipelineCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_ReturnsFalse_WhenNoStrategyCompactsAsync()
+    public async Task CompactAsyncReturnsFalseWhenNoStrategyCompactsAsync()
     {
         // Arrange
         TestCompactionStrategy strategy1 = new(_ => false);
@@ -60,7 +60,7 @@ public class PipelineCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_ReturnsTrue_WhenAnyStrategyCompactsAsync()
+    public async Task CompactAsyncReturnsTrueWhenAnyStrategyCompactsAsync()
     {
         // Arrange
         TestCompactionStrategy strategy1 = new(_ => false);
@@ -77,7 +77,7 @@ public class PipelineCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_ContinuesAfterFirstCompaction_WhenEarlyStopDisabledAsync()
+    public async Task CompactAsyncContinuesAfterFirstCompactionAsync()
     {
         // Arrange
         TestCompactionStrategy strategy1 = new(_ => true);
@@ -95,7 +95,7 @@ public class PipelineCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_ComposesStrategies_EndToEndAsync()
+    public async Task CompactAsyncComposesStrategiesEndToEndAsync()
     {
         // Arrange — pipeline: first exclude oldest 2 non-system groups, then exclude 2 more
         static void ExcludeOldest2(MessageIndex index)
@@ -154,7 +154,7 @@ public class PipelineCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_EmptyPipeline_ReturnsFalseAsync()
+    public async Task CompactAsyncEmptyPipelineReturnsFalseAsync()
     {
         // Arrange
         PipelineCompactionStrategy pipeline = new(new List<CompactionStrategy>());

@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.Compaction;
 public static class CompactionTriggers
 {
     /// <summary>
-    /// Always triger compaction, regardless of the message index state.
+    /// Always trigger compaction, regardless of the message index state.
     /// </summary>
     public static readonly CompactionTrigger Always =
         _ => true;

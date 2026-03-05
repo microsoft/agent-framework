@@ -64,7 +64,7 @@ internal sealed class CompactingChatClient : DelegatingChatClient
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         IEnumerable<ChatMessage> compactedMessages = await this.ApplyCompactionAsync(messages, cancellationToken).ConfigureAwait(false);
-        await foreach (var update in base.GetStreamingResponseAsync(compactedMessages, options, cancellationToken).ConfigureAwait(false))
+        await foreach (ChatResponseUpdate update in base.GetStreamingResponseAsync(compactedMessages, options, cancellationToken).ConfigureAwait(false))
         {
             yield return update;
         }

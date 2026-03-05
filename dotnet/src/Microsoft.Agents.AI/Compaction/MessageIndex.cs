@@ -240,8 +240,6 @@ public sealed class MessageIndex
     /// <returns>A list of all <see cref="ChatMessage"/> instances, in order.</returns>
     public IEnumerable<ChatMessage> GetAllMessages() => this.Groups.SelectMany(group => group.Messages);
 
-    #region Total aggregates (all groups, including excluded)
-
     /// <summary>
     /// Gets the total number of groups, including excluded ones.
     /// </summary>
@@ -261,10 +259,6 @@ public sealed class MessageIndex
     /// Gets the total token count across all groups, including excluded ones.
     /// </summary>
     public int TotalTokenCount => this.Groups.Sum(g => g.TokenCount);
-
-    #endregion
-
-    #region Included aggregates (non-excluded groups only)
 
     /// <summary>
     /// Gets the total number of groups that are not excluded.
@@ -286,10 +280,6 @@ public sealed class MessageIndex
     /// </summary>
     public int IncludedTokenCount => this.Groups.Where(g => !g.IsExcluded).Sum(g => g.TokenCount);
 
-    #endregion
-
-    #region Turn aggregates
-
     /// <summary>
     /// Gets the total number of user turns across all groups (including those with excluded groups).
     /// </summary>
@@ -307,8 +297,6 @@ public sealed class MessageIndex
     /// <returns>The groups belonging to the turn, in order.</returns>
     public IEnumerable<MessageGroup> GetTurnGroups(int turnIndex) =>
         this.Groups.Where(g => g.TurnIndex == turnIndex);
-
-    #endregion
 
     /// <summary>
     /// Computes the UTF-8 byte count for a set of messages.

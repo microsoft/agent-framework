@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI.UnitTests.Compaction;
 public class SlidingWindowCompactionStrategyTests
 {
     [Fact]
-    public async Task CompactAsync_BelowMaxTurns_ReturnsFalseAsync()
+    public async Task CompactAsyncBelowMaxTurnsReturnsFalseAsync()
     {
         // Arrange
         SlidingWindowCompactionStrategy strategy = new(maximumTurns: 3);
@@ -33,7 +33,7 @@ public class SlidingWindowCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_ExceedsMaxTurns_ExcludesOldestTurnsAsync()
+    public async Task CompactAsyncExceedsMaxTurnsExcludesOldestTurnsAsync()
     {
         // Arrange — keep 2 turns, conversation has 3
         SlidingWindowCompactionStrategy strategy = new(maximumTurns: 2);
@@ -63,7 +63,7 @@ public class SlidingWindowCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_PreservesSystemMessagesAsync()
+    public async Task CompactAsyncPreservesSystemMessagesAsync()
     {
         // Arrange
         SlidingWindowCompactionStrategy strategy = new(maximumTurns: 1);
@@ -87,7 +87,7 @@ public class SlidingWindowCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_PreservesToolCallGroupsInKeptTurnsAsync()
+    public async Task CompactAsyncPreservesToolCallGroupsInKeptTurnsAsync()
     {
         // Arrange
         SlidingWindowCompactionStrategy strategy = new(maximumTurns: 1);
@@ -114,7 +114,7 @@ public class SlidingWindowCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_CustomTrigger_OverridesDefaultAsync()
+    public async Task CompactAsyncCustomTriggerOverridesDefaultAsync()
     {
         // Arrange — custom trigger: only compact when tokens exceed threshold
         SlidingWindowCompactionStrategy strategy = new(maximumTurns: 99);
@@ -134,7 +134,7 @@ public class SlidingWindowCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_IncludedMessages_ContainOnlyKeptTurnsAsync()
+    public async Task CompactAsyncIncludedMessagesContainOnlyKeptTurnsAsync()
     {
         // Arrange
         SlidingWindowCompactionStrategy strategy = new(maximumTurns: 1);

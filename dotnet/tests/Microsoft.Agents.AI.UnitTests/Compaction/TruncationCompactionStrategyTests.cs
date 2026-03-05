@@ -15,7 +15,7 @@ public class TruncationCompactionStrategyTests
     private static readonly CompactionTrigger s_alwaysTrigger = _ => true;
 
     [Fact]
-    public async Task CompactAsync_AlwaysTrigger_CompactsToPreserveRecentAsync()
+    public async Task CompactAsyncAlwaysTriggerCompactsToPreserveRecentAsync()
     {
         // Arrange — always-trigger means always compact
         TruncationCompactionStrategy strategy = new(s_alwaysTrigger, preserveRecentGroups: 1);
@@ -35,7 +35,7 @@ public class TruncationCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_TriggerNotMet_ReturnsFalseAsync()
+    public async Task CompactAsyncTriggerNotMetReturnsFalseAsync()
     {
         // Arrange — trigger requires > 1000 tokens, conversation is tiny
         TruncationCompactionStrategy strategy = new(
@@ -57,7 +57,7 @@ public class TruncationCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_TriggerMet_ExcludesOldestGroupsAsync()
+    public async Task CompactAsyncTriggerMetExcludesOldestGroupsAsync()
     {
         // Arrange — trigger on groups > 2
         TruncationCompactionStrategy strategy = new(
@@ -86,7 +86,7 @@ public class TruncationCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_PreservesSystemMessagesAsync()
+    public async Task CompactAsyncPreservesSystemMessagesAsync()
     {
         // Arrange
         TruncationCompactionStrategy strategy = new(s_alwaysTrigger, preserveRecentGroups: 1);
@@ -114,7 +114,7 @@ public class TruncationCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_PreservesToolCallGroupAtomicityAsync()
+    public async Task CompactAsyncPreservesToolCallGroupAtomicityAsync()
     {
         // Arrange
         TruncationCompactionStrategy strategy = new(s_alwaysTrigger, preserveRecentGroups: 1);
@@ -138,7 +138,7 @@ public class TruncationCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_SetsExcludeReasonAsync()
+    public async Task CompactAsyncSetsExcludeReasonAsync()
     {
         // Arrange
         TruncationCompactionStrategy strategy = new(s_alwaysTrigger, preserveRecentGroups: 1);
@@ -157,7 +157,7 @@ public class TruncationCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_SkipsAlreadyExcludedGroupsAsync()
+    public async Task CompactAsyncSkipsAlreadyExcludedGroupsAsync()
     {
         // Arrange
         TruncationCompactionStrategy strategy = new(s_alwaysTrigger, preserveRecentGroups: 1);
@@ -180,7 +180,7 @@ public class TruncationCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_PreserveRecentGroups_KeepsMultipleAsync()
+    public async Task CompactAsyncPreserveRecentGroupsKeepsMultipleAsync()
     {
         // Arrange — keep 2 most recent
         TruncationCompactionStrategy strategy = new(s_alwaysTrigger, preserveRecentGroups: 2);
@@ -204,7 +204,7 @@ public class TruncationCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsync_NothingToRemove_ReturnsFalseAsync()
+    public async Task CompactAsyncNothingToRemoveReturnsFalseAsync()
     {
         // Arrange — preserve 5 but only 2 groups
         TruncationCompactionStrategy strategy = new(s_alwaysTrigger, preserveRecentGroups: 5);

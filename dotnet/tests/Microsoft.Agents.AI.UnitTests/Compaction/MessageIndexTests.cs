@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using Microsoft.Agents.AI.Compaction;
@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.UnitTests.Compaction;
 public class MessageIndexTests
 {
     [Fact]
-    public void Create_EmptyList_ReturnsEmptyGroups()
+    public void CreateEmptyListReturnsEmptyGroups()
     {
         // Arrange
         List<ChatMessage> messages = [];
@@ -25,7 +25,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_SystemMessage_CreatesSystemGroup()
+    public void CreateSystemMessageCreatesSystemGroup()
     {
         // Arrange
         List<ChatMessage> messages =
@@ -43,7 +43,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_UserMessage_CreatesUserGroup()
+    public void CreateUserMessageCreatesUserGroup()
     {
         // Arrange
         List<ChatMessage> messages =
@@ -60,7 +60,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_AssistantTextMessage_CreatesAssistantTextGroup()
+    public void CreateAssistantTextMessageCreatesAssistantTextGroup()
     {
         // Arrange
         List<ChatMessage> messages =
@@ -77,7 +77,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_ToolCallWithResults_CreatesAtomicToolCallGroup()
+    public void CreateToolCallWithResultsCreatesAtomicToolCallGroup()
     {
         // Arrange
         ChatMessage assistantMessage = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather", new Dictionary<string, object?> { ["city"] = "Seattle" })]);
@@ -97,7 +97,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_MixedConversation_GroupsCorrectly()
+    public void CreateMixedConversationGroupsCorrectly()
     {
         // Arrange
         ChatMessage systemMsg = new(ChatRole.System, "You are helpful.");
@@ -121,7 +121,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_MultipleToolResults_GroupsAllWithAssistant()
+    public void CreateMultipleToolResultsGroupsAllWithAssistant()
     {
         // Arrange
         ChatMessage assistantToolCall = new(ChatRole.Assistant, [
@@ -143,7 +143,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void GetIncludedMessages_ExcludesMarkedGroups()
+    public void GetIncludedMessagesExcludesMarkedGroups()
     {
         // Arrange
         ChatMessage msg1 = new(ChatRole.User, "First");
@@ -163,7 +163,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void GetAllMessages_IncludesExcludedGroups()
+    public void GetAllMessagesIncludesExcludedGroups()
     {
         // Arrange
         ChatMessage msg1 = new(ChatRole.User, "First");
@@ -180,7 +180,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void IncludedGroupCount_ReflectsExclusions()
+    public void IncludedGroupCountReflectsExclusions()
     {
         // Arrange
         MessageIndex groups = MessageIndex.Create(
@@ -198,7 +198,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_SummaryMessage_CreatesSummaryGroup()
+    public void CreateSummaryMessageCreatesSummaryGroup()
     {
         // Arrange
         ChatMessage summaryMessage = new(ChatRole.Assistant, "[Summary of earlier conversation]: key facts...");
@@ -216,7 +216,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_SummaryAmongOtherMessages_GroupsCorrectly()
+    public void CreateSummaryAmongOtherMessagesGroupsCorrectly()
     {
         // Arrange
         ChatMessage systemMsg = new(ChatRole.System, "You are helpful.");
@@ -237,7 +237,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void MessageGroup_StoresPassedCounts()
+    public void MessageGroupStoresPassedCounts()
     {
         // Arrange & Act
         MessageGroup group = new(MessageGroupKind.User, [new ChatMessage(ChatRole.User, "Hello")], byteCount: 5, tokenCount: 2);
@@ -249,7 +249,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void MessageGroup_MessagesAreImmutable()
+    public void MessageGroupMessagesAreImmutable()
     {
         // Arrange
         IReadOnlyList<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
@@ -261,7 +261,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_ComputesByteCount_Utf8()
+    public void CreateComputesByteCountUtf8()
     {
         // Arrange — "Hello" is 5 UTF-8 bytes
         MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
@@ -271,7 +271,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_ComputesByteCount_MultiByteChars()
+    public void CreateComputesByteCountMultiByteChars()
     {
         // Arrange — "café" has a multi-byte 'é' (2 bytes in UTF-8) → 5 bytes total
         MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "café")]);
@@ -281,7 +281,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_ComputesByteCount_MultipleMessagesInGroup()
+    public void CreateComputesByteCountMultipleMessagesInGroup()
     {
         // Arrange — ToolCall group: assistant (tool call, null text) + tool result "OK" (2 bytes)
         ChatMessage assistantMsg = new(ChatRole.Assistant, [new FunctionCallContent("call1", "fn")]);
@@ -295,7 +295,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_DefaultTokenCount_IsHeuristic()
+    public void CreateDefaultTokenCountIsHeuristic()
     {
         // Arrange — "Hello world test data!" = 22 UTF-8 bytes → 22 / 4 = 5 estimated tokens
         MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello world test data!")]);
@@ -306,7 +306,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_NullText_HasZeroCounts()
+    public void CreateNullTextHasZeroCounts()
     {
         // Arrange — message with no text (e.g., pure function call)
         ChatMessage msg = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather")]);
@@ -320,7 +320,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void TotalAggregates_SumAllGroups()
+    public void TotalAggregatesSumAllGroups()
     {
         // Arrange
         MessageIndex groups = MessageIndex.Create(
@@ -339,7 +339,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void IncludedAggregates_ExcludeMarkedGroups()
+    public void IncludedAggregatesExcludeMarkedGroups()
     {
         // Arrange
         MessageIndex groups = MessageIndex.Create(
@@ -363,7 +363,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void ToolCallGroup_AggregatesAcrossMessages()
+    public void ToolCallGroupAggregatesAcrossMessages()
     {
         // Arrange — tool call group with assistant "Ask" (3 bytes) + tool result "OK" (2 bytes)
         ChatMessage assistantMsg = new(ChatRole.Assistant, [new FunctionCallContent("call1", "fn")]);
@@ -380,7 +380,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_AssignsTurnIndices_SingleTurn()
+    public void CreateAssignsTurnIndicesSingleTurn()
     {
         // Arrange — System (no turn), User + Assistant = turn 1
         MessageIndex groups = MessageIndex.Create(
@@ -399,7 +399,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_AssignsTurnIndices_MultiTurn()
+    public void CreateAssignsTurnIndicesMultiTurn()
     {
         // Arrange — 3 user turns
         MessageIndex groups = MessageIndex.Create(
@@ -423,7 +423,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void Create_TurnSpansToolCallGroups()
+    public void CreateTurnSpansToolCallGroups()
     {
         // Arrange — turn 1 includes User, ToolCall, AssistantText
         ChatMessage assistantToolCall = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather")]);
@@ -446,7 +446,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void GetTurnGroups_ReturnsGroupsForSpecificTurn()
+    public void GetTurnGroupsReturnsGroupsForSpecificTurn()
     {
         // Arrange
         MessageIndex groups = MessageIndex.Create(
@@ -472,7 +472,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void IncludedTurnCount_ReflectsExclusions()
+    public void IncludedTurnCountReflectsExclusions()
     {
         // Arrange — 2 turns, exclude all groups in turn 1
         MessageIndex groups = MessageIndex.Create(
@@ -492,7 +492,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void TotalTurnCount_ZeroWhenNoUserMessages()
+    public void TotalTurnCountZeroWhenNoUserMessages()
     {
         // Arrange — only system messages
         MessageIndex groups = MessageIndex.Create(
@@ -506,7 +506,7 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void IncludedTurnCount_PartialExclusion_StillCountsTurn()
+    public void IncludedTurnCountPartialExclusionStillCountsTurn()
     {
         // Arrange — turn 1 has 2 groups, only one excluded
         MessageIndex groups = MessageIndex.Create(
