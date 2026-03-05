@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
+using FluentAssertions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -87,5 +89,72 @@ public class AgentEventsTests
         Assert.Equal("executor1", evt.ExecutorId);
         Assert.Same(response, evt.Response);
         Assert.Same(response, evt.Data);
+    }
+
+    /// <summary>
+    /// Regression test for https://github.com/microsoft/agent-framework/issues/3789
+    /// Verifies that WorkflowStartedEvent is emitted first before any SuperStepStartedEvent.
+    /// </summary>
+    [Fact]
+    public async Task StreamingRun_WorkflowStartedEvent_ShouldBeEmittedBefore_SuperStepStartedAsync()
+    {
+        // Arrange
+        TestEchoAgent agent = new("test-agent");
+        Workflow workflow = AgentWorkflowBuilder.BuildSequential(agent);
+        ChatMessage inputMessage = new(ChatRole.User, "Hello");
+
+        // Act
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, new List<ChatMessage> { inputMessage });
+        await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
+
+        List<WorkflowEvent> events = [];
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        events.Should().NotBeEmpty("workflow should produce events during execution");
+
+        List<WorkflowStartedEvent> startedEvents = events.OfType<WorkflowStartedEvent>().ToList();
+        startedEvents.Should().ContainSingle("workflow should emit exactly one WorkflowStartedEvent");
+
+        WorkflowStartedEvent startedEvent = startedEvents.First();
+        SuperStepStartedEvent? firstSuperStepEvent = events.OfType<SuperStepStartedEvent>().FirstOrDefault();
+        firstSuperStepEvent.Should().NotBeNull("workflow should emit SuperStepStartedEvent");
+
+        int startedIndex = events.IndexOf(startedEvent!);
+        int superStepIndex = events.IndexOf(firstSuperStepEvent!);
+
+        startedIndex.Should().BeLessThan(superStepIndex, "WorkflowStartedEvent should be emitted before SuperStepStartedEvent");
+    }
+
+    /// <summary>
+    /// Regression test for https://github.com/microsoft/agent-framework/issues/3789
+    /// Verifies that WorkflowStartedEvent is emitted using Lockstep execution mode.
+    /// </summary>
+    [Fact]
+    public async Task StreamingRun_LockstepExecution_ShouldEmit_WorkflowStartedEventAsync()
+    {
+        // Arrange
+        TestEchoAgent agent = new("test-agent");
+        Workflow workflow = AgentWorkflowBuilder.BuildSequential(agent);
+        ChatMessage inputMessage = new(ChatRole.User, "Hello");
+
+        // Act: Use Lockstep execution mode
+        await using StreamingRun run = await InProcessExecution.Lockstep.RunStreamingAsync(workflow, new List<ChatMessage> { inputMessage });
+        await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
+
+        List<WorkflowEvent> events = [];
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        events.Should().NotBeEmpty("workflow should produce events during execution");
+
+        List<WorkflowStartedEvent> startedEvents = events.OfType<WorkflowStartedEvent>().ToList();
+        startedEvents.Should().ContainSingle("Lockstep execution should emit exactly one WorkflowStartedEvent");
     }
 }

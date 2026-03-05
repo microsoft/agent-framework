@@ -86,6 +86,9 @@ internal sealed class StreamingRunEventStream : IRunEventStream
                             .SetTag(Tags.SessionId, this._stepRunner.SessionId);
                 runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowStarted));
 
+                // Emit WorkflowStartedEvent to the event stream for consumers
+                await this._eventChannel.Writer.WriteAsync(new WorkflowStartedEvent(), linkedSource.Token).ConfigureAwait(false);
+
                 // Run all available supersteps continuously
                 // Events are streamed out in real-time as they happen via the event handler
                 while (this._stepRunner.HasUnprocessedMessages && !linkedSource.Token.IsCancellationRequested)
