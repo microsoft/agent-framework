@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Threading.Tasks;
-using Azure.Identity;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
@@ -68,7 +67,7 @@ public abstract class IntegrationTest : IDisposable
     protected async ValueTask<DeclarativeWorkflowOptions> CreateOptionsAsync(bool externalConversation, IMcpToolHandler? mcpToolProvider, params IEnumerable<AIFunction> functionTools)
     {
         AzureAgentProvider agentProvider =
-            new(this.TestEndpoint, new AzureCliCredential())
+            new(this.TestEndpoint, TestAzureCliCredentials.CreateAzureCliCredential())
             {
                 Functions = functionTools,
             };

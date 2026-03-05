@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>
+    <InjectSharedIntegrationTestAzureCredentialsCode>True</InjectSharedIntegrationTestAzureCredentialsCode>
   </PropertyGroup>
 
   <ItemGroup>
