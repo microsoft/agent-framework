@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft. All rights reserved.
 
+using System.Buffers;
 using System.Collections.Generic;
 using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
@@ -674,5 +675,175 @@ public class MessageIndexTests
         // Assert
         Assert.Equal(5, inserted.ByteCount);
         Assert.Equal(1, inserted.TokenCount); // 5 / 4 = 1 (integer division)
+    }
+
+    [Fact]
+    public void ConstructorWithGroupsRestoresTurnIndex()
+    {
+        // Arrange — pre-existing groups with turn indices
+        MessageGroup group1 = new(MessageGroupKind.User, [new ChatMessage(ChatRole.User, "Q1")], 2, 1, turnIndex: 1);
+        MessageGroup group2 = new(MessageGroupKind.AssistantText, [new ChatMessage(ChatRole.Assistant, "A1")], 2, 1, turnIndex: 1);
+        MessageGroup group3 = new(MessageGroupKind.User, [new ChatMessage(ChatRole.User, "Q2")], 2, 1, turnIndex: 2);
+        List<MessageGroup> groups = [group1, group2, group3];
+
+        // Act — constructor should restore _currentTurn from the last group's TurnIndex
+        MessageIndex index = new(groups);
+
+        // Assert — adding a new user message should get turn 3 (restored 2 + 1)
+        index.Update(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+            new ChatMessage(ChatRole.User, "Q3"),
+        ]);
+
+        // The new user group should have TurnIndex 3
+        MessageGroup lastGroup = index.Groups[index.Groups.Count - 1];
+        Assert.Equal(MessageGroupKind.User, lastGroup.Kind);
+        Assert.NotNull(lastGroup.TurnIndex);
+    }
+
+    [Fact]
+    public void ConstructorWithEmptyGroupsHandlesGracefully()
+    {
+        // Arrange & Act — constructor with empty list
+        MessageIndex index = new([]);
+
+        // Assert
+        Assert.Empty(index.Groups);
+    }
+
+    [Fact]
+    public void ConstructorWithGroupsWithoutTurnIndexSkipsRestore()
+    {
+        // Arrange — groups without turn indices (system messages)
+        MessageGroup systemGroup = new(MessageGroupKind.System, [new ChatMessage(ChatRole.System, "Be helpful")], 10, 3, turnIndex: null);
+        List<MessageGroup> groups = [systemGroup];
+
+        // Act — constructor won't find a TurnIndex to restore
+        MessageIndex index = new(groups);
+
+        // Assert
+        Assert.Single(index.Groups);
+    }
+
+    [Fact]
+    public void ComputeTokenCountReturnsTokenCount()
+    {
+        // Arrange — call the public static method directly
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Hello world"),
+            new ChatMessage(ChatRole.Assistant, "Greetings"),
+        ];
+
+        // Act — use a simple tokenizer that counts words (each word = 1 token)
+        SimpleWordTokenizer tokenizer = new();
+        int tokenCount = MessageIndex.ComputeTokenCount(messages, tokenizer);
+
+        // Assert — "Hello world" = 2, "Greetings" = 1 → 3 total
+        Assert.Equal(3, tokenCount);
+    }
+
+    [Fact]
+    public void ComputeTokenCountEmptyTextReturnsZero()
+    {
+        // Arrange — message with no text content
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, [new FunctionCallContent("c1", "fn")]),
+        ];
+
+        SimpleWordTokenizer tokenizer = new();
+        int tokenCount = MessageIndex.ComputeTokenCount(messages, tokenizer);
+
+        // Assert — no text content → 0 tokens
+        Assert.Equal(0, tokenCount);
+    }
+
+    [Fact]
+    public void CreateWithTokenizerUsesTokenizerForCounts()
+    {
+        // Arrange
+        SimpleWordTokenizer tokenizer = new();
+
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Hello world test"),
+        ];
+
+        // Act
+        MessageIndex index = MessageIndex.Create(messages, tokenizer);
+
+        // Assert — tokenizer counts words: "Hello world test" = 3 tokens
+        Assert.Single(index.Groups);
+        Assert.Equal(3, index.Groups[0].TokenCount);
+        Assert.NotNull(index.Tokenizer);
+    }
+
+    [Fact]
+    public void InsertGroupWithTokenizerUsesTokenizer()
+    {
+        // Arrange
+        SimpleWordTokenizer tokenizer = new();
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+        ], tokenizer);
+
+        // Act
+        ChatMessage msg = new(ChatRole.Assistant, "Hello world test message");
+        MessageGroup inserted = index.InsertGroup(0, MessageGroupKind.AssistantText, [msg]);
+
+        // Assert — tokenizer counts words: "Hello world test message" = 4 tokens
+        Assert.Equal(4, inserted.TokenCount);
+    }
+
+    /// <summary>
+    /// A simple tokenizer that counts whitespace-separated words as tokens.
+    /// </summary>
+    private sealed class SimpleWordTokenizer : Microsoft.ML.Tokenizers.Tokenizer
+    {
+        public override Microsoft.ML.Tokenizers.PreTokenizer? PreTokenizer => null;
+        public override Microsoft.ML.Tokenizers.Normalizer? Normalizer => null;
+
+        protected override Microsoft.ML.Tokenizers.EncodeResults<Microsoft.ML.Tokenizers.EncodedToken> EncodeToTokens(string? text, System.ReadOnlySpan<char> textSpan, Microsoft.ML.Tokenizers.EncodeSettings settings)
+        {
+            // Simple word-based encoding
+            string input = text ?? textSpan.ToString();
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                return new Microsoft.ML.Tokenizers.EncodeResults<Microsoft.ML.Tokenizers.EncodedToken>
+                {
+                    Tokens = System.Array.Empty<Microsoft.ML.Tokenizers.EncodedToken>(),
+                    CharsConsumed = 0,
+                    NormalizedText = null,
+                };
+            }
+
+            string[] words = input.Split(' ');
+            List<Microsoft.ML.Tokenizers.EncodedToken> tokens = [];
+            int offset = 0;
+            for (int i = 0; i < words.Length; i++)
+            {
+                tokens.Add(new Microsoft.ML.Tokenizers.EncodedToken(i, words[i], new System.Range(offset, offset + words[i].Length)));
+                offset += words[i].Length + 1;
+            }
+
+            return new Microsoft.ML.Tokenizers.EncodeResults<Microsoft.ML.Tokenizers.EncodedToken>
+            {
+                Tokens = tokens,
+                CharsConsumed = input.Length,
+                NormalizedText = null,
+            };
+        }
+
+        public override OperationStatus Decode(System.Collections.Generic.IEnumerable<int> ids, System.Span<char> destination, out int idsConsumed, out int charsWritten)
+        {
+            idsConsumed = 0;
+            charsWritten = 0;
+            return OperationStatus.Done;
+        }
     }
 }

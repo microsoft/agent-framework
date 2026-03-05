@@ -67,11 +67,12 @@ public sealed class MessageIndex
         this.Groups = groups;
         this.Tokenizer = tokenizer;
 
+        // Restore turn counter from the last group that has a TurnIndex
         for (int index = groups.Count - 1; index >= 0; --index)
         {
-            if (this.Groups[0].TurnIndex.HasValue)
+            if (this.Groups[index].TurnIndex.HasValue)
             {
-                this._currentTurn = this.Groups[0].TurnIndex!.Value;
+                this._currentTurn = this.Groups[index].TurnIndex!.Value;
                 break;
             }
         }
@@ -353,11 +354,6 @@ public sealed class MessageIndex
 
     private static bool HasToolCalls(ChatMessage message)
     {
-        if (message.Contents is null)
-        {
-            return false;
-        }
-
         foreach (AIContent content in message.Contents)
         {
             if (content is FunctionCallContent)

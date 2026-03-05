@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Linq;
 using System.Threading.Tasks;
@@ -12,13 +12,11 @@ namespace Microsoft.Agents.AI.UnitTests.Compaction;
 /// </summary>
 public class TruncationCompactionStrategyTests
 {
-    private static readonly CompactionTrigger s_alwaysTrigger = _ => true;
-
     [Fact]
     public async Task CompactAsyncAlwaysTriggerCompactsToPreserveRecentAsync()
     {
         // Arrange — always-trigger means always compact
-        TruncationCompactionStrategy strategy = new(s_alwaysTrigger, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
         MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "First"),
@@ -89,7 +87,7 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncPreservesSystemMessagesAsync()
     {
         // Arrange
-        TruncationCompactionStrategy strategy = new(s_alwaysTrigger, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
         MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "You are helpful."),
@@ -117,9 +115,9 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncPreservesToolCallGroupAtomicityAsync()
     {
         // Arrange
-        TruncationCompactionStrategy strategy = new(s_alwaysTrigger, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
 
-        ChatMessage assistantToolCall= new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather")]);
+        ChatMessage assistantToolCall = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather")]);
         ChatMessage toolResult = new(ChatRole.Tool, "Sunny");
         ChatMessage finalResponse = new(ChatRole.User, "Thanks!");
 
@@ -141,7 +139,7 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncSetsExcludeReasonAsync()
     {
         // Arrange
-        TruncationCompactionStrategy strategy = new(s_alwaysTrigger, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
         MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Old"),
@@ -160,7 +158,7 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncSkipsAlreadyExcludedGroupsAsync()
     {
         // Arrange
-        TruncationCompactionStrategy strategy = new(s_alwaysTrigger, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
         MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Already excluded"),
@@ -183,7 +181,7 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncMinimumPreservedKeepsMultipleAsync()
     {
         // Arrange — keep 2 most recent
-        TruncationCompactionStrategy strategy = new(s_alwaysTrigger, minimumPreserved: 2);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 2);
         MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
@@ -207,7 +205,7 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncNothingToRemoveReturnsFalseAsync()
     {
         // Arrange — preserve 5 but only 2 groups
-        TruncationCompactionStrategy strategy = new(s_alwaysTrigger, minimumPreserved: 5);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 5);
         MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
@@ -226,12 +224,12 @@ public class TruncationCompactionStrategyTests
     {
         // Arrange — always trigger, custom target stops after 1 exclusion
         int targetChecks = 0;
-        CompactionTrigger targetAfterOne = _ => ++targetChecks >= 1;
+        bool TargetAfterOne(MessageIndex _) => ++targetChecks >= 1;
 
         TruncationCompactionStrategy strategy = new(
-            s_alwaysTrigger,
+            CompactionTriggers.Always,
             minimumPreserved: 1,
-            target: targetAfterOne);
+            target: TargetAfterOne);
 
         MessageIndex groups = MessageIndex.Create(
         [

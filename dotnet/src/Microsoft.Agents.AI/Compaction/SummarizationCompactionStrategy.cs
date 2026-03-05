@@ -157,11 +157,6 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
             }
         }
 
-        if (summarized == 0)
-        {
-            return false;
-        }
-
         // Generate summary using the chat client (single LLM call for all marked groups)
         ChatResponse response = await this.ChatClient.GetResponseAsync(
             [
@@ -180,14 +175,7 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
         ChatMessage summaryMessage = new(ChatRole.Assistant, $"[Summary]\n{summaryText}");
         (summaryMessage.AdditionalProperties ??= [])[MessageGroup.SummaryPropertyKey] = true;
 
-        if (insertIndex >= 0)
-        {
-            index.InsertGroup(insertIndex, MessageGroupKind.Summary, [summaryMessage]);
-        }
-        else
-        {
-            index.AddGroup(MessageGroupKind.Summary, [summaryMessage]);
-        }
+        index.InsertGroup(insertIndex, MessageGroupKind.Summary, [summaryMessage]);
 
         return true;
     }

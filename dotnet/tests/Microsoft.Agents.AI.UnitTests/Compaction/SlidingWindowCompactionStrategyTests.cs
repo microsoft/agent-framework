@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -163,12 +163,12 @@ public class SlidingWindowCompactionStrategyTests
     {
         // Arrange — trigger on > 1 turn, custom target stops after removing 1 turn
         int removeCount = 0;
-        CompactionTrigger targetAfterOne = _ => ++removeCount >= 1;
+        bool TargetAfterOne(MessageIndex _) => ++removeCount >= 1;
 
         SlidingWindowCompactionStrategy strategy = new(
             CompactionTriggers.TurnsExceed(1),
             minimumPreserved: 0,
-            target: targetAfterOne);
+            target: TargetAfterOne);
 
         MessageIndex index = MessageIndex.Create(
         [

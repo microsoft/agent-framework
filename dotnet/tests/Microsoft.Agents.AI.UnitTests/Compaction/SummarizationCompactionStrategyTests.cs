@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Linq;
@@ -15,8 +15,6 @@ namespace Microsoft.Agents.AI.UnitTests.Compaction;
 /// </summary>
 public class SummarizationCompactionStrategyTests
 {
-    private static readonly CompactionTrigger AlwaysTrigger = _ => true;
-
     /// <summary>
     /// Creates a mock <see cref="IChatClient"/> that returns the specified summary text.
     /// </summary>
@@ -60,7 +58,7 @@ public class SummarizationCompactionStrategyTests
         // Arrange — always trigger, preserve 1 recent group
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient("Key facts from earlier."),
-            AlwaysTrigger,
+            CompactionTriggers.Always,
             minimumPreserved: 1);
 
         MessageIndex index = MessageIndex.Create(
@@ -91,7 +89,7 @@ public class SummarizationCompactionStrategyTests
         // Arrange
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient(),
-            AlwaysTrigger,
+            CompactionTriggers.Always,
             minimumPreserved: 1);
 
         MessageIndex index = MessageIndex.Create(
@@ -118,7 +116,7 @@ public class SummarizationCompactionStrategyTests
         // Arrange
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient("Summary text."),
-            AlwaysTrigger,
+            CompactionTriggers.Always,
             minimumPreserved: 1);
 
         MessageIndex index = MessageIndex.Create(
@@ -145,7 +143,7 @@ public class SummarizationCompactionStrategyTests
         // Arrange — LLM returns whitespace
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient("   "),
-            AlwaysTrigger,
+            CompactionTriggers.Always,
             minimumPreserved: 1);
 
         MessageIndex index = MessageIndex.Create(
@@ -168,7 +166,7 @@ public class SummarizationCompactionStrategyTests
         // Arrange — preserve 5 but only 2 non-system groups
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient(),
-            AlwaysTrigger,
+            CompactionTriggers.Always,
             minimumPreserved: 5);
 
         MessageIndex index = MessageIndex.Create(
@@ -198,12 +196,12 @@ public class SummarizationCompactionStrategyTests
                 capturedMessages = [.. msgs])
             .ReturnsAsync(new ChatResponse([new ChatMessage(ChatRole.Assistant, "Custom summary.")]));
 
-        const string customPrompt = "Summarize in bullet points only.";
+        const string CustomPrompt = "Summarize in bullet points only.";
         SummarizationCompactionStrategy strategy = new(
             mockClient.Object,
-            AlwaysTrigger,
+            CompactionTriggers.Always,
             minimumPreserved: 1,
-            summarizationPrompt: customPrompt);
+            summarizationPrompt: CustomPrompt);
 
         MessageIndex index = MessageIndex.Create(
         [
@@ -216,7 +214,7 @@ public class SummarizationCompactionStrategyTests
 
         // Assert — the custom prompt should be the first message sent to the LLM
         Assert.NotNull(capturedMessages);
-        Assert.Equal(customPrompt, capturedMessages![0].Text);
+        Assert.Equal(CustomPrompt, capturedMessages![0].Text);
     }
 
     [Fact]
@@ -225,7 +223,7 @@ public class SummarizationCompactionStrategyTests
         // Arrange
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient(),
-            AlwaysTrigger,
+            CompactionTriggers.Always,
             minimumPreserved: 1);
 
         MessageIndex index = MessageIndex.Create(
@@ -248,13 +246,13 @@ public class SummarizationCompactionStrategyTests
     {
         // Arrange — 4 non-system groups, preserve 1, target met after 1 exclusion
         int exclusionCount = 0;
-        CompactionTrigger targetAfterOne = _ => ++exclusionCount >= 1;
+        CompactionTrigger TargetAfterOne = _ => ++exclusionCount >= 1;
 
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient("Partial summary."),
-            AlwaysTrigger,
+            CompactionTriggers.Always,
             minimumPreserved: 1,
-            target: targetAfterOne);
+            target: TargetAfterOne);
 
         MessageIndex index = MessageIndex.Create(
         [
@@ -278,7 +276,7 @@ public class SummarizationCompactionStrategyTests
         // Arrange — preserve 2
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient("Summary."),
-            AlwaysTrigger,
+            CompactionTriggers.Always,
             minimumPreserved: 2);
 
         MessageIndex index = MessageIndex.Create(
