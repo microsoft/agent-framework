@@ -1051,10 +1051,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             else:
                 final_tools.append(tool)  # type: ignore
 
+        existing_names = {name for t in final_tools if (name := _get_tool_name(t)) is not None}
         for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
-            final_tools.extend(mcp_server.functions)
+            final_tools.extend(f for f in mcp_server.functions if f.name not in existing_names)
 
         # Merge runtime kwargs into additional_function_arguments so they're available
         # in function middleware context and tool invocation.

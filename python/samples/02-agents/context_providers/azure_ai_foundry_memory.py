@@ -61,7 +61,7 @@ async def main() -> None:
         print(f"Creating memory store '{memory_store_name}'...")
         try:
             # Create a memory store
-            memory_store = await project_client.memory_stores.create(
+            memory_store = await project_client.beta.memory_stores.create(
                 name=memory_store_name,
                 description="Memory store for Agent Framework with FoundryMemoryProvider",
                 definition=memory_store_definition,
@@ -126,7 +126,7 @@ async def main() -> None:
                 print(f"Agent: {result3}\n")
 
                 print(f"Stored memories from: {memory_store.name} ({memory_store.id})")
-                res = await project_client.memory_stores.search_memories(name=memory_store.name, scope="user_123")
+                res = await project_client.beta.memory_stores.search_memories(name=memory_store.name, scope="user_123")
                 for memory in res.memories:
                     print(f"Memory: {memory.memory_item.content}")
 
@@ -134,7 +134,7 @@ async def main() -> None:
                 print(f"An error occurred: {e}")
 
             finally:
-                await project_client.memory_stores.delete(memory_store_name)
+                await project_client.beta.memory_stores.delete(memory_store_name)
                 print("==========================================")
                 print("Memory store deleted")
 

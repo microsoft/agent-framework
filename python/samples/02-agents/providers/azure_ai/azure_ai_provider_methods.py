@@ -8,7 +8,7 @@ from typing import Annotated
 from agent_framework import tool
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import AgentReference, PromptAgentDefinition
+from azure.ai.projects.models import PromptAgentDefinition
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -116,7 +116,7 @@ async def get_agent_by_name_example() -> None:
 async def get_agent_by_reference_example() -> None:
     """Example of using provider.get_agent(reference=...) to retrieve a specific agent version.
 
-    This method fetches a specific version of an agent using an AgentReference.
+    This method fetches a specific version of an agent using a reference mapping.
     Use this when you need to use a particular version of an agent.
     """
     print("=== provider.get_agent(reference=...) Example ===")
@@ -136,9 +136,9 @@ async def get_agent_by_reference_example() -> None:
         )
 
         try:
-            # Get the agent using an AgentReference with specific version
+            # Get the agent using a reference mapping with specific version
             provider = AzureAIProjectAgentProvider(project_client=project_client)
-            reference = AgentReference(name=created_agent.name, version=created_agent.version)
+            reference = {"name": created_agent.name, "version": created_agent.version}
             agent = await provider.get_agent(reference=reference)
 
             print(f"Retrieved agent: {agent.name} (version via reference)")

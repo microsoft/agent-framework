@@ -4,7 +4,7 @@ import asyncio
 import tempfile
 from collections.abc import AsyncIterable, Awaitable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Literal, cast, overload
 from uuid import uuid4
 
 import pytest
@@ -13,6 +13,7 @@ from agent_framework import (
     AgentExecutor,
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     AgentSession,
     BaseAgent,
     Content,
@@ -474,7 +475,7 @@ class StateTrackingExecutor(Executor):
     ) -> None:
         """Handle the message and track it in workflow state."""
         # Get existing messages from workflow state
-        existing_messages = ctx.get_state("processed_messages") or []
+        existing_messages: list[str] = ctx.get_state("processed_messages") or []
 
         # Record this message
         message_record = f"{message.run_id}:{message.data}"
@@ -833,6 +834,26 @@ class _StreamingTestAgent(BaseAgent):
         super().__init__(**kwargs)
         self._reply_text = reply_text
 
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
     def run(
         self,
         messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
@@ -883,8 +904,10 @@ async def test_agent_streaming_vs_non_streaming() -> None:
         stream_events.append(event)
 
     # Filter for agent events
-    agent_response = [
-        cast(AgentResponse, e.data) for e in stream_events if e.type == "output" and isinstance(e.data, AgentResponse)
+    agent_response: list[AgentResponse[Any]] = [
+        cast(AgentResponse[Any], e.data)  # pyright: ignore[reportUnknownMemberType]
+        for e in stream_events
+        if e.type == "output" and isinstance(e.data, AgentResponse)
     ]
     agent_response_updates = [
         e.data for e in stream_events if e.type == "output" and isinstance(e.data, AgentResponseUpdate)

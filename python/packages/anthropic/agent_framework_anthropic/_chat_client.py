@@ -926,6 +926,7 @@ class AnthropicClient(
                     usage_details.append(Content.from_usage(usage_details=details))
 
                 return ChatResponseUpdate(
+                    role="assistant",
                     response_id=event.message.id,
                     contents=[
                         *self._parse_contents_from_anthropic(event.message.content),

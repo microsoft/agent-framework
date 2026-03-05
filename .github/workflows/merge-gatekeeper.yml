@@ -29,4 +29,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           timeout: 3600
           interval: 30
-          ignored: CodeQL,CodeQL analysis (csharp)
+          # "Cleanup artifacts", "Agent", "Prepare", and "Upload results" are check runs
+          # created by an org-level GitHub App (MSDO), not by any workflow in this repo.
+          # They are outside our control and their transient failures should not block merges.
+          ignored: CodeQL,CodeQL analysis (csharp),Cleanup artifacts,Agent,Prepare,Upload results
