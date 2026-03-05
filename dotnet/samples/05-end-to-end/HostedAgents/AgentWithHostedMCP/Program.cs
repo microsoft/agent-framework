@@ -9,6 +9,7 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OpenAI.Responses;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -28,7 +29,6 @@ AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
     .GetResponsesClient(deploymentName)
-    .AsIChatClient()
     .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",
         name: "MicrosoftLearnAgent",
