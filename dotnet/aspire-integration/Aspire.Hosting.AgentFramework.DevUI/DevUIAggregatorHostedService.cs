@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -36,6 +37,10 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
     // Frontend resources loaded from the Microsoft.Agents.AI.DevUI assembly (null if unavailable)
     private readonly Dictionary<string, (string ResourceName, string ContentType)>? _frontendResources;
+
+    // Maps conversation IDs to backend URLs for routing GET requests that lack agent_id context.
+    // Populated when the aggregator routes conversation requests to a positively-resolved backend.
+    private readonly ConcurrentDictionary<string, string> _conversationBackendMap = new(StringComparer.OrdinalIgnoreCase);
 
     public DevUIAggregatorHostedService(
         DevUIResource resource,
@@ -469,6 +474,16 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             ? RewriteAgentIdInQueryString(context.Request.QueryString, actualAgentId)
             : context.Request.QueryString.ToString();
 
+        // Try conversation→backend map for previously-seen conversations
+        if (backendUrl is null)
+        {
+            var conversationId = ExtractConversationId(path);
+            if (conversationId is not null && this._conversationBackendMap.TryGetValue(conversationId, out var mappedUrl))
+            {
+                backendUrl = mappedUrl;
+            }
+        }
+
         if (backendUrl is null && context.Request.ContentLength > 0)
         {
             var bodyBytes = await ReadRequestBodyAsync(context.Request).ConfigureAwait(false);
@@ -502,8 +517,8 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
                         ? RewriteAgentIdInQueryString(context.Request.QueryString, actualId)
                         : context.Request.QueryString.ToString();
 
-                    await ProxyRequestAsync(
-                        context, backendUrl, targetPath + bodyQueryString, rewritten).ConfigureAwait(false);
+                    await this.ProxyAndRecordConversationAsync(
+                        context, backendUrl, path, targetPath + bodyQueryString, rewritten).ConfigureAwait(false);
                     return;
                 }
             }
@@ -522,7 +537,8 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             return;
         }
 
-        // No body and no query param — route to first backend
+        // Route to resolved backend (from query or conversation map), or fall back to first backend
+        var backendKnown = backendUrl is not null;
         backendUrl ??= this.ResolveBackends().Values.FirstOrDefault();
         if (backendUrl is null)
         {
@@ -531,8 +547,16 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         }
 
         var convPath = string.IsNullOrEmpty(path) ? "/v1/conversations" : $"/v1/conversations/{path}";
-        await ProxyRequestAsync(
-            context, backendUrl, convPath + queryString, bodyBytes: null).ConfigureAwait(false);
+        if (backendKnown)
+        {
+            await this.ProxyAndRecordConversationAsync(
+                context, backendUrl, path, convPath + queryString, bodyBytes: null).ConfigureAwait(false);
+        }
+        else
+        {
+            await ProxyRequestAsync(
+                context, backendUrl, convPath + queryString, bodyBytes: null).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -549,6 +573,86 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         query["agent_id"] = actualAgentId;
 
         return QueryString.Create(query).ToString();
+    }
+
+    private static string? ExtractConversationId(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return null;
+        }
+
+        var slashIndex = path.IndexOf('/');
+        return slashIndex > 0 ? path[..slashIndex] : path;
+    }
+
+    /// <summary>
+    /// Records the conversation→backend mapping and proxies the request.
+    /// For creation POSTs (no conversation ID in path), intercepts the response to capture the new ID.
+    /// </summary>
+    private async Task ProxyAndRecordConversationAsync(
+        HttpContext context,
+        string backendUrl,
+        string? conversationPath,
+        string targetUrl,
+        byte[]? bodyBytes)
+    {
+        var conversationId = ExtractConversationId(conversationPath);
+        if (conversationId is not null)
+        {
+            // We already know the conversation ID — record and proxy normally
+            this._conversationBackendMap[conversationId] = backendUrl;
+            await ProxyRequestAsync(context, backendUrl, targetUrl, bodyBytes).ConfigureAwait(false);
+            return;
+        }
+
+        // Creation POST: intercept response to capture the new conversation ID
+        if (!context.Request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase))
+        {
+            await ProxyRequestAsync(context, backendUrl, targetUrl, bodyBytes).ConfigureAwait(false);
+            return;
+        }
+
+        var originalBody = context.Response.Body;
+        using var buffer = new MemoryStream();
+        context.Response.Body = buffer;
+
+        try
+        {
+            await ProxyRequestAsync(context, backendUrl, targetUrl, bodyBytes).ConfigureAwait(false);
+
+            if (context.Response.StatusCode is >= 200 and < 300)
+            {
+                buffer.Position = 0;
+                try
+                {
+                    using var doc = await JsonDocument.ParseAsync(
+                        buffer, cancellationToken: context.RequestAborted).ConfigureAwait(false);
+                    if (doc.RootElement.TryGetProperty("id", out var idProp) &&
+                        idProp.ValueKind == JsonValueKind.String)
+                    {
+                        var createdId = idProp.GetString();
+                        if (createdId is not null)
+                        {
+                            this._conversationBackendMap[createdId] = backendUrl;
+                            this._logger.LogDebug(
+                                "Recorded conversation '{ConversationId}' → backend '{BackendUrl}'",
+                                createdId, backendUrl);
+                        }
+                    }
+                }
+                catch
+                {
+                    // Best-effort: response may not be parseable JSON
+                }
+            }
+        }
+        finally
+        {
+            context.Response.Body = originalBody;
+            buffer.Position = 0;
+            await buffer.CopyToAsync(originalBody, context.RequestAborted).ConfigureAwait(false);
+        }
     }
 
     private static async Task ProxyRequestAsync(
