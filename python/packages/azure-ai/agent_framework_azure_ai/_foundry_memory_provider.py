@@ -18,7 +18,6 @@ from agent_framework._sessions import AgentSession, BaseContextProvider, Session
 from agent_framework._settings import load_settings
 from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import ItemParam, ResponsesAssistantMessageItemParam, ResponsesUserMessageItemParam
 
 from ._shared import AzureAISettings
 
@@ -149,7 +148,7 @@ class FoundryMemoryProvider(BaseContextProvider):
         # On first run, retrieve static memories (user profile memories)
         if not state.get("initialized"):
             try:
-                static_search_result = await self.project_client.memory_stores.search_memories(
+                static_search_result = await self.project_client.beta.memory_stores.search_memories(
                     name=self.memory_store_name,
                     scope=self.scope or context.session_id,  # type: ignore[arg-type]
                 )
@@ -169,15 +168,15 @@ class FoundryMemoryProvider(BaseContextProvider):
         if not has_input:
             return
 
-        # Convert input messages to ItemParam format for search
+        # Convert input messages to memory search item format
         items = [
-            ItemParam({"type": "text", "text": msg.text})
+            {"type": "text", "text": msg.text}
             for msg in context.input_messages
             if msg and msg.text and msg.text.strip()
         ]
 
         try:
-            search_result = await self.project_client.memory_stores.search_memories(
+            search_result = await self.project_client.beta.memory_stores.search_memories(
                 name=self.memory_store_name,
                 scope=self.scope or context.session_id,  # type: ignore[arg-type]
                 items=items,
@@ -224,24 +223,24 @@ class FoundryMemoryProvider(BaseContextProvider):
         if context.response and context.response.messages:
             messages_to_store.extend(context.response.messages)
 
-        # Filter and convert messages to ItemParam format
-        items: list[ResponsesUserMessageItemParam | ResponsesAssistantMessageItemParam] = []
+        # Filter and convert messages to memory update item format
+        items: list[dict[str, str]] = []
         for message in messages_to_store:
             if message.role in {"user", "assistant", "system"} and message.text and message.text.strip():
                 if message.role == "user":
-                    items.append(ResponsesUserMessageItemParam(content=message.text))
+                    items.append({"role": "user", "type": "message", "content": message.text})
                 elif message.role == "assistant":
-                    items.append(ResponsesAssistantMessageItemParam(content=message.text))
+                    items.append({"role": "assistant", "type": "message", "content": message.text})
 
         if not items:
             return
 
         try:
             # Fire and forget - don't wait for the update to complete
-            update_poller = await self.project_client.memory_stores.begin_update_memories(
+            update_poller = await self.project_client.beta.memory_stores.begin_update_memories(
                 name=self.memory_store_name,
                 scope=self.scope or context.session_id,  # type: ignore[arg-type]
-                items=items,  # type: ignore[arg-type]
+                items=items,
                 previous_update_id=state.get("previous_update_id"),
                 update_delay=self.update_delay,
             )

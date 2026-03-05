@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import patch
 
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
 import pytest
 
 from agent_framework import (
@@ -275,6 +277,7 @@ async def test_single_edge_group_send_message_with_condition_pass() -> None:
     success = await edge_runner.send_message(message, state, ctx)
     assert success is True
     assert target.call_count == 1
+    assert target.last_message is not None
     assert target.last_message.data == "test"
 
 
@@ -301,7 +304,7 @@ async def test_single_edge_group_send_message_with_condition_fail() -> None:
     assert target.call_count == 0
 
 
-async def test_single_edge_group_tracing_success(span_exporter) -> None:
+async def test_single_edge_group_tracing_success(span_exporter: InMemorySpanExporter) -> None:
     """Test that single edge group processing creates proper success spans."""
     source = MockExecutor(id="source_executor")
     target = MockExecutor(id="target_executor")
@@ -352,7 +355,7 @@ async def test_single_edge_group_tracing_success(span_exporter) -> None:
     assert link.context.span_id == int("00f067aa0ba902b7", 16)
 
 
-async def test_single_edge_group_tracing_condition_failure(span_exporter) -> None:
+async def test_single_edge_group_tracing_condition_failure(span_exporter: InMemorySpanExporter) -> None:
     """Test that single edge group processing creates proper spans for condition failures."""
     source = MockExecutor(id="source_executor")
     target = MockExecutor(id="target_executor")
@@ -386,7 +389,7 @@ async def test_single_edge_group_tracing_condition_failure(span_exporter) -> Non
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE.value
 
 
-async def test_single_edge_group_tracing_type_mismatch(span_exporter) -> None:
+async def test_single_edge_group_tracing_type_mismatch(span_exporter: InMemorySpanExporter) -> None:
     """Test that single edge group processing creates proper spans for type mismatches."""
     source = MockExecutor(id="source_executor")
     target = MockExecutor(id="target_executor")
@@ -421,7 +424,7 @@ async def test_single_edge_group_tracing_type_mismatch(span_exporter) -> None:
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value
 
 
-async def test_single_edge_group_tracing_target_mismatch(span_exporter) -> None:
+async def test_single_edge_group_tracing_target_mismatch(span_exporter: InMemorySpanExporter) -> None:
     """Test that single edge group processing creates proper spans for target mismatches."""
     source = MockExecutor(id="source_executor")
     target = MockExecutor(id="target_executor")
@@ -775,7 +778,7 @@ async def test_source_edge_group_with_selection_func_send_message_with_target_in
     assert success is False
 
 
-async def test_fan_out_edge_group_tracing_success(span_exporter) -> None:
+async def test_fan_out_edge_group_tracing_success(span_exporter: InMemorySpanExporter) -> None:
     """Test that fan-out edge group processing creates proper success spans."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
@@ -827,7 +830,7 @@ async def test_fan_out_edge_group_tracing_success(span_exporter) -> None:
     assert link.context.span_id == int("00f067aa0ba902b7", 16)
 
 
-async def test_fan_out_edge_group_tracing_with_target(span_exporter) -> None:
+async def test_fan_out_edge_group_tracing_with_target(span_exporter: InMemorySpanExporter) -> None:
     """Test that fan-out edge group processing creates proper spans for targeted messages."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
@@ -994,7 +997,7 @@ async def test_target_edge_group_send_message_with_invalid_data() -> None:
     assert success is False
 
 
-async def test_fan_in_edge_group_tracing_buffered(span_exporter) -> None:
+async def test_fan_in_edge_group_tracing_buffered(span_exporter: InMemorySpanExporter) -> None:
     """Test that fan-in edge group processing creates proper spans for buffered messages."""
     source1 = MockExecutor(id="source_executor_1")
     source2 = MockExecutor(id="source_executor_2")
@@ -1086,7 +1089,7 @@ async def test_fan_in_edge_group_tracing_buffered(span_exporter) -> None:
     assert link.context.span_id == int("00f067aa0ba902b8", 16)
 
 
-async def test_fan_in_edge_group_tracing_type_mismatch(span_exporter) -> None:
+async def test_fan_in_edge_group_tracing_type_mismatch(span_exporter: InMemorySpanExporter) -> None:
     """Test that fan-in edge group processing creates proper spans for type mismatches."""
     source1 = MockExecutor(id="source_executor_1")
     source2 = MockExecutor(id="source_executor_2")

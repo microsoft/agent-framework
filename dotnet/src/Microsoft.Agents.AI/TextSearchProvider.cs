@@ -40,6 +40,7 @@ public sealed class TextSearchProvider : MessageAIContextProvider
     private const string DefaultCitationsPrompt = "Include citations to the source document with document name and link if document name and link is available.";
 
     private readonly ProviderSessionState<TextSearchProviderState> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
     private readonly Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> _searchAsync;
     private readonly ILogger<TextSearchProvider>? _logger;
     private readonly AITool[] _tools;
@@ -61,7 +62,7 @@ public sealed class TextSearchProvider : MessageAIContextProvider
         Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> searchAsync,
         TextSearchProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputRequestMessageFilter, options?.StorageInputResponseMessageFilter)
     {
         this._sessionState = new ProviderSessionState<TextSearchProviderState>(
             _ => new TextSearchProviderState(),
@@ -88,7 +89,7 @@ public sealed class TextSearchProvider : MessageAIContextProvider
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._sessionState.StateKey;
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(AIContextProvider.InvokingContext context, CancellationToken cancellationToken = default)

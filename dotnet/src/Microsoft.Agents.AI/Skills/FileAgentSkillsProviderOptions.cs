@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Shared.DiagnosticIds;
 
@@ -13,20 +14,19 @@ public sealed class FileAgentSkillsProviderOptions
 {
     /// <summary>
     /// Gets or sets a custom system prompt template for advertising skills.
-    /// Use <c>{skills}</c> as the placeholder for the generated skills list and
-    /// <c>{executor_instructions}</c> for executor-provided instructions.
+    /// Use <c>{0}</c> as the placeholder for the generated skills list.
     /// When <see langword="null"/>, a default template is used.
     /// </summary>
     public string? SkillsInstructionPrompt { get; set; }
 
     /// <summary>
-    /// Gets or sets the skill executor that enables script execution for loaded skills.
+    /// Gets or sets the file extensions recognized as discoverable skill resources.
+    /// Each value must start with a <c>'.'</c> character (for example, <c>.md</c>), and
+    /// extension comparisons are performed in a case-insensitive manner.
+    /// Files in the skill directory (and its subdirectories) whose extension matches
+    /// one of these values will be automatically discovered as resources.
+    /// When <see langword="null"/>, a default set of extensions is used
+    /// (<c>.md</c>, <c>.json</c>, <c>.yaml</c>, <c>.yml</c>, <c>.csv</c>, <c>.xml</c>, <c>.txt</c>).
     /// </summary>
-    /// <remarks>
-    /// When <see langword="null"/> (the default), script execution is disabled and skills only provide
-    /// instructions and resources. Set this to a <see cref="FileAgentSkillScriptExecutor"/> instance (e.g.,
-    /// <see cref="FileAgentSkillScriptExecutor.HostedCodeInterpreter()"/>) to enable script execution with
-    /// mode-specific instructions and tools.
-    /// </remarks>
-    public FileAgentSkillScriptExecutor? ScriptExecutor { get; set; }
+    public IEnumerable<string>? AllowedResourceExtensions { get; set; }
 }

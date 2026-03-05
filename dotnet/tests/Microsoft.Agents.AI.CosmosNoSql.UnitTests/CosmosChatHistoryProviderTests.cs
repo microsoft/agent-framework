@@ -150,7 +150,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
     [SkippableFact]
     [Trait("Category", "CosmosDB")]
-    public void StateKey_ReturnsDefaultKey_WhenNoStateKeyProvided()
+    public void StateKeys_ReturnsDefaultKey_WhenNoStateKeyProvided()
     {
         // Arrange & Act
         this.SkipIfEmulatorNotAvailable();
@@ -159,12 +159,13 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             _ => new CosmosChatHistoryProvider.State("test-conversation"));
 
         // Assert
-        Assert.Equal("CosmosChatHistoryProvider", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("CosmosChatHistoryProvider", provider.StateKeys);
     }
 
     [SkippableFact]
     [Trait("Category", "CosmosDB")]
-    public void StateKey_ReturnsCustomKey_WhenSetViaConstructor()
+    public void StateKeys_ReturnsCustomKey_WhenSetViaConstructor()
     {
         // Arrange & Act
         this.SkipIfEmulatorNotAvailable();
@@ -174,7 +175,8 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             stateKey: "custom-key");
 
         // Assert
-        Assert.Equal("custom-key", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("custom-key", provider.StateKeys);
     }
 
     [SkippableFact]
@@ -1004,7 +1006,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
             s_testDatabaseId,
             TestContainerId,
             _ => new CosmosChatHistoryProvider.State(conversationId),
-            storeInputMessageFilter: messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External));
+            storeInputRequestMessageFilter: messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External));
 
         var requestMessages = new[]
         {

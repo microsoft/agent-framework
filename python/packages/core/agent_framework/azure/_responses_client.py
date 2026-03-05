@@ -180,7 +180,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
                 client: AzureOpenAIResponsesClient[MyOptions] = AzureOpenAIResponsesClient()
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
-        if model_id := kwargs.pop("model_id", None) and not deployment_name:
+        if (model_id := kwargs.pop("model_id", None)) and not deployment_name:
             deployment_name = str(model_id)
 
         # Project client path: create OpenAI client from an Azure AI Foundry project

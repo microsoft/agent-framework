@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -15,8 +13,7 @@ namespace Microsoft.Agents.AI;
 /// and a markdown body with instructions. Resource files referenced in the body are validated at
 /// discovery time and read from disk on demand.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class FileAgentSkill
+internal sealed class FileAgentSkill
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="FileAgentSkill"/> class.
@@ -25,8 +22,8 @@ public sealed class FileAgentSkill
     /// <param name="body">The SKILL.md content after the closing <c>---</c> delimiter.</param>
     /// <param name="sourcePath">Absolute path to the directory containing this skill.</param>
     /// <param name="resourceNames">Relative paths of resource files referenced in the skill body.</param>
-    internal FileAgentSkill(
-        FileAgentSkillFrontmatter frontmatter,
+    public FileAgentSkill(
+        SkillFrontmatter frontmatter,
         string body,
         string sourcePath,
         IReadOnlyList<string>? resourceNames = null)
@@ -40,7 +37,12 @@ public sealed class FileAgentSkill
     /// <summary>
     /// Gets the parsed YAML frontmatter (name and description).
     /// </summary>
-    public FileAgentSkillFrontmatter Frontmatter { get; }
+    public SkillFrontmatter Frontmatter { get; }
+
+    /// <summary>
+    /// Gets the SKILL.md body content (without the YAML frontmatter).
+    /// </summary>
+    public string Body { get; }
 
     /// <summary>
     /// Gets the directory path where the skill was discovered.
@@ -48,12 +50,7 @@ public sealed class FileAgentSkill
     public string SourcePath { get; }
 
     /// <summary>
-    /// Gets the SKILL.md body content (without the YAML frontmatter).
-    /// </summary>
-    internal string Body { get; }
-
-    /// <summary>
     /// Gets the relative paths of resource files referenced in the skill body (e.g., "references/FAQ.md").
     /// </summary>
-    internal IReadOnlyList<string> ResourceNames { get; }
+    public IReadOnlyList<string> ResourceNames { get; }
 }

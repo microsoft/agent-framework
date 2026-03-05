@@ -42,32 +42,40 @@ public abstract class ChatHistoryProvider
 {
     private static IEnumerable<ChatMessage> DefaultExcludeChatHistoryFilter(IEnumerable<ChatMessage> messages)
         => messages.Where(m => m.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory);
+    private static IEnumerable<ChatMessage> DefaultNoopFilter(IEnumerable<ChatMessage> messages)
+        => messages;
 
+    private IReadOnlyList<string>? _stateKeys;
     private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? _provideOutputMessageFilter;
-    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> _storeInputMessageFilter;
+    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> _storeInputRequestMessageFilter;
+    private readonly Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> _storeInputResponseMessageFilter;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatHistoryProvider"/> class.
     /// </summary>
     /// <param name="provideOutputMessageFilter">An optional filter function to apply to messages when retrieving them from the chat history.</param>
-    /// <param name="storeInputMessageFilter">An optional filter function to apply to messages before storing them in the chat history. If not set, defaults to excluding messages with source type <see cref="AgentRequestMessageSourceType.ChatHistory"/>.</param>
+    /// <param name="storeInputRequestMessageFilter">An optional filter function to apply to request messages before storing them in the chat history. If not set, defaults to excluding messages with source type <see cref="AgentRequestMessageSourceType.ChatHistory"/>.</param>
+    /// <param name="storeInputResponseMessageFilter">An optional filter function to apply to response messages before storing them in the chat history. If not set, defaults to a no-op filter that includes all response messages.</param>
     protected ChatHistoryProvider(
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideOutputMessageFilter = null,
-        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputMessageFilter = null)
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
     {
         this._provideOutputMessageFilter = provideOutputMessageFilter;
-        this._storeInputMessageFilter = storeInputMessageFilter ?? DefaultExcludeChatHistoryFilter;
+        this._storeInputRequestMessageFilter = storeInputRequestMessageFilter ?? DefaultExcludeChatHistoryFilter;
+        this._storeInputResponseMessageFilter = storeInputResponseMessageFilter ?? DefaultNoopFilter;
     }
 
     /// <summary>
-    /// Gets the key used to store the provider state in the <see cref="AgentSession.StateBag"/>.
+    /// Gets the set of keys used to store the provider state in the <see cref="AgentSession.StateBag"/>.
     /// </summary>
     /// <remarks>
-    /// The default value is the name of the concrete type (e.g. <c>"InMemoryChatHistoryProvider"</c>).
-    /// Implementations may override this to provide a custom key, for example when multiple
-    /// instances of the same provider type are used in the same session.
+    /// The default value is a single-element set containing the name of the concrete type (e.g. <c>"InMemoryChatHistoryProvider"</c>).
+    /// Implementations may override this to provide custom keys, for example when multiple
+    /// instances of the same provider type are used in the same session, or when a provider
+    /// stores state under more than one key.
     /// </remarks>
-    public virtual string StateKey => this.GetType().Name;
+    public virtual IReadOnlyList<string> StateKeys => this._stateKeys ??= [this.GetType().Name];
 
     /// <summary>
     /// Called at the start of agent invocation to provide messages for the next agent invocation.
@@ -216,7 +224,7 @@ public abstract class ChatHistoryProvider
     /// To check if the invocation was successful, inspect the <see cref="InvokedContext.InvokeException"/> property.
     /// </para>
     /// <para>
-    /// The default implementation of this method, skips execution for any invocation failures, filters messages using the optional storage input message filter
+    /// The default implementation of this method, skips execution for any invocation failures, filters messages using the optional storage input request and response message filters
     /// and calls <see cref="StoreChatHistoryAsync"/> to store new chat history messages.
     /// For most scenarios, overriding <see cref="StoreChatHistoryAsync"/> is sufficient to store chat history messages, while still benefiting from the default error handling and filtering behavior.
     /// However, for scenarios that require more control over error handling or message filtering, overriding this method allows you to directly control the messages that are stored for the invocation.
@@ -229,7 +237,7 @@ public abstract class ChatHistoryProvider
             return default;
         }
 
-        var subContext = new InvokedContext(context.Agent, context.Session, this._storeInputMessageFilter(context.RequestMessages), context.ResponseMessages!);
+        var subContext = new InvokedContext(context.Agent, context.Session, this._storeInputRequestMessageFilter(context.RequestMessages), this._storeInputResponseMessageFilter(context.ResponseMessages!));
         return this.StoreChatHistoryAsync(subContext, cancellationToken);
     }
 
