@@ -152,4 +152,29 @@ public class CompactionTriggersTests
         MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "A")]);
         Assert.False(trigger(index));
     }
+
+    [Fact]
+    public void TokensBelowReturnsTrueWhenBelowThreshold()
+    {
+        CompactionTrigger trigger = CompactionTriggers.TokensBelow(999_999);
+        MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hi")]);
+
+        Assert.True(trigger(index));
+    }
+
+    [Fact]
+    public void TokensBelowReturnsFalseWhenAboveThreshold()
+    {
+        CompactionTrigger trigger = CompactionTriggers.TokensBelow(0);
+        MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello world")]);
+
+        Assert.False(trigger(index));
+    }
+
+    [Fact]
+    public void AlwaysReturnsTrue()
+    {
+        MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "A")]);
+        Assert.True(CompactionTriggers.Always(index));
+    }
 }

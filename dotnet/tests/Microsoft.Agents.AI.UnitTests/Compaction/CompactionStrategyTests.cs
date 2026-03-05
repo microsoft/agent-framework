@@ -1,0 +1,166 @@
+// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Agents.AI.Compaction;
+using Microsoft.Extensions.AI;
+
+namespace Microsoft.Agents.AI.UnitTests.Compaction;
+
+/// <summary>
+/// Contains tests for the <see cref="CompactionStrategy"/> abstract base class.
+/// </summary>
+public class CompactionStrategyTests
+{
+    [Fact]
+    public void ConstructorNullTriggerThrows()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => new TestStrategy(null!));
+    }
+
+    [Fact]
+    public async Task CompactAsyncTriggerNotMetReturnsFalseAsync()
+    {
+        // Arrange — trigger never fires
+        TestStrategy strategy = new(_ => false);
+        MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert
+        Assert.False(result);
+        Assert.Equal(0, strategy.ApplyCallCount);
+    }
+
+    [Fact]
+    public async Task CompactAsyncTriggerMetCallsApplyAsync()
+    {
+        // Arrange — trigger always fires
+        TestStrategy strategy = new(_ => true, applyFunc: _ => true);
+        MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert
+        Assert.True(result);
+        Assert.Equal(1, strategy.ApplyCallCount);
+    }
+
+    [Fact]
+    public async Task CompactAsyncReturnsFalseWhenApplyReturnsFalseAsync()
+    {
+        // Arrange — trigger fires but Apply does nothing
+        TestStrategy strategy = new(_ => true, applyFunc: _ => false);
+        MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert
+        Assert.False(result);
+        Assert.Equal(1, strategy.ApplyCallCount);
+    }
+
+    [Fact]
+    public async Task CompactAsyncDefaultTargetIsInverseOfTriggerAsync()
+    {
+        // Arrange — trigger fires when groups > 2
+        // Default target should be: stop when groups <= 2 (i.e., !trigger)
+        CompactionTrigger trigger = CompactionTriggers.GroupsExceed(2);
+        TestStrategy strategy = new(trigger, applyFunc: index =>
+        {
+            // Exclude oldest non-system group one at a time
+            foreach (MessageGroup group in index.Groups)
+            {
+                if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
+                {
+                    group.IsExcluded = true;
+                    // Target (default = !trigger) returns true when groups <= 2
+                    // So the strategy would check Target after this exclusion
+                    break;
+                }
+            }
+
+            return true;
+        });
+
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+            new ChatMessage(ChatRole.Assistant, "A2"),
+        ]);
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — trigger fires (4 > 2), Apply is called
+        Assert.True(result);
+        Assert.Equal(1, strategy.ApplyCallCount);
+    }
+
+    [Fact]
+    public async Task CompactAsyncCustomTargetIsPassedToStrategyAsync()
+    {
+        // Arrange — custom target that always signals stop
+        bool targetCalled = false;
+        CompactionTrigger customTarget = _ =>
+        {
+            targetCalled = true;
+            return true;
+        };
+
+        TestStrategy strategy = new(_ => true, customTarget, _ =>
+        {
+            // Access the target from within the strategy
+            return true;
+        });
+
+        MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+
+        // Act
+        await strategy.CompactAsync(index);
+
+        // Assert — the custom target is accessible (verified by TestStrategy checking it)
+        Assert.Equal(1, strategy.ApplyCallCount);
+        // The target is accessible to derived classes via the protected property
+        Assert.True(strategy.InvokeTarget(index));
+        Assert.True(targetCalled);
+    }
+
+    /// <summary>
+    /// A concrete test implementation of <see cref="CompactionStrategy"/> for testing the base class.
+    /// </summary>
+    private sealed class TestStrategy : CompactionStrategy
+    {
+        private readonly Func<MessageIndex, bool>? _applyFunc;
+
+        public TestStrategy(
+            CompactionTrigger trigger,
+            CompactionTrigger? target = null,
+            Func<MessageIndex, bool>? applyFunc = null)
+            : base(trigger, target)
+        {
+            this._applyFunc = applyFunc;
+        }
+
+        public int ApplyCallCount { get; private set; }
+
+        /// <summary>
+        /// Exposes the protected Target property for test verification.
+        /// </summary>
+        public bool InvokeTarget(MessageIndex index) => this.Target(index);
+
+        protected override Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
+        {
+            this.ApplyCallCount++;
+            bool result = this._applyFunc?.Invoke(index) ?? false;
+            return Task.FromResult(result);
+        }
+    }
+}

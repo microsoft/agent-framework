@@ -521,4 +521,158 @@ public class MessageIndexTests
         Assert.Equal(1, groups.TotalTurnCount);
         Assert.Equal(1, groups.IncludedTurnCount);
     }
+
+    [Fact]
+    public void UpdateAppendsNewMessagesIncrementally()
+    {
+        // Arrange — create with 2 messages
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+        ];
+        MessageIndex index = MessageIndex.Create(messages);
+        Assert.Equal(2, index.Groups.Count);
+        Assert.Equal(2, index.ProcessedMessageCount);
+
+        // Act — add 2 more messages and update
+        messages.Add(new ChatMessage(ChatRole.User, "Q2"));
+        messages.Add(new ChatMessage(ChatRole.Assistant, "A2"));
+        index.Update(messages);
+
+        // Assert — should have 4 groups total, processed count updated
+        Assert.Equal(4, index.Groups.Count);
+        Assert.Equal(4, index.ProcessedMessageCount);
+        Assert.Equal(MessageGroupKind.User, index.Groups[2].Kind);
+        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[3].Kind);
+    }
+
+    [Fact]
+    public void UpdateNoOpWhenNoNewMessages()
+    {
+        // Arrange
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+        ];
+        MessageIndex index = MessageIndex.Create(messages);
+        int originalCount = index.Groups.Count;
+
+        // Act — update with same count
+        index.Update(messages);
+
+        // Assert — nothing changed
+        Assert.Equal(originalCount, index.Groups.Count);
+    }
+
+    [Fact]
+    public void UpdateRebuildsWhenMessagesShrink()
+    {
+        // Arrange — create with 3 messages
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ];
+        MessageIndex index = MessageIndex.Create(messages);
+        Assert.Equal(3, index.Groups.Count);
+
+        // Exclude a group to verify rebuild clears state
+        index.Groups[0].IsExcluded = true;
+
+        // Act — update with fewer messages (simulates storage compaction)
+        List<ChatMessage> shortened =
+        [
+            new ChatMessage(ChatRole.User, "Q2"),
+        ];
+        index.Update(shortened);
+
+        // Assert — rebuilt from scratch
+        Assert.Single(index.Groups);
+        Assert.False(index.Groups[0].IsExcluded);
+        Assert.Equal(1, index.ProcessedMessageCount);
+    }
+
+    [Fact]
+    public void UpdatePreservesExistingGroupExclusionState()
+    {
+        // Arrange
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+        ];
+        MessageIndex index = MessageIndex.Create(messages);
+        index.Groups[0].IsExcluded = true;
+        index.Groups[0].ExcludeReason = "Test exclusion";
+
+        // Act — append new messages
+        messages.Add(new ChatMessage(ChatRole.User, "Q2"));
+        index.Update(messages);
+
+        // Assert — original exclusion state preserved
+        Assert.True(index.Groups[0].IsExcluded);
+        Assert.Equal("Test exclusion", index.Groups[0].ExcludeReason);
+        Assert.Equal(3, index.Groups.Count);
+    }
+
+    [Fact]
+    public void InsertGroupInsertsAtSpecifiedIndex()
+    {
+        // Arrange
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ]);
+
+        // Act — insert between Q1 and Q2
+        ChatMessage summaryMsg = new(ChatRole.Assistant, "[Summary]");
+        MessageGroup inserted = index.InsertGroup(1, MessageGroupKind.Summary, [summaryMsg], turnIndex: 1);
+
+        // Assert
+        Assert.Equal(3, index.Groups.Count);
+        Assert.Same(inserted, index.Groups[1]);
+        Assert.Equal(MessageGroupKind.Summary, index.Groups[1].Kind);
+        Assert.Equal("[Summary]", index.Groups[1].Messages[0].Text);
+        Assert.Equal(1, inserted.TurnIndex);
+    }
+
+    [Fact]
+    public void AddGroupAppendsToEnd()
+    {
+        // Arrange
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+        ]);
+
+        // Act
+        ChatMessage msg = new(ChatRole.Assistant, "Appended");
+        MessageGroup added = index.AddGroup(MessageGroupKind.AssistantText, [msg], turnIndex: 1);
+
+        // Assert
+        Assert.Equal(2, index.Groups.Count);
+        Assert.Same(added, index.Groups[1]);
+        Assert.Equal("Appended", index.Groups[1].Messages[0].Text);
+    }
+
+    [Fact]
+    public void InsertGroupComputesByteAndTokenCounts()
+    {
+        // Arrange
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+        ]);
+
+        // Act — insert a group with known text
+        ChatMessage msg = new(ChatRole.Assistant, "Hello"); // 5 bytes, ~1 token (5/4)
+        MessageGroup inserted = index.InsertGroup(0, MessageGroupKind.AssistantText, [msg]);
+
+        // Assert
+        Assert.Equal(5, inserted.ByteCount);
+        Assert.Equal(1, inserted.TokenCount); // 5 / 4 = 1 (integer division)
+    }
 }

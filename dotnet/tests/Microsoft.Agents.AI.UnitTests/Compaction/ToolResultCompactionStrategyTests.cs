@@ -191,4 +191,46 @@ public class ToolResultCompactionStrategyTests
         // Assert
         Assert.True(result);
     }
+
+    [Fact]
+    public async Task CompactAsyncTargetStopsCollapsingEarlyAsync()
+    {
+        // Arrange — 2 tool groups, target met after first collapse
+        int collapseCount = 0;
+        CompactionTrigger targetAfterOne = _ => ++collapseCount >= 1;
+
+        ToolResultCompactionStrategy strategy = new(
+            trigger: _ => true,
+            preserveRecentGroups: 1,
+            target: targetAfterOne);
+
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("c1", "fn1")]),
+            new ChatMessage(ChatRole.Tool, "result1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("c2", "fn2")]),
+            new ChatMessage(ChatRole.Tool, "result2"),
+            new ChatMessage(ChatRole.User, "Q3"),
+        ]);
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — only first tool group collapsed, second left intact
+        Assert.True(result);
+
+        // Count collapsed tool groups (excluded with ToolCall kind)
+        int collapsedToolGroups = 0;
+        foreach (MessageGroup group in index.Groups)
+        {
+            if (group.IsExcluded && group.Kind == MessageGroupKind.ToolCall)
+            {
+                collapsedToolGroups++;
+            }
+        }
+
+        Assert.Equal(1, collapsedToolGroups);
+    }
 }

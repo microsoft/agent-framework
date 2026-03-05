@@ -220,4 +220,60 @@ public class TruncationCompactionStrategyTests
         // Assert
         Assert.False(result);
     }
+
+    [Fact]
+    public async Task CompactAsyncCustomTargetStopsEarlyAsync()
+    {
+        // Arrange — always trigger, custom target stops after 1 exclusion
+        int targetChecks = 0;
+        CompactionTrigger targetAfterOne = _ => ++targetChecks >= 1;
+
+        TruncationCompactionStrategy strategy = new(
+            s_alwaysTrigger,
+            preserveRecentGroups: 1,
+            target: targetAfterOne);
+
+        MessageIndex groups = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+            new ChatMessage(ChatRole.User, "Q3"),
+        ]);
+
+        // Act
+        bool result = await strategy.CompactAsync(groups);
+
+        // Assert — only 1 group excluded (target met after first)
+        Assert.True(result);
+        Assert.True(groups.Groups[0].IsExcluded);
+        Assert.False(groups.Groups[1].IsExcluded);
+        Assert.False(groups.Groups[2].IsExcluded);
+        Assert.False(groups.Groups[3].IsExcluded);
+    }
+
+    [Fact]
+    public async Task CompactAsyncIncrementalStopsAtTargetAsync()
+    {
+        // Arrange — trigger on groups > 2, target is default (inverse of trigger: groups <= 2)
+        TruncationCompactionStrategy strategy = new(
+            CompactionTriggers.GroupsExceed(2),
+            preserveRecentGroups: 1);
+
+        MessageIndex groups = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+            new ChatMessage(ChatRole.Assistant, "A2"),
+            new ChatMessage(ChatRole.User, "Q3"),
+        ]);
+
+        // Act — 5 groups, trigger fires (5 > 2), compacts until groups <= 2
+        bool result = await strategy.CompactAsync(groups);
+
+        // Assert — should stop at 2 included groups (not go all the way to 1)
+        Assert.True(result);
+        Assert.Equal(2, groups.IncludedGroupCount);
+    }
 }

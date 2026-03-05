@@ -157,4 +157,38 @@ public class SlidingWindowCompactionStrategyTests
         Assert.Equal("Q2", included[1].Text);
         Assert.Equal("A2", included[2].Text);
     }
+
+    [Fact]
+    public async Task CompactAsyncCustomTargetStopsExcludingEarlyAsync()
+    {
+        // Arrange — 4 turns, maxTurns=1 means 3 should be excluded
+        // But custom target stops after removing 1 turn
+        int removeCount = 0;
+        CompactionTrigger targetAfterOne = _ => ++removeCount >= 1;
+
+        SlidingWindowCompactionStrategy strategy = new(
+            maximumTurns: 1,
+            target: targetAfterOne);
+
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+            new ChatMessage(ChatRole.Assistant, "A2"),
+            new ChatMessage(ChatRole.User, "Q3"),
+            new ChatMessage(ChatRole.Assistant, "A3"),
+            new ChatMessage(ChatRole.User, "Q4"),
+        ]);
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — only turn 1 excluded (target stopped after 1 removal)
+        Assert.True(result);
+        Assert.True(index.Groups[0].IsExcluded);   // Q1 (turn 1)
+        Assert.True(index.Groups[1].IsExcluded);   // A1 (turn 1)
+        Assert.False(index.Groups[2].IsExcluded);  // Q2 (turn 2) — kept
+        Assert.False(index.Groups[3].IsExcluded);  // A2 (turn 2)
+    }
 }
