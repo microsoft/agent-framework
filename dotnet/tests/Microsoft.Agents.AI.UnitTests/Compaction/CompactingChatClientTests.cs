@@ -1,8 +1,7 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -348,7 +347,7 @@ public sealed class CompactingChatClientTests : IDisposable
         SetRunContext(session);
 
         // Use an IEnumerable (not a List) to trigger the copy path
-        IEnumerable<ChatMessage> messages = new ChatMessage[] { new(ChatRole.User, "Hello") };
+        IEnumerable<ChatMessage> messages = [new(ChatRole.User, "Hello")];
 
         // Act
         ChatResponse response = await client.GetResponseAsync(messages);
@@ -380,7 +379,7 @@ public sealed class CompactingChatClientTests : IDisposable
         AgentRunContext context = new(
             mockAgent.Object,
             session,
-            new List<ChatMessage> { new(ChatRole.User, "test") },
+            [new(ChatRole.User, "test")],
             null);
         SetCurrentRunContext(context);
     }

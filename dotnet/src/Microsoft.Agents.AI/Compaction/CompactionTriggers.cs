@@ -21,6 +21,12 @@ public static class CompactionTriggers
         _ => true;
 
     /// <summary>
+    /// Always trigger compaction, regardless of the message index state.
+    /// </summary>
+    public static readonly CompactionTrigger Never =
+        _ => false;
+
+    /// <summary>
     /// Creates a trigger that fires when the included token count is below the specified maximum.
     /// </summary>
     /// <param name="maxTokens">The token threshold. Compaction proceeds when included tokens exceed this value.</param>

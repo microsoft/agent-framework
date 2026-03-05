@@ -246,7 +246,7 @@ public class SummarizationCompactionStrategyTests
     {
         // Arrange — 4 non-system groups, preserve 1, target met after 1 exclusion
         int exclusionCount = 0;
-        CompactionTrigger TargetAfterOne = _ => ++exclusionCount >= 1;
+        bool TargetAfterOne(MessageIndex _) => ++exclusionCount >= 1;
 
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient("Partial summary."),
@@ -296,5 +296,115 @@ public class SummarizationCompactionStrategyTests
         Assert.Contains("[Summary]", included[0].Text);
         Assert.Equal("Q2", included[1].Text);
         Assert.Equal("A2", included[2].Text);
+    }
+
+    [Fact]
+    public async Task CompactAsyncWithSystemBetweenSummarizableGroupsAsync()
+    {
+        // Arrange — system group between user/assistant groups to exercise skip logic in loop
+        IChatClient mockClient = CreateMockChatClient("[Summary]");
+        SummarizationCompactionStrategy strategy = new(
+            mockClient,
+            CompactionTriggers.Always,
+            minimumPreserved: 1);
+
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.System, "System note"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ]);
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — summary inserted at 0, system group shifted to index 2
+        Assert.True(result);
+        Assert.Equal(MessageGroupKind.Summary, index.Groups[0].Kind);
+        Assert.Equal(MessageGroupKind.System, index.Groups[2].Kind);
+        Assert.False(index.Groups[2].IsExcluded); // System never excluded
+    }
+
+    [Fact]
+    public async Task CompactAsyncMaxSummarizableBoundsLoopExitAsync()
+    {
+        // Arrange — large MinimumPreserved so maxSummarizable is small, target never stops
+        IChatClient mockClient = CreateMockChatClient("[Summary]");
+        SummarizationCompactionStrategy strategy = new(
+            mockClient,
+            CompactionTriggers.Always,
+            minimumPreserved: 3,
+            target: _ => false);
+
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+            new ChatMessage(ChatRole.Assistant, "A2"),
+            new ChatMessage(ChatRole.User, "Q3"),
+            new ChatMessage(ChatRole.Assistant, "A3"),
+        ]);
+
+        // Act — should only summarize 6-3 = 3 groups (not all 6)
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — 3 preserved + 1 summary = 4 included
+        Assert.True(result);
+        Assert.Equal(4, index.IncludedGroupCount);
+    }
+
+    [Fact]
+    public async Task CompactAsyncWithPreExcludedGroupAsync()
+    {
+        // Arrange — pre-exclude a group so the count and loop both must skip it
+        IChatClient mockClient = CreateMockChatClient("[Summary]");
+        SummarizationCompactionStrategy strategy = new(
+            mockClient,
+            CompactionTriggers.Always,
+            minimumPreserved: 1);
+
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+            new ChatMessage(ChatRole.Assistant, "A2"),
+        ]);
+        index.Groups[0].IsExcluded = true; // Pre-exclude Q1
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert
+        Assert.True(result);
+        Assert.True(index.Groups[0].IsExcluded); // Still excluded
+    }
+
+    [Fact]
+    public async Task CompactAsyncWithEmptyTextMessageInGroupAsync()
+    {
+        // Arrange — a message with null text (FunctionCallContent) in a summarized group
+        IChatClient mockClient = CreateMockChatClient("[Summary]");
+        SummarizationCompactionStrategy strategy = new(
+            mockClient,
+            CompactionTriggers.Always,
+            minimumPreserved: 1);
+
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("c1", "fn")]),
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+        ];
+
+        MessageIndex index = MessageIndex.Create(messages);
+
+        // Act — the tool-call group's message has null text
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — compaction succeeded despite null text
+        Assert.True(result);
     }
 }

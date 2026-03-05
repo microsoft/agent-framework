@@ -233,4 +233,30 @@ public class ToolResultCompactionStrategyTests
 
         Assert.Equal(1, collapsedToolGroups);
     }
+
+    [Fact]
+    public async Task CompactAsyncSkipsPreExcludedAndSystemGroupsAsync()
+    {
+        // Arrange — pre-excluded and system groups in the enumeration
+        ToolResultCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 0);
+
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.System, "System prompt"),
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("c1", "fn")]),
+            new ChatMessage(ChatRole.Tool, "Result 1"),
+            new ChatMessage(ChatRole.User, "Q1"),
+        ];
+
+        MessageIndex index = MessageIndex.Create(messages);
+        // Pre-exclude the user group
+        index.Groups[index.Groups.Count - 1].IsExcluded = true;
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — system never excluded, pre-excluded skipped
+        Assert.True(result);
+        Assert.False(index.Groups[0].IsExcluded); // System stays
+    }
 }

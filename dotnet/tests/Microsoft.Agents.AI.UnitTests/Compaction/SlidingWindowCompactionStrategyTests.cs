@@ -221,4 +221,30 @@ public class SlidingWindowCompactionStrategyTests
         Assert.False(index.Groups[4].IsExcluded);  // Q3
         Assert.False(index.Groups[5].IsExcluded);  // A3
     }
+
+    [Fact]
+    public async Task CompactAsyncSkipsExcludedAndSystemGroupsInEnumerationAsync()
+    {
+        // Arrange — includes system and pre-excluded groups that must be skipped
+        SlidingWindowCompactionStrategy strategy = new(
+            CompactionTriggers.TurnsExceed(1),
+            minimumPreserved: 0);
+
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.System, "System prompt"),
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ]);
+        // Pre-exclude one group
+        index.Groups[1].IsExcluded = true;
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — system preserved, pre-excluded skipped
+        Assert.True(result);
+        Assert.False(index.Groups[0].IsExcluded); // System preserved
+    }
 }

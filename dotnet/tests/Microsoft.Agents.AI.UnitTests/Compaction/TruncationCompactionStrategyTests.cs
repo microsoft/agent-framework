@@ -274,4 +274,55 @@ public class TruncationCompactionStrategyTests
         Assert.True(result);
         Assert.Equal(2, groups.IncludedGroupCount);
     }
+
+    [Fact]
+    public async Task CompactAsyncLoopExitsWhenMaxRemovableReachedAsync()
+    {
+        // Arrange — target never stops (always false), so the loop must exit via removed >= maxRemovable
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 2, target: CompactionTriggers.Never);
+        MessageIndex groups = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+            new ChatMessage(ChatRole.Assistant, "A2"),
+        ]);
+
+        // Act
+        bool result = await strategy.CompactAsync(groups);
+
+        // Assert — only 2 removed (maxRemovable = 4 - 2 = 2), 2 preserved
+        Assert.True(result);
+        Assert.Equal(2, groups.IncludedGroupCount);
+        Assert.True(groups.Groups[0].IsExcluded);
+        Assert.True(groups.Groups[1].IsExcluded);
+        Assert.False(groups.Groups[2].IsExcluded);
+        Assert.False(groups.Groups[3].IsExcluded);
+    }
+
+    [Fact]
+    public async Task CompactAsyncSkipsPreExcludedAndSystemGroupsAsync()
+    {
+        // Arrange — has excluded + system groups that the loop must skip
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
+        MessageIndex groups = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.System, "System"),
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ]);
+        // Pre-exclude one group
+        groups.Groups[1].IsExcluded = true;
+
+        // Act
+        bool result = await strategy.CompactAsync(groups);
+
+        // Assert — system preserved, pre-excluded skipped, A1 removed, Q2 preserved
+        Assert.True(result);
+        Assert.False(groups.Groups[0].IsExcluded); // System
+        Assert.True(groups.Groups[1].IsExcluded);  // Pre-excluded Q1
+        Assert.True(groups.Groups[2].IsExcluded);  // Newly excluded A1
+        Assert.False(groups.Groups[3].IsExcluded); // Preserved Q2
+    }
 }

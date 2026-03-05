@@ -800,6 +800,68 @@ public class MessageIndexTests
         Assert.Equal(4, inserted.TokenCount);
     }
 
+    [Fact]
+    public void CreateWithStandaloneToolMessageGroupsAsAssistantText()
+    {
+        // A Tool message not preceded by an assistant tool-call falls through to the else branch
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.Tool, "Orphaned tool result"),
+        ];
+
+        MessageIndex index = MessageIndex.Create(messages);
+
+        // The Tool message should be grouped as AssistantText (the default fallback)
+        Assert.Single(index.Groups);
+        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
+    }
+
+    [Fact]
+    public void CreateWithAssistantNonSummaryWithPropertiesFallsToAssistantText()
+    {
+        // Assistant message with AdditionalProperties but NOT a summary
+        ChatMessage assistant = new(ChatRole.Assistant, "Regular response");
+        (assistant.AdditionalProperties ??= [])["someOtherKey"] = "value";
+
+        MessageIndex index = MessageIndex.Create([assistant]);
+
+        Assert.Single(index.Groups);
+        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
+    }
+
+    [Fact]
+    public void ComputeByteCountHandlesNullAndNonNullText()
+    {
+        // Mix of messages: one with text (non-null), one without (null Text)
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("c1", "fn")]),
+        ];
+
+        int byteCount = MessageIndex.ComputeByteCount(messages);
+
+        // Only "Hello" contributes bytes (5 bytes UTF-8)
+        Assert.Equal(5, byteCount);
+    }
+
+    [Fact]
+    public void ComputeTokenCountHandlesNullAndNonNullText()
+    {
+        // Mix: one with text, one without
+        SimpleWordTokenizer tokenizer = new();
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Hello world"),
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("c1", "fn")]),
+        ];
+
+        int tokenCount = MessageIndex.ComputeTokenCount(messages, tokenizer);
+
+        // Only "Hello world" contributes tokens (2 words)
+        Assert.Equal(2, tokenCount);
+    }
+
     /// <summary>
     /// A simple tokenizer that counts whitespace-separated words as tokens.
     /// </summary>
