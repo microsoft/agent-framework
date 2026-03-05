@@ -58,12 +58,17 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
     /// An optional custom system prompt for the summarization LLM call. When <see langword="null"/>,
     /// <see cref="DefaultSummarizationPrompt"/> is used.
     /// </param>
+    /// <param name="target">
+    /// An optional target condition that controls when compaction stops. When <see langword="null"/>,
+    /// defaults to the inverse of the <paramref name="trigger"/> — compaction stops as soon as the trigger would no longer fire.
+    /// </param>
     public SummarizationCompactionStrategy(
         IChatClient chatClient,
         CompactionTrigger trigger,
         int preserveRecentGroups = 4,
-        string? summarizationPrompt = null)
-        : base(trigger)
+        string? summarizationPrompt = null,
+        CompactionTrigger? target = null)
+        : base(trigger, target)
     {
         this.ChatClient = Throw.IfNull(chatClient);
         this.PreserveRecentGroups = preserveRecentGroups;
@@ -100,19 +105,19 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
         }
 
         int protectedFromEnd = Math.Min(this.PreserveRecentGroups, nonSystemIncludedCount);
-        int groupsToSummarize = nonSystemIncludedCount - protectedFromEnd;
+        int maxSummarizable = nonSystemIncludedCount - protectedFromEnd;
 
-        if (groupsToSummarize <= 0)
+        if (maxSummarizable <= 0)
         {
             return false;
         }
 
-        // Collect the oldest non-system included groups for summarization
+        // Mark oldest non-system groups for summarization one at a time until the target is met
         StringBuilder conversationText = new();
         int summarized = 0;
         int insertIndex = -1;
 
-        for (int i = 0; i < index.Groups.Count && summarized < groupsToSummarize; i++)
+        for (int i = 0; i < index.Groups.Count && summarized < maxSummarizable; i++)
         {
             MessageGroup group = index.Groups[i];
             if (group.IsExcluded || group.Kind == MessageGroupKind.System)
@@ -138,6 +143,12 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
             group.IsExcluded = true;
             group.ExcludeReason = $"Summarized by {nameof(SummarizationCompactionStrategy)}";
             summarized++;
+
+            // Stop marking when target condition is met
+            if (this.Target(index))
+            {
+                break;
+            }
         }
 
         if (summarized == 0)
@@ -145,7 +156,7 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
             return false;
         }
 
-        // Generate summary using the chat client
+        // Generate summary using the chat client (single LLM call for all marked groups)
         ChatResponse response = await this.ChatClient.GetResponseAsync(
             [
                 new ChatMessage(ChatRole.System, this.SummarizationPrompt),

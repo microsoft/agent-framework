@@ -75,13 +75,13 @@ public class TruncationCompactionStrategyTests
         // Act
         bool result = await strategy.CompactAsync(groups);
 
-        // Assert
+        // Assert — incremental: excludes until GroupsExceed(2) is no longer met → 2 groups remain
         Assert.True(result);
-        Assert.Equal(1, groups.IncludedGroupCount);
-        // Oldest 3 excluded, newest 1 kept
+        Assert.Equal(2, groups.IncludedGroupCount);
+        // Oldest 2 excluded, newest 2 kept
         Assert.True(groups.Groups[0].IsExcluded);
         Assert.True(groups.Groups[1].IsExcluded);
-        Assert.True(groups.Groups[2].IsExcluded);
+        Assert.False(groups.Groups[2].IsExcluded);
         Assert.False(groups.Groups[3].IsExcluded);
     }
 

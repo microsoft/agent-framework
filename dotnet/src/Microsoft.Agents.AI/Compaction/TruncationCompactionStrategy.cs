@@ -37,8 +37,12 @@ public sealed class TruncationCompactionStrategy : CompactionStrategy
     /// The minimum number of most-recent non-system message groups to keep.
     /// Defaults to 1 so that at least the latest exchange is always preserved.
     /// </param>
-    public TruncationCompactionStrategy(CompactionTrigger trigger, int preserveRecentGroups = DefaultPreserveRecentGroups)
-        : base(trigger)
+    /// <param name="target">
+    /// An optional target condition that controls when compaction stops. When <see langword="null"/>,
+    /// defaults to the inverse of the <paramref name="trigger"/> — compaction stops as soon as the trigger would no longer fire.
+    /// </param>
+    public TruncationCompactionStrategy(CompactionTrigger trigger, int preserveRecentGroups = DefaultPreserveRecentGroups, CompactionTrigger? target = null)
+        : base(trigger, target)
     {
         this.PreserveRecentGroups = preserveRecentGroups;
     }
@@ -68,7 +72,7 @@ public sealed class TruncationCompactionStrategy : CompactionStrategy
             return Task.FromResult(false);
         }
 
-        // Exclude oldest non-system groups first (iterate from the beginning)
+        // Exclude oldest non-system groups one at a time, re-checking target after each
         bool compacted = false;
         int removed = 0;
         for (int i = 0; i < index.Groups.Count && removed < maxRemovable; i++)
@@ -83,6 +87,12 @@ public sealed class TruncationCompactionStrategy : CompactionStrategy
             group.ExcludeReason = $"Truncated by {nameof(TruncationCompactionStrategy)}";
             removed++;
             compacted = true;
+
+            // Stop when target condition is met
+            if (this.Target(index))
+            {
+                break;
+            }
         }
 
         return Task.FromResult(compacted);

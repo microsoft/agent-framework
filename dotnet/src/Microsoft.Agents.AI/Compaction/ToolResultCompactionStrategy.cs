@@ -44,8 +44,12 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     /// The number of most-recent non-system message groups to protect from collapsing.
     /// Defaults to <see cref="DefaultPreserveRecentGroups"/>, ensuring the current turn's tool interactions remain visible.
     /// </param>
-    public ToolResultCompactionStrategy(CompactionTrigger trigger, int preserveRecentGroups = DefaultPreserveRecentGroups)
-        : base(trigger)
+    /// <param name="target">
+    /// An optional target condition that controls when compaction stops. When <see langword="null"/>,
+    /// defaults to the inverse of the <paramref name="trigger"/> — compaction stops as soon as the trigger would no longer fire.
+    /// </param>
+    public ToolResultCompactionStrategy(CompactionTrigger trigger, int preserveRecentGroups = DefaultPreserveRecentGroups, CompactionTrigger? target = null)
+        : base(trigger, target)
     {
         this.PreserveRecentGroups = preserveRecentGroups;
     }
@@ -76,15 +80,30 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
             protectedGroupIndices.Add(nonSystemIncludedIndices[i]);
         }
 
-        // Process from end to start so insertions don't shift earlier indices
-        bool compacted = false;
-        for (int i = index.Groups.Count - 1; i >= 0; i--)
+        // Collect eligible tool groups in order (oldest first)
+        List<int> eligibleIndices = [];
+        for (int i = 0; i < index.Groups.Count; i++)
         {
             MessageGroup group = index.Groups[i];
-            if (group.IsExcluded || group.Kind != MessageGroupKind.ToolCall || protectedGroupIndices.Contains(i))
+            if (!group.IsExcluded && group.Kind == MessageGroupKind.ToolCall && !protectedGroupIndices.Contains(i))
             {
-                continue;
+                eligibleIndices.Add(i);
             }
+        }
+
+        if (eligibleIndices.Count == 0)
+        {
+            return Task.FromResult(false);
+        }
+
+        // Collapse one tool group at a time from oldest, re-checking target after each
+        bool compacted = false;
+        int offset = 0;
+
+        for (int e = 0; e < eligibleIndices.Count; e++)
+        {
+            int idx = eligibleIndices[e] + offset;
+            MessageGroup group = index.Groups[idx];
 
             // Extract tool names from FunctionCallContent
             List<string> toolNames = [];
@@ -107,9 +126,16 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
             group.ExcludeReason = $"Collapsed by {nameof(ToolResultCompactionStrategy)}";
 
             string summary = $"[Tool calls: {string.Join(", ", toolNames)}]";
-            index.InsertGroup(i + 1, MessageGroupKind.AssistantText, [new ChatMessage(ChatRole.Assistant, summary)], group.TurnIndex);
+            index.InsertGroup(idx + 1, MessageGroupKind.AssistantText, [new ChatMessage(ChatRole.Assistant, summary)], group.TurnIndex);
+            offset++; // Each insertion shifts subsequent indices by 1
 
             compacted = true;
+
+            // Stop when target condition is met
+            if (this.Target(index))
+            {
+                break;
+            }
         }
 
         return Task.FromResult(compacted);

@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -42,8 +41,12 @@ public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
     /// <param name="maximumTurns">
     /// The maximum number of user turns to keep. Older turns and their associated responses are removed.
     /// </param>
-    public SlidingWindowCompactionStrategy(int maximumTurns = DefaultMaximumTurns)
-        : base(CompactionTriggers.TurnsExceed(maximumTurns))
+    /// <param name="target">
+    /// An optional target condition that controls when compaction stops. When <see langword="null"/>,
+    /// defaults to the inverse of the auto-derived trigger — compaction stops as soon as the turn count is within bounds.
+    /// </param>
+    public SlidingWindowCompactionStrategy(int maximumTurns = DefaultMaximumTurns, CompactionTrigger? target = null)
+        : base(CompactionTriggers.TurnsExceed(maximumTurns), target)
     {
         this.MaxTurns = maximumTurns;
     }
@@ -71,24 +74,30 @@ public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
             return Task.FromResult(false);
         }
 
-        // Determine which turn indices to exclude (oldest)
+        // Exclude one turn at a time from oldest, re-checking target after each
         int turnsToRemove = includedTurns.Count - this.MaxTurns;
-        HashSet<int> excludedTurnIndices = [.. includedTurns.Take(turnsToRemove)];
-
         bool compacted = false;
-        for (int i = 0; i < index.Groups.Count; i++)
+
+        for (int t = 0; t < turnsToRemove; t++)
         {
-            MessageGroup group = index.Groups[i];
-            if (group.IsExcluded || group.Kind == MessageGroupKind.System)
+            int turnToExclude = includedTurns[t];
+
+            for (int i = 0; i < index.Groups.Count; i++)
             {
-                continue;
+                MessageGroup group = index.Groups[i];
+                if (!group.IsExcluded && group.Kind != MessageGroupKind.System && group.TurnIndex == turnToExclude)
+                {
+                    group.IsExcluded = true;
+                    group.ExcludeReason = $"Excluded by {nameof(SlidingWindowCompactionStrategy)}";
+                }
             }
 
-            if (group.TurnIndex is int ti && excludedTurnIndices.Contains(ti))
+            compacted = true;
+
+            // Stop when target condition is met
+            if (this.Target(index))
             {
-                group.IsExcluded = true;
-                group.ExcludeReason = $"Excluded by {nameof(SlidingWindowCompactionStrategy)}";
-                compacted = true;
+                break;
             }
         }
 

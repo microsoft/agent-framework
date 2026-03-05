@@ -23,6 +23,12 @@ namespace Microsoft.Agents.AI.Compaction;
 /// the trigger returns <see langword="false"/>.
 /// </para>
 /// <para>
+/// An optional <b>target</b> condition controls when compaction stops. Strategies incrementally exclude
+/// groups and re-evaluate the target after each exclusion, stopping as soon as the target returns
+/// <see langword="true"/>. When no target is specified, it defaults to the inverse of the trigger —
+/// meaning compaction stops when the trigger condition would no longer fire.
+/// </para>
+/// <para>
 /// Strategies can be applied at three lifecycle points:
 /// <list type="bullet">
 /// <item><description><b>In-run</b>: During the tool loop, before each LLM call, to keep context within token limits.</description></item>
@@ -43,15 +49,28 @@ public abstract class CompactionStrategy
     /// <param name="trigger">
     /// The <see cref="CompactionTrigger"/> that determines whether compaction should proceed.
     /// </param>
-    protected CompactionStrategy(CompactionTrigger trigger)
+    /// <param name="target">
+    /// An optional target condition that controls when compaction stops. Strategies re-evaluate
+    /// this predicate after each incremental exclusion and stop when it returns <see langword="true"/>.
+    /// When <see langword="null"/>, defaults to the inverse of the <paramref name="trigger"/> — compaction
+    /// stops as soon as the trigger condition would no longer fire.
+    /// </param>
+    protected CompactionStrategy(CompactionTrigger trigger, CompactionTrigger? target = null)
     {
         this.Trigger = Throw.IfNull(trigger);
+        this.Target = target ?? (index => !trigger(index));
     }
 
     /// <summary>
     /// Gets the trigger predicate that controls when compaction proceeds.
     /// </summary>
     protected CompactionTrigger Trigger { get; }
+
+    /// <summary>
+    /// Gets the target predicate that controls when compaction stops.
+    /// Strategies re-evaluate this after each incremental exclusion and stop when it returns <see langword="true"/>.
+    /// </summary>
+    protected CompactionTrigger Target { get; }
 
     /// <summary>
     /// Evaluates the <see cref="Trigger"/> and, when it fires, delegates to
@@ -98,7 +117,8 @@ public abstract class CompactionStrategy
     /// <remarks>
     /// This method is called by <see cref="CompactAsync"/> only when the <see cref="Trigger"/>
     /// returns <see langword="true"/>. Implementations do not need to evaluate the trigger or
-    /// report metrics — the base class handles both.
+    /// report metrics — the base class handles both. Implementations should use <see cref="Target"/>
+    /// to determine when to stop compacting incrementally.
     /// </remarks>
     /// <param name="index">The message index to compact. The strategy mutates this collection in place.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>

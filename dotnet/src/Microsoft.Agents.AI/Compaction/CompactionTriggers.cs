@@ -21,6 +21,14 @@ public static class CompactionTriggers
         _ => true;
 
     /// <summary>
+    /// Creates a trigger that fires when the included token count is below the specified maximum.
+    /// </summary>
+    /// <param name="maxTokens">The token threshold. Compaction proceeds when included tokens exceed this value.</param>
+    /// <returns>A <see cref="CompactionTrigger"/> that evaluates included token count.</returns>
+    public static CompactionTrigger TokensBelow(int maxTokens) =>
+        index => index.IncludedTokenCount < maxTokens;
+
+    /// <summary>
     /// Creates a trigger that fires when the included token count exceeds the specified maximum.
     /// </summary>
     /// <param name="maxTokens">The token threshold. Compaction proceeds when included tokens exceed this value.</param>
