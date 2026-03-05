@@ -52,9 +52,23 @@ class _KwargsCapturingAgent(BaseAgent):
         self.captured_kwargs = []
 
     @overload
-    def run(self, messages: AgentRunInputs | None = ..., *, stream: Literal[False] = ..., session: AgentSession | None = ..., **kwargs: Any) -> Awaitable[AgentResponse[Any]]: ...
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
     @overload
-    def run(self, messages: AgentRunInputs | None = ..., *, stream: Literal[True], session: AgentSession | None = ..., **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
         self,
@@ -90,9 +104,23 @@ class _OptionsAwareAgent(BaseAgent):
         self.captured_kwargs = []
 
     @overload
-    def run(self, messages: AgentRunInputs | None = ..., *, stream: Literal[False] = ..., session: AgentSession | None = ..., **kwargs: Any) -> Awaitable[AgentResponse[Any]]: ...
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
     @overload
-    def run(self, messages: AgentRunInputs | None = ..., *, stream: Literal[True], session: AgentSession | None = ..., **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
         self,
@@ -475,9 +503,23 @@ async def test_kwargs_preserved_on_response_continuation() -> None:
             self._asked = False
 
         @overload
-        def run(self, messages: AgentRunInputs | None = ..., *, stream: Literal[False] = ..., session: AgentSession | None = ..., **kwargs: Any) -> Awaitable[AgentResponse[Any]]: ...
+        def run(
+            self,
+            messages: AgentRunInputs | None = ...,
+            *,
+            stream: Literal[False] = ...,
+            session: AgentSession | None = ...,
+            **kwargs: Any,
+        ) -> Awaitable[AgentResponse[Any]]: ...
         @overload
-        def run(self, messages: AgentRunInputs | None = ..., *, stream: Literal[True], session: AgentSession | None = ..., **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+        def run(
+            self,
+            messages: AgentRunInputs | None = ...,
+            *,
+            stream: Literal[True],
+            session: AgentSession | None = ...,
+            **kwargs: Any,
+        ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
         def run(
             self,
@@ -538,9 +580,23 @@ async def test_kwargs_overridden_on_response_continuation() -> None:
             self._asked = False
 
         @overload
-        def run(self, messages: AgentRunInputs | None = ..., *, stream: Literal[False] = ..., session: AgentSession | None = ..., **kwargs: Any) -> Awaitable[AgentResponse[Any]]: ...
+        def run(
+            self,
+            messages: AgentRunInputs | None = ...,
+            *,
+            stream: Literal[False] = ...,
+            session: AgentSession | None = ...,
+            **kwargs: Any,
+        ) -> Awaitable[AgentResponse[Any]]: ...
         @overload
-        def run(self, messages: AgentRunInputs | None = ..., *, stream: Literal[True], session: AgentSession | None = ..., **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+        def run(
+            self,
+            messages: AgentRunInputs | None = ...,
+            *,
+            stream: Literal[True],
+            session: AgentSession | None = ...,
+            **kwargs: Any,
+        ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
         def run(
             self,
@@ -605,9 +661,23 @@ async def test_kwargs_empty_value_passed_on_continuation() -> None:
             self._asked = False
 
         @overload
-        def run(self, messages: AgentRunInputs | None = ..., *, stream: Literal[False] = ..., session: AgentSession | None = ..., **kwargs: Any) -> Awaitable[AgentResponse[Any]]: ...
+        def run(
+            self,
+            messages: AgentRunInputs | None = ...,
+            *,
+            stream: Literal[False] = ...,
+            session: AgentSession | None = ...,
+            **kwargs: Any,
+        ) -> Awaitable[AgentResponse[Any]]: ...
         @overload
-        def run(self, messages: AgentRunInputs | None = ..., *, stream: Literal[True], session: AgentSession | None = ..., **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+        def run(
+            self,
+            messages: AgentRunInputs | None = ...,
+            *,
+            stream: Literal[True],
+            session: AgentSession | None = ...,
+            **kwargs: Any,
+        ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
         def run(
             self,

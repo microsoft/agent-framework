@@ -12,7 +12,7 @@ import json
 import sys
 from functools import reduce
 from operator import and_
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import numpy as np
 from agent_framework import Message
@@ -107,9 +107,10 @@ class RedisContextProvider(BaseContextProvider):
         self._token_escaper: TokenEscaper = TokenEscaper()
         self._index_initialized: bool = False
         self._schema_dict: dict[str, Any] | None = None
-        self.redis_index = redis_index or AsyncSearchIndex.from_dict(
+        index = redis_index or AsyncSearchIndex.from_dict(  # pyright: ignore[reportUnknownMemberType]
             self.schema_dict, redis_url=self.redis_url, validate_on_load=True
         )
+        self.redis_index: Any = index
 
     # -- Hooks pattern ---------------------------------------------------------
 
@@ -189,7 +190,7 @@ class RedisContextProvider(BaseContextProvider):
 
     def _build_filter_from_dict(self, filters: dict[str, str | None]) -> Any | None:
         """Builds a combined filter expression from simple equality tags."""
-        parts = [Tag(k) == v for k, v in filters.items() if v]
+        parts: list[FilterExpression] = [Tag(k) == v for k, v in filters.items() if v]
         return reduce(and_, parts) if parts else None
 
     def _build_schema_dict(
@@ -278,7 +279,9 @@ class RedisContextProvider(BaseContextProvider):
                     sig["fields"][name] = {"type": ftype}
             return sig
 
-        existing_index = await AsyncSearchIndex.from_existing(self.index_name, redis_url=self.redis_url)
+        existing_index: Any = await AsyncSearchIndex.from_existing(  # pyright: ignore[reportUnknownMemberType]
+            self.index_name, redis_url=self.redis_url
+        )
         existing_schema = existing_index.schema.to_dict()
         current_schema = self.schema_dict
         existing_sig = _schema_signature(existing_schema)
@@ -319,7 +322,9 @@ class RedisContextProvider(BaseContextProvider):
 
         if self.redis_vectorizer and self.vector_field_name:
             text_list = [d["content"] for d in prepared]
-            embeddings = await self.redis_vectorizer.aembed_many(text_list, batch_size=len(text_list))
+            embeddings = await self.redis_vectorizer.aembed_many(  # pyright: ignore[reportUnknownMemberType]
+                text_list, batch_size=len(text_list)
+            )
             for i, d in enumerate(prepared):
                 vec = np.asarray(embeddings[i], dtype=np.float32).tobytes()
                 field_name: str = self.vector_field_name
@@ -365,7 +370,7 @@ class RedisContextProvider(BaseContextProvider):
 
         try:
             if self.redis_vectorizer and self.vector_field_name:
-                vector = await self.redis_vectorizer.aembed(q)
+                vector = await self.redis_vectorizer.aembed(q)  # pyright: ignore[reportUnknownMemberType]
                 query = HybridQuery(
                     text=q,
                     text_field_name="content",
@@ -374,13 +379,12 @@ class RedisContextProvider(BaseContextProvider):
                     text_scorer=text_scorer,
                     filter_expression=combined_filter,
                     linear_alpha=linear_alpha,
-                    dtype=self.redis_vectorizer.dtype,
+                    dtype=self.redis_vectorizer.dtype,  # pyright: ignore[reportUnknownMemberType]
                     num_results=num_results,
                     return_fields=return_fields,
                     stopwords=None,
                 )
-                hybrid_results = await self.redis_index.query(query)
-                return cast(list[dict[str, Any]], hybrid_results)
+                return await self.redis_index.query(query)  # type: ignore[no-any-return]
             query = TextQuery(
                 text=q,
                 text_field_name="content",
@@ -390,8 +394,7 @@ class RedisContextProvider(BaseContextProvider):
                 return_fields=return_fields,
                 stopwords=None,
             )
-            text_results = await self.redis_index.query(query)
-            return cast(list[dict[str, Any]], text_results)
+            return await self.redis_index.query(query)  # type: ignore[no-any-return]
         except Exception as exc:  # pragma: no cover
             raise IntegrationInvalidRequestException(f"Redis text search failed: {exc}") from exc
 

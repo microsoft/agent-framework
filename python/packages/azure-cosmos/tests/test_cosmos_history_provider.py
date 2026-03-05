@@ -9,14 +9,15 @@ from contextlib import suppress
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import agent_framework_azure_cosmos._history_provider as history_provider_module
 import pytest
 from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import SettingNotFoundError
-from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider
 from azure.cosmos.aio import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
+
+import agent_framework_azure_cosmos._history_provider as history_provider_module
+from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider
 
 skip_if_cosmos_integration_tests_disabled = pytest.mark.skipif(
     any(
@@ -357,9 +358,10 @@ class TestCosmosHistoryProviderClose:
     async def test_async_context_manager_preserves_original_exception(self, mock_container: MagicMock) -> None:
         provider = CosmosHistoryProvider(source_id="mem", container_client=mock_container)
 
-        with patch.object(
-            provider, "close", AsyncMock(side_effect=RuntimeError("close failed"))
-        ), pytest.raises(ValueError, match="inner error"):
+        with (
+            patch.object(provider, "close", AsyncMock(side_effect=RuntimeError("close failed"))),
+            pytest.raises(ValueError, match="inner error"),
+        ):
             async with provider:
                 raise ValueError("inner error")
 

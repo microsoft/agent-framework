@@ -16,6 +16,7 @@ Coverage includes:
 - String interpolation: {Variable.Path}
 """
 
+import locale
 from unittest.mock import MagicMock
 
 import pytest
@@ -494,29 +495,38 @@ class TestPowerFxUndefinedVariables:
         assert result is None
 
     async def test_undefined_variable_returns_none_with_non_english_ui_culture(self, mock_state):
-        """Test that undefined variables return None even when CurrentUICulture is non-English.
+        """Test that undefined variables return None even when locale is non-English.
 
-        Regression test for #4321: on non-English systems, CurrentUICulture causes
+        Regression test for #4321: on non-English systems, locale settings can cause
         PowerFx to emit localized error messages that don't match the English
         string guards ("isn't recognized", "Name isn't valid"), crashing the workflow.
-        The fix sets CurrentUICulture to en-US alongside CurrentCulture before eval.
+        The fix evaluates with locale='en-US' and restores the ambient LC_NUMERIC.
         """
-        from System.Globalization import CultureInfo
-
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
 
-        # Simulate a non-English UI culture (e.g. Italian)
-        original_ui_culture = CultureInfo.CurrentUICulture
-        CultureInfo.CurrentUICulture = CultureInfo("it-IT")
+        # Simulate a non-English locale (e.g. Italian)
+        original_numeric_locale = locale.setlocale(locale.LC_NUMERIC)
+        test_numeric_locale: str | None = None
         try:
+            for locale_candidate in ("it_IT.UTF-8", "it_IT", "fr_FR.UTF-8", "fr_FR", "de_DE.UTF-8", "de_DE"):
+                try:
+                    locale.setlocale(locale.LC_NUMERIC, locale_candidate)
+                    test_numeric_locale = locale.setlocale(locale.LC_NUMERIC)
+                    break
+                except locale.Error:
+                    continue
+
+            if test_numeric_locale is None:
+                pytest.skip("No non-English LC_NUMERIC locale available on this system")
+
             # Should return None, not raise ValueError with Italian error text
             result = state.eval("=Local.StatusConversationId")
             assert result is None
-            # Verify the production code restored CurrentUICulture after eval
-            assert str(CultureInfo.CurrentUICulture) == str(CultureInfo("it-IT"))
+            # Verify the production code restored LC_NUMERIC after eval
+            assert locale.setlocale(locale.LC_NUMERIC) == test_numeric_locale
         finally:
-            CultureInfo.CurrentUICulture = original_ui_culture
+            locale.setlocale(locale.LC_NUMERIC, original_numeric_locale)
 
 
 class TestStringInterpolation:
