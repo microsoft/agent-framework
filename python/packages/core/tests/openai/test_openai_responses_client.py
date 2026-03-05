@@ -2241,6 +2241,45 @@ def test_prepare_content_for_openai_unsupported_content() -> None:
     assert result == {}
 
 
+def test_prepare_content_for_openai_function_result_with_rich_items() -> None:
+    """Test _prepare_content_for_openai with function_result containing rich items."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    image_content = Content.from_data(data=b"image_bytes", media_type="image/png")
+    content = Content.from_function_result(
+        call_id="call_rich",
+        result=[Content.from_text("Result text"), image_content],
+    )
+
+    result = client._prepare_content_for_openai("user", content, {})  # type: ignore
+
+    assert result["type"] == "function_call_output"
+    assert result["call_id"] == "call_rich"
+    # Output should be a list with text and image parts
+    output = result["output"]
+    assert isinstance(output, list)
+    assert len(output) == 2
+    assert output[0]["type"] == "input_text"
+    assert output[0]["text"] == "Result text"
+    assert output[1]["type"] == "input_image"
+
+
+def test_prepare_content_for_openai_function_result_without_items() -> None:
+    """Test _prepare_content_for_openai with plain string function_result."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    content = Content.from_function_result(
+        call_id="call_plain",
+        result="Simple result",
+    )
+
+    result = client._prepare_content_for_openai("user", content, {})  # type: ignore
+
+    assert result["type"] == "function_call_output"
+    assert result["call_id"] == "call_plain"
+    assert result["output"] == "Simple result"
+
+
 def test_parse_chunk_from_openai_code_interpreter() -> None:
     """Test _parse_chunk_from_openai with code_interpreter_call."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")

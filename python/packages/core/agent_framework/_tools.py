@@ -649,8 +649,8 @@ class FunctionTool(SerializationMixin):
         if isinstance(result, Content):
             if result.type in ("data", "uri"):
                 return [result]
-            if result.type == "text" and result.text:
-                return result.text
+            if result.type == "text":
+                return result.text or ""
         if isinstance(result, list) and any(isinstance(item, Content) for item in result):
             return [item if isinstance(item, Content) else Content.from_text(str(item)) for item in result]
         dumpable = FunctionTool._make_dumpable(result)

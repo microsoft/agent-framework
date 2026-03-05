@@ -364,6 +364,37 @@ def test_function_result_exception_handling(openai_unit_test_env: dict[str, str]
     assert openai_messages[0]["tool_call_id"] == "call-123"
 
 
+def test_function_result_with_rich_items_warns_and_omits(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that function_result with items logs a warning and omits rich items."""
+
+    client = OpenAIChatClient()
+    image_content = Content.from_data(data=b"image_bytes", media_type="image/png")
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(
+                call_id="call_rich",
+                result=[Content.from_text("Result text"), image_content],
+            )
+        ],
+    )
+
+    with patch("agent_framework.openai._chat_client.logger") as mock_logger:
+        openai_messages = client._prepare_message_for_openai(message)
+
+    # Warning should be logged
+    mock_logger.warning.assert_called_once()
+    assert "does not support rich content" in mock_logger.warning.call_args[0][0]
+
+    # Tool message should still be emitted with text result
+    assert len(openai_messages) == 1
+    assert openai_messages[0]["role"] == "tool"
+    assert openai_messages[0]["tool_call_id"] == "call_rich"
+    assert openai_messages[0]["content"] == "Result text"
+
+
 def test_parse_result_string_passthrough():
     """Test that string values are passed through directly without JSON encoding."""
     from agent_framework import FunctionTool

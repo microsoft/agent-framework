@@ -217,6 +217,112 @@ def test_prepare_message_for_anthropic_function_result(
     assert result["content"][0]["is_error"] is False
 
 
+def test_prepare_message_for_anthropic_function_result_with_data_image(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Test function result with a data-type image item produces a base64 image block."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    image_content = Content.from_data(data=b"fake_image_bytes", media_type="image/png")
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(
+                call_id="call_img",
+                result=[Content.from_text("Here is the image"), image_content],
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["role"] == "user"
+    tool_result = result["content"][0]
+    assert tool_result["type"] == "tool_result"
+    assert tool_result["tool_use_id"] == "call_img"
+    content = tool_result["content"]
+    assert len(content) == 2
+    assert content[0]["type"] == "text"
+    assert content[0]["text"] == "Here is the image"
+    assert content[1]["type"] == "image"
+    assert content[1]["source"]["type"] == "base64"
+    assert content[1]["source"]["media_type"] == "image/png"
+
+
+def test_prepare_message_for_anthropic_function_result_with_uri_image(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Test function result with a uri-type image item produces a URL image block."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    uri_content = Content.from_uri(uri="https://example.com/image.png", media_type="image/png")
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(
+                call_id="call_uri",
+                result=[uri_content],
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    tool_result = result["content"][0]
+    content = tool_result["content"]
+    assert len(content) == 1
+    assert content[0]["type"] == "image"
+    assert content[0]["source"]["type"] == "url"
+    assert content[0]["source"]["url"] == "https://example.com/image.png"
+
+
+def test_prepare_message_for_anthropic_function_result_with_unsupported_media(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Test function result with unsupported media type skips the item."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    audio_content = Content.from_data(data=b"audio_bytes", media_type="audio/wav")
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(
+                call_id="call_audio",
+                result=[Content.from_text("Some text"), audio_content],
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    tool_result = result["content"][0]
+    content = tool_result["content"]
+    # Audio should be skipped, only text remains
+    assert len(content) == 1
+    assert content[0]["type"] == "text"
+    assert content[0]["text"] == "Some text"
+
+
+def test_prepare_message_for_anthropic_function_result_all_unsupported_media(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Test function result where all items are unsupported falls back to string result."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    audio_content = Content.from_data(data=b"audio_bytes", media_type="audio/wav")
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(
+                call_id="call_all_unsupported",
+                result=[audio_content],
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    tool_result = result["content"][0]
+    # All items unsupported → tool_content is empty → falls back to string result
+    assert tool_result["content"] == ""
+
+
 def test_prepare_message_for_anthropic_text_reasoning(
     mock_anthropic_client: MagicMock,
 ) -> None:

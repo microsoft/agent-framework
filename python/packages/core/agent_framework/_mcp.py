@@ -158,71 +158,65 @@ def _parse_tool_result_from_mcp(
     """
     import json
 
-    text_parts: list[str] = []
-    rich_items: list[Content] = []
+    result: list[Content] = []
+    has_rich = False
     for item in mcp_type.content:
         match item:
             case types.TextContent():
-                text_parts.append(item.text)
+                result.append(Content.from_text(item.text))
             case types.ImageContent():
-                rich_items.append(
+                has_rich = True
+                result.append(
                     Content.from_uri(
                         uri=f"data:{item.mimeType};base64,{item.data}",
                         media_type=item.mimeType,
                     )
                 )
             case types.AudioContent():
-                rich_items.append(
+                has_rich = True
+                result.append(
                     Content.from_uri(
                         uri=f"data:{item.mimeType};base64,{item.data}",
                         media_type=item.mimeType,
                     )
                 )
             case types.ResourceLink():
-                text_parts.append(
-                    json.dumps(
-                        {
-                            "type": "resource_link",
-                            "uri": str(item.uri),
-                            "mimeType": item.mimeType,
-                        },
-                        default=str,
+                result.append(
+                    Content.from_text(
+                        json.dumps(
+                            {
+                                "type": "resource_link",
+                                "uri": str(item.uri),
+                                "mimeType": item.mimeType,
+                            },
+                            default=str,
+                        )
                     )
                 )
             case types.EmbeddedResource():
                 match item.resource:
                     case types.TextResourceContents():
-                        text_parts.append(item.resource.text)
+                        result.append(Content.from_text(item.resource.text))
                     case types.BlobResourceContents():
-                        text_parts.append(
-                            json.dumps(
-                                {
-                                    "type": "blob",
-                                    "data": item.resource.blob,
-                                    "mimeType": item.resource.mimeType,
-                                },
-                                default=str,
+                        result.append(
+                            Content.from_text(
+                                json.dumps(
+                                    {
+                                        "type": "blob",
+                                        "data": item.resource.blob,
+                                        "mimeType": item.resource.mimeType,
+                                    },
+                                    default=str,
+                                )
                             )
                         )
             case _:
-                text_parts.append(str(item))
+                result.append(Content.from_text(str(item)))
 
-    if rich_items:
-        # Return rich content list preserving original order
-        result: list[Content] = []
-        text_idx = 0
-        rich_idx = 0
-        for item in mcp_type.content:
-            match item:
-                case types.ImageContent() | types.AudioContent():
-                    result.append(rich_items[rich_idx])
-                    rich_idx += 1
-                case _:
-                    if text_idx < len(text_parts):
-                        result.append(Content.from_text(text_parts[text_idx]))
-                        text_idx += 1
+    if has_rich:
         return result
 
+    text_parts = [c.text for c in result if c.text]
     if not text_parts:
         return ""
     if len(text_parts) == 1:

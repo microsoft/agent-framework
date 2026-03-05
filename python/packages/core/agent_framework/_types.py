@@ -801,6 +801,17 @@ class Content:
             raw_representation: Optional raw representation from the provider.
         """
         if isinstance(result, list):
+            if not all(isinstance(c, Content) for c in result):
+                return cls(
+                    "function_result",
+                    call_id=call_id,
+                    result=str(result),
+                    items=list(items) if items else None,
+                    exception=exception,
+                    annotations=annotations,
+                    additional_properties=additional_properties,
+                    raw_representation=raw_representation,
+                )
             text_parts = [c.text for c in result if c.type == "text" and c.text]
             rich_items = [c for c in result if c.type in ("data", "uri")]
             return cls(

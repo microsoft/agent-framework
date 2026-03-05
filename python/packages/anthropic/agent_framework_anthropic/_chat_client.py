@@ -741,10 +741,15 @@ class AnthropicClient(
                                     "Ignoring unsupported rich content media type in tool result: %s",
                                     item.media_type,
                                 )
+                        tool_result_content = (
+                            tool_content
+                            if tool_content
+                            else (content.result if content.result is not None else "")
+                        )
                         a_content.append({
                             "type": "tool_result",
                             "tool_use_id": content.call_id,
-                            "content": tool_content,
+                            "content": tool_result_content,
                             "is_error": content.exception is not None,
                         })
                     else:

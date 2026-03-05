@@ -2427,6 +2427,27 @@ def test_content_from_function_result_items_in_to_dict():
     assert d["items"][0]["type"] == "data"
 
 
+def test_from_function_result_with_only_rich_content_list():
+    """Test Content.from_function_result with only image items and no text."""
+    content_list = [
+        Content.from_data(data=b"image_bytes", media_type="image/png"),
+    ]
+    result = Content.from_function_result(call_id="test-456", result=content_list)
+    assert result.type == "function_result"
+    assert result.result == ""
+    assert result.items is not None
+    assert len(result.items) == 1
+    assert result.items[0].type == "data"
+
+
+def test_from_function_result_with_non_content_list():
+    """Test Content.from_function_result with a list of non-Content objects falls back to str."""
+    result = Content.from_function_result(call_id="test-789", result=["hello", "world"])
+    assert result.type == "function_result"
+    assert result.result == "['hello', 'world']"
+    assert result.items is None
+
+
 # endregion
 
 
