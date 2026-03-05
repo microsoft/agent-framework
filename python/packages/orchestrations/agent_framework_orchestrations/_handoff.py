@@ -41,7 +41,7 @@ from agent_framework import Agent, SupportsAgentRun
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware
 from agent_framework._sessions import AgentSession
 from agent_framework._tools import FunctionTool, tool
-from agent_framework._types import AgentResponse, AgentResponseUpdate, Content, Message
+from agent_framework._types import AgentResponse, AgentResponseUpdate, Message
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
@@ -252,7 +252,6 @@ class HandoffAgentExecutor(AgentExecutor):
         Returns:
             A cloned ``Agent`` instance with handoff tools added
         """
-
         # Clone the agent to avoid mutating the original
         cloned_agent = self._clone_chat_agent(agent)  # type: ignore
         # Add handoff tools to the cloned agent
@@ -264,88 +263,6 @@ class HandoffAgentExecutor(AgentExecutor):
         cloned_agent.middleware = existing_middleware
 
         return cloned_agent
-
-    def _persist_pending_approval_function_calls(self) -> None:
-        """Persist pending approval function calls for stateless provider resumes.
-
-        Handoff workflows force ``store=False`` and replay conversation state from ``_full_conversation``.
-        When a run pauses on function approval, ``AgentExecutor`` returns ``None`` and the assistant
-        function-call message is not returned as an ``AgentResponse``. Without persisting that call, the
-        next turn may submit only a function result, which responses-style APIs reject.
-        """
-        pending_calls: list[Content] = []
-        for request in self._pending_agent_requests.values():
-            if request.type != "function_approval_request":
-                continue
-            function_call = getattr(request, "function_call", None)
-            if isinstance(function_call, Content) and function_call.type == "function_call":
-                pending_calls.append(function_call)
-
-        if not pending_calls:
-            return
-
-        self._full_conversation.append(
-            Message(
-                role="assistant",
-                contents=pending_calls,
-                author_name=self._agent.name,
-            )
-        )
-
-    def _persist_missing_approved_function_results(
-        self,
-        *,
-        runtime_tool_messages: list[Message],
-        response_messages: list[Message],
-    ) -> None:
-        """Persist fallback function_result entries for approved calls when missing.
-
-        In approval resumes, function invocation can execute approved tools without
-        always surfacing those tool outputs in the returned ``AgentResponse.messages``.
-        For stateless handoff replays, we must keep call/output pairs balanced.
-        """
-        candidate_results: dict[str, Content] = {}
-        for message in runtime_tool_messages:
-            for content in message.contents:
-                if content.type == "function_result":
-                    call_id = getattr(content, "call_id", None)
-                    if isinstance(call_id, str) and call_id:
-                        candidate_results[call_id] = content
-                    continue
-
-                if content.type != "function_approval_response" or not content.approved:
-                    continue
-
-                function_call = getattr(content, "function_call", None)
-                call_id = getattr(function_call, "call_id", None) or getattr(content, "id", None)
-                if isinstance(call_id, str) and call_id and call_id not in candidate_results:
-                    # Fallback content for approved calls when runtime messages do not include
-                    # a concrete function_result payload.
-                    candidate_results[call_id] = Content.from_function_result(
-                        call_id=call_id,
-                        result='{"status":"approved"}',
-                    )
-
-        if not candidate_results:
-            return
-
-        observed_result_call_ids: set[str] = set()
-        for message in [*self._full_conversation, *response_messages]:
-            for content in message.contents:
-                if content.type == "function_result" and isinstance(content.call_id, str) and content.call_id:
-                    observed_result_call_ids.add(content.call_id)
-
-        missing_call_ids = sorted(set(candidate_results.keys()) - observed_result_call_ids)
-        if not missing_call_ids:
-            return
-
-        self._full_conversation.append(
-            Message(
-                role="tool",
-                contents=[candidate_results[call_id] for call_id in missing_call_ids],
-                author_name=self._agent.name,
-            )
-        )
 
     def _clone_chat_agent(self, agent: Agent) -> Agent:
         """Produce a deep copy of the Agent while preserving runtime configuration."""
@@ -367,10 +284,7 @@ class HandoffAgentExecutor(AgentExecutor):
         # Disable parallel tool calls to prevent the agent from invoking multiple handoff tools at once.
         cloned_options: dict[str, Any] = {
             "allow_multiple_tool_calls": False,
-            # Handoff workflows already manage full conversation context explicitly
-            # across executors. Keep provider-side conversation storage disabled to
-            # avoid stale tool-call state (Responses API previous_response chains).
-            "store": False,
+            "store": options.get("store"),
             "frequency_penalty": options.get("frequency_penalty"),
             "instructions": options.get("instructions"),
             "logit_bias": dict(logit_bias) if logit_bias else None,
@@ -449,44 +363,15 @@ class HandoffAgentExecutor(AgentExecutor):
         self, ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate]
     ) -> None:
         """Override to support handoff."""
-        incoming_messages = list(self._cache)
-        cleaned_incoming_messages = clean_conversation_for_handoff(incoming_messages)
-        runtime_tool_messages = [
-            message
-            for message in incoming_messages
-            if any(
-                content.type
-                in {
-                    "function_result",
-                    "function_approval_response",
-                }
-                for content in message.contents
-            )
-            or message.role == "tool"
-        ]
-
         # When the full conversation is empty, it means this is the first run.
         # Broadcast the initial cache to all other agents. Subsequent runs won't
         # need this since responses are broadcast after each agent run and user input.
         if self._is_start_agent and not self._full_conversation:
-            await self._broadcast_messages(cleaned_incoming_messages, cast(WorkflowContext[AgentExecutorRequest], ctx))
+            await self._broadcast_messages(self._cache.copy(), cast(WorkflowContext[AgentExecutorRequest], ctx))
 
-        # Persist only cleaned chat history between turns to avoid replaying stale tool calls.
-        self._full_conversation.extend(cleaned_incoming_messages)
-
-        # Always run with full conversation context for request_info resumes.
-        # Keep runtime tool-control messages for this run only (e.g., approval responses).
-        self._cache = list(self._full_conversation)
-        self._cache.extend(runtime_tool_messages)
-
-        # Handoff workflows are orchestrator-stateful and provider-stateless by design.
-        # If an existing session still has a service conversation id, clear it to avoid
-        # replaying stale unresolved tool calls across resumed turns.
-        if (
-            cast(Agent, self._agent).default_options.get("store") is False
-            and self._session.service_session_id is not None
-        ):
-            self._session.service_session_id = None
+        # Full conversation maintains the chat history between agents across handoffs,
+        # excluding internal agent messages such as tool calls and results.
+        self._full_conversation.extend(self._cache.copy())
 
         # Check termination condition before running the agent
         if await self._check_terminate_and_yield(cast(WorkflowContext[Never, list[Message]], ctx)):
@@ -505,35 +390,41 @@ class HandoffAgentExecutor(AgentExecutor):
 
         # A function approval request is issued by the base AgentExecutor
         if response is None:
-            if cast(Agent, self._agent).default_options.get("store") is False:
-                self._persist_pending_approval_function_calls()
             # Agent did not complete (e.g., waiting for user input); do not emit response
             logger.debug("AgentExecutor %s: Agent did not complete, awaiting user input", self.id)
             return
 
-        # Remove function call related content from the agent response for broadcast.
-        # This prevents replaying stale tool artifacts to other agents.
+        # Remove function call related content from the agent response for full conversation history
         cleaned_response = clean_conversation_for_handoff(response.messages)
+        if not cleaned_response:
+            logger.warning(
+                "Agent %s: Agent response contains no messages after removing function related contents. This "
+                "may be caused by the agent only invoking the handoff tool without generating any other content "
+                "types. This could cause issues for some providers that require at one message in the request.",
+                self.id,
+            )
 
-        # For internal tracking, preserve the full response (including function_calls)
-        # in _full_conversation so that Azure OpenAI can match function_calls with
-        # function_results when the workflow resumes after user approvals.
-        self._full_conversation.extend(response.messages)
-        self._persist_missing_approved_function_results(
-            runtime_tool_messages=runtime_tool_messages,
-            response_messages=response.messages,
-        )
+        # Append the agent response to the full conversation history. This list removes
+        # function call related content such that the result stays consistent regardless
+        # of which agent yields the final output.
+        self._full_conversation.extend(cleaned_response)
 
         # Broadcast only the cleaned response to other agents (without function_calls/results)
         await self._broadcast_messages(cleaned_response, cast(WorkflowContext[AgentExecutorRequest], ctx))
 
         # Check if a handoff was requested
-        if handoff_target := self._is_handoff_requested(response):
+        if is_handoff_requested := self._is_handoff_requested(response):
+            handoff_target, handoff_message = is_handoff_requested
             if handoff_target not in self._handoff_targets:
                 raise ValueError(
                     f"Agent '{resolve_agent_id(self._agent)}' attempted to handoff to unknown "
                     f"target '{handoff_target}'. Valid targets are: {', '.join(self._handoff_targets)}"
                 )
+
+            # Add the handoff message to the cache so that the next invocation of the agent includes
+            # the tool call result. This is necessary because each tool call must have a corresponding
+            # tool result.
+            self._cache.append(handoff_message)
 
             await cast(WorkflowContext[AgentExecutorRequest], ctx).send_message(
                 AgentExecutorRequest(messages=[], should_respond=True),
@@ -613,12 +504,25 @@ class HandoffAgentExecutor(AgentExecutor):
         # Since all agents are connected via fan-out, we can directly send the message
         await ctx.send_message(agent_executor_request)
 
-    def _is_handoff_requested(self, response: AgentResponse) -> str | None:
+    def _is_handoff_requested(self, response: AgentResponse) -> tuple[str, Message] | None:
         """Determine if the agent response includes a handoff request.
 
         If a handoff tool is invoked, the middleware will short-circuit execution
         and provide a synthetic result that includes the target agent ID. The message
         that contains the function result will be the last message in the response.
+
+        Args:
+            response: The AgentResponse to inspect for handoff requests
+
+        Returns:
+            A tuple of (target_agent_id, message) if a handoff is requested, or None if no handoff is requested
+
+        Note:
+            The returned message is the full message that contains the handoff function result content. This is
+            needed to complete the agent's chat history due to the `_AutoHandoffMiddleware` short-circuiting
+            behavior, which prevents the handoff tool call and result from being included in the agent response
+            messages. By returning the full message, we can ensure the agent's chat history remains valid with
+            a function result for the handoff tool call.
         """
         if not response.messages:
             return None
@@ -641,7 +545,7 @@ class HandoffAgentExecutor(AgentExecutor):
                 if parsed_payload:
                     handoff_target = parsed_payload.get(HANDOFF_FUNCTION_RESULT_KEY)
                     if isinstance(handoff_target, str):
-                        return handoff_target
+                        return handoff_target, last_message
             else:
                 continue
 

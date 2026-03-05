@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import os
 import re
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, cast
@@ -15,17 +16,21 @@ from agent_framework import (
     Message,
     ResponseStream,
     WorkflowEvent,
+    WorkflowRunState,
     resolve_agent_id,
     tool,
 )
 from agent_framework._clients import BaseChatClient
 from agent_framework._middleware import ChatMiddlewareLayer, FunctionInvocationContext, MiddlewareTermination
 from agent_framework._tools import FunctionInvocationLayer, FunctionTool
-from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
+from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder, HandoffSentEvent
+from azure.identity import AzureCliCredential
+from pytest import param
+from typing_extensions import Annotated
 
 from agent_framework_orchestrations._handoff import (
     HANDOFF_FUNCTION_RESULT_KEY,
-    HandoffAgentExecutor,
     HandoffConfiguration,
     _AutoHandoffMiddleware,  # pyright: ignore[reportPrivateUsage]
     get_handoff_tool_name,
@@ -33,6 +38,7 @@ from agent_framework_orchestrations._handoff import (
 from agent_framework_orchestrations._orchestrator_helpers import clean_conversation_for_handoff
 
 
+# region unit tests
 class MockChatClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], BaseChatClient[Any]):
     """Mock chat client for testing handoff workflows."""
 
@@ -685,31 +691,6 @@ async def test_handoff_resume_preserves_approved_tool_output_for_stateless_runs(
     assert refund_client.resume_validated is True
 
 
-def test_handoff_clone_disables_provider_side_storage() -> None:
-    """Handoff executors should force store=False to avoid stale provider call state."""
-    triage = MockHandoffAgent(name="triage")
-    workflow = HandoffBuilder(participants=[triage]).with_start_agent(triage).build()
-
-    executor = workflow.executors[resolve_agent_id(triage)]
-    assert isinstance(executor, HandoffAgentExecutor)
-    assert executor._agent.default_options.get("store") is False
-
-
-async def test_handoff_clears_stale_service_session_id_before_run() -> None:
-    """Stale service session IDs must be dropped before each handoff agent turn."""
-    triage = MockHandoffAgent(name="triage", handoff_to="specialist")
-    specialist = MockHandoffAgent(name="specialist")
-    workflow = HandoffBuilder(participants=[triage, specialist]).with_start_agent(triage).build()
-
-    triage_executor = workflow.executors[resolve_agent_id(triage)]
-    assert isinstance(triage_executor, HandoffAgentExecutor)
-    triage_executor._session.service_session_id = "resp_stale_value"
-
-    await _drain(workflow.run("My order is damaged", stream=True))
-
-    assert triage_executor._session.service_session_id is None
-
-
 def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
     """Tool-control messages must be excluded from persisted handoff history."""
     function_call = Content.from_function_call(
@@ -746,52 +727,6 @@ def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
         "My order arrived damaged.",
         "Triage Agent: Routing you to Refund.",
     ]
-
-
-def test_persist_missing_approved_function_results_handles_runtime_and_fallback_outputs() -> None:
-    """Persisted history should retain approved call outputs across runtime shapes."""
-    agent = MockHandoffAgent(name="triage")
-    executor = HandoffAgentExecutor(agent, handoffs=[])
-
-    call_with_runtime_result = "call-runtime-result"
-    call_with_approval_only = "call-approval-only"
-
-    executor._full_conversation = [
-        Message(
-            role="assistant",
-            contents=[
-                Content.from_function_call(call_id=call_with_runtime_result, name="submit_refund", arguments={}),
-                Content.from_function_call(call_id=call_with_approval_only, name="submit_refund", arguments={}),
-            ],
-        )
-    ]
-
-    approval_response = Content.from_function_approval_response(
-        approved=True,
-        id=call_with_approval_only,
-        function_call=Content.from_function_call(call_id=call_with_approval_only, name="submit_refund", arguments={}),
-    )
-    runtime_messages = [
-        Message(
-            role="tool",
-            contents=[Content.from_function_result(call_id=call_with_runtime_result, result='{"submitted":true}')],
-        ),
-        Message(role="user", contents=[approval_response]),
-    ]
-
-    executor._persist_missing_approved_function_results(runtime_tool_messages=runtime_messages, response_messages=[])
-
-    persisted_tool_messages = [message for message in executor._full_conversation if message.role == "tool"]
-    assert persisted_tool_messages
-    persisted_results = [
-        content
-        for message in persisted_tool_messages
-        for content in message.contents
-        if content.type == "function_result" and content.call_id
-    ]
-    result_by_call_id = {content.call_id: content.result for content in persisted_results}
-    assert result_by_call_id[call_with_runtime_result] == '{"submitted":true}'
-    assert result_by_call_id[call_with_approval_only] == '{"status":"approved"}'
 
 
 async def test_autonomous_mode_yields_output_without_user_request():
@@ -1061,8 +996,8 @@ async def test_auto_handoff_middleware_intercepts_handoff_tool_call() -> None:
     middleware = _AutoHandoffMiddleware([HandoffConfiguration(target=target_id)])
 
     @tool(name=get_handoff_tool_name(target_id), approval_mode="never_require")
-    def handoff_tool() -> str:
-        return "unreachable"
+    def handoff_tool() -> None:
+        pass
 
     context = FunctionInvocationContext(function=handoff_tool, arguments={})
     call_next = AsyncMock()
@@ -1117,3 +1052,227 @@ def test_handoff_builder_rejects_non_agent_supports_agent_run():
 
     with pytest.raises(TypeError, match="Participants must be Agent instances"):
         HandoffBuilder().participants([fake])
+
+
+# endregion
+
+# region integration tests
+
+
+skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
+    os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/")
+    or os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "") == "",
+    reason="No real AZURE_AI_PROJECT_ENDPOINT or AZURE_AI_MODEL_DEPLOYMENT_NAME provided; skipping integration tests.",
+)
+
+
+@pytest.mark.integration
+@skip_if_azure_ai_integration_tests_disabled
+@pytest.mark.parametrize("store", [param(False, id="store=False"), param(True, id="store=True")])
+async def test_simple_handoff_workflow(store: bool) -> None:
+    """Test a simple handoff workflow with two agents."""
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
+
+    triage_agent = client.as_agent(
+        instructions=(
+            "You are frontline support triage. Route customer issues to the appropriate specialist agents "
+            "based on the problem described."
+        ),
+        name="triage_agent",
+        default_options={"store": store},
+    )
+
+    refund_agent = client.as_agent(
+        instructions="You process refund requests. Ask user the ID of the order they want refunded.",
+        name="refund_agent",
+        default_options={"store": store},
+    )
+
+    workflow = (
+        HandoffBuilder(
+            participants=[triage_agent, refund_agent],
+            termination_condition=lambda conversation: (
+                # We terminate after triage hands off to refund to test handoff works
+                len(conversation) > 0 and conversation[-1].author_name == refund_agent.name
+            ),
+        )
+        .with_start_agent(triage_agent)
+        .build()
+    )
+
+    workflow_result = await workflow.run("I want to get a refund")
+    # The workflow should end in IDLE state rather than IDLE_WITH_PENDING_REQUESTS
+    # because the termination condition is met right after the refund agent's response.
+    assert workflow_result.get_final_state() == WorkflowRunState.IDLE
+    # Output should contain responses from both agents and a final full conversation from between them.
+    assert len(workflow_result.get_outputs()) == 3
+    # There will be exactly one handoff request
+    handoff_event = [event for event in workflow_result if event.type == "handoff_sent"]
+    assert len(handoff_event) == 1
+    assert isinstance(handoff_event[0].data, HandoffSentEvent)
+    assert handoff_event[0].data.source == triage_agent.name
+    assert handoff_event[0].data.target == refund_agent.name
+
+
+@pytest.mark.integration
+@skip_if_azure_ai_integration_tests_disabled
+@pytest.mark.parametrize("store", [param(False, id="store=False"), param(True, id="store=True")])
+async def test_simple_handoff_workflow_with_request_and_response(store: bool) -> None:
+    """Test a simple handoff workflow with two agents where the second agent makes a request after handoff."""
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
+
+    triage_agent = client.as_agent(
+        instructions=(
+            "You are frontline support triage. Route customer issues to the appropriate specialist agents "
+            "based on the problem described."
+        ),
+        name="triage_agent",
+        default_options={"store": store},
+    )
+
+    refund_agent = client.as_agent(
+        instructions="You process refund requests. Ask user the ID of the order they want refunded.",
+        name="refund_agent",
+        default_options={"store": store},
+    )
+
+    workflow = (
+        HandoffBuilder(
+            participants=[triage_agent, refund_agent],
+            termination_condition=lambda conversation: (
+                # We terminate after the refund agent request user input and the user provides
+                # a response. There will be two user messages in the conversation at that point
+                # - the original user message and the follow-up message in response to the refund
+                # agent's request.
+                len([message for message in conversation if message.role == "user"]) == 2
+            ),
+        )
+        .with_start_agent(triage_agent)
+        .build()
+    )
+
+    workflow_result = await workflow.run("I want to get a refund")
+    # The workflow should end in IDLE_WITH_PENDING_REQUESTS state rather than IDLE
+    # because the user has not yet responded to the refund agent's request yet.
+    assert workflow_result.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+    # There will be exactly one handoff request
+    handoff_event = [event for event in workflow_result if event.type == "handoff_sent"]
+    assert len(handoff_event) == 1
+    assert isinstance(handoff_event[0].data, HandoffSentEvent)
+    assert handoff_event[0].data.source == triage_agent.name
+    assert handoff_event[0].data.target == refund_agent.name
+    # There should be exactly one request for information from the refund agent after handoff
+    request_events = [event for event in workflow_result if event.type == "request_info"]
+    assert len(request_events) == 1
+    assert isinstance(request_events[0].data, HandoffAgentUserRequest)
+    # Provide the user's response to the refund agent's request to allow the workflow to complete.
+    workflow_result = await workflow.run(
+        responses={
+            request_events[0].request_id: HandoffAgentUserRequest.create_response("My order number is 12345"),
+        },
+    )
+
+    # The workflow should now end in IDLE state since the termination condition
+    # is met after the user's response to the refund agent's request.
+    assert workflow_result.get_final_state() == WorkflowRunState.IDLE
+
+
+@tool(approval_mode="always_require")
+def process_refund(order_number: Annotated[str, "Order number to process refund for"]) -> str:
+    """Simulated function to process a refund for a given order number."""
+    return f"Refund processed successfully for order {order_number}."
+
+
+@pytest.mark.integration
+@skip_if_azure_ai_integration_tests_disabled
+@pytest.mark.parametrize("store", [param(False, id="store=False"), param(True, id="store=True")])
+async def test_simple_handoff_workflow_with_approval_request(store: bool) -> None:
+    """Test a simple handoff workflow with two agents where the second agent makes a request after handoff."""
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
+
+    triage_agent = client.as_agent(
+        instructions=(
+            "You are frontline support triage. Route customer issues to the appropriate specialist agents "
+            "based on the problem described."
+        ),
+        name="triage_agent",
+        default_options={"store": store},
+    )
+
+    refund_agent = client.as_agent(
+        instructions="You process refund requests. Ask user the ID of the order they want refunded.",
+        name="refund_agent",
+        default_options={"store": store},
+        tools=[process_refund],
+    )
+
+    # This workflow will be terminated manually
+    workflow = (
+        HandoffBuilder(
+            participants=[triage_agent, refund_agent],
+        )
+        .with_start_agent(triage_agent)
+        .build()
+    )
+
+    workflow_result = await workflow.run("I want to get a refund")
+    # The workflow should end in IDLE_WITH_PENDING_REQUESTS state rather than IDLE
+    # because the user has not yet responded to the refund agent's request yet.
+    assert workflow_result.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+    # There will be exactly one handoff request
+    handoff_event = [event for event in workflow_result if event.type == "handoff_sent"]
+    assert len(handoff_event) == 1
+    assert isinstance(handoff_event[0].data, HandoffSentEvent)
+    assert handoff_event[0].data.source == triage_agent.name
+    assert handoff_event[0].data.target == refund_agent.name
+    # There should be exactly one request for information from the refund agent after handoff
+    request_events = [event for event in workflow_result if event.type == "request_info"]
+    assert len(request_events) == 1
+    assert isinstance(request_events[0].data, HandoffAgentUserRequest)
+    # Provide the user's response to the refund agent's request to allow the workflow to complete.
+    workflow_result = await workflow.run(
+        responses={
+            request_events[0].request_id: HandoffAgentUserRequest.create_response("My order number is 12345"),
+        },
+    )
+
+    # The workflow should now end in IDLE_WITH_PENDING_REQUESTS state since the refund agent will ask for
+    # approval to process the refund after receiving the user's response.
+    assert workflow_result.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+    # There should be exactly one request for tool approval from the refund agent.
+    request_events = [event for event in workflow_result if event.type == "request_info"]
+    assert len(request_events) == 1
+    assert isinstance(request_events[0].data, Content) and request_events[0].data.type == "function_approval_request"
+
+    # Provide the user's response to the refund agent's request to allow the workflow to complete.
+    workflow_result = await workflow.run(
+        responses={request_events[0].request_id: request_events[0].data.to_function_approval_response(approved=True)}
+    )
+
+    # The refund agent will process the refund after receiving approval, but since there is no termination condition,
+    # the workflow will end in IDLE_WITH_PENDING_REQUESTS state waiting for further user input.
+    assert workflow_result.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+    # There should be exactly one request for information from the refund agent after processing the refund,
+    # which is the follow-up question asking if there is anything else they can help with.
+    request_events = [event for event in workflow_result if event.type == "request_info"]
+    assert len(request_events) == 1
+    assert isinstance(request_events[0].data, HandoffAgentUserRequest)
+    workflow_result = await workflow.run(responses={request_events[0].request_id: HandoffAgentUserRequest.terminate()})
+
+    assert workflow_result.get_final_state() == WorkflowRunState.IDLE
+
+
+# endregion
