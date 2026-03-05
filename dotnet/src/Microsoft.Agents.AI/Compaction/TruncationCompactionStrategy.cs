@@ -6,72 +6,82 @@ using System.Threading.Tasks;
 namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
-/// A compaction strategy that keeps the most recent message groups up to a specified limit,
-/// optionally preserving system message groups.
+/// A compaction strategy that removes the oldest non-system message groups,
+/// keeping the most recent groups up to <see cref="PreserveRecentGroups"/>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// This strategy implements a sliding window approach: it marks older groups as excluded
-/// while keeping the most recent groups within the configured <see cref="MaxGroups"/> limit.
-/// System message groups can optionally be preserved regardless of their position.
+/// This strategy preserves system messages and removes the oldest non-system message groups first.
+/// It respects atomic group boundaries — an assistant message with tool calls and its
+/// corresponding tool result messages are always removed together.
 /// </para>
 /// <para>
-/// This strategy respects atomic group preservation — tool call groups (assistant message + tool results)
-/// are always kept or excluded together.
+/// The <see cref="CompactionTrigger"/> controls when compaction proceeds.
+/// Use <see cref="CompactionTriggers"/> for common trigger conditions such as token or group thresholds.
 /// </para>
 /// </remarks>
-public sealed class TruncationCompactionStrategy : ICompactionStrategy
+public sealed class TruncationCompactionStrategy : CompactionStrategy
 {
+    /// <summary>
+    /// The default number of most-recent non-system groups to protect from collapsing.
+    /// </summary>
+    public const int DefaultPreserveRecentGroups = 32;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="TruncationCompactionStrategy"/> class.
     /// </summary>
-    /// <param name="maxGroups">The maximum number of message groups to keep. Must be greater than zero.</param>
-    /// <param name="preserveSystemMessages">Whether to preserve system message groups regardless of position. Defaults to <see langword="true"/>.</param>
-    public TruncationCompactionStrategy(int maxGroups, bool preserveSystemMessages = true)
+    /// <param name="trigger">
+    /// The <see cref="CompactionTrigger"/> that controls when compaction proceeds.
+    /// </param>
+    /// <param name="preserveRecentGroups">
+    /// The minimum number of most-recent non-system message groups to keep.
+    /// Defaults to 1 so that at least the latest exchange is always preserved.
+    /// </param>
+    public TruncationCompactionStrategy(CompactionTrigger trigger, int preserveRecentGroups = DefaultPreserveRecentGroups)
+        : base(trigger)
     {
-        this.MaxGroups = maxGroups;
-        this.PreserveSystemMessages = preserveSystemMessages;
+        this.PreserveRecentGroups = preserveRecentGroups;
     }
 
     /// <summary>
-    /// Gets the maximum number of message groups to retain after compaction.
+    /// Gets the minimum number of most-recent non-system message groups to retain after compaction.
     /// </summary>
-    public int MaxGroups { get; }
-
-    /// <summary>
-    /// Gets a value indicating whether system message groups are preserved regardless of their position in the conversation.
-    /// </summary>
-    public bool PreserveSystemMessages { get; }
+    public int PreserveRecentGroups { get; }
 
     /// <inheritdoc/>
-    public Task<bool> CompactAsync(MessageIndex groups, CancellationToken cancellationToken = default)
+    protected override Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
     {
-        int includedCount = groups.IncludedGroupCount;
-        if (includedCount <= this.MaxGroups)
+        // Count removable (non-system, non-excluded) groups
+        int removableCount = 0;
+        for (int i = 0; i < index.Groups.Count; i++)
+        {
+            MessageGroup group = index.Groups[i];
+            if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
+            {
+                removableCount++;
+            }
+        }
+
+        int maxRemovable = removableCount - this.PreserveRecentGroups;
+        if (maxRemovable <= 0)
         {
             return Task.FromResult(false);
         }
 
-        int excessCount = includedCount - this.MaxGroups;
-        bool compacted = false;
-
         // Exclude oldest non-system groups first (iterate from the beginning)
-        for (int i = 0; i < groups.Groups.Count && excessCount > 0; i++)
+        bool compacted = false;
+        int removed = 0;
+        for (int i = 0; i < index.Groups.Count && removed < maxRemovable; i++)
         {
-            MessageGroup group = groups.Groups[i];
-            if (group.IsExcluded)
-            {
-                continue;
-            }
-
-            if (this.PreserveSystemMessages && group.Kind == MessageGroupKind.System)
+            MessageGroup group = index.Groups[i];
+            if (group.IsExcluded || group.Kind == MessageGroupKind.System)
             {
                 continue;
             }
 
             group.IsExcluded = true;
-            group.ExcludeReason = "Truncated by TruncationCompactionStrategy";
-            excessCount--;
+            group.ExcludeReason = $"Truncated by {nameof(TruncationCompactionStrategy)}";
+            removed++;
             compacted = true;
         }
 

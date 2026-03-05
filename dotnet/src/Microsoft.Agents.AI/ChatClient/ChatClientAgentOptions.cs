@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using Microsoft.Agents.AI.Compaction;
@@ -47,7 +47,7 @@ public sealed class ChatClientAgentOptions
     public IEnumerable<AIContextProvider>? AIContextProviders { get; set; }
 
     /// <summary>
-    /// Gets or sets the <see cref="ICompactionStrategy"/> to use for in-run context compaction.
+    /// Gets or sets the <see cref="CompactionStrategy"/> to use for in-run context compaction.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -57,10 +57,10 @@ public sealed class ChatClientAgentOptions
     /// </para>
     /// <para>
     /// The strategy organizes messages into atomic groups (preserving tool-call/result pairings)
-    /// before applying compaction logic. See <see cref="ICompactionStrategy"/> for details.
+    /// before applying compaction logic. See <see cref="CompactionStrategy"/> for details.
     /// </para>
     /// </remarks>
-    public ICompactionStrategy? CompactionStrategy { get; set; }
+    public CompactionStrategy? CompactionStrategy { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether to use the provided <see cref="IChatClient"/> instance as is,

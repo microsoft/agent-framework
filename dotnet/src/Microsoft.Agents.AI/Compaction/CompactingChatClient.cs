@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -12,7 +13,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
-/// A delegating <see cref="IChatClient"/> that applies an <see cref="ICompactionStrategy"/> to the message list
+/// A delegating <see cref="IChatClient"/> that applies an <see cref="CompactionStrategy"/> to the message list
 /// before each call to the inner chat client.
 /// </summary>
 /// <remarks>
@@ -28,7 +29,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// </remarks>
 internal sealed class CompactingChatClient : DelegatingChatClient
 {
-    private readonly ICompactionStrategy _compactionStrategy;
+    private readonly CompactionStrategy _compactionStrategy;
     private readonly ProviderSessionState<State> _sessionState;
 
     /// <summary>
@@ -36,7 +37,7 @@ internal sealed class CompactingChatClient : DelegatingChatClient
     /// </summary>
     /// <param name="innerClient">The inner chat client to delegate to.</param>
     /// <param name="compactionStrategy">The compaction strategy to apply before each call.</param>
-    public CompactingChatClient(IChatClient innerClient, ICompactionStrategy compactionStrategy)
+    public CompactingChatClient(IChatClient innerClient, CompactionStrategy compactionStrategy)
         : base(innerClient)
     {
         this._compactionStrategy = Throw.IfNull(compactionStrategy);
@@ -75,7 +76,7 @@ internal sealed class CompactingChatClient : DelegatingChatClient
         Throw.IfNull(serviceType);
 
         return
-            serviceKey is null && serviceType.IsInstanceOfType(typeof(ICompactionStrategy)) ?
+            serviceKey is null && serviceType.IsInstanceOfType(typeof(CompactionStrategy)) ?
                 this._compactionStrategy :
                 base.GetService(serviceType, serviceKey);
     }
@@ -108,8 +109,12 @@ internal sealed class CompactingChatClient : DelegatingChatClient
             messageIndex = MessageIndex.Create(messageList);
         }
 
-        // Apply compaction 
+        // Apply compaction
+        Stopwatch stopwatch = Stopwatch.StartNew();
         bool wasCompacted = await this._compactionStrategy.CompactAsync(messageIndex, cancellationToken).ConfigureAwait(false);
+        stopwatch.Stop();
+
+        Debug.WriteLine($"COMPACTION: {wasCompacted} - {stopwatch.ElapsedMilliseconds}ms");
 
         if (wasCompacted)
         {

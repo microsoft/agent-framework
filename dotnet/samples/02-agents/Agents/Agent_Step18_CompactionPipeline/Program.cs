@@ -39,23 +39,18 @@ static string LookupPrice([Description("The product name to look up.")] string p
     };
 
 // Configure the compaction pipeline with one of each strategy, ordered least to most aggressive.
-//const int MaxTokens = 512;
-//const int MaxTurns = 4;
-const int MaxGroups = 2;
-
 PipelineCompactionStrategy compactionPipeline =
     new(// 1. Gentle: collapse old tool-call groups into short summaries like "[Tool calls: LookupPrice]"
-        //new ToolResultCompactionStrategy(MaxTokens, preserveRecentGroups: 2),
+        new ToolResultCompactionStrategy(CompactionTriggers.TokensExceed(0x200)),
 
         // 2. Moderate: use an LLM to summarize older conversation spans into a concise message
-        new SummarizationCompactionStrategy(summarizerChatClient, MaxGroups)
+        new SummarizationCompactionStrategy(summarizerChatClient, CompactionTriggers.TokensExceed(0x500)),
 
         // 3. Aggressive: keep only the last N user turns and their responses
-        //new SlidingWindowCompactionStrategy(MaxTurns),
+        new SlidingWindowCompactionStrategy(maximumTurns: 4),
 
         // 4. Emergency: drop oldest groups until under the token budget
-        //new TruncationCompactionStrategy(MaxGroups)
-        );
+        new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(0x8000)));
 
 // Create the agent with an in-memory chat history provider whose reducer is the compaction pipeline.
 AIAgent agent =

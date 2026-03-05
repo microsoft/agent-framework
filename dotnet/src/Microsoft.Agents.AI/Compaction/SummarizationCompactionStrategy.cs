@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,36 +11,62 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
-/// A compaction strategy that summarizes older message groups using an <see cref="IChatClient"/>,
-/// replacing them with a single summary message.
+/// A compaction strategy that uses an LLM to summarize older portions of the conversation,
+/// replacing them with a single summary message that preserves key facts and context.
 /// </summary>
 /// <remarks>
 /// <para>
-/// When the number of included message groups exceeds <see cref="MaxGroupsBeforeSummary"/>,
-/// this strategy extracts the oldest non-system groups (up to the threshold), sends them
-/// to an <see cref="IChatClient"/> for summarization, and replaces those groups with a single
-/// assistant message containing the summary.
+/// This strategy protects system messages and the most recent <see cref="PreserveRecentGroups"/>
+/// non-system groups. All older groups are collected and sent to the <see cref="IChatClient"/>
+/// for summarization. The resulting summary replaces those messages as a single assistant message
+/// with <see cref="MessageGroupKind.Summary"/>.
 /// </para>
 /// <para>
-/// System message groups are always preserved and never included in summarization.
+/// The <see cref="CompactionTrigger"/> predicate controls when compaction proceeds.
+/// When <see langword="null"/>, the strategy compacts whenever there are groups older than the preserve window.
+/// Use <see cref="CompactionTriggers"/> for common trigger conditions such as token thresholds.
 /// </para>
 /// </remarks>
-public sealed class SummarizationCompactionStrategy : ICompactionStrategy
+public sealed class SummarizationCompactionStrategy : CompactionStrategy
 {
-    private const string DefaultSummarizationPrompt =
-        "Summarize the following conversation concisely, preserving key facts, decisions, and context. " +
-        "Focus on information that would be needed to continue the conversation effectively.";
+    /// <summary>
+    /// The default summarization prompt used when none is provided.
+    /// </summary>
+    public const string DefaultSummarizationPrompt =
+        """
+        You are a conversation summarizer. Produce a concise summary of the conversation that preserves:
+
+        - Key facts, decisions, and user preferences
+        - Important context needed for future turns
+        - Tool call outcomes and their significance
+
+        Omit pleasantries and redundant exchanges. Be factual and brief.
+        """;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SummarizationCompactionStrategy"/> class.
     /// </summary>
-    /// <param name="chatClient">The chat client to use for generating summaries.</param>
-    /// <param name="maxGroupsBeforeSummary">The maximum number of included groups allowed before summarization is triggered.</param>
-    /// <param name="summarizationPrompt">Optional custom prompt for the summarization request. If <see langword="null"/>, a default prompt is used.</param>
-    public SummarizationCompactionStrategy(IChatClient chatClient, int maxGroupsBeforeSummary, string? summarizationPrompt = null)
+    /// <param name="chatClient">The <see cref="IChatClient"/> to use for generating summaries. A smaller, faster model is recommended.</param>
+    /// <param name="trigger">
+    /// The <see cref="CompactionTrigger"/> that controls when compaction proceeds.
+    /// </param>
+    /// <param name="preserveRecentGroups">
+    /// The number of most-recent non-system message groups to protect from summarization.
+    /// Defaults to 4, preserving the current and recent exchanges.
+    /// </param>
+    /// <param name="summarizationPrompt">
+    /// An optional custom system prompt for the summarization LLM call. When <see langword="null"/>,
+    /// <see cref="DefaultSummarizationPrompt"/> is used.
+    /// </param>
+    public SummarizationCompactionStrategy(
+        IChatClient chatClient,
+        CompactionTrigger trigger,
+        int preserveRecentGroups = 4,
+        string? summarizationPrompt = null)
+        : base(trigger)
     {
         this.ChatClient = Throw.IfNull(chatClient);
-        this.MaxGroupsBeforeSummary = maxGroupsBeforeSummary;
+        this.PreserveRecentGroups = preserveRecentGroups;
         this.SummarizationPrompt = summarizationPrompt ?? DefaultSummarizationPrompt;
     }
 
@@ -48,9 +76,9 @@ public sealed class SummarizationCompactionStrategy : ICompactionStrategy
     public IChatClient ChatClient { get; }
 
     /// <summary>
-    /// Gets the maximum number of included groups allowed before summarization is triggered.
+    /// Gets the number of most-recent non-system groups to protect from summarization.
     /// </summary>
-    public int MaxGroupsBeforeSummary { get; }
+    public int PreserveRecentGroups { get; }
 
     /// <summary>
     /// Gets the prompt used when requesting summaries from the chat client.
@@ -58,25 +86,35 @@ public sealed class SummarizationCompactionStrategy : ICompactionStrategy
     public string SummarizationPrompt { get; }
 
     /// <inheritdoc/>
-    public async Task<bool> CompactAsync(MessageIndex groups, CancellationToken cancellationToken = default)
+    protected override async Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
     {
-        int includedCount = groups.IncludedGroupCount;
-        if (includedCount <= this.MaxGroupsBeforeSummary)
+        // Count non-system, non-excluded groups to determine which are protected
+        int nonSystemIncludedCount = 0;
+        for (int i = 0; i < index.Groups.Count; i++)
+        {
+            MessageGroup group = index.Groups[i];
+            if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
+            {
+                nonSystemIncludedCount++;
+            }
+        }
+
+        int protectedFromEnd = Math.Min(this.PreserveRecentGroups, nonSystemIncludedCount);
+        int groupsToSummarize = nonSystemIncludedCount - protectedFromEnd;
+
+        if (groupsToSummarize <= 0)
         {
             return false;
         }
-
-        // Determine how many groups to summarize (keep the most recent MaxGroupsBeforeSummary groups)
-        int groupsToSummarize = includedCount - this.MaxGroupsBeforeSummary;
 
         // Collect the oldest non-system included groups for summarization
         StringBuilder conversationText = new();
         int summarized = 0;
         int insertIndex = -1;
 
-        for (int i = 0; i < groups.Groups.Count && summarized < groupsToSummarize; i++)
+        for (int i = 0; i < index.Groups.Count && summarized < groupsToSummarize; i++)
         {
-            MessageGroup group = groups.Groups[i];
+            MessageGroup group = index.Groups[i];
             if (group.IsExcluded || group.Kind == MessageGroupKind.System)
             {
                 continue;
@@ -98,7 +136,7 @@ public sealed class SummarizationCompactionStrategy : ICompactionStrategy
             }
 
             group.IsExcluded = true;
-            group.ExcludeReason = "Summarized by SummarizationCompactionStrategy";
+            group.ExcludeReason = $"Summarized by {nameof(SummarizationCompactionStrategy)}";
             summarized++;
         }
 
@@ -111,23 +149,27 @@ public sealed class SummarizationCompactionStrategy : ICompactionStrategy
         ChatResponse response = await this.ChatClient.GetResponseAsync(
             [
                 new ChatMessage(ChatRole.System, this.SummarizationPrompt),
+                .. index.Groups
+                    .Where(g => !g.IsExcluded && g.Kind == MessageGroupKind.System)
+                    .SelectMany(g => g.Messages),
                 new ChatMessage(ChatRole.User, conversationText.ToString()),
+                new ChatMessage(ChatRole.User, "Summarize the conversation above concisely."),
             ],
             cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        string summaryText = response.Text ?? string.Empty;
+        string summaryText = string.IsNullOrWhiteSpace(response.Text) ? "[Summary unavailable]" : response.Text;
 
         // Insert a summary group at the position of the first summarized group
-        ChatMessage summaryMessage = new(ChatRole.Assistant, $"[Summary of earlier conversation]: {summaryText}");
+        ChatMessage summaryMessage = new(ChatRole.Assistant, $"[Summary]\n{summaryText}");
         (summaryMessage.AdditionalProperties ??= [])[MessageGroup.SummaryPropertyKey] = true;
 
         if (insertIndex >= 0)
         {
-            groups.InsertGroup(insertIndex, MessageGroupKind.Summary, [summaryMessage]);
+            index.InsertGroup(insertIndex, MessageGroupKind.Summary, [summaryMessage]);
         }
         else
         {
-            groups.AddGroup(MessageGroupKind.Summary, [summaryMessage]);
+            index.AddGroup(MessageGroupKind.Summary, [summaryMessage]);
         }
 
         return true;

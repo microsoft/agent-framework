@@ -8,7 +8,7 @@
 //using Microsoft.Extensions.AI;
 //using Moq;
 
-//namespace Microsoft.Agents.AI.Abstractions.UnitTests.Compaction;
+//namespace Microsoft.Agents.AI.UnitTests.Compaction;
 
 ///// <summary>
 ///// Contains tests for the compaction integration with <see cref="InMemoryChatHistoryProvider"/>.

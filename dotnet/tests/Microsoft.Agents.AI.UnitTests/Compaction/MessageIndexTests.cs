@@ -1,10 +1,10 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AI.Abstractions.UnitTests.Compaction;
+namespace Microsoft.Agents.AI.UnitTests.Compaction;
 
 /// <summary>
 /// Contains tests for the <see cref="MessageIndex"/> class.

@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
-using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
