@@ -25,8 +25,6 @@ const string AgentInstructions = """
 const string AgentNameMEAI = "MemorySearchAgent-MEAI";
 const string AgentNameNative = "MemorySearchAgent-NATIVE";
 
-// Scope identifies the user or context for memory isolation.
-// Using a unique user identifier ensures memories are private to that user.
 string userScope = $"user_{Environment.MachineName}";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
@@ -35,7 +33,6 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), credential);
 
 // Ensure the memory store exists and has memories to retrieve.
 await EnsureMemoryStoreAsync();
-
 // Create the Memory Search tool configuration
 MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope) { UpdateDelayInSecs = 0 };
 
@@ -81,32 +78,6 @@ finally
     Console.WriteLine("Memory store deleted.");
 }
 
-#pragma warning disable CS8321 // Local function is declared but never used
-
-// Option 1 - Using MemorySearchTool wrapped as MEAI AITool
-async Task<AIAgent> CreateAgentWithMEAI()
-{
-    return await aiProjectClient.CreateAIAgentAsync(
-        model: deploymentName,
-        name: AgentNameMEAI,
-        instructions: AgentInstructions,
-        tools: [((ResponseTool)memorySearchTool).AsAITool()]);
-}
-
-// Option 2 - Using PromptAgentDefinition with MemorySearchTool (Native SDK)
-async Task<AIAgent> CreateAgentWithNativeSDK()
-{
-    return await aiProjectClient.CreateAIAgentAsync(
-        name: AgentNameNative,
-        creationOptions: new AgentVersionCreationOptions(
-            new PromptAgentDefinition(model: deploymentName)
-            {
-                Instructions = AgentInstructions,
-                Tools = { memorySearchTool }
-            })
-    );
-}
-
 // Helpers — kept at the bottom so the main agent flow above stays clean.
 async Task EnsureMemoryStoreAsync()
 {
@@ -138,4 +109,29 @@ async Task EnsureMemoryStoreAsync()
     }
 
     Console.WriteLine($"Memory update completed (status: {updateResult.Status}).\n");
+}
+#pragma warning disable CS8321 // Local function is declared but never used
+
+// Option 1 - Using MemorySearchTool wrapped as MEAI AITool
+async Task<AIAgent> CreateAgentWithMEAI()
+{
+    return await aiProjectClient.CreateAIAgentAsync(
+        model: deploymentName,
+        name: AgentNameMEAI,
+        instructions: AgentInstructions,
+        tools: [((ResponseTool)memorySearchTool).AsAITool()]);
+}
+
+// Option 2 - Using PromptAgentDefinition with MemorySearchTool (Native SDK)
+async Task<AIAgent> CreateAgentWithNativeSDK()
+{
+    return await aiProjectClient.CreateAIAgentAsync(
+        name: AgentNameNative,
+        creationOptions: new AgentVersionCreationOptions(
+            new PromptAgentDefinition(model: deploymentName)
+            {
+                Instructions = AgentInstructions,
+                Tools = { memorySearchTool }
+            })
+    );
 }
