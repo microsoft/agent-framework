@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from contextlib import suppress
 from typing import Any, Generic
 
 from agent_framework import (
@@ -43,6 +45,20 @@ else:
 
 
 logger = logging.getLogger("agent_framework.azure")
+
+
+def _supports_keyword_argument(value: Any, keyword: str) -> bool:
+    """Return True when *value* has an explicit parameter named *keyword*."""
+    with suppress(TypeError, ValueError):
+        signature = inspect.signature(value)
+        return keyword in signature.parameters
+    return False
+
+
+def _project_client_allows_preview(project_client: AIProjectClient) -> bool:
+    """Return whether the project client is configured to allow preview operations."""
+    allow_preview = getattr(getattr(project_client, "_config", None), "allow_preview", None)
+    return bool(allow_preview)
 
 
 # Type variable for options - allows typed Agent[OptionsT] returns
@@ -102,6 +118,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         project_endpoint: str | None = None,
         model: str | None = None,
         credential: AzureCredentialTypes | None = None,
+        allow_preview: bool | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -117,6 +134,8 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             credential: Azure credential for authentication. Accepts a TokenCredential,
                 AsyncTokenCredential, or a callable token provider.
                 Required when project_client is not provided.
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``
+                when supported by the installed ``azure-ai-projects`` version.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
 
@@ -146,14 +165,22 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             if not credential:
                 raise ValueError("Azure credential is required when project_client is not provided.")
 
-            project_client = AIProjectClient(
-                endpoint=resolved_endpoint,
-                credential=credential,  # type: ignore[arg-type]
-                user_agent=AGENT_FRAMEWORK_USER_AGENT,
-            )
+            project_client_kwargs: dict[str, Any] = {
+                "endpoint": resolved_endpoint,
+                "credential": credential,  # type: ignore[arg-type]
+                "user_agent": AGENT_FRAMEWORK_USER_AGENT,
+            }
+            if allow_preview is not None and _supports_keyword_argument(AIProjectClient, "allow_preview"):
+                project_client_kwargs["allow_preview"] = allow_preview
+            project_client = AIProjectClient(**project_client_kwargs)
             self._should_close_client = True
 
         self._project_client = project_client
+        self._allow_preview = bool(allow_preview) or _project_client_allows_preview(project_client)
+        self._supports_create_version_foundry_features = _supports_keyword_argument(
+            self._project_client.agents.create_version,
+            "foundry_features",
+        )
 
     async def create_agent(
         self,
@@ -247,7 +274,13 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             "description": description,
         }
         if foundry_features:
-            create_version_kwargs["foundry_features"] = foundry_features
+            if self._supports_create_version_foundry_features:
+                create_version_kwargs["foundry_features"] = foundry_features
+            elif not self._allow_preview:
+                raise ValueError(
+                    "Preview agent features require allow_preview=True on AIProjectClient "
+                    "when using azure-ai-projects 2.0 GA."
+                )
 
         created_agent = await self._project_client.agents.create_version(**create_version_kwargs)
 

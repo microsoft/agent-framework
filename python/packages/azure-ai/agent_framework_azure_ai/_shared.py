@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Mapping, MutableMapping, Sequence
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from agent_framework import (
     Content,
@@ -19,8 +19,6 @@ from azure.ai.agents.models import (
 from azure.ai.projects.models import (
     CodeInterpreterTool,
     MCPTool,
-    TextResponseFormatConfigurationResponseFormatJsonObject,
-    TextResponseFormatConfigurationResponseFormatText,
     TextResponseFormatJsonSchema,
     Tool,
     WebSearchPreviewTool,
@@ -37,6 +35,24 @@ if sys.version_info >= (3, 11):
     from typing import TypedDict  # pragma: no cover
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+
+if TYPE_CHECKING:
+    from azure.ai.projects.models import (
+        TextResponseFormatConfigurationResponseFormatJsonObject as TextResponseFormatJsonObject,
+    )
+    from azure.ai.projects.models import (
+        TextResponseFormatConfigurationResponseFormatText as TextResponseFormatText,
+    )
+else:
+    try:
+        from azure.ai.projects.models import TextResponseFormatJsonObject, TextResponseFormatText
+    except ImportError:  # pragma: no cover - compatibility with azure-ai-projects<2.0.0
+        from azure.ai.projects.models import (
+            TextResponseFormatConfigurationResponseFormatJsonObject as TextResponseFormatJsonObject,
+        )
+        from azure.ai.projects.models import (
+            TextResponseFormatConfigurationResponseFormatText as TextResponseFormatText,
+        )
 
 logger = logging.getLogger("agent_framework.azure")
 
@@ -479,11 +495,7 @@ def _prepare_mcp_tool_dict_for_azure_ai(tool_dict: dict[str, Any]) -> MCPTool:
 
 def create_text_format_config(
     response_format: type[BaseModel] | Mapping[str, Any],
-) -> (
-    TextResponseFormatJsonSchema
-    | TextResponseFormatConfigurationResponseFormatJsonObject
-    | TextResponseFormatConfigurationResponseFormatText
-):
+) -> TextResponseFormatJsonSchema | TextResponseFormatJsonObject | TextResponseFormatText:
     """Convert response_format into Azure text format configuration."""
     if isinstance(response_format, type) and issubclass(response_format, BaseModel):
         schema = response_format.model_json_schema()
@@ -513,9 +525,9 @@ def create_text_format_config(
                 config_kwargs["description"] = format_config["description"]
             return TextResponseFormatJsonSchema(**config_kwargs)
         if format_type == "json_object":
-            return TextResponseFormatConfigurationResponseFormatJsonObject()
+            return TextResponseFormatJsonObject()
         if format_type == "text":
-            return TextResponseFormatConfigurationResponseFormatText()
+            return TextResponseFormatText()
 
     raise IntegrationInvalidRequestException("response_format must be a Pydantic model or mapping.")
 
