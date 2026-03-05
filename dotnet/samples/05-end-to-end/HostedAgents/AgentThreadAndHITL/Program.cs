@@ -25,7 +25,7 @@ static string GetWeather([Description("The location to get the weather for.")] s
 #pragma warning disable MEAI001 // Type is for evaluation purposes only
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName)
     .AsIChatClient()
     .AsAIAgent(

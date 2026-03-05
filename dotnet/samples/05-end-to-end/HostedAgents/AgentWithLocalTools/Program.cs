@@ -84,7 +84,7 @@ string GetAvailableHotels(
     }
 }
 
-var credential = new AzureCliCredential();
+var credential = new DefaultAzureCredential();
 AIProjectClient projectClient = new(new Uri(endpoint), credential);
 
 ClientConnection connection = projectClient.GetConnection(typeof(AzureOpenAIClient).FullName!);

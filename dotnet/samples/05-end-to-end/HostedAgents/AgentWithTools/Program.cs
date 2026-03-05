@@ -13,7 +13,7 @@ var openAiEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 var toolConnectionId = Environment.GetEnvironmentVariable("MCP_TOOL_CONNECTION_ID") ?? throw new InvalidOperationException("MCP_TOOL_CONNECTION_ID is not set.");
 
-var credential = new AzureCliCredential();
+var credential = new DefaultAzureCredential();
 
 var chatClient = new AzureOpenAIClient(new Uri(openAiEndpoint), credential)
     .GetChatClient(deploymentName)
