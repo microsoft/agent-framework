@@ -4,6 +4,7 @@
 
 import pytest
 from ag_ui.core import (
+    CustomEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
     ToolCallArgsEvent,
@@ -871,3 +872,26 @@ class TestTextMessageEventBalancing:
 
         assert len(start_events) == 2
         assert len(end_events) == 2
+
+
+def test_emit_oauth_consent_request():
+    """Test that oauth_consent_request content emits a CustomEvent."""
+    content = Content.from_oauth_consent_request(
+        consent_link="https://login.microsoftonline.com/consent",
+    )
+    flow = FlowState()
+    events = _emit_content(content, flow)
+
+    assert len(events) == 1
+    assert isinstance(events[0], CustomEvent)
+    assert events[0].name == "oauth_consent_request"
+    assert events[0].value == {"consent_link": "https://login.microsoftonline.com/consent"}
+
+
+def test_emit_oauth_consent_request_no_link():
+    """Test that oauth_consent_request without a consent_link emits no events."""
+    content = Content("oauth_consent_request")
+    flow = FlowState()
+    events = _emit_content(content, flow)
+
+    assert len(events) == 0

@@ -707,6 +707,81 @@ async def test_chat_agent_as_tool_name_sanitization(client: SupportsChatGetRespo
         assert tool.name == expected_tool_name, f"Expected {expected_tool_name}, got {tool.name} for input {agent_name}"
 
 
+async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGetResponse) -> None:
+    """Test that propagate_session=True forwards the parent's session to the sub-agent."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+
+    parent_session = AgentSession(session_id="parent-session-123")
+    parent_session.state["shared_key"] = "shared_value"
+
+    # Spy on the agent's run method to capture the session argument
+    original_run = agent.run
+    captured_session = None
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_session
+        captured_session = kwargs.get("session")
+        return original_run(*args, **kwargs)
+
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+
+    await tool.invoke(arguments=tool.input_model(task="Hello"), session=parent_session)
+
+    assert captured_session is parent_session
+    assert captured_session.session_id == "parent-session-123"
+    assert captured_session.state["shared_key"] == "shared_value"
+
+
+async def test_chat_agent_as_tool_propagate_session_false_by_default(client: SupportsChatGetResponse) -> None:
+    """Test that propagate_session defaults to False and does not forward the session."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool()  # default: propagate_session=False
+
+    parent_session = AgentSession(session_id="parent-session-456")
+
+    original_run = agent.run
+    captured_session = None
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_session
+        captured_session = kwargs.get("session")
+        return original_run(*args, **kwargs)
+
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+
+    await tool.invoke(arguments=tool.input_model(task="Hello"), session=parent_session)
+
+    assert captured_session is None
+
+
+async def test_chat_agent_as_tool_propagate_session_shares_state(client: SupportsChatGetResponse) -> None:
+    """Test that shared session allows the sub-agent to read and write parent's state."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+
+    parent_session = AgentSession(session_id="shared-session")
+    parent_session.state["counter"] = 0
+
+    # The sub-agent receives the same session object, so mutations are shared
+    original_run = agent.run
+    captured_session = None
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_session
+        captured_session = kwargs.get("session")
+        if captured_session:
+            captured_session.state["counter"] += 1
+        return original_run(*args, **kwargs)
+
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+
+    await tool.invoke(arguments=tool.input_model(task="Hello"), session=parent_session)
+
+    # The parent's state should reflect the sub-agent's mutation
+    assert parent_session.state["counter"] == 1
+
+
 async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -> None:
     """Test basic as_mcp_server functionality."""
     agent = Agent(client=client, name="TestAgent", description="Test agent for MCP")
@@ -753,6 +828,49 @@ async def test_chat_agent_with_local_mcp_tools(client: SupportsChatGetResponse) 
         # Test async context manager with MCP tools
         async with agent:
             pass
+
+
+async def test_mcp_tools_not_duplicated_when_passed_as_runtime_tools(chat_client_base: Any) -> None:
+    """Test that MCP tool functions from self.mcp_tools are not duplicated when already present in runtime tools."""
+    captured_options: list[dict[str, Any]] = []
+
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        captured_options.append(dict(options))
+        return await original_inner(messages=messages, options=options, **kwargs)
+
+    chat_client_base._inner_get_response = capturing_inner
+
+    # Create FunctionTool instances that simulate expanded MCP functions
+    mcp_func_a = FunctionTool(func=lambda: "a", name="tool_a", description="Tool A")
+    mcp_func_b = FunctionTool(func=lambda: "b", name="tool_b", description="Tool B")
+
+    # Create a mock MCP tool that is already connected (simulates turn 2)
+    mock_mcp_tool = MagicMock(spec=MCPTool)
+    mock_mcp_tool.is_connected = True
+    mock_mcp_tool.functions = [mcp_func_a, mcp_func_b]
+    mock_mcp_tool.__aenter__ = AsyncMock(return_value=mock_mcp_tool)
+    mock_mcp_tool.__aexit__ = AsyncMock(return_value=None)
+
+    # Agent has the MCP tool in its constructor (stored in self.mcp_tools)
+    agent = Agent(client=chat_client_base, name="TestAgent", tools=[mock_mcp_tool])
+
+    # Simulate AG-UI turn 2: pass already-expanded MCP functions + a client tool as runtime tools
+    client_tool = FunctionTool(func=lambda: "client", name="client_tool", description="Client tool")
+    runtime_tools = [mcp_func_a, mcp_func_b, client_tool]
+
+    await agent.run("hello", tools=runtime_tools)
+
+    # Verify the chat client received each tool exactly once
+    assert len(captured_options) >= 1
+    tool_names = [t.name for t in captured_options[0]["tools"]]
+    assert tool_names.count("tool_a") == 1, f"tool_a duplicated: {tool_names}"
+    assert tool_names.count("tool_b") == 1, f"tool_b duplicated: {tool_names}"
+    assert "client_tool" in tool_names
+    assert len(tool_names) == 3
 
 
 async def test_agent_tool_receives_session_in_kwargs(chat_client_base: Any) -> None:
