@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -197,12 +197,12 @@ public class ToolResultCompactionStrategyTests
     {
         // Arrange — 2 tool groups, target met after first collapse
         int collapseCount = 0;
-        CompactionTrigger targetAfterOne = _ => ++collapseCount >= 1;
+        bool TargetAfterOne(MessageIndex _) => ++collapseCount >= 1;
 
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
             minimumPreserved: 1,
-            target: targetAfterOne);
+            target: TargetAfterOne);
 
         MessageIndex index = MessageIndex.Create(
         [

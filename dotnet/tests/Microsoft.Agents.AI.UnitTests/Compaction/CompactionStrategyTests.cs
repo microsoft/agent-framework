@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Threading;
@@ -109,13 +109,13 @@ public class CompactionStrategyTests
     {
         // Arrange — custom target that always signals stop
         bool targetCalled = false;
-        CompactionTrigger customTarget = _ =>
+        bool CustomTarget(MessageIndex _)
         {
             targetCalled = true;
             return true;
-        };
+        }
 
-        TestStrategy strategy = new(_ => true, customTarget, _ =>
+        TestStrategy strategy = new(_ => true, CustomTarget, _ =>
         {
             // Access the target from within the strategy
             return true;

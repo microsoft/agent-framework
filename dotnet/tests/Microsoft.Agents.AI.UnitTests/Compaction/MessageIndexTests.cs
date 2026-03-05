@@ -1,9 +1,10 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Buffers;
 using System.Collections.Generic;
 using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
+using Microsoft.ML.Tokenizers;
 
 namespace Microsoft.Agents.AI.UnitTests.Compaction;
 
@@ -865,35 +866,35 @@ public class MessageIndexTests
     /// <summary>
     /// A simple tokenizer that counts whitespace-separated words as tokens.
     /// </summary>
-    private sealed class SimpleWordTokenizer : Microsoft.ML.Tokenizers.Tokenizer
+    private sealed class SimpleWordTokenizer : Tokenizer
     {
-        public override Microsoft.ML.Tokenizers.PreTokenizer? PreTokenizer => null;
-        public override Microsoft.ML.Tokenizers.Normalizer? Normalizer => null;
+        public override PreTokenizer? PreTokenizer => null;
+        public override Normalizer? Normalizer => null;
 
-        protected override Microsoft.ML.Tokenizers.EncodeResults<Microsoft.ML.Tokenizers.EncodedToken> EncodeToTokens(string? text, System.ReadOnlySpan<char> textSpan, Microsoft.ML.Tokenizers.EncodeSettings settings)
+        protected override EncodeResults<EncodedToken> EncodeToTokens(string? text, System.ReadOnlySpan<char> textSpan, EncodeSettings settings)
         {
             // Simple word-based encoding
             string input = text ?? textSpan.ToString();
             if (string.IsNullOrWhiteSpace(input))
             {
-                return new Microsoft.ML.Tokenizers.EncodeResults<Microsoft.ML.Tokenizers.EncodedToken>
+                return new EncodeResults<EncodedToken>
                 {
-                    Tokens = System.Array.Empty<Microsoft.ML.Tokenizers.EncodedToken>(),
+                    Tokens = System.Array.Empty<EncodedToken>(),
                     CharsConsumed = 0,
                     NormalizedText = null,
                 };
             }
 
             string[] words = input.Split(' ');
-            List<Microsoft.ML.Tokenizers.EncodedToken> tokens = [];
+            List<EncodedToken> tokens = [];
             int offset = 0;
             for (int i = 0; i < words.Length; i++)
             {
-                tokens.Add(new Microsoft.ML.Tokenizers.EncodedToken(i, words[i], new System.Range(offset, offset + words[i].Length)));
+                tokens.Add(new EncodedToken(i, words[i], new System.Range(offset, offset + words[i].Length)));
                 offset += words[i].Length + 1;
             }
 
-            return new Microsoft.ML.Tokenizers.EncodeResults<Microsoft.ML.Tokenizers.EncodedToken>
+            return new EncodeResults<EncodedToken>
             {
                 Tokens = tokens,
                 CharsConsumed = input.Length,
@@ -901,7 +902,7 @@ public class MessageIndexTests
             };
         }
 
-        public override OperationStatus Decode(System.Collections.Generic.IEnumerable<int> ids, System.Span<char> destination, out int idsConsumed, out int charsWritten)
+        public override OperationStatus Decode(IEnumerable<int> ids, System.Span<char> destination, out int idsConsumed, out int charsWritten)
         {
             idsConsumed = 0;
             charsWritten = 0;
