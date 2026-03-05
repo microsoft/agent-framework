@@ -83,10 +83,13 @@ OptionsCoT = TypeVar(
 
 def _get_tool_name(tool: Any) -> str | None:
     """Extract a tool's name from either an object with a .name attribute or a dict tool definition."""
-    if isinstance(tool, dict):
-        func = tool.get("function")
-        if isinstance(func, dict):
-            return func.get("name")
+    if isinstance(tool, Mapping):
+        tool_mapping = cast(Mapping[str, Any], tool)
+        func = tool_mapping.get("function")
+        if isinstance(func, Mapping):
+            func_mapping = cast(Mapping[str, Any], func)
+            name = func_mapping.get("name")
+            return name if isinstance(name, str) else None
         return None
     return getattr(tool, "name", None)
 
@@ -164,12 +167,12 @@ def _sanitize_agent_name(agent_name: str | None) -> str | None:
 class _RunContext(TypedDict):
     session: AgentSession | None
     session_context: SessionContext
-    input_messages: list[Message]
-    session_messages: list[Message]
+    input_messages: Sequence[Message]
+    session_messages: Sequence[Message]
     agent_name: str
-    chat_options: dict[str, Any]
-    filtered_kwargs: dict[str, Any]
-    finalize_kwargs: dict[str, Any]
+    chat_options: MutableMapping[str, Any]
+    filtered_kwargs: Mapping[str, Any]
+    finalize_kwargs: Mapping[str, Any]
 
 
 # region Agent Protocol
@@ -454,6 +457,7 @@ class BaseAgent(SerializationMixin):
         stream_callback: Callable[[AgentResponseUpdate], None]
         | Callable[[AgentResponseUpdate], Awaitable[None]]
         | None = None,
+        propagate_session: bool = False,
     ) -> FunctionTool:
         """Create a FunctionTool that wraps this agent.
 
@@ -464,6 +468,12 @@ class BaseAgent(SerializationMixin):
             arg_description: The description for the function argument.
                 If None, defaults to "Task for {tool_name}".
             stream_callback: Optional callback for streaming responses. If provided, uses run(..., stream=True).
+            propagate_session: If True, the parent agent's ``AgentSession`` is
+                forwarded to this sub-agent's ``run()`` call, so both agents
+                operate within the same logical session (sharing the same
+                ``session_id`` and provider-managed state, such as any stored
+                conversation history or metadata). Defaults to False, meaning
+                the sub-agent runs with a new, independent session.
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
@@ -480,8 +490,11 @@ class BaseAgent(SerializationMixin):
                 # Create an agent
                 agent = Agent(client=client, name="research-agent", description="Performs research tasks")
 
-                # Convert the agent to a tool
+                # Convert the agent to a tool (independent session)
                 research_tool = agent.as_tool()
+
+                # Convert the agent to a tool (shared session with parent)
+                research_tool = agent.as_tool(propagate_session=True)
 
                 # Use the tool with another agent
                 coordinator = Agent(client=client, name="coordinator", tools=research_tool)
@@ -509,16 +522,21 @@ class BaseAgent(SerializationMixin):
             # Extract the input from kwargs using the specified arg_name
             input_text = kwargs.get(arg_name, "")
 
-            # Forward runtime context kwargs, excluding arg_name and conversation_id.
-            forwarded_kwargs = {k: v for k, v in kwargs.items() if k not in (arg_name, "conversation_id", "options")}
+            # Extract parent session when propagate_session is enabled
+            parent_session = kwargs.get("session") if propagate_session else None
+
+            # Forward runtime context kwargs, excluding framework-internal keys.
+            forwarded_kwargs = {
+                k: v for k, v in kwargs.items() if k not in (arg_name, "conversation_id", "options", "session")
+            }
 
             if stream_callback is None:
                 # Use non-streaming mode
-                return (await self.run(input_text, stream=False, **forwarded_kwargs)).text
+                return (await self.run(input_text, stream=False, session=parent_session, **forwarded_kwargs)).text
 
             # Use streaming mode - accumulate updates and create final response
             response_updates: list[AgentResponseUpdate] = []
-            async for update in self.run(input_text, stream=True, **forwarded_kwargs):
+            async for update in self.run(input_text, stream=True, session=parent_session, **forwarded_kwargs):
                 response_updates.append(update)
                 if is_async_callback:
                     await stream_callback(update)  # type: ignore[misc]
@@ -755,10 +773,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         should check if there is already an agent name defined, and if not
         set it to this value.
         """
-        if hasattr(self.client, "_update_agent_name_and_description") and callable(
-            self.client._update_agent_name_and_description
-        ):  # type: ignore[reportAttributeAccessIssue, attr-defined]
-            self.client._update_agent_name_and_description(self.name, self.description)  # type: ignore[reportAttributeAccessIssue, attr-defined]
+        update_fn = getattr(self.client, "_update_agent_name_and_description", None)
+        if callable(update_fn):
+            update_fn(self.name, self.description)
 
     @overload
     def run(
@@ -845,11 +862,14 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     options=options,
                     kwargs=kwargs,
                 )
-                response = await self.client.get_response(  # type: ignore[call-overload]
-                    messages=ctx["session_messages"],
-                    stream=False,
-                    options=ctx["chat_options"],
-                    **ctx["filtered_kwargs"],
+                response = cast(
+                    ChatResponse[Any],
+                    await self.client.get_response(  # type: ignore
+                        messages=ctx["session_messages"],
+                        stream=False,
+                        options=ctx["chat_options"],  # type: ignore[reportArgumentType]
+                        **ctx["filtered_kwargs"],
+                    ),
                 )
 
                 if not response:
@@ -915,7 +935,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             )
             await self._run_after_providers(session=ctx["session"], context=session_context)
 
-        async def _get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        async def _get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
             ctx_holder["ctx"] = await self._prepare_run_context(
                 messages=messages,
                 session=session,
@@ -927,7 +947,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             return self.client.get_response(  # type: ignore[call-overload, no-any-return]
                 messages=ctx["session_messages"],
                 stream=True,
-                options=ctx["chat_options"],
+                options=ctx["chat_options"],  # type: ignore[reportArgumentType]
                 **ctx["filtered_kwargs"],
             )
 
@@ -950,12 +970,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             rf = (
                 ctx.get("chat_options", {}).get("response_format")
                 if ctx
-                else (options.get("response_format") if options else None)
+                else (options.get("response_format") if options else None)  # type: ignore[union-attr]
             )
             return self._finalize_response_updates(updates, response_format=rf)
 
         return (
-            ResponseStream
+            ResponseStream  # type: ignore[reportUnknownMemberType]
             .from_awaitable(_get_stream())
             .map(
                 transform=partial(
@@ -973,10 +993,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         updates: Sequence[AgentResponseUpdate],
         *,
         response_format: Any | None = None,
-    ) -> AgentResponse:
+    ) -> AgentResponse[Any]:
         """Finalize response updates into a single AgentResponse."""
         output_format_type = response_format if isinstance(response_format, type) else None
-        return AgentResponse.from_updates(updates, output_format_type=output_format_type)
+        return AgentResponse.from_updates(  # pyright: ignore[reportUnknownVariableType]
+            updates,
+            output_format_type=output_format_type,
+        )
 
     @staticmethod
     def _extract_conversation_id_from_streaming_response(response: AgentResponse[Any]) -> str | None:
@@ -985,10 +1008,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         if raw is None:
             return None
 
-        raw_items: list[Any] = raw if isinstance(raw, list) else [raw]
+        raw_items: list[Any] = list(cast(Any, raw)) if isinstance(raw, list) else [raw]
         for item in reversed(raw_items):
             if isinstance(item, Mapping):
-                value = item.get("conversation_id")
+                mapped_item = cast(Mapping[str, Any], item)
+                value = mapped_item.get("conversation_id")
                 if isinstance(value, str) and value:
                     return value
                 continue
@@ -1059,8 +1083,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         # Merge runtime kwargs into additional_function_arguments so they're available
         # in function middleware context and tool invocation.
-        existing_additional_args = opts.pop("additional_function_arguments", None) or {}
+        existing_additional_args: dict[str, Any] = opts.pop("additional_function_arguments", None) or {}
         additional_function_arguments = {**kwargs, **existing_additional_args}
+        # Include session so as_tool() wrappers with propagate_session=True can access it.
+        if active_session is not None:
+            additional_function_arguments["session"] = active_session
 
         # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {

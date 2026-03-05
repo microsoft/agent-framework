@@ -15,7 +15,7 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Generic, Literal
+from typing import Any, Generic, Literal, cast
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
@@ -301,11 +301,16 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         for tool in normalize_tools(tools):
             if isinstance(tool, FunctionTool):
                 chat_tools.append(tool.to_json_schema_spec())
-            elif isinstance(tool, MutableMapping) and tool.get("type") == "web_search":
-                # Web search is handled via web_search_options, not tools array
-                web_search_options = {k: v for k, v in tool.items() if k != "type"}
+            elif isinstance(tool, MutableMapping):
+                typed_tool = cast(MutableMapping[str, Any], tool)
+                if typed_tool.get("type") == "web_search":
+                    # Web search is handled via web_search_options, not tools array
+                    web_search_options = {k: v for k, v in typed_tool.items() if k != "type"}
+                else:
+                    # Pass through all other dict-based tools unchanged
+                    chat_tools.append(typed_tool)
             else:
-                # Pass through all other tools (dicts, SDK types) unchanged
+                # Pass through all other tools (SDK types) unchanged
                 chat_tools.append(tool)
         result: dict[str, Any] = {}
         if chat_tools:
@@ -608,10 +613,21 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         # See https://github.com/microsoft/agent-framework/issues/4084
         for msg in all_messages:
             msg_content: Any = msg.get("content")
-            if isinstance(msg_content, list) and all(
-                isinstance(c, dict) and c.get("type") == "text" for c in msg_content
-            ):
-                msg["content"] = "\n".join(c.get("text", "") for c in msg_content)
+            if isinstance(msg_content, list):
+                typed_msg_content = cast(list[object], msg_content)
+                text_items: list[Mapping[str, Any]] = []
+                for item in typed_msg_content:
+                    if not isinstance(item, Mapping):
+                        break
+                    text_item = cast(Mapping[str, Any], item)
+                    if text_item.get("type") != "text":
+                        break
+                    text_items.append(text_item)
+                else:
+                    msg["content"] = "\n".join(
+                        text_item.get("text", "") if isinstance(text_item.get("text", ""), str) else ""
+                        for text_item in text_items
+                    )
 
         return all_messages
 
@@ -775,21 +791,26 @@ class OpenAIChatClient(  # type: ignore[misc]
             env_file_encoding=env_file_encoding,
         )
 
-        if not async_client and not openai_settings["api_key"]:
+        api_key_value = openai_settings.get("api_key")
+        if not async_client and not api_key_value:
             raise ValueError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
-        if not openai_settings["chat_model_id"]:
+
+        chat_model_id = openai_settings.get("chat_model_id")
+        if not chat_model_id:
             raise ValueError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
 
+        base_url_value = openai_settings.get("base_url")
+
         super().__init__(
-            model_id=openai_settings["chat_model_id"],
-            api_key=self._get_api_key(openai_settings["api_key"]),
-            base_url=openai_settings["base_url"] if openai_settings["base_url"] else None,
-            org_id=openai_settings["org_id"],
+            model_id=chat_model_id,
+            api_key=self._get_api_key(api_key_value),
+            base_url=base_url_value if base_url_value else None,
+            org_id=openai_settings.get("org_id"),
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,

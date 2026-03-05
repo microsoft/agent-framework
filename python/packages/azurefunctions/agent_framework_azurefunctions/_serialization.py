@@ -13,22 +13,24 @@ This module adds:
 - serialize_value / deserialize_value: convenience aliases for encode/decode
 - reconstruct_to_type: for HITL responses where external data (without type markers)
   needs to be reconstructed to a known type
-- _resolve_type: resolves 'module:class' type keys to Python types
+- resolve_type: resolves 'module:class' type keys to Python types
 """
 
 from __future__ import annotations
 
 import importlib
 import logging
+from contextlib import suppress
 from dataclasses import is_dataclass
 from typing import Any
 
 from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 
-def _resolve_type(type_key: str) -> type | None:
+def resolve_type(type_key: str) -> type | None:
     """Resolve a 'module:class' type key to its Python type.
 
     Args:
@@ -108,11 +110,9 @@ def reconstruct_to_type(value: Any, target_type: type) -> Any:
     if value is None:
         return None
 
-    try:
+    with suppress(TypeError):
         if isinstance(value, target_type):
             return value
-    except TypeError:
-        pass
 
     if not isinstance(value, dict):
         return value
@@ -123,17 +123,18 @@ def reconstruct_to_type(value: Any, target_type: type) -> Any:
         return decoded
 
     # Try Pydantic model validation (for unmarked dicts, e.g., external HITL data)
-    if hasattr(target_type, "model_validate"):
+    if issubclass(target_type, BaseModel):
         try:
             return target_type.model_validate(value)
         except Exception:
             logger.debug("Could not validate Pydantic model %s", target_type)
+            return value  # type: ignore[return-value]
 
     # Try dataclass construction (for unmarked dicts, e.g., external HITL data)
-    if is_dataclass(target_type) and isinstance(target_type, type):
+    if is_dataclass(target_type) and isinstance(target_type, type):  # type: ignore
         try:
             return target_type(**value)
         except Exception:
             logger.debug("Could not construct dataclass %s", target_type)
 
-    return value
+    return value  # type: ignore[return-value]

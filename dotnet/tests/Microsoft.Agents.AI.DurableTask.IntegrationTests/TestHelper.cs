@@ -2,7 +2,6 @@
 
 using Azure;
 using Azure.AI.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.AI.DurableTask.IntegrationTests.Logging;
 using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
@@ -14,7 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpenAI.Chat;
-using Xunit.Abstractions;
+using Shared.IntegrationTests;
 
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 
@@ -166,7 +165,7 @@ internal sealed class TestHelper : IDisposable
 
         AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
             ? new AzureOpenAIClient(new Uri(azureOpenAiEndpoint), new AzureKeyCredential(azureOpenAiKey))
-            : new AzureOpenAIClient(new Uri(azureOpenAiEndpoint), new AzureCliCredential());
+            : new AzureOpenAIClient(new Uri(azureOpenAiEndpoint), TestAzureCliCredentials.CreateAzureCliCredential());
 
         return client.GetChatClient(azureOpenAiDeploymentName);
     }

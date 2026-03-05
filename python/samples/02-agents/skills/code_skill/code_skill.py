@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 from textwrap import dedent
+from typing import Any
 
 from agent_framework import Agent, Skill, SkillResource, SkillsProvider
 from agent_framework.azure import AzureOpenAIResponsesClient
@@ -14,7 +15,7 @@ from dotenv import load_dotenv
 Code-Defined Agent Skills — Define skills in Python code
 
 This sample demonstrates how to create Agent Skills in code,
-without needing SKILL.md files on disk. Two patterns are shown:
+without needing SKILL.md files on disk. Three patterns are shown:
 
 Pattern 1: Basic Code Skill
   Create a Skill instance directly with static resources (inline content).
@@ -23,6 +24,11 @@ Pattern 2: Dynamic Resources
   Create a Skill and attach callable resources via the @skill.resource
   decorator. Resources can be sync or async functions that generate content at
   invocation time.
+
+Pattern 3: Dynamic Resources with kwargs
+  Attach a callable resource that accepts **kwargs to receive runtime
+  arguments passed via agent.run(). This is useful for injecting
+  request-scoped context (user tokens, session data) into skill resources.
 
 Both patterns can be combined with file-based skills in a single SkillsProvider.
 """
@@ -72,12 +78,15 @@ project_info_skill = Skill(
 
 
 @project_info_skill.resource
-def environment() -> str:
+def environment(**kwargs: Any) -> str:
     """Get current environment configuration."""
+    # Access runtime kwargs passed via agent.run(app_version="...")
+    app_version = kwargs.get("app_version", "unknown")
     env = os.environ.get("APP_ENV", "development")
     region = os.environ.get("APP_REGION", "us-east-1")
     return f"""\
       # Environment Configuration
+      - App Version: {app_version}
       - Environment: {env}
       - Region: {region}
       - Python: {sys.version}
@@ -124,10 +133,11 @@ async def main() -> None:
         response = await agent.run("What naming convention should I use for class attributes?")
         print(f"Agent: {response}\n")
 
-        # Example 2: Project info question (Pattern 2 — dynamic resources)
+        # Example 2: Project info question (Pattern 2 & 3 — dynamic resources with kwargs)
         print("Example 2: Project info question")
         print("---------------------------------")
-        response = await agent.run("What environment are we running in and who is on the team?")
+        # Pass app_version as a runtime kwarg; it flows to the environment() resource via **kwargs
+        response = await agent.run("What environment are we running in and who is on the team?", app_version="2.4.1")
         print(f"Agent: {response}\n")
 
     """
@@ -141,9 +151,9 @@ async def main() -> None:
 
     Example 2: Project info question
     ---------------------------------
-    Agent: We're running in the development environment in us-east-1.
-    The team consists of Alice Chen (Tech Lead), Bob Smith (Backend Engineer),
-    and Carol Davis (Frontend Engineer).
+    Agent: We're running app version 2.4.1 in the development environment
+    in us-east-1. The team consists of Alice Chen (Tech Lead), Bob Smith
+    (Backend Engineer), and Carol Davis (Frontend Engineer).
     """
 
 

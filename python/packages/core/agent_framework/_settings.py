@@ -215,9 +215,7 @@ def load_settings(
             raise FileNotFoundError(env_file_path)
 
         raw_dotenv_values = dotenv_values(dotenv_path=env_file_path, encoding=encoding)
-        loaded_dotenv_values = {
-            key: value for key, value in raw_dotenv_values.items() if key is not None and value is not None
-        }
+        loaded_dotenv_values = {key: value for key, value in raw_dotenv_values.items() if value is not None}
 
     # Filter out None overrides so defaults / env vars are preserved
     overrides = {k: v for k, v in overrides.items() if v is not None}
