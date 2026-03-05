@@ -5,7 +5,7 @@ import os
 from random import randint
 from typing import Annotated, Any, Literal
 
-from agent_framework import SupportsChatGetResponse, tool
+from agent_framework import Content, Message, SupportsChatGetResponse, tool
 from agent_framework.azure import (
     AzureAIAgentClient,
     AzureOpenAIAssistantsClient,
@@ -117,10 +117,11 @@ async def main(client_name: ClientName = "openai_chat") -> None:
     client = get_client(client_name)
 
     # 1. Configure prompt and streaming mode.
-    message = "What's the weather in Amsterdam and in Paris?"
+    prompt = "What's the weather in Amsterdam and in Paris?"
+    message = [Message(role="user", contents=[Content.from_text(prompt)])]
     stream = os.getenv("STREAM", "false").lower() == "true"
     print(f"Client: {client_name}")
-    print(f"User: {message}")
+    print(f"User: {prompt}")
 
     # 2. Run with context-managed clients.
     if isinstance(client, OpenAIAssistantsClient | AzureOpenAIAssistantsClient | AzureAIAgentClient):
