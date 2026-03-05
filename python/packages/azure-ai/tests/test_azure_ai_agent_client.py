@@ -540,6 +540,17 @@ def test_as_agent_no_name_anywhere(mock_agents_client: MagicMock) -> None:
     assert agent.name is None
 
 
+def test_as_agent_empty_string_preserves_explicit_value(mock_agents_client: MagicMock) -> None:
+    """Test that empty-string name/description are preserved and do not fall back to client defaults."""
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_name="client_name")
+    client.agent_description = "client description"
+
+    agent = client.as_agent(name="", description="", instructions="You are helpful.")
+
+    assert agent.name == ""
+    assert agent.description == ""
+
+
 async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: MagicMock) -> None:
     """Test _inner_get_response method."""
     client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")

@@ -577,6 +577,17 @@ def test_as_agent_no_name_anywhere(mock_project_client: MagicMock) -> None:
     assert agent.name is None
 
 
+def test_as_agent_empty_string_preserves_explicit_value(mock_project_client: MagicMock) -> None:
+    """Test that empty-string name/description are preserved and do not fall back to client defaults."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="client_name")
+    client.agent_description = "client description"
+
+    agent = client.as_agent(name="", description="", instructions="You are helpful.")
+
+    assert agent.name == ""
+    assert agent.description == ""
+
+
 async def test_async_context_manager(mock_project_client: MagicMock) -> None:
     """Test async context manager functionality."""
     client = create_test_azure_ai_client(mock_project_client, should_close_client=True)

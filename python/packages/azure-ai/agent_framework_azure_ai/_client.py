@@ -1195,8 +1195,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """
         return super().as_agent(
             id=id,
-            name=name or self.agent_name,
-            description=description or self.agent_description,
+            name=self.agent_name if name is None else name,
+            description=self.agent_description if description is None else description,
             instructions=instructions,
             tools=tools,
             default_options=default_options,
