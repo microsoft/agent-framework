@@ -40,25 +40,27 @@ static string LookupPrice([Description("The product name to look up.")] string p
     };
 
 // Configure the compaction pipeline with one of each strategy, ordered least to most aggressive.
-//const int MaxTokens = 512;
-//const int MaxTurns = 4;
+const int MaxTokens = 512;
+const int MaxTurns = 4;
 
 ChatHistoryCompactionPipeline compactionPipeline =
-    //new(// 1. Gentle: collapse old tool-call groups into short summaries like "[Tool calls: LookupPrice]"
-    //    new ToolResultCompactionStrategy(MaxTokens, preserveRecentGroups: 2),
+    new(// 1. Gentle: collapse old tool-call groups into short summaries like "[Tool calls: LookupPrice]"
+        new ToolResultCompactionStrategy(MaxTokens, preserveRecentGroups: 2),
 
-    //    // 2. Moderate: use an LLM to summarize older conversation spans into a concise message
-    //    new SummarizationCompactionStrategy(summarizerChatClient, MaxTokens, preserveRecentGroups: 2),
+        // 2. Moderate: use an LLM to summarize older conversation spans into a concise message
+        new SummarizationCompactionStrategy(summarizerChatClient, MaxTokens, preserveRecentGroups: 2),
 
-    //    // 3. Aggressive: keep only the last N user turns and their responses
-    //    new SlidingWindowCompactionStrategy(MaxTurns),
+        // 3. Aggressive: keep only the last N user turns and their responses
+        new SlidingWindowCompactionStrategy(MaxTurns),
 
-    //    // 4. Emergency: drop oldest groups until under the token budget
-    //    new TruncationCompactionStrategy(MaxTokens, preserveRecentGroups: 1));
-    Create(
-        Approach.Balanced,
-        Size.Compact,
-        summarizerChatClient);
+        // 4. Emergency: drop oldest groups until under the token budget
+        new TruncationCompactionStrategy(MaxTokens, preserveRecentGroups: 1));
+
+// TODO: PRECONFIGURED PIPELINE
+////Create(
+////    Approach.Balanced,
+////    Size.Compact,
+////    summarizerChatClient);
 
 // Create the agent with an in-memory chat history provider whose reducer is the compaction pipeline.
 AIAgent agent =
