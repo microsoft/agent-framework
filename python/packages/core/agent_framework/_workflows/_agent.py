@@ -328,11 +328,19 @@ class WorkflowAgent(BaseAgent):
 
         session_messages: list[Message] = session_context.get_messages(include_input=True)
         all_updates: list[AgentResponseUpdate] = []
+        emitted_message_ids: set[str] = set()
         async for event in self._run_core(
             session_messages, checkpoint_id, checkpoint_storage, streaming=True, **kwargs
         ):
             updates = self._convert_workflow_event_to_agent_response_updates(response_id, event)
             for update in updates:
+                # Deduplicate: orchestrations (e.g. HandoffBuilder) may yield the full
+                # conversation at termination, re-emitting messages that were already
+                # streamed individually. Skip updates whose message_id was already sent.
+                if update.message_id and update.message_id in emitted_message_ids:
+                    continue
+                if update.message_id:
+                    emitted_message_ids.add(update.message_id)
                 all_updates.append(update)
                 yield update
 
@@ -449,6 +457,7 @@ class WorkflowAgent(BaseAgent):
         raw_representations: list[object] = []
         merged_usage: UsageDetails | None = None
         latest_created_at: str | None = None
+        seen_message_ids: set[str] = set()
 
         for output_event in output_events:
             if output_event.type == "request_info":
@@ -475,8 +484,17 @@ class WorkflowAgent(BaseAgent):
                     )
 
                 if isinstance(data, AgentResponse):
-                    messages.extend(data.messages)
-                    raw_representations.append(data.raw_representation)
+                    non_user_messages = [
+                        msg for msg in data.messages
+                        if msg.role != "user"
+                        and not (msg.message_id and msg.message_id in seen_message_ids)
+                    ]
+                    for msg in non_user_messages:
+                        if msg.message_id:
+                            seen_message_ids.add(msg.message_id)
+                    messages.extend(non_user_messages)
+                    if non_user_messages:
+                        raw_representations.append(data.raw_representation)
                     merged_usage = add_usage_details(merged_usage, data.usage_details)
                     latest_created_at = (
                         data.created_at
@@ -486,12 +504,24 @@ class WorkflowAgent(BaseAgent):
                         else latest_created_at
                     )
                 elif isinstance(data, Message):
-                    messages.append(data)
-                    raw_representations.append(data.raw_representation)
+                    if data.role != "user" and not (data.message_id and data.message_id in seen_message_ids):
+                        if data.message_id:
+                            seen_message_ids.add(data.message_id)
+                        messages.append(data)
+                        raw_representations.append(data.raw_representation)
                 elif is_instance_of(data, list[Message]):
                     chat_messages = cast(list[Message], data)
-                    messages.extend(chat_messages)
-                    raw_representations.append(data)
+                    non_user_messages = [
+                        msg for msg in chat_messages
+                        if msg.role != "user"
+                        and not (msg.message_id and msg.message_id in seen_message_ids)
+                    ]
+                    for msg in non_user_messages:
+                        if msg.message_id:
+                            seen_message_ids.add(msg.message_id)
+                    messages.extend(non_user_messages)
+                    if non_user_messages:
+                        raw_representations.append(data)
                 else:
                     contents = self._extract_contents(data)
                     if not contents:
@@ -571,7 +601,11 @@ class WorkflowAgent(BaseAgent):
             executor_id = event.executor_id
 
             if isinstance(data, AgentResponseUpdate):
-                # Pass through AgentResponseUpdate directly (streaming from AgentExecutor)
+                # Pass through AgentResponseUpdate directly (streaming from AgentExecutor).
+                # Filter user-role updates: orchestrations (e.g. HandoffBuilder) may emit the
+                # full conversation including user messages, which should not be echoed back.
+                if data.role == "user":
+                    return []
                 if not data.author_name:
                     data.author_name = executor_id
                 return [data]
@@ -579,6 +613,8 @@ class WorkflowAgent(BaseAgent):
                 # Convert each message in AgentResponse to an AgentResponseUpdate
                 updates: list[AgentResponseUpdate] = []
                 for msg in data.messages:
+                    if msg.role == "user":
+                        continue
                     updates.append(
                         AgentResponseUpdate(
                             contents=list(msg.contents),
@@ -593,6 +629,8 @@ class WorkflowAgent(BaseAgent):
                     )
                 return updates
             if isinstance(data, Message):
+                if data.role == "user":
+                    return []
                 return [
                     AgentResponseUpdate(
                         contents=list(data.contents),
@@ -609,6 +647,8 @@ class WorkflowAgent(BaseAgent):
                 chat_messages = cast(list[Message], data)
                 updates = []
                 for msg in chat_messages:
+                    if msg.role == "user":
+                        continue
                     updates.append(
                         AgentResponseUpdate(
                             contents=list(msg.contents),

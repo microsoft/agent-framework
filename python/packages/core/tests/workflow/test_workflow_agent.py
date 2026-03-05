@@ -469,10 +469,11 @@ class TestWorkflowAgent:
         assert updates[2].raw_representation.value == 42
 
     async def test_workflow_as_agent_yield_output_with_list_of_chat_messages(self) -> None:
-        """Test that yield_output with list[Message] extracts contents from all messages.
+        """Test that yield_output with list[Message] extracts contents from non-user messages.
 
-        Note: Content items are coalesced by _finalize_response, so multiple text contents
-        become a single merged Content in the final response.
+        User-role messages are filtered out since agent responses should only contain
+        assistant/tool output. Content items are coalesced by _finalize_response, so
+        multiple text contents become a single merged Content in the final response.
         """
 
         @executor
@@ -491,25 +492,198 @@ class TestWorkflowAgent:
         workflow = WorkflowBuilder(start_executor=list_yielding_executor).build()
         agent = workflow.as_agent("list-msg-agent")
 
-        # Verify streaming returns the update with all 4 contents before coalescing
+        # Verify streaming returns updates for non-user messages only
         updates: list[AgentResponseUpdate] = []
         async for update in agent.run("test", stream=True):
             updates.append(update)
 
-        assert len(updates) == 3
+        assert len(updates) == 2
         full_response = AgentResponse.from_updates(updates)
-        assert len(full_response.messages) == 3
+        assert len(full_response.messages) == 2
         texts = [message.text for message in full_response.messages]
-        # Note: `from_agent_run_response_updates` coalesces multiple text contents into one content
-        assert texts == ["first message", "second message", "thirdfourth"]
+        # Note: AgentResponse.from_updates coalesces multiple text contents into a single merged Content
+        assert texts == ["second message", "thirdfourth"]
 
         # Verify run()
         result = await agent.run("test")
 
         assert isinstance(result, AgentResponse)
-        assert len(result.messages) == 3
+        assert len(result.messages) == 2
         texts = [message.text for message in result.messages]
-        assert texts == ["first message", "second message", "third fourth"]
+        assert texts == ["second message", "third fourth"]
+
+    async def test_workflow_as_agent_filters_user_role_agent_response_update(self) -> None:
+        """Test that AgentResponseUpdate with role='user' is dropped from the stream."""
+
+        @executor
+        async def user_update_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:
+            # Emit a user-role AgentResponseUpdate directly
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text="echoed user input")],
+                    role="user",
+                    author_name="test",
+                    response_id="resp-1",
+                    message_id="msg-1",
+                    created_at="2026-01-01T00:00:00Z",
+                )
+            )
+            # Emit a valid assistant-role update
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text="assistant reply")],
+                    role="assistant",
+                    author_name="test",
+                    response_id="resp-1",
+                    message_id="msg-2",
+                    created_at="2026-01-01T00:00:00Z",
+                )
+            )
+
+        workflow = WorkflowBuilder(start_executor=user_update_executor).build()
+        agent = workflow.as_agent("user-update-agent")
+
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("test", stream=True):
+            updates.append(update)
+
+        # User-role update should be filtered out
+        assert len(updates) == 1
+        assert updates[0].role == "assistant"
+        assert updates[0].contents[0].text == "assistant reply"
+
+    async def test_workflow_as_agent_deduplicates_streaming_messages(self) -> None:
+        """Test that duplicate messages are deduplicated in streaming mode.
+
+        Orchestrations like HandoffBuilder emit messages individually during streaming
+        then re-emit the full conversation at termination. The WorkflowAgent should
+        deduplicate so the caller doesn't see repeated messages.
+        """
+        msg_id_1 = str(uuid.uuid4())
+        msg_id_2 = str(uuid.uuid4())
+
+        @executor
+        async def dedup_executor(messages: list[Message], ctx: WorkflowContext[Never, Any]) -> None:
+            # Simulate streaming: emit individual AgentResponseUpdate messages
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text="first reply")],
+                    role="assistant",
+                    author_name="agent-a",
+                    response_id="resp-1",
+                    message_id=msg_id_1,
+                    created_at="2026-01-01T00:00:00Z",
+                )
+            )
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text="second reply")],
+                    role="assistant",
+                    author_name="agent-b",
+                    response_id="resp-2",
+                    message_id=msg_id_2,
+                    created_at="2026-01-01T00:00:01Z",
+                )
+            )
+            # Simulate termination: re-emit the full conversation as list[Message]
+            # (this is what HandoffBuilder._check_terminate_and_yield does)
+            await ctx.yield_output([
+                Message(role="user", text="user input", message_id="user-msg-1"),
+                Message(role="assistant", text="first reply", message_id=msg_id_1),
+                Message(role="assistant", text="second reply", message_id=msg_id_2),
+            ])
+
+        workflow = WorkflowBuilder(start_executor=dedup_executor).build()
+        agent = workflow.as_agent("dedup-agent")
+
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("test", stream=True):
+            updates.append(update)
+
+        # Should have exactly 2 assistant updates — no duplicates from the list[Message] yield
+        assert len(updates) == 2
+        assert updates[0].contents[0].text == "first reply"
+        assert updates[1].contents[0].text == "second reply"
+
+    async def test_workflow_as_agent_deduplicates_non_streaming_messages(self) -> None:
+        """Test that duplicate messages are deduplicated in non-streaming mode."""
+        msg_id_1 = str(uuid.uuid4())
+        msg_id_2 = str(uuid.uuid4())
+
+        @executor
+        async def dedup_executor(messages: list[Message], ctx: WorkflowContext[Never, Any]) -> None:
+            # Emit individual AgentResponse with messages
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[
+                        Message(role="assistant", text="first reply", message_id=msg_id_1),
+                    ],
+                    response_id="resp-1",
+                )
+            )
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[
+                        Message(role="assistant", text="second reply", message_id=msg_id_2),
+                    ],
+                    response_id="resp-2",
+                )
+            )
+            # Re-emit the full conversation at termination
+            await ctx.yield_output([
+                Message(role="user", text="user input", message_id="user-msg-1"),
+                Message(role="assistant", text="first reply", message_id=msg_id_1),
+                Message(role="assistant", text="second reply", message_id=msg_id_2),
+            ])
+
+        workflow = WorkflowBuilder(start_executor=dedup_executor).build()
+        agent = workflow.as_agent("dedup-agent")
+
+        result = await agent.run("test")
+
+        # Should have exactly 2 assistant messages — no duplicates from the list[Message] yield
+        assert len(result.messages) == 2
+        assert result.messages[0].text == "first reply"
+        assert result.messages[1].text == "second reply"
+
+    async def test_workflow_as_agent_agent_response_raw_repr_consistency(self) -> None:
+        """Test that AgentResponse with only user messages does not add orphan raw_representations."""
+
+        @executor
+        async def mixed_response_executor(
+            messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]
+        ) -> None:
+            # Emit an AgentResponse with only user messages
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[Message(role="user", text="user only")],
+                    response_id="resp-user-only",
+                )
+            )
+            # Emit an AgentResponse with mixed messages
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[
+                        Message(role="user", text="user msg"),
+                        Message(role="assistant", text="assistant msg"),
+                    ],
+                    response_id="resp-mixed",
+                )
+            )
+
+        workflow = WorkflowBuilder(start_executor=mixed_response_executor).build()
+        agent = workflow.as_agent("mixed-response-agent")
+
+        result = await agent.run("test")
+
+        # Only the assistant message from the mixed response should appear
+        assert len(result.messages) == 1
+        assert result.messages[0].text == "assistant msg"
+
+        # raw_representation should only contain the mixed response's raw_representation,
+        # not the user-only response's (which produced no output messages)
+        assert isinstance(result.raw_representation, list)
+        assert len(result.raw_representation) == 1
 
     async def test_session_conversation_history_included_in_workflow_run(self) -> None:
         """Test that messages provided to agent.run() are passed through to the workflow."""

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from agent_framework import (
     Agent,
+    AgentResponseUpdate,
     BaseContextProvider,
     ChatResponse,
     ChatResponseUpdate,
@@ -1117,3 +1118,47 @@ def test_handoff_builder_rejects_non_agent_supports_agent_run():
 
     with pytest.raises(TypeError, match="Participants must be Agent instances"):
         HandoffBuilder().participants([fake])
+
+
+async def test_handoff_as_agent_run_stream_does_not_echo_user_input() -> None:
+    """WorkflowAgent wrapping a handoff workflow must not echo user input in streamed updates.
+
+    When HandoffAgentExecutor emits the full conversation via ctx.yield_output() on
+    termination, user-role messages from that list should not appear as
+    AgentResponseUpdate items in the stream returned by WorkflowAgent.run(..., stream=True).
+    """
+    agent = MockHandoffAgent(name="single_agent")
+
+    workflow = (
+        HandoffBuilder(
+            participants=[agent],
+            # Terminate immediately after the agent responds (user msg + assistant msg = 2).
+            termination_condition=lambda conv: len(conv) >= 2,
+        )
+        .with_start_agent(agent)
+        .build()
+    )
+
+    workflow_agent = workflow.as_agent(name="test_workflow_agent")
+
+    user_input = "Hi! Can you help me with something?"
+    updates: list[AgentResponseUpdate] = []
+    async for update in workflow_agent.run(user_input, stream=True):
+        updates.append(update)
+
+    assert updates, "Expected at least one streaming update"
+
+    # The core assertion: no update should carry the user role.
+    user_role_updates = [u for u in updates if u.role == "user"]
+    assert not user_role_updates, (
+        f"User input was echoed back in the stream as {len(user_role_updates)} update(s). "
+        "Expected only assistant-role updates."
+    )
+
+    # Also verify non-streaming path filters user messages
+    result = await workflow_agent.run(user_input)
+    user_role_messages = [m for m in result.messages if m.role == "user"]
+    assert not user_role_messages, (
+        f"User input was echoed back in non-streaming result as {len(user_role_messages)} message(s). "
+        "Expected only assistant-role messages."
+    )
