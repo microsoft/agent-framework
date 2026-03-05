@@ -47,7 +47,7 @@ PipelineCompactionStrategy compactionPipeline =
         new SummarizationCompactionStrategy(summarizerChatClient, CompactionTriggers.TokensExceed(0x500)),
 
         // 3. Aggressive: keep only the last N user turns and their responses
-        new SlidingWindowCompactionStrategy(maximumTurns: 4),
+        new SlidingWindowCompactionStrategy(CompactionTriggers.TurnsExceed(4)),
 
         // 4. Emergency: drop oldest groups until under the token budget
         new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(0x8000)));

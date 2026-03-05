@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -7,20 +8,18 @@ using System.Threading.Tasks;
 namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
-/// A compaction strategy that keeps only the most recent user turns and their
-/// associated response groups, removing older turns to bound conversation length.
+/// A compaction strategy that removes the oldest user turns and their associated response groups
+/// to bound conversation length.
 /// </summary>
 /// <remarks>
 /// <para>
 /// This strategy always preserves system messages. It identifies user turns in the
-/// conversation (via <see cref="MessageGroup.TurnIndex"/>) and keeps the last
-/// <see cref="MaxTurns"/> turns along with all response groups (assistant replies,
-/// tool call groups) that belong to each kept turn.
+/// conversation (via <see cref="MessageGroup.TurnIndex"/>) and excludes the oldest turns
+/// one at a time until the <see cref="CompactionStrategy.Target"/> condition is met.
 /// </para>
 /// <para>
-/// The <see cref="CompactionTrigger"/> predicate controls when compaction proceeds.
-/// When <see langword="null"/>, a default trigger of <see cref="CompactionTriggers.TurnsExceed"/>
-/// with <see cref="MaxTurns"/> is used.
+/// <see cref="MinimumPreserved"/> is a hard floor: even if the <see cref="CompactionStrategy.Target"/>
+/// has not been reached, compaction will not touch the last <see cref="MinimumPreserved"/> non-system groups.
 /// </para>
 /// <para>
 /// This strategy is more predictable than token-based truncation for bounding conversation
@@ -30,62 +29,87 @@ namespace Microsoft.Agents.AI.Compaction;
 public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
 {
     /// <summary>
-    /// The default maximum number of user turns to retain before compaction occurs. This default is a reasonable starting point
-    /// for many conversations, but should be tuned based on the expected conversation length and token budget.
+    /// The default minimum number of most-recent non-system groups to preserve.
     /// </summary>
-    public const int DefaultMaximumTurns = 32;
+    public const int DefaultMinimumPreserved = 1;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SlidingWindowCompactionStrategy"/> class.
     /// </summary>
-    /// <param name="maximumTurns">
-    /// The maximum number of user turns to keep. Older turns and their associated responses are removed.
+    /// <param name="trigger">
+    /// The <see cref="CompactionTrigger"/> that controls when compaction proceeds.
+    /// Use <see cref="CompactionTriggers.TurnsExceed"/> for turn-based thresholds.
+    /// </param>
+    /// <param name="minimumPreserved">
+    /// The minimum number of most-recent non-system message groups to preserve.
+    /// This is a hard floor — compaction will not exclude groups beyond this limit,
+    /// regardless of the target condition.
     /// </param>
     /// <param name="target">
     /// An optional target condition that controls when compaction stops. When <see langword="null"/>,
-    /// defaults to the inverse of the auto-derived trigger — compaction stops as soon as the turn count is within bounds.
+    /// defaults to the inverse of the <paramref name="trigger"/> — compaction stops as soon as the trigger would no longer fire.
     /// </param>
-    public SlidingWindowCompactionStrategy(int maximumTurns = DefaultMaximumTurns, CompactionTrigger? target = null)
-        : base(CompactionTriggers.TurnsExceed(maximumTurns), target)
+    public SlidingWindowCompactionStrategy(CompactionTrigger trigger, int minimumPreserved = DefaultMinimumPreserved, CompactionTrigger? target = null)
+        : base(trigger, target)
     {
-        this.MaxTurns = maximumTurns;
+        this.MinimumPreserved = minimumPreserved;
     }
 
     /// <summary>
-    /// Gets the maximum number of user turns to retain after compaction.
+    /// Gets the minimum number of most-recent non-system groups that are always preserved.
+    /// This is a hard floor that compaction cannot exceed, regardless of the target condition.
     /// </summary>
-    public int MaxTurns { get; }
+    public int MinimumPreserved { get; }
 
     /// <inheritdoc/>
     protected override Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
     {
-        // Collect distinct included turn indices in order
-        List<int> includedTurns = [];
+        // Identify protected groups: the N most-recent non-system, non-excluded groups
+        List<int> nonSystemIncludedIndices = [];
         foreach (MessageGroup group in index.Groups)
         {
-            if (!group.IsExcluded && group.TurnIndex is int turnIndex && !includedTurns.Contains(turnIndex))
+            if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
             {
-                includedTurns.Add(turnIndex);
+                nonSystemIncludedIndices.Add(index.Groups.IndexOf(group));
             }
         }
 
-        if (includedTurns.Count <= this.MaxTurns)
+        int protectedStart = Math.Max(0, nonSystemIncludedIndices.Count - this.MinimumPreserved);
+        HashSet<int> protectedGroupIndices = [];
+        for (int i = protectedStart; i < nonSystemIncludedIndices.Count; i++)
         {
-            return Task.FromResult(false);
+            protectedGroupIndices.Add(nonSystemIncludedIndices[i]);
+        }
+
+        // Collect distinct included turn indices in order (oldest first), excluding protected groups
+        List<int> excludableTurns = [];
+        for (int i = 0; i < index.Groups.Count; i++)
+        {
+            MessageGroup group = index.Groups[i];
+            if (!group.IsExcluded
+                && group.Kind != MessageGroupKind.System
+                && !protectedGroupIndices.Contains(i)
+                && group.TurnIndex is int turnIndex
+                && !excludableTurns.Contains(turnIndex))
+            {
+                excludableTurns.Add(turnIndex);
+            }
         }
 
         // Exclude one turn at a time from oldest, re-checking target after each
-        int turnsToRemove = includedTurns.Count - this.MaxTurns;
         bool compacted = false;
 
-        for (int t = 0; t < turnsToRemove; t++)
+        for (int t = 0; t < excludableTurns.Count; t++)
         {
-            int turnToExclude = includedTurns[t];
+            int turnToExclude = excludableTurns[t];
 
             for (int i = 0; i < index.Groups.Count; i++)
             {
                 MessageGroup group = index.Groups[i];
-                if (!group.IsExcluded && group.Kind != MessageGroupKind.System && group.TurnIndex == turnToExclude)
+                if (!group.IsExcluded
+                    && group.Kind != MessageGroupKind.System
+                    && !protectedGroupIndices.Contains(i)
+                    && group.TurnIndex == turnToExclude)
                 {
                     group.IsExcluded = true;
                     group.ExcludeReason = $"Excluded by {nameof(SlidingWindowCompactionStrategy)}";

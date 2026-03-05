@@ -7,13 +7,17 @@ namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
 /// A compaction strategy that removes the oldest non-system message groups,
-/// keeping the most recent groups up to <see cref="PreserveRecentGroups"/>.
+/// keeping at least <see cref="MinimumPreserved"/> most-recent groups intact.
 /// </summary>
 /// <remarks>
 /// <para>
 /// This strategy preserves system messages and removes the oldest non-system message groups first.
 /// It respects atomic group boundaries — an assistant message with tool calls and its
 /// corresponding tool result messages are always removed together.
+/// </para>
+/// <para>
+/// <see cref="MinimumPreserved"/> is a hard floor: even if the <see cref="CompactionStrategy.Target"/>
+/// has not been reached, compaction will not touch the last <see cref="MinimumPreserved"/> non-system groups.
 /// </para>
 /// <para>
 /// The <see cref="CompactionTrigger"/> controls when compaction proceeds.
@@ -23,9 +27,9 @@ namespace Microsoft.Agents.AI.Compaction;
 public sealed class TruncationCompactionStrategy : CompactionStrategy
 {
     /// <summary>
-    /// The default number of most-recent non-system groups to protect from collapsing.
+    /// The default minimum number of most-recent non-system groups to preserve.
     /// </summary>
-    public const int DefaultPreserveRecentGroups = 32;
+    public const int DefaultMinimumPreserved = 32;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="TruncationCompactionStrategy"/> class.
@@ -33,24 +37,26 @@ public sealed class TruncationCompactionStrategy : CompactionStrategy
     /// <param name="trigger">
     /// The <see cref="CompactionTrigger"/> that controls when compaction proceeds.
     /// </param>
-    /// <param name="preserveRecentGroups">
-    /// The minimum number of most-recent non-system message groups to keep.
-    /// Defaults to 1 so that at least the latest exchange is always preserved.
+    /// <param name="minimumPreserved">
+    /// The minimum number of most-recent non-system message groups to preserve.
+    /// This is a hard floor — compaction will not remove groups beyond this limit,
+    /// regardless of the target condition.
     /// </param>
     /// <param name="target">
     /// An optional target condition that controls when compaction stops. When <see langword="null"/>,
     /// defaults to the inverse of the <paramref name="trigger"/> — compaction stops as soon as the trigger would no longer fire.
     /// </param>
-    public TruncationCompactionStrategy(CompactionTrigger trigger, int preserveRecentGroups = DefaultPreserveRecentGroups, CompactionTrigger? target = null)
+    public TruncationCompactionStrategy(CompactionTrigger trigger, int minimumPreserved = DefaultMinimumPreserved, CompactionTrigger? target = null)
         : base(trigger, target)
     {
-        this.PreserveRecentGroups = preserveRecentGroups;
+        this.MinimumPreserved = minimumPreserved;
     }
 
     /// <summary>
-    /// Gets the minimum number of most-recent non-system message groups to retain after compaction.
+    /// Gets the minimum number of most-recent non-system message groups that are always preserved.
+    /// This is a hard floor that compaction cannot exceed, regardless of the target condition.
     /// </summary>
-    public int PreserveRecentGroups { get; }
+    public int MinimumPreserved { get; }
 
     /// <inheritdoc/>
     protected override Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
@@ -66,7 +72,7 @@ public sealed class TruncationCompactionStrategy : CompactionStrategy
             }
         }
 
-        int maxRemovable = removableCount - this.PreserveRecentGroups;
+        int maxRemovable = removableCount - this.MinimumPreserved;
         if (maxRemovable <= 0)
         {
             return Task.FromResult(false);

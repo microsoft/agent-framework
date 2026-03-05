@@ -15,8 +15,8 @@ public class SlidingWindowCompactionStrategyTests
     [Fact]
     public async Task CompactAsyncBelowMaxTurnsReturnsFalseAsync()
     {
-        // Arrange
-        SlidingWindowCompactionStrategy strategy = new(maximumTurns: 3);
+        // Arrange — trigger requires > 3 turns, conversation has 2
+        SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(3));
         MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
@@ -35,8 +35,8 @@ public class SlidingWindowCompactionStrategyTests
     [Fact]
     public async Task CompactAsyncExceedsMaxTurnsExcludesOldestTurnsAsync()
     {
-        // Arrange — keep 2 turns, conversation has 3
-        SlidingWindowCompactionStrategy strategy = new(maximumTurns: 2);
+        // Arrange — trigger on > 2 turns, conversation has 3
+        SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(2));
         MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
@@ -65,8 +65,8 @@ public class SlidingWindowCompactionStrategyTests
     [Fact]
     public async Task CompactAsyncPreservesSystemMessagesAsync()
     {
-        // Arrange
-        SlidingWindowCompactionStrategy strategy = new(maximumTurns: 1);
+        // Arrange — trigger on > 1 turn
+        SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(1));
         MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "You are helpful."),
@@ -89,8 +89,8 @@ public class SlidingWindowCompactionStrategyTests
     [Fact]
     public async Task CompactAsyncPreservesToolCallGroupsInKeptTurnsAsync()
     {
-        // Arrange
-        SlidingWindowCompactionStrategy strategy = new(maximumTurns: 1);
+        // Arrange — trigger on > 1 turn
+        SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(1));
         MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
@@ -114,10 +114,10 @@ public class SlidingWindowCompactionStrategyTests
     }
 
     [Fact]
-    public async Task CompactAsyncCustomTriggerOverridesDefaultAsync()
+    public async Task CompactAsyncTriggerNotMetReturnsFalseAsync()
     {
-        // Arrange — custom trigger: only compact when tokens exceed threshold
-        SlidingWindowCompactionStrategy strategy = new(maximumTurns: 99);
+        // Arrange — trigger requires > 99 turns
+        SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(99));
 
         MessageIndex groups = MessageIndex.Create(
         [
@@ -126,7 +126,7 @@ public class SlidingWindowCompactionStrategyTests
             new ChatMessage(ChatRole.User, "Q3"),
         ]);
 
-        // Act — tokens are tiny, trigger not met
+        // Act
         bool result = await strategy.CompactAsync(groups);
 
         // Assert
@@ -136,8 +136,8 @@ public class SlidingWindowCompactionStrategyTests
     [Fact]
     public async Task CompactAsyncIncludedMessagesContainOnlyKeptTurnsAsync()
     {
-        // Arrange
-        SlidingWindowCompactionStrategy strategy = new(maximumTurns: 1);
+        // Arrange — trigger on > 1 turn
+        SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(1));
         MessageIndex groups = MessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "System"),
@@ -161,13 +161,13 @@ public class SlidingWindowCompactionStrategyTests
     [Fact]
     public async Task CompactAsyncCustomTargetStopsExcludingEarlyAsync()
     {
-        // Arrange — 4 turns, maxTurns=1 means 3 should be excluded
-        // But custom target stops after removing 1 turn
+        // Arrange — trigger on > 1 turn, custom target stops after removing 1 turn
         int removeCount = 0;
         CompactionTrigger targetAfterOne = _ => ++removeCount >= 1;
 
         SlidingWindowCompactionStrategy strategy = new(
-            maximumTurns: 1,
+            CompactionTriggers.TurnsExceed(1),
+            minimumPreserved: 0,
             target: targetAfterOne);
 
         MessageIndex index = MessageIndex.Create(
@@ -190,5 +190,35 @@ public class SlidingWindowCompactionStrategyTests
         Assert.True(index.Groups[1].IsExcluded);   // A1 (turn 1)
         Assert.False(index.Groups[2].IsExcluded);  // Q2 (turn 2) — kept
         Assert.False(index.Groups[3].IsExcluded);  // A2 (turn 2)
+    }
+
+    [Fact]
+    public async Task CompactAsyncMinimumPreservedStopsCompactionAsync()
+    {
+        // Arrange — always trigger with never-satisfied target, but MinimumPreserved = 2 is hard floor
+        SlidingWindowCompactionStrategy strategy = new(
+            CompactionTriggers.TurnsExceed(1),
+            minimumPreserved: 2,
+            target: _ => false);
+
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+            new ChatMessage(ChatRole.Assistant, "A2"),
+            new ChatMessage(ChatRole.User, "Q3"),
+            new ChatMessage(ChatRole.Assistant, "A3"),
+        ]);
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — target never says stop, but MinimumPreserved=2 prevents removing the last 2 groups
+        Assert.True(result);
+        Assert.Equal(2, index.IncludedGroupCount);
+        // Last 2 non-system groups must be preserved
+        Assert.False(index.Groups[4].IsExcluded);  // Q3
+        Assert.False(index.Groups[5].IsExcluded);  // A3
     }
 }

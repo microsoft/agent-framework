@@ -21,6 +21,10 @@ namespace Microsoft.Agents.AI.Compaction;
 /// <c>[Tool calls: get_weather, search_docs]</c>.
 /// </para>
 /// <para>
+/// <see cref="MinimumPreserved"/> is a hard floor: even if the <see cref="CompactionStrategy.Target"/>
+/// has not been reached, compaction will not touch the last <see cref="MinimumPreserved"/> non-system groups.
+/// </para>
+/// <para>
 /// The <see cref="CompactionTrigger"/> predicate controls when compaction proceeds.
 /// When <see langword="null"/>, a default compound trigger of
 /// <see cref="CompactionTriggers.TokensExceed"/> AND <see cref="CompactionTriggers.HasToolCalls"/>
@@ -30,9 +34,9 @@ namespace Microsoft.Agents.AI.Compaction;
 public sealed class ToolResultCompactionStrategy : CompactionStrategy
 {
     /// <summary>
-    /// The default number of most-recent non-system groups to protect from collapsing.
+    /// The default minimum number of most-recent non-system groups to preserve.
     /// </summary>
-    public const int DefaultPreserveRecentGroups = 2;
+    public const int DefaultMinimumPreserved = 2;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ToolResultCompactionStrategy"/> class.
@@ -40,24 +44,27 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     /// <param name="trigger">
     /// The <see cref="CompactionTrigger"/> that controls when compaction proceeds.
     /// </param>
-    /// <param name="preserveRecentGroups">
-    /// The number of most-recent non-system message groups to protect from collapsing.
-    /// Defaults to <see cref="DefaultPreserveRecentGroups"/>, ensuring the current turn's tool interactions remain visible.
+    /// <param name="minimumPreserved">
+    /// The minimum number of most-recent non-system message groups to preserve.
+    /// This is a hard floor — compaction will not collapse groups beyond this limit,
+    /// regardless of the target condition.
+    /// Defaults to <see cref="DefaultMinimumPreserved"/>, ensuring the current turn's tool interactions remain visible.
     /// </param>
     /// <param name="target">
     /// An optional target condition that controls when compaction stops. When <see langword="null"/>,
     /// defaults to the inverse of the <paramref name="trigger"/> — compaction stops as soon as the trigger would no longer fire.
     /// </param>
-    public ToolResultCompactionStrategy(CompactionTrigger trigger, int preserveRecentGroups = DefaultPreserveRecentGroups, CompactionTrigger? target = null)
+    public ToolResultCompactionStrategy(CompactionTrigger trigger, int minimumPreserved = DefaultMinimumPreserved, CompactionTrigger? target = null)
         : base(trigger, target)
     {
-        this.PreserveRecentGroups = preserveRecentGroups;
+        this.MinimumPreserved = minimumPreserved;
     }
 
     /// <summary>
-    /// Gets the number of most-recent non-system groups to protect from collapsing.
+    /// Gets the minimum number of most-recent non-system groups that are always preserved.
+    /// This is a hard floor that compaction cannot exceed, regardless of the target condition.
     /// </summary>
-    public int PreserveRecentGroups { get; }
+    public int MinimumPreserved { get; }
 
     /// <inheritdoc/>
     protected override Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
@@ -73,7 +80,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
             }
         }
 
-        int protectedStart = Math.Max(0, nonSystemIncludedIndices.Count - this.PreserveRecentGroups);
+        int protectedStart = Math.Max(0, nonSystemIncludedIndices.Count - this.MinimumPreserved);
         HashSet<int> protectedGroupIndices = [];
         for (int i = protectedStart; i < nonSystemIncludedIndices.Count; i++)
         {

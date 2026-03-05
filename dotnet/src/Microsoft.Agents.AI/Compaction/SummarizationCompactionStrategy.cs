@@ -16,10 +16,14 @@ namespace Microsoft.Agents.AI.Compaction;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This strategy protects system messages and the most recent <see cref="PreserveRecentGroups"/>
+/// This strategy protects system messages and the most recent <see cref="MinimumPreserved"/>
 /// non-system groups. All older groups are collected and sent to the <see cref="IChatClient"/>
 /// for summarization. The resulting summary replaces those messages as a single assistant message
 /// with <see cref="MessageGroupKind.Summary"/>.
+/// </para>
+/// <para>
+/// <see cref="MinimumPreserved"/> is a hard floor: even if the <see cref="CompactionStrategy.Target"/>
+/// has not been reached, compaction will not touch the last <see cref="MinimumPreserved"/> non-system groups.
 /// </para>
 /// <para>
 /// The <see cref="CompactionTrigger"/> predicate controls when compaction proceeds.
@@ -50,9 +54,10 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
     /// <param name="trigger">
     /// The <see cref="CompactionTrigger"/> that controls when compaction proceeds.
     /// </param>
-    /// <param name="preserveRecentGroups">
-    /// The number of most-recent non-system message groups to protect from summarization.
-    /// Defaults to 4, preserving the current and recent exchanges.
+    /// <param name="minimumPreserved">
+    /// The minimum number of most-recent non-system message groups to preserve.
+    /// This is a hard floor — compaction will not summarize groups beyond this limit,
+    /// regardless of the target condition. Defaults to 4, preserving the current and recent exchanges.
     /// </param>
     /// <param name="summarizationPrompt">
     /// An optional custom system prompt for the summarization LLM call. When <see langword="null"/>,
@@ -65,13 +70,13 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
     public SummarizationCompactionStrategy(
         IChatClient chatClient,
         CompactionTrigger trigger,
-        int preserveRecentGroups = 4,
+        int minimumPreserved = 4,
         string? summarizationPrompt = null,
         CompactionTrigger? target = null)
         : base(trigger, target)
     {
         this.ChatClient = Throw.IfNull(chatClient);
-        this.PreserveRecentGroups = preserveRecentGroups;
+        this.MinimumPreserved = minimumPreserved;
         this.SummarizationPrompt = summarizationPrompt ?? DefaultSummarizationPrompt;
     }
 
@@ -81,9 +86,10 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
     public IChatClient ChatClient { get; }
 
     /// <summary>
-    /// Gets the number of most-recent non-system groups to protect from summarization.
+    /// Gets the minimum number of most-recent non-system groups that are always preserved.
+    /// This is a hard floor that compaction cannot exceed, regardless of the target condition.
     /// </summary>
-    public int PreserveRecentGroups { get; }
+    public int MinimumPreserved { get; }
 
     /// <summary>
     /// Gets the prompt used when requesting summaries from the chat client.
@@ -104,7 +110,7 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
             }
         }
 
-        int protectedFromEnd = Math.Min(this.PreserveRecentGroups, nonSystemIncludedCount);
+        int protectedFromEnd = Math.Min(this.MinimumPreserved, nonSystemIncludedCount);
         int maxSummarizable = nonSystemIncludedCount - protectedFromEnd;
 
         if (maxSummarizable <= 0)
