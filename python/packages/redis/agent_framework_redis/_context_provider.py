@@ -341,7 +341,7 @@ class RedisContextProvider(BaseContextProvider):
         filter_expression: Any | None = None,
         return_fields: list[str] | None = None,
         num_results: int = 10,
-        linear_alpha: float = 0.7,
+        alpha: float = 0.7,
     ) -> list[dict[str, Any]]:
         """Runs a text or hybrid vector-text search with optional filters."""
         await self._ensure_index()
@@ -378,7 +378,7 @@ class RedisContextProvider(BaseContextProvider):
                     vector_field_name=self.vector_field_name,
                     text_scorer=text_scorer,
                     filter_expression=combined_filter,
-                    linear_alpha=linear_alpha,
+                    alpha=alpha,
                     dtype=self.redis_vectorizer.dtype,  # pyright: ignore[reportUnknownMemberType]
                     num_results=num_results,
                     return_fields=return_fields,
