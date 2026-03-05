@@ -1486,6 +1486,9 @@ class AzureAIAgentClient(
         Returns:
             A Agent instance configured with this chat client.
         """
+        # Use agent_name from client initialization if name not provided
+        if name is None:
+            name = self.agent_name
         return super().as_agent(
             id=id,
             name=name,
