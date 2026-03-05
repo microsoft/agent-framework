@@ -1,5 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.Shared.DiagnosticIds;
+
 namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
@@ -10,6 +13,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// during compaction operations. For example, an assistant message containing tool calls
 /// and its corresponding tool result messages form an atomic <see cref="ToolCall"/> group.
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public enum MessageGroupKind
 {
     /// <summary>

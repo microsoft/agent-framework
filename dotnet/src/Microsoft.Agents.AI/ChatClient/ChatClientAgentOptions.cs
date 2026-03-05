@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -60,6 +62,7 @@ public sealed class ChatClientAgentOptions
     /// before applying compaction logic. See <see cref="CompactionStrategy"/> for details.
     /// </para>
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public CompactionStrategy? CompactionStrategy { get; set; }
 
     /// <summary>

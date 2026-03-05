@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Compaction;
 
@@ -26,6 +28,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// These values are computed by <see cref="MessageIndex.Create"/> and passed into the constructor.
 /// </para>
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class MessageGroup
 {
     /// <summary>

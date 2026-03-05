@@ -2,8 +2,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Compaction;
 
@@ -26,6 +28,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// length, since it operates on logical turn boundaries rather than estimated token counts.
 /// </para>
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
 {
     /// <summary>

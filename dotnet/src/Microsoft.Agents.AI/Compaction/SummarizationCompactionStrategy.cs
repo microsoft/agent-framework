@@ -1,11 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Compaction;
@@ -31,6 +33,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// Use <see cref="CompactionTriggers"/> for common trigger conditions such as token thresholds.
 /// </para>
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class SummarizationCompactionStrategy : CompactionStrategy
 {
     /// <summary>

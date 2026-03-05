@@ -3,11 +3,13 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Compaction;
@@ -27,6 +29,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// before applying compaction logic. Only included messages are forwarded to the inner client.
 /// </para>
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal sealed class CompactingChatClient : DelegatingChatClient
 {
     private readonly CompactionStrategy _compactionStrategy;

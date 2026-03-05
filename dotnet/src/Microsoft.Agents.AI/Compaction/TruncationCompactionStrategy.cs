@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Compaction;
 
@@ -24,6 +26,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// Use <see cref="CompactionTriggers"/> for common trigger conditions such as token or group thresholds.
 /// </para>
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class TruncationCompactionStrategy : CompactionStrategy
 {
     /// <summary>

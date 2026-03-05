@@ -2,10 +2,12 @@
 
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text;
 using Microsoft.Extensions.AI;
 using Microsoft.ML.Tokenizers;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Compaction;
 
@@ -34,6 +36,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// appending only new messages without reprocessing the entire history.
 /// </para>
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class MessageIndex
 {
     private int _currentTurn;

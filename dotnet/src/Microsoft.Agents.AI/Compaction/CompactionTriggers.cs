@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Compaction;
 
@@ -12,6 +14,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// Combine triggers with <see cref="All"/> or <see cref="Any"/> for compound conditions,
 /// or write a custom lambda for full flexibility.
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class CompactionTriggers
 {
     /// <summary>
