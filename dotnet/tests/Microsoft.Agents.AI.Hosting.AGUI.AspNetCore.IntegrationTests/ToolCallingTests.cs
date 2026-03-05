@@ -16,7 +16,6 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests;
 

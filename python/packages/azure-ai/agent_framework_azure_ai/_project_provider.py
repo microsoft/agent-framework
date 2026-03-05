@@ -224,7 +224,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
                 if isinstance(tool, MCPTool):
                     mcp_tools.append(tool)
                 elif isinstance(tool, (FunctionTool, MutableMapping)):
-                    non_mcp_tools.append(tool)
+                    non_mcp_tools.append(tool)  # type: ignore[reportUnknownArgumentType]
 
         # Connect MCP tools and discover their functions BEFORE creating the agent
         # This is required because Azure AI Responses API doesn't accept tools at request time

@@ -186,7 +186,7 @@ class RawAzureAIInferenceEmbeddingClient(
         values: Sequence[Content | str],
         *,
         options: AzureAIInferenceEmbeddingOptionsT | None = None,
-    ) -> GeneratedEmbeddings[list[float]]:
+    ) -> GeneratedEmbeddings[list[float], AzureAIInferenceEmbeddingOptionsT]:
         """Generate embeddings for text and/or image inputs.
 
         Text inputs (``str`` or ``Content`` with ``type="text"``) are sent to the

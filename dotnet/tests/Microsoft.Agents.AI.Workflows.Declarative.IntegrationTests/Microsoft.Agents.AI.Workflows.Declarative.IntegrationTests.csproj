@@ -5,6 +5,7 @@
     <InjectSharedBuildTestCode>true</InjectSharedBuildTestCode>
     <InjectSharedFoundryAgents>true</InjectSharedFoundryAgents>
     <InjectSharedIntegrationTestCode>true</InjectSharedIntegrationTestCode>
+    <InjectSharedIntegrationTestAzureCredentialsCode>True</InjectSharedIntegrationTestAzureCredentialsCode>
   </PropertyGroup>
 
   <ItemGroup>

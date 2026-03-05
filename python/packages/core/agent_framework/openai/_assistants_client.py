@@ -360,23 +360,26 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
             env_file_encoding=env_file_encoding,
         )
 
-        if not async_client and not openai_settings["api_key"]:
+        api_key_value = openai_settings.get("api_key")
+        if not async_client and not api_key_value:
             raise ValueError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
-        if not openai_settings["chat_model_id"]:
+
+        chat_model_id = openai_settings.get("chat_model_id")
+        if not chat_model_id:
             raise ValueError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
 
         super().__init__(
-            model_id=openai_settings["chat_model_id"],
-            api_key=self._get_api_key(openai_settings["api_key"]),
-            org_id=openai_settings["org_id"],
+            model_id=chat_model_id,
+            api_key=self._get_api_key(api_key_value),
+            org_id=openai_settings.get("org_id"),
             default_headers=default_headers,
             client=async_client,
-            base_url=openai_settings["base_url"],
+            base_url=openai_settings.get("base_url"),
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
         )
@@ -403,7 +406,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         """Clean up any assistants we created."""
         if self._should_delete_assistant and self.assistant_id is not None:
             client = await self._ensure_client()
-            await client.beta.assistants.delete(self.assistant_id)
+            await client.beta.assistants.delete(self.assistant_id)  # type: ignore[reportDeprecated]
             object.__setattr__(self, "assistant_id", None)
             object.__setattr__(self, "_should_delete_assistant", False)
 
@@ -466,7 +469,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                 raise ValueError("Parameter 'model_id' is required for assistant creation.")
 
             client = await self._ensure_client()
-            created_assistant = await client.beta.assistants.create(
+            created_assistant = await client.beta.assistants.create(  # type: ignore[reportDeprecated]
                 model=self.model_id,
                 description=self.assistant_description,
                 name=self.assistant_name,
@@ -568,7 +571,8 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                         if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
                             text_content = Content.from_text(delta_block.text.value)
                             if delta_block.text.annotations:
-                                text_content.annotations = []
+                                annotations: list[Annotation] = []
+                                text_content.annotations = annotations
                                 for annotation in delta_block.text.annotations:
                                     if isinstance(annotation, FileCitationDeltaAnnotation):
                                         ann: Annotation = Annotation(
@@ -589,7 +593,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                                                     end_index=annotation.end_index,
                                                 )
                                             ]
-                                        text_content.annotations.append(ann)
+                                        annotations.append(ann)
                                     elif isinstance(annotation, FilePathDeltaAnnotation):
                                         ann = Annotation(
                                             type="citation",
@@ -609,7 +613,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                                                     end_index=annotation.end_index,
                                                 )
                                             ]
-                                        text_content.annotations.append(ann)
+                                        annotations.append(ann)
                             yield ChatResponseUpdate(
                                 role=role,  # type: ignore[arg-type]
                                 contents=[text_content],
@@ -628,7 +632,8 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                             continue
                         text_content = Content.from_text(block.text.value)
                         if block.text.annotations:
-                            text_content.annotations = []
+                            completed_annotations: list[Annotation] = []
+                            text_content.annotations = completed_annotations
                             for completed_annotation in block.text.annotations:
                                 if isinstance(completed_annotation, FileCitationAnnotation):
                                     props: dict[str, Any] = {
@@ -644,17 +649,13 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                                         and completed_annotation.file_citation.file_id
                                     ):
                                         ann["file_id"] = completed_annotation.file_citation.file_id
-                                    if (
-                                        completed_annotation.start_index is not None
-                                        and completed_annotation.end_index is not None
-                                    ):
-                                        ann["annotated_regions"] = [
-                                            TextSpanRegion(
-                                                type="text_span",
-                                                start_index=completed_annotation.start_index,
-                                                end_index=completed_annotation.end_index,
-                                            )
-                                        ]
+                                    ann["annotated_regions"] = [
+                                        TextSpanRegion(
+                                            type="text_span",
+                                            start_index=completed_annotation.start_index,
+                                            end_index=completed_annotation.end_index,
+                                        )
+                                    ]
                                     text_content.annotations.append(ann)
                                 elif isinstance(completed_annotation, FilePathAnnotation):
                                     ann = Annotation(
@@ -666,17 +667,13 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                                     )
                                     if completed_annotation.file_path and completed_annotation.file_path.file_id:
                                         ann["file_id"] = completed_annotation.file_path.file_id
-                                    if (
-                                        completed_annotation.start_index is not None
-                                        and completed_annotation.end_index is not None
-                                    ):
-                                        ann["annotated_regions"] = [
-                                            TextSpanRegion(
-                                                type="text_span",
-                                                start_index=completed_annotation.start_index,
-                                                end_index=completed_annotation.end_index,
-                                            )
-                                        ]
+                                    ann["annotated_regions"] = [
+                                        TextSpanRegion(
+                                            type="text_span",
+                                            start_index=completed_annotation.start_index,
+                                            end_index=completed_annotation.end_index,
+                                        )
+                                    ]
                                     text_content.annotations.append(ann)
                                 else:
                                     logger.debug("Unparsed annotation type: %s", completed_annotation.type)
@@ -823,15 +820,16 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                 tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
             elif isinstance(tool, MutableMapping):
                 # Pass through dict-based tools directly (from static factory methods)
-                tool_definitions.append(tool)
+                tool_definitions.append(cast(MutableMapping[str, Any], tool))
 
         if len(tool_definitions) > 0:
             run_options["tools"] = tool_definitions
 
         if tool_mode is not None:
-            if (mode := tool_mode["mode"]) == "required" and (
-                func_name := tool_mode.get("required_function_name")
-            ) is not None:
+            mode = tool_mode.get("mode")
+            if mode is None:
+                raise ValueError("tool_choice mode is required")
+            if mode == "required" and (func_name := tool_mode.get("required_function_name")) is not None:
                 run_options["tool_choice"] = {
                     "type": "function",
                     "function": {"name": func_name},
