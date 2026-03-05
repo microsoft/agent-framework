@@ -65,10 +65,8 @@ internal sealed class Program
         // Initial request with screenshot - start with Bing search page
         Console.WriteLine("Starting computer automation session (initial screenshot: cua_browser_search.png)...");
 
-        // IMPORTANT: Computer-use with the Azure Agents API differs from the vanilla OpenAI Responses API.
-        // The Azure Agents API rejects requests that include previous_response_id alongside
-        // computer_call_output items. To work around this, each call uses a fresh session (avoiding
-        // previous_response_id) and re-sends the full conversation context as input items instead.
+        // With RAPI (no server-side agent), we use PreviousResponseId to chain calls,
+        // sending only the new computer_call_output items instead of re-sending the full context.
         AgentSession session = await agent.CreateSessionAsync();
         AgentResponse response = await agent.RunAsync(message, session: session, options: runOptions);
 
@@ -132,27 +130,15 @@ internal sealed class Program
 
             Console.WriteLine("Sending action result back to agent...");
 
-            // Build the follow-up messages with full conversation context.
-            List<ChatMessage> followUpMessages = [];
-
-            // Re-send all response output items as an assistant message so the API has full context
-            List<AIContent> priorOutputContents = response.Messages
-                .SelectMany(m => m.Contents)
-                .ToList();
-            followUpMessages.Add(new ChatMessage(ChatRole.Assistant, priorOutputContents));
-
-            // Add the computer_call_output as a user message
+            // Send only the computer_call_output — the session carries PreviousResponseId for context continuity.
             AIContent callOutput = new()
             {
                 RawRepresentation = new ComputerCallOutputResponseItem(
                     currentCallId,
                     output: ComputerCallOutput.CreateScreenshotOutput(new BinaryData(screenInfo.ImageBytes), "image/png"))
             };
-            followUpMessages.Add(new ChatMessage(ChatRole.User, [callOutput]));
 
-            // Create a fresh session so ConversationId does not carry over a previous_response_id.
-            session = await agent.CreateSessionAsync();
-            response = await agent.RunAsync(followUpMessages, session: session, options: runOptions);
+            response = await agent.RunAsync([new ChatMessage(ChatRole.User, [callOutput])], session: session, options: runOptions);
         }
     }
 }

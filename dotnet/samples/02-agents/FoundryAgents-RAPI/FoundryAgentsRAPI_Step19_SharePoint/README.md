@@ -20,7 +20,7 @@ Set the following environment variables:
 ```powershell
 $env:AZURE_FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
 $env:AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME="gpt-4o-mini"
-$env:SHAREPOINT_PROJECT_CONNECTION_ID="your-sharepoint-connection-id"
+$env:SHAREPOINT_PROJECT_CONNECTION_ID="your-sharepoint-connection-id"  # The full ARM resource URI, e.g., "/subscriptions/.../connections/SharepointTestTool"
 ```
 
 ## Run the sample
