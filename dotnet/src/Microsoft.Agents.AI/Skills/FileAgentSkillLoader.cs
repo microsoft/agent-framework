@@ -17,8 +17,9 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 /// <remarks>
 /// Searches directories recursively (up to <see cref="MaxSearchDepth"/> levels) for SKILL.md files.
-/// Each file is validated for YAML frontmatter and resource integrity. Invalid skills are excluded
-/// with logged warnings. Resource paths are checked against path traversal and symlink escape attacks.
+/// Each file is validated for YAML frontmatter. Resource files are discovered by scanning the skill
+/// directory for files with matching extensions. Invalid resources are skipped with logged warnings.
+/// Resource paths are checked against path traversal and symlink escape attacks.
 /// </remarks>
 internal sealed partial class FileAgentSkillLoader
 {
@@ -33,14 +34,6 @@ internal sealed partial class FileAgentSkillLoader
     // Example: "---\nname: foo\n---\nBody" → Group 1: "name: foo\n"
     private static readonly Regex s_frontmatterRegex = new(@"\A\uFEFF?^---\s*$(.+?)^---\s*$", RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
 
-    // Matches markdown links to local resource files. Group 1 = relative file path.
-    // Supports optional ./ or ../ prefixes; excludes URLs (no ":" in the path character class).
-    // Intentionally conservative: only matches paths with word characters, hyphens, dots,
-    // and forward slashes. Paths with spaces or special characters are not supported.
-    // Examples: [doc](refs/FAQ.md) → "refs/FAQ.md", [s](./s.json) → "./s.json",
-    //           [p](../shared/doc.txt) → "../shared/doc.txt"
-    private static readonly Regex s_resourceLinkRegex = new(@"\[.*?\]\((\.?\.?/?[\w][\w\-./]*\.\w+)\)", RegexOptions.Compiled, TimeSpan.FromSeconds(5));
-
     // Matches YAML "key: value" lines. Group 1 = key, Group 2 = quoted value, Group 3 = unquoted value.
     // Accepts single or double quotes; the lazy quantifier trims trailing whitespace on unquoted values.
     // Examples: "name: foo" → (name, _, foo), "name: 'foo bar'" → (name, foo bar, _),
@@ -52,14 +45,22 @@ internal sealed partial class FileAgentSkillLoader
     private static readonly Regex s_validNameRegex = new(@"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$", RegexOptions.Compiled);
 
     private readonly ILogger _logger;
+    private readonly HashSet<string> _allowedResourceExtensions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FileAgentSkillLoader"/> class.
     /// </summary>
     /// <param name="logger">The logger instance.</param>
-    internal FileAgentSkillLoader(ILogger logger)
+    /// <param name="allowedResourceExtensions">File extensions to recognize as skill resources. When <see langword="null"/>, defaults are used.</param>
+    internal FileAgentSkillLoader(ILogger logger, IEnumerable<string>? allowedResourceExtensions = null)
     {
         this._logger = logger;
+
+        ValidateExtensions(allowedResourceExtensions);
+
+        this._allowedResourceExtensions = new HashSet<string>(
+            allowedResourceExtensions ?? [".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt"],
+            StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -183,9 +184,9 @@ internal sealed partial class FileAgentSkillLoader
         }
     }
 
-    private FileAgentSkill? ParseSkillFile(string skillDirectoryPath)
+    private FileAgentSkill? ParseSkillFile(string skillDirectoryFullPath)
     {
-        string skillFilePath = Path.Combine(skillDirectoryPath, SkillFileName);
+        string skillFilePath = Path.Combine(skillDirectoryFullPath, SkillFileName);
 
         string content = File.ReadAllText(skillFilePath, Encoding.UTF8);
 
@@ -194,17 +195,12 @@ internal sealed partial class FileAgentSkillLoader
             return null;
         }
 
-        List<string> resourceNames = ExtractResourcePaths(body);
-
-        if (!this.ValidateResources(skillDirectoryPath, resourceNames, frontmatter.Name))
-        {
-            return null;
-        }
+        List<string> resourceNames = this.DiscoverResourceFiles(skillDirectoryFullPath, frontmatter.Name);
 
         return new FileAgentSkill(
             frontmatter: frontmatter,
             body: body,
-            sourcePath: skillDirectoryPath,
+            sourcePath: skillDirectoryFullPath,
             resourceNames: resourceNames);
     }
 
@@ -270,34 +266,84 @@ internal sealed partial class FileAgentSkillLoader
         return true;
     }
 
-    private bool ValidateResources(string skillDirectoryPath, List<string> resourceNames, string skillName)
+    /// <summary>
+    /// Scans a skill directory for resource files matching the configured extensions.
+    /// </summary>
+    /// <remarks>
+    /// Recursively walks <paramref name="skillDirectoryFullPath"/> and collects files whose extension
+    /// matches <see cref="_allowedResourceExtensions"/>, excluding <c>SKILL.md</c> itself. Each candidate
+    /// is validated against path-traversal and symlink-escape checks; unsafe files are skipped with
+    /// a warning.
+    /// </remarks>
+    private List<string> DiscoverResourceFiles(string skillDirectoryFullPath, string skillName)
     {
-        string normalizedSkillPath = Path.GetFullPath(skillDirectoryPath) + Path.DirectorySeparatorChar;
+        string normalizedSkillDirectoryFullPath = skillDirectoryFullPath + Path.DirectorySeparatorChar;
 
-        foreach (string resourceName in resourceNames)
+        var resources = new List<string>();
+
+#if NET
+        var enumerationOptions = new EnumerationOptions
         {
-            string fullPath = Path.GetFullPath(Path.Combine(skillDirectoryPath, resourceName));
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+            AttributesToSkip = FileAttributes.ReparsePoint,
+        };
 
-            if (!IsPathWithinDirectory(fullPath, normalizedSkillPath))
+        foreach (string filePath in Directory.EnumerateFiles(skillDirectoryFullPath, "*", enumerationOptions))
+#else
+        foreach (string filePath in Directory.EnumerateFiles(skillDirectoryFullPath, "*", SearchOption.AllDirectories))
+#endif
+        {
+            string fileName = Path.GetFileName(filePath);
+
+            // Exclude SKILL.md itself
+            if (string.Equals(fileName, SkillFileName, StringComparison.OrdinalIgnoreCase))
             {
-                LogResourcePathTraversal(this._logger, skillName, resourceName);
-                return false;
+                continue;
             }
 
-            if (!File.Exists(fullPath))
+            // Filter by extension
+            string extension = Path.GetExtension(filePath);
+            if (string.IsNullOrEmpty(extension) || !this._allowedResourceExtensions.Contains(extension))
             {
-                LogMissingResource(this._logger, skillName, resourceName);
-                return false;
+                if (this._logger.IsEnabled(LogLevel.Debug))
+                {
+                    LogResourceSkippedExtension(this._logger, skillName, SanitizePathForLog(filePath), extension);
+                }
+                continue;
             }
 
-            if (HasSymlinkInPath(fullPath, normalizedSkillPath))
+            // Normalize the enumerated path to guard against non-canonical forms
+            // (redundant separators, 8.3 short names, etc.) that would produce
+            // malformed relative resource names.
+            string resolvedFilePath = Path.GetFullPath(filePath);
+
+            // Path containment check
+            if (!IsPathWithinDirectory(resolvedFilePath, normalizedSkillDirectoryFullPath))
             {
-                LogResourceSymlinkEscape(this._logger, skillName, resourceName);
-                return false;
+                if (this._logger.IsEnabled(LogLevel.Warning))
+                {
+                    LogResourcePathTraversal(this._logger, skillName, SanitizePathForLog(filePath));
+                }
+                continue;
             }
+
+            // Symlink check
+            if (HasSymlinkInPath(resolvedFilePath, normalizedSkillDirectoryFullPath))
+            {
+                if (this._logger.IsEnabled(LogLevel.Warning))
+                {
+                    LogResourceSymlinkEscape(this._logger, skillName, SanitizePathForLog(filePath));
+                }
+                continue;
+            }
+
+            // Compute relative path and normalize to forward slashes
+            string relativePath = resolvedFilePath.Substring(normalizedSkillDirectoryFullPath.Length);
+            resources.Add(NormalizeResourcePath(relativePath));
         }
 
-        return true;
+        return resources;
     }
 
     /// <summary>
@@ -336,22 +382,6 @@ internal sealed partial class FileAgentSkillLoader
         return false;
     }
 
-    private static List<string> ExtractResourcePaths(string content)
-    {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var paths = new List<string>();
-        foreach (Match m in s_resourceLinkRegex.Matches(content))
-        {
-            string path = NormalizeResourcePath(m.Groups[1].Value);
-            if (seen.Add(path))
-            {
-                paths.Add(path);
-            }
-        }
-
-        return paths;
-    }
-
     /// <summary>
     /// Normalizes a relative resource path by trimming a leading <c>./</c> prefix and replacing
     /// backslashes with forward slashes so that <c>./refs/doc.md</c> and <c>refs/doc.md</c> are
@@ -372,6 +402,43 @@ internal sealed partial class FileAgentSkillLoader
         return path;
     }
 
+    /// <summary>
+    /// Replaces control characters in a file path with '?' to prevent log injection
+    /// via crafted filenames (e.g., filenames containing newlines on Linux).
+    /// </summary>
+    private static string SanitizePathForLog(string path)
+    {
+        char[]? chars = null;
+        for (int i = 0; i < path.Length; i++)
+        {
+            if (char.IsControl(path[i]))
+            {
+                chars ??= path.ToCharArray();
+                chars[i] = '?';
+            }
+        }
+
+        return chars is null ? path : new string(chars);
+    }
+
+    private static void ValidateExtensions(IEnumerable<string>? extensions)
+    {
+        if (extensions is null)
+        {
+            return;
+        }
+
+        foreach (string ext in extensions)
+        {
+            if (string.IsNullOrWhiteSpace(ext) || !ext.StartsWith(".", StringComparison.Ordinal))
+            {
+#pragma warning disable CA2208 // Instantiate argument exceptions correctly
+                throw new ArgumentException($"Each extension must start with '.'. Invalid value: '{ext}'", nameof(FileAgentSkillsProviderOptions.AllowedResourceExtensions));
+#pragma warning restore CA2208 // Instantiate argument exceptions correctly
+            }
+        }
+    }
+
     [LoggerMessage(LogLevel.Information, "Discovered {Count} potential skills")]
     private static partial void LogSkillsDiscovered(ILogger logger, int count);
 
@@ -390,18 +457,18 @@ internal sealed partial class FileAgentSkillLoader
     [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' has an invalid '{FieldName}' value: {Reason}")]
     private static partial void LogInvalidFieldValue(ILogger logger, string skillFilePath, string fieldName, string reason);
 
-    [LoggerMessage(LogLevel.Warning, "Excluding skill '{SkillName}': referenced resource '{ResourceName}' does not exist")]
-    private static partial void LogMissingResource(ILogger logger, string skillName, string resourceName);
-
-    [LoggerMessage(LogLevel.Warning, "Excluding skill '{SkillName}': resource '{ResourceName}' references a path outside the skill directory")]
-    private static partial void LogResourcePathTraversal(ILogger logger, string skillName, string resourceName);
+    [LoggerMessage(LogLevel.Warning, "Skipping resource in skill '{SkillName}': '{ResourcePath}' references a path outside the skill directory")]
+    private static partial void LogResourcePathTraversal(ILogger logger, string skillName, string resourcePath);
 
     [LoggerMessage(LogLevel.Warning, "Duplicate skill name '{SkillName}': skill from '{NewPath}' skipped in favor of existing skill from '{ExistingPath}'")]
     private static partial void LogDuplicateSkillName(ILogger logger, string skillName, string newPath, string existingPath);
 
-    [LoggerMessage(LogLevel.Warning, "Excluding skill '{SkillName}': resource '{ResourceName}' is a symlink that resolves outside the skill directory")]
-    private static partial void LogResourceSymlinkEscape(ILogger logger, string skillName, string resourceName);
+    [LoggerMessage(LogLevel.Warning, "Skipping resource in skill '{SkillName}': '{ResourcePath}' is a symlink that resolves outside the skill directory")]
+    private static partial void LogResourceSymlinkEscape(ILogger logger, string skillName, string resourcePath);
 
     [LoggerMessage(LogLevel.Information, "Reading resource '{FileName}' from skill '{SkillName}'")]
     private static partial void LogResourceReading(ILogger logger, string fileName, string skillName);
+
+    [LoggerMessage(LogLevel.Debug, "Skipping file '{FilePath}' in skill '{SkillName}': extension '{Extension}' is not in the allowed list")]
+    private static partial void LogResourceSkippedExtension(ILogger logger, string skillName, string filePath, string extension);
 }
