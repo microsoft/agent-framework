@@ -552,6 +552,100 @@ class TestWorkflowAgent:
         assert updates[0].role == "assistant"
         assert updates[0].contents[0].text == "assistant reply"
 
+    async def test_workflow_as_agent_deduplicates_streaming_messages(self) -> None:
+        """Test that duplicate messages are deduplicated in streaming mode.
+
+        Orchestrations like HandoffBuilder emit messages individually during streaming
+        then re-emit the full conversation at termination. The WorkflowAgent should
+        deduplicate so the caller doesn't see repeated messages.
+        """
+        msg_id_1 = str(uuid.uuid4())
+        msg_id_2 = str(uuid.uuid4())
+
+        @executor
+        async def dedup_executor(messages: list[Message], ctx: WorkflowContext[Never, Any]) -> None:
+            # Simulate streaming: emit individual AgentResponseUpdate messages
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text="first reply")],
+                    role="assistant",
+                    author_name="agent-a",
+                    response_id="resp-1",
+                    message_id=msg_id_1,
+                    created_at="2026-01-01T00:00:00Z",
+                )
+            )
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text="second reply")],
+                    role="assistant",
+                    author_name="agent-b",
+                    response_id="resp-2",
+                    message_id=msg_id_2,
+                    created_at="2026-01-01T00:00:01Z",
+                )
+            )
+            # Simulate termination: re-emit the full conversation as list[Message]
+            # (this is what HandoffBuilder._check_terminate_and_yield does)
+            await ctx.yield_output([
+                Message(role="user", text="user input", message_id="user-msg-1"),
+                Message(role="assistant", text="first reply", message_id=msg_id_1),
+                Message(role="assistant", text="second reply", message_id=msg_id_2),
+            ])
+
+        workflow = WorkflowBuilder(start_executor=dedup_executor).build()
+        agent = workflow.as_agent("dedup-agent")
+
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("test", stream=True):
+            updates.append(update)
+
+        # Should have exactly 2 assistant updates — no duplicates from the list[Message] yield
+        assert len(updates) == 2
+        assert updates[0].contents[0].text == "first reply"
+        assert updates[1].contents[0].text == "second reply"
+
+    async def test_workflow_as_agent_deduplicates_non_streaming_messages(self) -> None:
+        """Test that duplicate messages are deduplicated in non-streaming mode."""
+        msg_id_1 = str(uuid.uuid4())
+        msg_id_2 = str(uuid.uuid4())
+
+        @executor
+        async def dedup_executor(messages: list[Message], ctx: WorkflowContext[Never, Any]) -> None:
+            # Emit individual AgentResponse with messages
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[
+                        Message(role="assistant", text="first reply", message_id=msg_id_1),
+                    ],
+                    response_id="resp-1",
+                )
+            )
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[
+                        Message(role="assistant", text="second reply", message_id=msg_id_2),
+                    ],
+                    response_id="resp-2",
+                )
+            )
+            # Re-emit the full conversation at termination
+            await ctx.yield_output([
+                Message(role="user", text="user input", message_id="user-msg-1"),
+                Message(role="assistant", text="first reply", message_id=msg_id_1),
+                Message(role="assistant", text="second reply", message_id=msg_id_2),
+            ])
+
+        workflow = WorkflowBuilder(start_executor=dedup_executor).build()
+        agent = workflow.as_agent("dedup-agent")
+
+        result = await agent.run("test")
+
+        # Should have exactly 2 assistant messages — no duplicates from the list[Message] yield
+        assert len(result.messages) == 2
+        assert result.messages[0].text == "first reply"
+        assert result.messages[1].text == "second reply"
+
     async def test_workflow_as_agent_agent_response_raw_repr_consistency(self) -> None:
         """Test that AgentResponse with only user messages does not add orphan raw_representations."""
 
