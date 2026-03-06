@@ -22,7 +22,7 @@ from agent_framework.exceptions import (
     IntegrationInvalidRequestException,
 )
 from redisvl.index import AsyncSearchIndex
-from redisvl.query import HybridQuery, TextQuery
+from redisvl.query import AggregateHybridQuery, TextQuery
 from redisvl.query.filter import FilterExpression, Tag
 from redisvl.utils.token_escaper import TokenEscaper
 from redisvl.utils.vectorize import BaseVectorizer
@@ -341,7 +341,7 @@ class RedisContextProvider(BaseContextProvider):
         filter_expression: Any | None = None,
         return_fields: list[str] | None = None,
         num_results: int = 10,
-        linear_alpha: float = 0.7,
+        alpha: float = 0.7,
     ) -> list[dict[str, Any]]:
         """Runs a text or hybrid vector-text search with optional filters."""
         await self._ensure_index()
@@ -371,14 +371,14 @@ class RedisContextProvider(BaseContextProvider):
         try:
             if self.redis_vectorizer and self.vector_field_name:
                 vector = await self.redis_vectorizer.aembed(q)  # pyright: ignore[reportUnknownMemberType]
-                query = HybridQuery(
+                query = AggregateHybridQuery(
                     text=q,
                     text_field_name="content",
                     vector=vector,
                     vector_field_name=self.vector_field_name,
                     text_scorer=text_scorer,
                     filter_expression=combined_filter,
-                    linear_alpha=linear_alpha,
+                    alpha=alpha,
                     dtype=self.redis_vectorizer.dtype,  # pyright: ignore[reportUnknownMemberType]
                     num_results=num_results,
                     return_fields=return_fields,
