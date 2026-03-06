@@ -37,7 +37,7 @@ ChatClient chatClient = new AzureOpenAIClient(
         new DefaultAzureCredential())
     .GetChatClient(deploymentName);
 
-AIAgent baseAgent = chatClient.AsIChatClient().AsAIAgent(
+AIAgent baseAgent = chatClient.AsAIAgent(
     name: "RecipeAgent",
     instructions: """
         You are a helpful recipe assistant. When users ask you to create or suggest a recipe,
