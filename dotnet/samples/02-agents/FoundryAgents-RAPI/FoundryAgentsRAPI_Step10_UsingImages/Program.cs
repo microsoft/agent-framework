@@ -12,7 +12,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 
 FoundryAgentClient agent = new(
     endpoint: new Uri(endpoint),
-    tokenProvider: new AzureCliCredential(),
+    tokenProvider: new DefaultAzureCredential(),
     model: deploymentName,
     instructions: "You are a helpful agent that can analyze images.",
     name: "VisionAgent");

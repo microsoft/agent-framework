@@ -18,7 +18,7 @@ static string GetWeather([Description("The location to get the weather for.")] s
 AITool weatherTool = AIFunctionFactory.Create(GetWeather);
 FoundryAgentClient weatherAgent = new(
     endpoint: new Uri(endpoint),
-    tokenProvider: new AzureCliCredential(),
+    tokenProvider: new DefaultAzureCredential(),
     model: deploymentName,
     instructions: "You answer questions about the weather.",
     name: "WeatherAgent",
@@ -26,7 +26,7 @@ FoundryAgentClient weatherAgent = new(
 
 FoundryAgentClient agent = new(
     endpoint: new Uri(endpoint),
-    tokenProvider: new AzureCliCredential(),
+    tokenProvider: new DefaultAzureCredential(),
     model: deploymentName,
     instructions: "You are a helpful assistant who responds in French.",
     name: "MainAgent",

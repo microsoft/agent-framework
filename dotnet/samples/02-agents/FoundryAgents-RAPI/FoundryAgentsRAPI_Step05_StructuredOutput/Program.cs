@@ -17,7 +17,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 
 FoundryAgentClient agent = new(
     endpoint: new Uri(endpoint),
-    tokenProvider: new AzureCliCredential(),
+    tokenProvider: new DefaultAzureCredential(),
     options: new ChatClientAgentOptions
     {
         Name = "StructuredOutputAssistant",

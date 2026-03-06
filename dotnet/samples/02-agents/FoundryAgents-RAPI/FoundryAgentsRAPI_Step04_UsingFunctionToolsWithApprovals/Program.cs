@@ -19,7 +19,7 @@ ApprovalRequiredAIFunction approvalTool = new(AIFunctionFactory.Create(GetWeathe
 
 FoundryAgentClient agent = new(
     endpoint: new Uri(endpoint),
-    tokenProvider: new AzureCliCredential(),
+    tokenProvider: new DefaultAzureCredential(),
     model: deploymentName,
     instructions: "You are a helpful assistant that can get weather information.",
     name: "WeatherAssistant",

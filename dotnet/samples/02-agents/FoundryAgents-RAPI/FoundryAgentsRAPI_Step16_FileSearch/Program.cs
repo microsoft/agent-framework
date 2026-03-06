@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use File Search Tool with a FoundryAgentClient using the Responses API directly.
 
@@ -17,7 +17,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 const string AgentInstructions = "You are a helpful assistant that can search through uploaded files to answer questions.";
 
 // We need the AIProjectClient to upload files and create vector stores.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 var projectOpenAIClient = aiProjectClient.GetProjectOpenAIClient();
 var filesClient = projectOpenAIClient.GetProjectFilesClient();
 var vectorStoresClient = projectOpenAIClient.GetProjectVectorStoresClient();
@@ -53,7 +53,7 @@ Console.WriteLine($"Created vector store, vector store ID: {vectorStoreId}");
 // No server-side agent is created.
 FoundryAgentClient agent = new(
     endpoint: new Uri(endpoint),
-    tokenProvider: new AzureCliCredential(),
+    tokenProvider: new DefaultAzureCredential(),
     model: deploymentName,
     instructions: AgentInstructions,
     name: "FileSearchAgent-RAPI",

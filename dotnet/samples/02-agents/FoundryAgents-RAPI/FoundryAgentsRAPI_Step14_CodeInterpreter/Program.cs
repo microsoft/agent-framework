@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use Code Interpreter Tool with a FoundryAgentClient using the Responses API directly.
 
@@ -20,7 +20,7 @@ const string AgentName = "CoderAgent-RAPI";
 // No server-side agent is created.
 FoundryAgentClient agent = new(
     endpoint: new Uri(endpoint),
-    tokenProvider: new AzureCliCredential(),
+    tokenProvider: new DefaultAzureCredential(),
     model: deploymentName,
     instructions: AgentInstructions,
     name: AgentName,

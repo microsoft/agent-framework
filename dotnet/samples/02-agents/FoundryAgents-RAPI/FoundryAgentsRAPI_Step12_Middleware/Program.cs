@@ -28,7 +28,7 @@ AITool getWeatherTool = AIFunctionFactory.Create(GetWeather, name: nameof(GetWea
 
 FoundryAgentClient originalAgent = new(
     endpoint: new Uri(endpoint),
-    tokenProvider: new AzureCliCredential(),
+    tokenProvider: new DefaultAzureCredential(),
     model: deploymentName,
     instructions: "You are an AI assistant that helps people find information.",
     name: "InformationAssistant",
@@ -62,7 +62,7 @@ Console.WriteLine("\n\n=== Example 4: Middleware with human in the loop function
 
 FoundryAgentClient humanInTheLoopAgent = new(
     endpoint: new Uri(endpoint),
-    tokenProvider: new AzureCliCredential(),
+    tokenProvider: new DefaultAzureCredential(),
     model: deploymentName,
     instructions: "You are a Human in the loop testing AI assistant that helps people find information.",
     name: "HumanInTheLoopAgent",

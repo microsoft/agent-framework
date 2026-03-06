@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use plugins with a FoundryAgentClient using the Responses API directly.
 // Plugin classes can depend on other services that need to be injected.
@@ -26,7 +26,7 @@ IServiceProvider serviceProvider = services.BuildServiceProvider();
 // Create a FoundryAgentClient with the options-based constructor to pass services.
 FoundryAgentClient agent = new(
     endpoint: new Uri(endpoint),
-    tokenProvider: new AzureCliCredential(),
+    tokenProvider: new DefaultAzureCredential(),
     clientOptions: null,
     options: new ChatClientAgentOptions
     {

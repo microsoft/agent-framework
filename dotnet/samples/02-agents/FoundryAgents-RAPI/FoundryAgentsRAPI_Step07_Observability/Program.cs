@@ -29,7 +29,7 @@ using var tracerProvider = tracerProviderBuilder.Build();
 //   AZURE_AI_MODEL_DEPLOYMENT_NAME - The model deployment name to use.
 AIAgent agent = new FoundryAgentClient(
     endpoint: new Uri(endpoint),
-    tokenProvider: new AzureCliCredential(),
+    tokenProvider: new DefaultAzureCredential(),
     model: deploymentName,
     instructions: "You are good at telling jokes.",
     name: "JokerAgent")

@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use a local MCP (Model Context Protocol) client with a FoundryAgentClient
 // using the Responses API directly. The MCP tools are resolved locally by connecting directly to the MCP
@@ -36,7 +36,7 @@ List<AITool> wrappedTools = mcpTools.Select(tool => (AITool)new LoggingMcpTool(t
 // No server-side agent is created.
 FoundryAgentClient agent = new(
     endpoint: new Uri(endpoint),
-    tokenProvider: new AzureCliCredential(),
+    tokenProvider: new DefaultAzureCredential(),
     model: deploymentName,
     instructions: AgentInstructions,
     name: AgentName,

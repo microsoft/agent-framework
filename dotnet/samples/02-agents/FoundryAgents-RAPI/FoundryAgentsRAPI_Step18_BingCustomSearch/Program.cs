@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use Bing Custom Search Tool with a FoundryAgentClient using the Responses API directly.
 
@@ -27,7 +27,7 @@ BingCustomSearchToolParameters bingCustomSearchToolParameters = new([
 // No server-side agent is created.
 FoundryAgentClient agent = new(
     endpoint: new Uri(endpoint),
-    tokenProvider: new AzureCliCredential(),
+    tokenProvider: new DefaultAzureCredential(),
     model: deploymentName,
     instructions: AgentInstructions,
     name: "BingCustomSearchAgent-RAPI",
