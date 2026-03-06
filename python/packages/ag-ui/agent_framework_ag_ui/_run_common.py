@@ -12,6 +12,11 @@ from typing import Any, cast
 from ag_ui.core import (
     BaseEvent,
     CustomEvent,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunFinishedEvent,
     StateSnapshotEvent,
     TextMessageContentEvent,
@@ -458,29 +463,37 @@ def _emit_mcp_tool_result(content: Content, flow: FlowState) -> list[BaseEvent]:
 
 
 def _emit_text_reasoning(content: Content) -> list[BaseEvent]:
-    """Emit a custom event for text_reasoning content.
+    """Emit AG-UI reasoning events for text_reasoning content.
 
-    AG-UI protocol does not define a dedicated reasoning event type, so we emit
-    a ``CustomEvent`` with ``name="text_reasoning"``.  This makes reasoning /
-    chain-of-thought progress visible to frontends that listen for custom events,
-    following the same pattern used by ``_emit_usage``.
+    Uses the protocol-defined reasoning event types (``ReasoningStartEvent``,
+    ``ReasoningMessageStartEvent``, ``ReasoningMessageContentEvent``,
+    ``ReasoningMessageEndEvent``, ``ReasoningEndEvent``) so that AG-UI consumers
+    such as CopilotKit can render reasoning natively.
+
+    Only ``content.text`` is used for the visible reasoning message. If
+    ``content.protected_data`` is present it is forwarded as the
+    ``encrypted_value`` field on the ``ReasoningMessageEndEvent`` so that
+    consumers can persist it for state continuity without conflating it
+    with display text.
     """
-    # Only emit user-visible text from content.text. Do not fall back to
-    # protected_data as text, since protected_data may contain non-display
-    # payloads such as provider-specific reasoning metadata.
     text = content.text or ""
     if not text and content.protected_data is None:
         return []
 
-    value: dict[str, Any] = {"text": text}
-    # Expose protected_data under a separate key so consumers can decide
-    # whether/how to render it, without conflating it with display text.
-    if content.protected_data is not None:
-        value["protected_data"] = content.protected_data
-    if content.id:
-        value["id"] = content.id
+    message_id = content.id or generate_event_id()
 
-    return [CustomEvent(name="text_reasoning", value=value)]
+    events: list[BaseEvent] = [
+        ReasoningStartEvent(),
+        ReasoningMessageStartEvent(message_id=message_id, role="reasoning"),
+    ]
+
+    if text:
+        events.append(ReasoningMessageContentEvent(message_id=message_id, delta=text))
+
+    events.append(ReasoningMessageEndEvent(message_id=message_id))
+    events.append(ReasoningEndEvent())
+
+    return events
 
 
 def _emit_content(
