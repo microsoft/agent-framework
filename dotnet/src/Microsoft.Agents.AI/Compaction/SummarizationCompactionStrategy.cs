@@ -142,7 +142,7 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
             // Build text representation of the group for summarization
             foreach (ChatMessage message in group.Messages)
             {
-                string text = message.Text ?? string.Empty;
+                string text = message.Text;
                 if (!string.IsNullOrEmpty(text))
                 {
                     conversationText.AppendLine($"{message.Role}: {text}");

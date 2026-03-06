@@ -319,7 +319,7 @@ public sealed class MessageIndex
         int total = 0;
         for (int i = 0; i < messages.Count; i++)
         {
-            string text = messages[i].Text ?? string.Empty;
+            string text = messages[i].Text;
             if (text.Length > 0)
             {
                 total += Encoding.UTF8.GetByteCount(text);
@@ -340,7 +340,7 @@ public sealed class MessageIndex
         int total = 0;
         for (int i = 0; i < messages.Count; i++)
         {
-            string text = messages[i].Text ?? string.Empty;
+            string text = messages[i].Text;
             if (text.Length > 0)
             {
                 total += tokenizer.CountTokens(text);
