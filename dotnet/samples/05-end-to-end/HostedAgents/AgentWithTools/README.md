@@ -6,7 +6,7 @@ Key features:
 
 - Configuring Foundry tools using `UseFoundryTools` with MCP and code interpreter
 - Connecting to an external MCP tool via a Foundry project connection
-- Using `AzureCliCredential` for Azure authentication
+- Using `DefaultAzureCredential` for Azure authentication
 - OpenTelemetry instrumentation for both the chat client and agent
 
 > For common prerequisites and setup instructions, see the [Hosted Agent Samples README](../README.md).
@@ -36,7 +36,7 @@ $env:MCP_TOOL_CONNECTION_ID="SampleMCPTool"
 
 ## How It Works
 
-1. An `AzureOpenAIClient` is created with `AzureCliCredential` and used to get a chat client
+1. An `AzureOpenAIClient` is created with `DefaultAzureCredential` and used to get a chat client
 2. The chat client is wrapped with `UseFoundryTools` which registers two Foundry tool types:
    - **MCP connection**: Connects to an external MCP server (Microsoft Learn) via the project connection name, providing documentation fetch and search capabilities
    - **Code interpreter**: Allows the agent to execute code snippets when needed
