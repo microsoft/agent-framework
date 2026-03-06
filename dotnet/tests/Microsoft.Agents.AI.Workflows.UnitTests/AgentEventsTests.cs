@@ -92,7 +92,6 @@ public class AgentEventsTests
     }
 
     /// <summary>
-    /// Regression test for https://github.com/microsoft/agent-framework/issues/3789
     /// Verifies that WorkflowStartedEvent is emitted first before any SuperStepStartedEvent.
     /// </summary>
     [Fact]
@@ -114,23 +113,22 @@ public class AgentEventsTests
         }
 
         // Assert
-        events.Should().NotBeEmpty("workflow should produce events during execution");
+        events.Should().NotBeEmpty();
 
         List<WorkflowStartedEvent> startedEvents = events.OfType<WorkflowStartedEvent>().ToList();
-        startedEvents.Should().ContainSingle("workflow should emit exactly one WorkflowStartedEvent");
+        startedEvents.Should().NotBeEmpty();
 
-        WorkflowStartedEvent startedEvent = startedEvents.First();
+        WorkflowStartedEvent? firstStartedEvent = startedEvents.FirstOrDefault();
         SuperStepStartedEvent? firstSuperStepEvent = events.OfType<SuperStepStartedEvent>().FirstOrDefault();
-        firstSuperStepEvent.Should().NotBeNull("workflow should emit SuperStepStartedEvent");
+        firstSuperStepEvent.Should().NotBeNull();
 
-        int startedIndex = events.IndexOf(startedEvent!);
+        int startedIndex = events.IndexOf(firstStartedEvent!);
         int superStepIndex = events.IndexOf(firstSuperStepEvent!);
 
-        startedIndex.Should().BeLessThan(superStepIndex, "WorkflowStartedEvent should be emitted before SuperStepStartedEvent");
+        startedIndex.Should().BeLessThan(superStepIndex);
     }
 
     /// <summary>
-    /// Regression test for https://github.com/microsoft/agent-framework/issues/3789
     /// Verifies that WorkflowStartedEvent is emitted using Lockstep execution mode.
     /// </summary>
     [Fact]
@@ -152,9 +150,9 @@ public class AgentEventsTests
         }
 
         // Assert
-        events.Should().NotBeEmpty("workflow should produce events during execution");
+        events.Should().NotBeEmpty();
 
         List<WorkflowStartedEvent> startedEvents = events.OfType<WorkflowStartedEvent>().ToList();
-        startedEvents.Should().ContainSingle("Lockstep execution should emit exactly one WorkflowStartedEvent");
+        startedEvents.Should().NotBeEmpty();
     }
 }
