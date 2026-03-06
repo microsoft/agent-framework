@@ -109,6 +109,7 @@ from ._sessions import (
     SessionContext,
     register_state_type,
 )
+from ._security_middleware import SecureAgentConfig
 from ._settings import SecretString, load_settings
 from ._skills import (
     Skill,
@@ -129,6 +130,7 @@ from ._tools import (
     FunctionInvocationLayer,
     FunctionTool,
     ToolTypes,
+    ai_function,
     normalize_function_invocation_configuration,
     tool,
 )
@@ -354,6 +356,7 @@ __all__ = [
     "RoleLiteral",
     "Runner",
     "RunnerContext",
+    "SecureAgentConfig",
     "SecretString",
     "SelectiveToolCallCompactionStrategy",
     "SessionContext",
@@ -411,6 +414,7 @@ __all__ = [
     "WorkflowViz",
     "__version__",
     "add_usage_details",
+    "ai_function",
     "agent_middleware",
     "annotate_message_groups",
     "apply_compaction",

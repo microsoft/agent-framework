@@ -1,6 +1,6 @@
 # Quick Start: FIDES Security System
 
-**FIDES** (Framework for Information Defense and Execution Safety) - A quick reference for implementing automatic prompt injection defense and data exfiltration prevention in your agent.
+**FIDES**  - A quick reference for implementing automatic prompt injection defense and data exfiltration prevention in your agent.
 
 ## 🚀 Two Security Dimensions
 

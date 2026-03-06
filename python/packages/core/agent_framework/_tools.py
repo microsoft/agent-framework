@@ -1948,53 +1948,6 @@ class FunctionRequestResult(TypedDict, total=False):
         function_call_results: The list of function call results, if any.
         function_call_count: The number of function calls executed in this processing step.
     """
-                # we load the tools here, since middleware might have changed them compared to before calling func.
-                tools = _extract_tools(kwargs)
-                if function_calls and tools:
-                    # Use the stored middleware pipeline instead of extracting from kwargs
-                    # because kwargs may have been modified by the underlying function
-                    function_call_results, should_terminate = await _try_execute_function_calls(
-                        custom_args=kwargs,
-                        attempt_idx=attempt_idx,
-                        function_calls=function_calls,
-                        tools=tools,  # type: ignore
-                        middleware_pipeline=stored_middleware_pipeline,
-                        config=config,
-                    )
-                    # Check if we have approval requests or function calls (not results) in the results
-                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
-                        # When we have approval requests, we also need to add placeholder tool results
-                        # so the conversation history remains valid for the OpenAI API (tool_calls must be
-                        # followed by tool messages). The placeholders will be replaced when approval comes back.
-                        from ._types import Role
-                        
-                        # Create placeholder FunctionResultContent for each approval request
-                        placeholder_results = []
-                        for fccr in function_call_results:
-                            if isinstance(fccr, FunctionApprovalRequestContent):
-                                placeholder_results.append(
-                                    FunctionResultContent(
-                                        call_id=fccr.function_call.call_id,
-                                        result="[APPROVAL_PENDING] This tool call requires user approval before execution.",
-                                    )
-                                )
-                        
-                        # Add approval requests to assistant message
-                        if response.messages and response.messages[0].role == Role.ASSISTANT:
-                            response.messages[0].contents.extend(function_call_results)
-                        else:
-                            result_message = ChatMessage(role="assistant", contents=function_call_results)
-                            response.messages.append(result_message)
-                        
-                        # Also add placeholder tool results so conversation history is valid
-                        if placeholder_results:
-                            placeholder_message = ChatMessage(role="tool", contents=placeholder_results)
-                            response.messages.append(placeholder_message)
-                        
-                        return response
-                    if any(isinstance(fccr, FunctionCallContent) for fccr in function_call_results):
-                        # the function calls are already in the response, so we just continue
-                        return response
 
     action: Literal["return", "continue", "stop"]
     errors_in_a_row: int
@@ -2394,48 +2347,48 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         mutable_options["tool_choice"] = "none"
                     errors_in_a_row = result.get("errors_in_a_row", errors_in_a_row)
 
-                    # Check if we have approval requests or function calls (not results) in the results
-                    if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
-                        # When we have approval requests, we also need to yield placeholder tool results
-                        # so the conversation history remains valid for the OpenAI API (tool_calls must be
-                        # followed by tool messages). The placeholders will be replaced when approval comes back.
-                        from ._types import Role
+                    # # Check if we have approval requests or function calls (not results) in the results
+                    # if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
+                    #     # When we have approval requests, we also need to yield placeholder tool results
+                    #     # so the conversation history remains valid for the OpenAI API (tool_calls must be
+                    #     # followed by tool messages). The placeholders will be replaced when approval comes back.
+                    #     from ._types import Role
                         
-                        # Create placeholder FunctionResultContent for each approval request
-                        placeholder_results = []
-                        for fccr in function_call_results:
-                            if isinstance(fccr, FunctionApprovalRequestContent):
-                                placeholder_results.append(
-                                    FunctionResultContent(
-                                        call_id=fccr.function_call.call_id,
-                                        result="[APPROVAL_PENDING] This tool call requires user approval before execution.",
-                                    )
-                                )
+                    #     # Create placeholder FunctionResultContent for each approval request
+                    #     placeholder_results = []
+                    #     for fccr in function_call_results:
+                    #         if isinstance(fccr, FunctionApprovalRequestContent):
+                    #             placeholder_results.append(
+                    #                 FunctionResultContent(
+                    #                     call_id=fccr.function_call.call_id,
+                    #                     result="[APPROVAL_PENDING] This tool call requires user approval before execution.",
+                    #                 )
+                    #             )
                         
-                        # Yield approval requests as part of assistant message for the UI
-                        if response.messages and response.messages[0].role == Role.ASSISTANT:
-                            response.messages[0].contents.extend(function_call_results)
-                            yield ChatResponseUpdate(contents=function_call_results, role="assistant")
-                        else:
-                            result_message = ChatMessage(role="assistant", contents=function_call_results)
-                            yield ChatResponseUpdate(contents=function_call_results, role="assistant")
-                            response.messages.append(result_message)
+                    #     # Yield approval requests as part of assistant message for the UI
+                    #     if response.messages and response.messages[0].role == Role.ASSISTANT:
+                    #         response.messages[0].contents.extend(function_call_results)
+                    #         yield ChatResponseUpdate(contents=function_call_results, role="assistant")
+                    #     else:
+                    #         result_message = ChatMessage(role="assistant", contents=function_call_results)
+                    #         yield ChatResponseUpdate(contents=function_call_results, role="assistant")
+                    #         response.messages.append(result_message)
                         
-                        # Also yield placeholder tool results so conversation history is valid
-                        if placeholder_results:
-                            yield ChatResponseUpdate(contents=placeholder_results, role="tool")
+                    #     # Also yield placeholder tool results so conversation history is valid
+                    #     if placeholder_results:
+                    #         yield ChatResponseUpdate(contents=placeholder_results, role="tool")
                         
-                        return
-                    if any(isinstance(fccr, FunctionCallContent) for fccr in function_call_results):
-                        # the function calls were already yielded.
-                        return
+                    #     return
+                    # if any(isinstance(fccr, FunctionCallContent) for fccr in function_call_results):
+                    #     # the function calls were already yielded.
+                    #     return
 
-                    # Check if middleware signaled to terminate the loop (context.terminate=True)
-                    # This allows middleware to short-circuit the tool loop without another LLM call
-                    if should_terminate:
-                        # Yield tool results and return immediately without calling LLM again
-                        yield ChatResponseUpdate(contents=function_call_results, role="tool")
-                        return
+                    # # Check if middleware signaled to terminate the loop (context.terminate=True)
+                    # # This allows middleware to short-circuit the tool loop without another LLM call
+                    # if should_terminate:
+                    #     # Yield tool results and return immediately without calling LLM again
+                    #     yield ChatResponseUpdate(contents=function_call_results, role="tool")
+                    #     return
 
                     if any(
                         fcr.exception is not None
@@ -2651,3 +2604,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             return ChatResponse.from_updates(updates, output_format_type=response_format)
 
         return ResponseStream(_stream(), finalizer=_finalize)
+
+
+# Alias for the @tool decorator, used by security tools and samples
+ai_function = tool

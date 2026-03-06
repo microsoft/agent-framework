@@ -2,7 +2,7 @@
 
 ## Overview
 
-**FIDES** (Framework for Information Defense and Execution Safety) is a comprehensive deterministic prompt injection defense system for the agent framework. The implementation provides label-based security mechanisms to defend against prompt injection attacks by tracking integrity and confidentiality of content throughout agent execution.
+**FIDES**  is a comprehensive deterministic prompt injection defense system for the agent framework. The implementation provides label-based security mechanisms to defend against prompt injection attacks by tracking integrity and confidentiality of content throughout agent execution.
 
 **🚀 Key Features:**
 - **Automatic Variable Hiding** - UNTRUSTED content is automatically hidden without requiring manual intervention

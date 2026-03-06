@@ -22,7 +22,7 @@ from ._security import (
     VariableReferenceContent,
     combine_labels,
 )
-from ._types import FunctionResultContent
+from ._types import Content
 
 if TYPE_CHECKING:
     from ._clients import ChatClientProtocol
@@ -712,12 +712,12 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         """
         result = context.result
         
-        # If result is a FunctionResultContent, attach label to additional_properties
-        if isinstance(result, FunctionResultContent):
+        # If result is a Content with type="function_result", attach label to additional_properties
+        if isinstance(result, Content) and getattr(result, 'type', None) == 'function_result':
             if not hasattr(result, "additional_properties") or result.additional_properties is None:
                 result.additional_properties = {}
             result.additional_properties["security_label"] = label.to_dict()
-            logger.debug(f"Attached label to FunctionResultContent: {label}")
+            logger.debug(f"Attached label to Content(function_result): {label}")
         
         # If result is a dict, attach label directly
         elif isinstance(result, dict):
