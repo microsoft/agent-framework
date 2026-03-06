@@ -556,14 +556,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         """
         from ._agents import Agent
 
-        strategy = (
-            getattr(self, "compaction_strategy", None)
-            if compaction_strategy is None
-            else compaction_strategy
-        )
-        resolved_tokenizer = (
-            getattr(self, "tokenizer", None) if tokenizer is None else tokenizer
-        )
+        strategy = getattr(self, "compaction_strategy", None) if compaction_strategy is None else compaction_strategy
+        resolved_tokenizer = getattr(self, "tokenizer", None) if tokenizer is None else tokenizer
 
         return Agent(
             client=self,

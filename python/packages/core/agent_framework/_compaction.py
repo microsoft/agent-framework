@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -21,17 +21,18 @@ if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
 
 GroupKind: TypeAlias = Literal["system", "user", "assistant_text", "tool_call"]
-
-GROUP_ID_KEY = "_group_id"
-GROUP_KIND_KEY = "_group_kind"
-GROUP_INDEX_KEY = "_group_index"
-GROUP_HAS_REASONING_KEY = "_group_has_reasoning"
+GROUP_ANNOTATION_KEY = "_group"
+GROUP_ID_KEY = "id"
+GROUP_KIND_KEY = "kind"
+GROUP_INDEX_KEY = "index"
+GROUP_HAS_REASONING_KEY = "has_reasoning"
+GROUP_TOKEN_COUNT_KEY = "token_count"  # noqa: S105 - compaction metadata key, not a credential
 EXCLUDED_KEY = "_excluded"
 EXCLUDE_REASON_KEY = "_exclude_reason"
-TOKEN_COUNT_KEY = "_token_count"  # noqa: S105  # nosec B105
 SUMMARY_OF_MESSAGE_IDS_KEY = "_summary_of_message_ids"
 SUMMARY_OF_GROUP_IDS_KEY = "_summary_of_group_ids"
 SUMMARIZED_BY_SUMMARY_ID_KEY = "_summarized_by_summary_id"
+
 
 logger = logging.getLogger("agent_framework")
 
@@ -215,12 +216,144 @@ def group_messages(messages: list[Message]) -> list[dict[str, Any]]:
     return spans
 
 
+def _coerce_group_kind(value: object) -> GroupKind | None:
+    if value == "system":
+        return "system"
+    if value == "user":
+        return "user"
+    if value == "assistant_text":
+        return "assistant_text"
+    if value == "tool_call":
+        return "tool_call"
+    return None
+
+
+def _read_group_annotation(message: Message) -> dict[str, Any] | None:
+    raw_annotation = _read_group_annotation_raw(message)
+    if raw_annotation is None:
+        return None
+
+    group_id = raw_annotation.get(GROUP_ID_KEY)
+    group_kind = _coerce_group_kind(raw_annotation.get(GROUP_KIND_KEY))
+    group_index = raw_annotation.get(GROUP_INDEX_KEY)
+    has_reasoning = raw_annotation.get(GROUP_HAS_REASONING_KEY)
+    token_count = raw_annotation.get(GROUP_TOKEN_COUNT_KEY)
+    if token_count is not None and not isinstance(token_count, int):
+        return None
+    if (
+        not isinstance(group_id, str)
+        or group_kind is None
+        or not isinstance(group_index, int)
+        or not isinstance(has_reasoning, bool)
+    ):
+        return None
+
+    return raw_annotation
+
+
+def _read_group_annotation_raw(message: Message) -> dict[str, Any] | None:
+    raw_annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+    if isinstance(raw_annotation, dict):
+        return raw_annotation
+    if isinstance(raw_annotation, Mapping):
+        annotation = dict(raw_annotation)
+        message.additional_properties[GROUP_ANNOTATION_KEY] = annotation
+        return annotation
+    return None
+
+
+def _set_group_summarized_by_summary_id(message: Message, summary_id: str) -> None:
+    annotation = _read_group_annotation_raw(message)
+    if annotation is None:
+        annotation = {}
+        message.additional_properties[GROUP_ANNOTATION_KEY] = annotation
+    annotation[SUMMARIZED_BY_SUMMARY_ID_KEY] = summary_id
+
+
+def _write_group_annotation(
+    message: Message,
+    *,
+    group_id: str,
+    kind: GroupKind,
+    index: int,
+    has_reasoning: bool,
+) -> None:
+    existing_raw_annotation = _read_group_annotation_raw(message)
+    unknown_fields: dict[str, Any] = {}
+    token_count: int | None = None
+    if existing_raw_annotation is not None:
+        raw_token_count = existing_raw_annotation.get(GROUP_TOKEN_COUNT_KEY)
+        if isinstance(raw_token_count, int) or raw_token_count is None:
+            token_count = raw_token_count
+        unknown_fields = {
+            key: value
+            for key, value in existing_raw_annotation.items()
+            if key
+            not in {
+                GROUP_ID_KEY,
+                GROUP_KIND_KEY,
+                GROUP_INDEX_KEY,
+                GROUP_HAS_REASONING_KEY,
+                GROUP_TOKEN_COUNT_KEY,
+            }
+        }
+
+    annotation = {
+        GROUP_ID_KEY: group_id,
+        GROUP_KIND_KEY: kind,
+        GROUP_INDEX_KEY: index,
+        GROUP_HAS_REASONING_KEY: has_reasoning,
+        GROUP_TOKEN_COUNT_KEY: token_count,
+    }
+    annotation.update(unknown_fields)
+    message.additional_properties[GROUP_ANNOTATION_KEY] = annotation
+
+
+def _group_id(message: Message) -> str | None:
+    annotation = _read_group_annotation(message)
+    if annotation is None:
+        return None
+    group_id = annotation.get(GROUP_ID_KEY)
+    return group_id if isinstance(group_id, str) else None
+
+
+def _group_kind(message: Message) -> GroupKind | None:
+    annotation = _read_group_annotation(message)
+    if annotation is None:
+        return None
+    return _coerce_group_kind(annotation.get(GROUP_KIND_KEY))
+
+
+def _group_index(message: Message) -> int | None:
+    annotation = _read_group_annotation(message)
+    if annotation is None:
+        return None
+    group_index = annotation.get(GROUP_INDEX_KEY)
+    return group_index if isinstance(group_index, int) else None
+
+
+def _token_count(message: Message) -> int | None:
+    annotation = _read_group_annotation(message)
+    if annotation is None:
+        return None
+    token_count = annotation.get(GROUP_TOKEN_COUNT_KEY)
+    return token_count if isinstance(token_count, int) else None
+
+
+def _write_token_count(message: Message, token_count: int) -> None:
+    annotation = _read_group_annotation_raw(message)
+    if annotation is None:
+        return
+    annotation[GROUP_TOKEN_COUNT_KEY] = token_count
+    message.additional_properties[GROUP_ANNOTATION_KEY] = annotation
+
+
 def _ordered_group_ids_from_annotations(messages: Sequence[Message]) -> list[str]:
     ordered_group_ids: list[str] = []
     seen: set[str] = set()
     for message in messages:
-        group_id = message.additional_properties.get(GROUP_ID_KEY)
-        if isinstance(group_id, str) and group_id not in seen:
+        group_id = _group_id(message)
+        if group_id is not None and group_id not in seen:
             seen.add(group_id)
             ordered_group_ids.append(group_id)
     return ordered_group_ids
@@ -228,14 +361,14 @@ def _ordered_group_ids_from_annotations(messages: Sequence[Message]) -> list[str
 
 def _first_unannotated_index(messages: Sequence[Message]) -> int | None:
     for index, message in enumerate(messages):
-        if not isinstance(message.additional_properties.get(GROUP_ID_KEY), str):
+        if _group_id(message) is None:
             return index
     return None
 
 
 def _first_untokenized_index(messages: Sequence[Message]) -> int | None:
     for index, message in enumerate(messages):
-        if not isinstance(message.additional_properties.get(TOKEN_COUNT_KEY), int):
+        if _token_count(message) is None:
             return index
     return None
 
@@ -248,15 +381,15 @@ def _first_annotation_gaps(
     first_unannotated: int | None = None
     first_untokenized: int | None = None
     for index, message in enumerate(messages):
-        if first_unannotated is None and not isinstance(message.additional_properties.get(GROUP_ID_KEY), str):
+        missing_group_annotation = first_unannotated is None and _group_id(message) is None
+        missing_token_annotation = include_tokens and first_untokenized is None and _token_count(message) is None
+
+        if missing_group_annotation:
             first_unannotated = index
-        if (
-            include_tokens
-            and first_untokenized is None
-            and not isinstance(message.additional_properties.get(TOKEN_COUNT_KEY), int)
-        ):
+        if missing_token_annotation:
             first_untokenized = index
-        if first_unannotated is not None and (not include_tokens or first_untokenized is not None):
+
+        if missing_group_annotation or missing_token_annotation:
             break
     return first_unannotated, first_untokenized
 
@@ -265,11 +398,11 @@ def _reannotation_start(messages: Sequence[Message], index: int) -> int:
     if index <= 0:
         return 0
     previous_index = index - 1
-    previous_group_id = messages[previous_index].additional_properties.get(GROUP_ID_KEY)
-    if not isinstance(previous_group_id, str):
+    previous_group_id = _group_id(messages[previous_index])
+    if previous_group_id is None:
         return previous_index
     while previous_index > 0:
-        prior_group_id = messages[previous_index - 1].additional_properties.get(GROUP_ID_KEY)
+        prior_group_id = _group_id(messages[previous_index - 1])
         if prior_group_id != previous_group_id:
             break
         previous_index -= 1
@@ -302,44 +435,41 @@ def annotate_message_groups(
             messages,
             include_tokens=tokenizer is not None,
         )
-        candidate_starts = [
-            index
-            for index in (first_unannotated_index, first_untokenized_index)
-            if index is not None
-        ]
+        candidate_starts = [index for index in (first_unannotated_index, first_untokenized_index) if index is not None]
         if not candidate_starts:
             return _ordered_group_ids_from_annotations(messages)
         start_index = min(candidate_starts)
 
     start_index = _reannotation_start(messages, start_index)
 
+    # Continue group indices from the preserved prefix when only re-annotating a suffix.
     group_index_offset = 0
     if start_index > 0:
-        previous_group_index = messages[start_index - 1].additional_properties.get(GROUP_INDEX_KEY)
-        if isinstance(previous_group_index, int):
+        previous_group_index = _group_index(messages[start_index - 1])
+        if previous_group_index is not None:
             group_index_offset = previous_group_index + 1
 
     spans = group_messages(messages[start_index:])
     for span_index, span in enumerate(spans):
         group_id = str(span["group_id"])
-        kind = str(span["kind"])
+        kind = _coerce_group_kind(span["kind"])
+        if kind is None:
+            raise ValueError(f"Unexpected group kind in span: {span['kind']}")
         local_start_index = int(span["start_index"])
         local_end_index = int(span["end_index"])
         has_reasoning = bool(span["has_reasoning"])
         for idx in range(start_index + local_start_index, start_index + local_end_index + 1):
             message = messages[idx]
-            message.additional_properties[GROUP_ID_KEY] = group_id
-            message.additional_properties[GROUP_KIND_KEY] = kind
-            message.additional_properties[GROUP_INDEX_KEY] = group_index_offset + span_index
-            message.additional_properties[GROUP_HAS_REASONING_KEY] = has_reasoning
+            _write_group_annotation(
+                message,
+                group_id=group_id,
+                kind=kind,
+                index=group_index_offset + span_index,
+                has_reasoning=has_reasoning,
+            )
             message.additional_properties.setdefault(EXCLUDED_KEY, False)
-            if (
-                tokenizer is not None
-                and not isinstance(message.additional_properties.get(TOKEN_COUNT_KEY), int)
-            ):
-                message.additional_properties[TOKEN_COUNT_KEY] = tokenizer.count_tokens(
-                    _serialize_message(message)
-                )
+            if tokenizer is not None and _token_count(message) is None:
+                _write_token_count(message, tokenizer.count_tokens(_serialize_message(message)))
     return _ordered_group_ids_from_annotations(messages)
 
 
@@ -366,9 +496,12 @@ def annotate_token_counts(
     from_index: int | None = None,
     force_retokenize: bool = False,
 ) -> None:
-    """Annotate `_token_count` metadata, incrementally by default."""
+    """Annotate token-count metadata, incrementally by default."""
     if not messages:
         return
+
+    # Token counts are stored inside group annotations.
+    annotate_message_groups(messages, from_index=from_index)
 
     if force_retokenize:
         start_index = 0
@@ -381,7 +514,7 @@ def annotate_token_counts(
         start_index = first_untokenized_index
 
     for message in messages[start_index:]:
-        message.additional_properties[TOKEN_COUNT_KEY] = tokenizer.count_tokens(_serialize_message(message))
+        _write_token_count(message, tokenizer.count_tokens(_serialize_message(message)))
 
 
 def extend_compaction_messages(
@@ -420,7 +553,9 @@ def included_messages(messages: list[Message]) -> list[Message]:
 def included_token_count(messages: list[Message]) -> int:
     total = 0
     for message in included_messages(messages):
-        total += int(message.additional_properties.get(TOKEN_COUNT_KEY, 0))
+        token_count = _token_count(message)
+        if token_count is not None:
+            total += token_count
     return total
 
 
@@ -436,8 +571,8 @@ def set_excluded(message: Message, *, excluded: bool, reason: str | None = None)
 def exclude_group_ids(messages: list[Message], group_ids: set[str], *, reason: str) -> bool:
     changed = False
     for message in messages:
-        group_id = message.additional_properties.get(GROUP_ID_KEY)
-        if isinstance(group_id, str) and group_id in group_ids:
+        group_id = _group_id(message)
+        if group_id is not None and group_id in group_ids:
             changed = set_excluded(message, excluded=True, reason=reason) or changed
     return changed
 
@@ -449,8 +584,8 @@ def project_included_messages(messages: list[Message]) -> list[Message]:
 def _group_messages_by_id(messages: list[Message]) -> dict[str, list[Message]]:
     grouped: dict[str, list[Message]] = {}
     for message in messages:
-        group_id = message.additional_properties.get(GROUP_ID_KEY)
-        if not isinstance(group_id, str):
+        group_id = _group_id(message)
+        if group_id is None:
             continue
         grouped.setdefault(group_id, []).append(message)
     return grouped
@@ -459,18 +594,18 @@ def _group_messages_by_id(messages: list[Message]) -> dict[str, list[Message]]:
 def _group_kind_map(messages: list[Message]) -> dict[str, GroupKind]:
     kinds: dict[str, GroupKind] = {}
     for message in messages:
-        group_id = message.additional_properties.get(GROUP_ID_KEY)
-        group_kind = message.additional_properties.get(GROUP_KIND_KEY)
-        if isinstance(group_id, str) and isinstance(group_kind, str) and group_id not in kinds:
-            kinds[group_id] = group_kind  # type: ignore[assignment]
+        group_id = _group_id(message)
+        group_kind = _group_kind(message)
+        if group_id is not None and group_kind is not None and group_id not in kinds:
+            kinds[group_id] = group_kind
     return kinds
 
 
 def _group_start_indices(messages: list[Message]) -> dict[str, int]:
     starts: dict[str, int] = {}
     for idx, message in enumerate(messages):
-        group_id = message.additional_properties.get(GROUP_ID_KEY)
-        if isinstance(group_id, str) and group_id not in starts:
+        group_id = _group_id(message)
+        if group_id is not None and group_id not in starts:
             starts[group_id] = idx
     return starts
 
@@ -806,19 +941,23 @@ class SummarizationStrategy:
             return False
         summary_id = f"summary_{len(messages)}"
         original_message_ids = [message.message_id for message in messages_to_summarize if message.message_id]
+        summary_of_group_ids = list(group_ids_to_summarize)
+        summary_annotation = {
+            SUMMARY_OF_MESSAGE_IDS_KEY: original_message_ids,
+            SUMMARY_OF_GROUP_IDS_KEY: summary_of_group_ids,
+        }
 
         summary_message = Message(
             role="assistant",
             text=summary_text,
             message_id=summary_id,
             additional_properties={
-                SUMMARY_OF_MESSAGE_IDS_KEY: original_message_ids,
-                SUMMARY_OF_GROUP_IDS_KEY: list(group_ids_to_summarize),
+                GROUP_ANNOTATION_KEY: summary_annotation,
             },
         )
 
         for message in messages_to_summarize:
-            message.additional_properties[SUMMARIZED_BY_SUMMARY_ID_KEY] = summary_id
+            _set_group_summarized_by_summary_id(message, summary_id)
             set_excluded(message, excluded=True, reason="summarized")
 
         insertion_index = min(starts[group_id] for group_id in group_ids_to_summarize if group_id in starts)
@@ -917,14 +1056,15 @@ async def apply_compaction(
 __all__ = [
     "EXCLUDED_KEY",
     "EXCLUDE_REASON_KEY",
+    "GROUP_ANNOTATION_KEY",
     "GROUP_HAS_REASONING_KEY",
     "GROUP_ID_KEY",
     "GROUP_INDEX_KEY",
     "GROUP_KIND_KEY",
+    "GROUP_TOKEN_COUNT_KEY",
     "SUMMARIZED_BY_SUMMARY_ID_KEY",
     "SUMMARY_OF_GROUP_IDS_KEY",
     "SUMMARY_OF_MESSAGE_IDS_KEY",
-    "TOKEN_COUNT_KEY",
     "CharacterEstimatorTokenizer",
     "CompactionStrategy",
     "GroupKind",

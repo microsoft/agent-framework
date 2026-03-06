@@ -28,6 +28,12 @@ from agent_framework import (
     merge_chat_options,
     tool,
 )
+from agent_framework._compaction import (
+    GROUP_ANNOTATION_KEY,
+    GROUP_HAS_REASONING_KEY,
+    GROUP_ID_KEY,
+    GROUP_TOKEN_COUNT_KEY,
+)
 from agent_framework._types import (
     _get_data_bytes,
     _get_data_bytes_as_str,
@@ -1652,6 +1658,78 @@ def test_chat_message_complex_content_serialization():
     assert reconstructed.contents[0].type == "text"
     assert reconstructed.contents[1].type == "function_call"
     assert reconstructed.contents[2].type == "function_result"
+
+
+def test_message_roundtrip_preserves_compaction_annotation_dict() -> None:
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text("Hello")],
+        additional_properties={
+            GROUP_ANNOTATION_KEY: {
+                "id": "group_1",
+                "kind": "assistant_text",
+                "index": 1,
+                "has_reasoning": False,
+                "token_count": 42,
+            }
+        },
+    )
+
+    restored = Message.from_dict(message.to_dict())
+    annotation = restored.additional_properties.get(GROUP_ANNOTATION_KEY)
+
+    assert isinstance(annotation, dict)
+    assert annotation[GROUP_ID_KEY] == "group_1"
+    assert annotation[GROUP_TOKEN_COUNT_KEY] == 42
+
+
+def test_content_roundtrip_preserves_compaction_annotation_dict() -> None:
+    content = Content.from_text(
+        text="Hello",
+        additional_properties={
+            GROUP_ANNOTATION_KEY: {
+                "id": "group_2",
+                "kind": "assistant_text",
+                "index": 2,
+                "has_reasoning": False,
+                "token_count": None,
+            }
+        },
+    )
+
+    restored = Content.from_dict(content.to_dict())
+    annotation = restored.additional_properties.get(GROUP_ANNOTATION_KEY)
+
+    assert isinstance(annotation, dict)
+    assert annotation[GROUP_ID_KEY] == "group_2"
+    assert annotation[GROUP_TOKEN_COUNT_KEY] is None
+
+
+def test_chat_response_roundtrip_preserves_compaction_annotation_dict() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(
+                role="assistant",
+                contents=[Content.from_text("Hello")],
+                additional_properties={
+                    GROUP_ANNOTATION_KEY: {
+                        "id": "group_3",
+                        "kind": "assistant_text",
+                        "index": 3,
+                        "has_reasoning": True,
+                        "token_count": 15,
+                    }
+                },
+            )
+        ]
+    )
+
+    restored = ChatResponse.from_dict(response.to_dict())
+    annotation = restored.messages[0].additional_properties.get(GROUP_ANNOTATION_KEY)
+
+    assert isinstance(annotation, dict)
+    assert annotation[GROUP_ID_KEY] == "group_3"
+    assert annotation[GROUP_HAS_REASONING_KEY] is True
 
 
 def test_usage_content_serialization_with_details():

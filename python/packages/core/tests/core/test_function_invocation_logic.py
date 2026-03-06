@@ -17,6 +17,7 @@ from agent_framework import (
 )
 from agent_framework._compaction import (
     EXCLUDED_KEY,
+    GROUP_ANNOTATION_KEY,
     GROUP_ID_KEY,
     CharacterEstimatorTokenizer,
     SlidingWindowStrategy,
@@ -25,6 +26,14 @@ from agent_framework._compaction import (
     included_token_count,
 )
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
+
+
+def _group_id(message: Message) -> str | None:
+    annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+    if not isinstance(annotation, dict):
+        return None
+    value = annotation.get(GROUP_ID_KEY)
+    return value if isinstance(value, str) else None
 
 
 async def test_base_client_with_function_calling(chat_client_base: SupportsChatGetResponse):
@@ -153,7 +162,7 @@ async def test_function_loop_applies_compaction_projection_each_model_call(chat_
             oldest_group_id = groups[0]
             changed = False
             for message in messages:
-                if message.additional_properties.get(GROUP_ID_KEY) == oldest_group_id:
+                if _group_id(message) == oldest_group_id:
                     if message.additional_properties.get(EXCLUDED_KEY) is not True:
                         changed = True
                     message.additional_properties[EXCLUDED_KEY] = True

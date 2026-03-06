@@ -16,8 +16,7 @@ excluding older non-system groups.
 """
 
 EXCLUDED_KEY = "_excluded"
-GROUP_ID_KEY = "_group_id"
-GROUP_KIND_KEY = "_group_kind"
+GROUP_ANNOTATION_KEY = "_group"
 
 
 class KeepLastUserTurnStrategy:
@@ -25,8 +24,9 @@ class KeepLastUserTurnStrategy:
         group_ids = annotate_message_groups(messages)
         group_kinds: dict[str, str] = {}
         for message in messages:
-            group_id = message.additional_properties.get(GROUP_ID_KEY)
-            kind = message.additional_properties.get(GROUP_KIND_KEY)
+            group_annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+            group_id = group_annotation.get("id") if isinstance(group_annotation, dict) else None
+            kind = group_annotation.get("kind") if isinstance(group_annotation, dict) else None
             if (
                 isinstance(group_id, str)
                 and isinstance(kind, str)
@@ -42,7 +42,8 @@ class KeepLastUserTurnStrategy:
 
         changed = False
         for message in messages:
-            group_id = message.additional_properties.get(GROUP_ID_KEY)
+            group_annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+            group_id = group_annotation.get("id") if isinstance(group_annotation, dict) else None
             if message.role == "system":
                 continue
             if group_id == keep_user_group_id:

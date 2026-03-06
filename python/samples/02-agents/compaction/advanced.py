@@ -93,7 +93,8 @@ async def main() -> None:
     print("Projected roles:", [m.role for m in projected])
     print("Projected messages with token counts:")
     for msg in projected:
-        token_count = msg.additional_properties.get("_token_count")
+        group = msg.additional_properties.get("_group")
+        token_count = group.get("token_count") if isinstance(group, dict) else None
         text_preview = msg.text[:80] if msg.text else "<non-text>"
         print(f"- [{msg.role}] {text_preview} ({token_count} tokens)")
 

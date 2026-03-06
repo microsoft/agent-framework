@@ -8,13 +8,14 @@ from typing import Any
 from agent_framework import ChatResponse, Content, Message
 from agent_framework._compaction import (
     EXCLUDED_KEY,
+    GROUP_ANNOTATION_KEY,
     GROUP_HAS_REASONING_KEY,
     GROUP_ID_KEY,
     GROUP_KIND_KEY,
+    GROUP_TOKEN_COUNT_KEY,
     SUMMARIZED_BY_SUMMARY_ID_KEY,
     SUMMARY_OF_GROUP_IDS_KEY,
     SUMMARY_OF_MESSAGE_IDS_KEY,
-    TOKEN_COUNT_KEY,
     CharacterEstimatorTokenizer,
     SelectiveToolCallCompactionStrategy,
     SlidingWindowStrategy,
@@ -57,6 +58,45 @@ def _tool_result(call_id: str, result: str) -> Message:
     )
 
 
+def _group_id(message: Message) -> str | None:
+    annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+    if not isinstance(annotation, dict):
+        return None
+    value = annotation.get(GROUP_ID_KEY)
+    return value if isinstance(value, str) else None
+
+
+def _group_kind(message: Message) -> str | None:
+    annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+    if not isinstance(annotation, dict):
+        return None
+    value = annotation.get(GROUP_KIND_KEY)
+    return value if isinstance(value, str) else None
+
+
+def _group_has_reasoning(message: Message) -> bool | None:
+    annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+    if not isinstance(annotation, dict):
+        return None
+    value = annotation.get(GROUP_HAS_REASONING_KEY)
+    return value if isinstance(value, bool) else None
+
+
+def _token_count(message: Message) -> int | None:
+    annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+    if not isinstance(annotation, dict):
+        return None
+    value = annotation.get(GROUP_TOKEN_COUNT_KEY)
+    return value if isinstance(value, int) else None
+
+
+def _group_unknown_value(message: Message, key: str) -> Any:
+    annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+    if not isinstance(annotation, dict):
+        return None
+    return annotation.get(key)
+
+
 def test_group_annotations_keep_tool_call_and_tool_result_atomic() -> None:
     messages = [
         Message(role="user", text="hello"),
@@ -67,9 +107,10 @@ def test_group_annotations_keep_tool_call_and_tool_result_atomic() -> None:
 
     annotate_message_groups(messages)
 
-    call_group = messages[1].additional_properties[GROUP_ID_KEY]
-    assert call_group == messages[2].additional_properties[GROUP_ID_KEY]
-    assert messages[1].additional_properties[GROUP_ID_KEY] != messages[0].additional_properties[GROUP_ID_KEY]
+    call_group = _group_id(messages[1])
+    assert call_group is not None
+    assert call_group == _group_id(messages[2])
+    assert _group_id(messages[1]) != _group_id(messages[0])
 
 
 def test_group_annotations_include_reasoning_in_tool_call_group() -> None:
@@ -80,10 +121,11 @@ def test_group_annotations_include_reasoning_in_tool_call_group() -> None:
 
     annotate_message_groups(messages)
 
-    first_group = messages[0].additional_properties[GROUP_ID_KEY]
-    assert messages[1].additional_properties[GROUP_ID_KEY] == first_group
-    assert messages[0].additional_properties[GROUP_HAS_REASONING_KEY] is True
-    assert messages[0].additional_properties[GROUP_KIND_KEY] == "tool_call"
+    first_group = _group_id(messages[0])
+    assert first_group is not None
+    assert _group_id(messages[1]) == first_group
+    assert _group_has_reasoning(messages[0]) is True
+    assert _group_kind(messages[0]) == "tool_call"
 
 
 def test_group_annotations_handle_same_message_reasoning_and_function_calls() -> None:
@@ -97,11 +139,12 @@ def test_group_annotations_handle_same_message_reasoning_and_function_calls() ->
 
     annotate_message_groups(messages)
 
-    call_group = messages[1].additional_properties[GROUP_ID_KEY]
-    assert messages[2].additional_properties[GROUP_ID_KEY] == call_group
-    assert messages[3].additional_properties[GROUP_ID_KEY] == call_group
-    assert messages[1].additional_properties[GROUP_KIND_KEY] == "tool_call"
-    assert messages[1].additional_properties[GROUP_HAS_REASONING_KEY] is True
+    call_group = _group_id(messages[1])
+    assert call_group is not None
+    assert _group_id(messages[2]) == call_group
+    assert _group_id(messages[3]) == call_group
+    assert _group_kind(messages[1]) == "tool_call"
+    assert _group_has_reasoning(messages[1]) is True
 
 
 def test_annotate_message_groups_with_tokenizer_adds_token_counts() -> None:
@@ -115,23 +158,26 @@ def test_annotate_message_groups_with_tokenizer_adds_token_counts() -> None:
         tokenizer=CharacterEstimatorTokenizer(),
     )
 
-    assert isinstance(messages[0].additional_properties.get(TOKEN_COUNT_KEY), int)
-    assert isinstance(messages[1].additional_properties.get(TOKEN_COUNT_KEY), int)
+    assert isinstance(_token_count(messages[0]), int)
+    assert isinstance(_token_count(messages[1]), int)
 
 
 def test_extend_compaction_messages_preserves_existing_annotations_and_tokens() -> None:
     tokenizer = CharacterEstimatorTokenizer()
     messages = [_assistant_function_call("c3")]
     annotate_message_groups(messages)
-    old_group_id = messages[0].additional_properties[GROUP_ID_KEY]
+    old_group_id = _group_id(messages[0])
+    assert old_group_id is not None
     old_token_count = tokenizer.count_tokens("precomputed")
-    messages[0].additional_properties[TOKEN_COUNT_KEY] = old_token_count
+    annotation = messages[0].additional_properties.get(GROUP_ANNOTATION_KEY)
+    if isinstance(annotation, dict):
+        annotation[GROUP_TOKEN_COUNT_KEY] = old_token_count
 
     extend_compaction_messages(messages, [_tool_result("c3", "ok")], tokenizer=tokenizer)
 
-    assert messages[1].additional_properties[GROUP_ID_KEY] == old_group_id
-    assert messages[0].additional_properties[TOKEN_COUNT_KEY] == old_token_count
-    assert isinstance(messages[1].additional_properties.get(TOKEN_COUNT_KEY), int)
+    assert _group_id(messages[1]) == old_group_id
+    assert _token_count(messages[0]) == old_token_count
+    assert isinstance(_token_count(messages[1]), int)
 
 
 def test_append_compaction_message_annotates_new_message() -> None:
@@ -140,7 +186,7 @@ def test_append_compaction_message_annotates_new_message() -> None:
     append_compaction_message(messages, Message(role="assistant", text="world"))
 
     assert len(messages) == 2
-    assert isinstance(messages[1].additional_properties.get(GROUP_ID_KEY), str)
+    assert isinstance(_group_id(messages[1]), str)
 
 
 async def test_truncation_strategy_keeps_system_anchor() -> None:
@@ -294,16 +340,19 @@ async def test_summarization_strategy_adds_bidirectional_trace_links() -> None:
     changed = await strategy(messages)
 
     assert changed is True
-    summary_messages = [message for message in messages if SUMMARY_OF_MESSAGE_IDS_KEY in message.additional_properties]
+    summary_messages = [
+        message for message in messages if _group_unknown_value(message, SUMMARY_OF_MESSAGE_IDS_KEY) is not None
+    ]
     assert len(summary_messages) == 1
     summary = summary_messages[0]
     summary_id = summary.message_id
     assert summary_id is not None
-    assert summary.additional_properties[SUMMARY_OF_GROUP_IDS_KEY]
-    summarized_message_ids: list[str] = summary.additional_properties[SUMMARY_OF_MESSAGE_IDS_KEY]
+    assert _group_unknown_value(summary, SUMMARY_OF_GROUP_IDS_KEY)
+    summarized_message_ids = _group_unknown_value(summary, SUMMARY_OF_MESSAGE_IDS_KEY)
+    assert isinstance(summarized_message_ids, list)
     for message in messages:
         if message.message_id in summarized_message_ids:
-            assert message.additional_properties.get(SUMMARIZED_BY_SUMMARY_ID_KEY) == summary_id
+            assert _group_unknown_value(message, SUMMARIZED_BY_SUMMARY_ID_KEY) == summary_id
             assert message.additional_properties.get(EXCLUDED_KEY) is True
 
 
@@ -374,15 +423,15 @@ class _ExcludeOldestNonSystem:
         group_ids = annotate_message_groups(messages)
         kinds: dict[str, str] = {}
         for message in messages:
-            group_id = message.additional_properties.get(GROUP_ID_KEY)
-            kind = message.additional_properties.get(GROUP_KIND_KEY)
-            if isinstance(group_id, str) and isinstance(kind, str) and group_id not in kinds:
+            group_id = _group_id(message)
+            kind = _group_kind(message)
+            if group_id is not None and kind is not None and group_id not in kinds:
                 kinds[group_id] = kind
         for group_id in group_ids:
             if kinds.get(group_id) == "system":
                 continue
             for message in messages:
-                if message.additional_properties.get(GROUP_ID_KEY) == group_id:
+                if _group_id(message) == group_id:
                     message.additional_properties[EXCLUDED_KEY] = True
             return True
         return False

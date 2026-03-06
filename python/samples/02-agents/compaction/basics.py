@@ -141,22 +141,32 @@ async def main() -> None:
         )
         print(f"{index:02d}. [{message.role}] {message_text}")
 
-    summaries = [
-        m for m in messages if SUMMARY_OF_MESSAGE_IDS_KEY in m.additional_properties
-    ]
-    summarized = [
-        m for m in messages if m.additional_properties.get(SUMMARIZED_BY_SUMMARY_ID_KEY)
-    ]
+    summaries = []
+    summarized = []
+    for message in messages:
+        group_annotation = message.additional_properties.get("_group")
+        if not isinstance(group_annotation, dict):
+            continue
+        if group_annotation.get(SUMMARY_OF_MESSAGE_IDS_KEY):
+            summaries.append(message)
+        if group_annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY):
+            summarized.append(message)
     if summaries or summarized:
         print("Summary trace metadata present:")
         for message in summaries:
-            summarized_ids = message.additional_properties.get(
-                SUMMARY_OF_MESSAGE_IDS_KEY
+            group_annotation = message.additional_properties.get("_group")
+            summarized_ids = (
+                group_annotation.get(SUMMARY_OF_MESSAGE_IDS_KEY)
+                if isinstance(group_annotation, dict)
+                else None
             )
             print(f"  summary_id={message.message_id} summarizes={summarized_ids}")
         for message in summarized:
-            summarized_by = message.additional_properties.get(
-                SUMMARIZED_BY_SUMMARY_ID_KEY
+            group_annotation = message.additional_properties.get("_group")
+            summarized_by = (
+                group_annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY)
+                if isinstance(group_annotation, dict)
+                else None
             )
             print(f"  original_id={message.message_id} summarized_by={summarized_by}")
 

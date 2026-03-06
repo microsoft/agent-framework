@@ -105,9 +105,8 @@ async def main() -> None:
     print(f"Included token count after compaction: {token_count_after}")
     print("Projected roles:", [message.role for message in projected])
     for message in projected:
-        print(
-            f"- [{message.role}] {message.text} ({message.additional_properties.get('_token_count')} tokens)"
-        )
+        token_count = message.additional_properties.get("_group", {}).get("token_count")
+        print(f"- [{message.role}] {message.text} ({token_count} tokens)")
 
 
 if __name__ == "__main__":
@@ -120,5 +119,6 @@ Included token count after compaction: 149
 Projected roles: ['system', 'user', 'assistant']
 - [system] You are a migration assistant. (40 tokens)
 - [user] Now provide a detailed checklist with owners, rollback gates, and validation criteria. (49 tokens)
-- [assistant] Checklist: baseline snapshots, migration dry-run, production canary, progressive deployment, automated integrity checks, and post-migration reconciliation. (60 tokens)
+- [assistant] Checklist: baseline snapshots, migration dry-run, production canary,
+  progressive deployment, automated integrity checks, and post-migration reconciliation. (60 tokens)
 """
