@@ -40,9 +40,10 @@ internal sealed partial class FileAgentSkillLoader
     //           "description: \"A skill\"" → (description, A skill, _)
     private static readonly Regex s_yamlKeyValueRegex = new(@"^\s*(\w+)\s*:\s*(?:[""'](.+?)[""']|(.+?))\s*$", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
 
-    // Validates skill names: lowercase letters, numbers, and hyphens only; must not start or end with a hyphen.
-    // Examples: "my-skill" ✓, "skill123" ✓, "-bad" ✗, "bad-" ✗, "Bad" ✗
-    private static readonly Regex s_validNameRegex = new(@"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$", RegexOptions.Compiled);
+    // Validates skill names: lowercase letters, numbers, and hyphens only;
+    // must not start or end with a hyphen; must not contain consecutive hyphens.
+    // Examples: "my-skill" ✓, "skill123" ✓, "-bad" ✗, "bad-" ✗, "Bad" ✗, "my--skill" ✗
+    private static readonly Regex s_validNameRegex = new("^[a-z0-9]([a-z0-9]*-[a-z0-9])*[a-z0-9]*$", RegexOptions.Compiled);
 
     private readonly ILogger _logger;
     private readonly HashSet<string> _allowedResourceExtensions;
@@ -244,7 +245,22 @@ internal sealed partial class FileAgentSkillLoader
 
         if (name.Length > MaxNameLength || !s_validNameRegex.IsMatch(name))
         {
-            LogInvalidFieldValue(this._logger, skillFilePath, "name", $"Must be {MaxNameLength} characters or fewer, using only lowercase letters, numbers, and hyphens, and must not start or end with a hyphen.");
+            LogInvalidFieldValue(this._logger, skillFilePath, "name", $"Must be {MaxNameLength} characters or fewer, using only lowercase letters, numbers, and hyphens, and must not start or end with a hyphen or contain consecutive hyphens.");
+            return false;
+        }
+
+        // skillFilePath is e.g. "/skills/my-skill/SKILL.md".
+        // GetDirectoryName strips the filename → "/skills/my-skill".
+        // GetFileName then extracts the last segment → "my-skill".
+        // This gives us the skill's parent directory name to validate against the frontmatter name.
+        string directoryName = Path.GetFileName(Path.GetDirectoryName(skillFilePath)) ?? string.Empty;
+        if (!string.Equals(name, directoryName, StringComparison.Ordinal))
+        {
+            if (this._logger.IsEnabled(LogLevel.Error))
+            {
+                LogNameDirectoryMismatch(this._logger, SanitizePathForLog(skillFilePath), name, SanitizePathForLog(directoryName));
+            }
+
             return false;
         }
 
@@ -456,6 +472,9 @@ internal sealed partial class FileAgentSkillLoader
 
     [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' has an invalid '{FieldName}' value: {Reason}")]
     private static partial void LogInvalidFieldValue(ILogger logger, string skillFilePath, string fieldName, string reason);
+
+    [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}': skill name '{SkillName}' does not match parent directory name '{DirectoryName}'")]
+    private static partial void LogNameDirectoryMismatch(ILogger logger, string skillFilePath, string skillName, string directoryName);
 
     [LoggerMessage(LogLevel.Warning, "Skipping resource in skill '{SkillName}': '{ResourcePath}' references a path outside the skill directory")]
     private static partial void LogResourcePathTraversal(ILogger logger, string skillName, string resourcePath);
