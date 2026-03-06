@@ -46,7 +46,7 @@ internal sealed class CompactingChatClient : DelegatingChatClient
         this._compactionStrategy = Throw.IfNull(compactionStrategy);
         this._sessionState = new ProviderSessionState<State>(
             _ => new State(),
-            Convert.ToBase64String(BitConverter.GetBytes(compactionStrategy.GetHashCode())),
+            $"{nameof(CompactingChatClient)}:{Convert.ToBase64String(BitConverter.GetBytes(compactionStrategy.GetHashCode()))}",
             AgentJsonUtilities.DefaultOptions);
     }
 
@@ -87,13 +87,21 @@ internal sealed class CompactingChatClient : DelegatingChatClient
     private async Task<IEnumerable<ChatMessage>> ApplyCompactionAsync(
         IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
     {
-        List<ChatMessage> messageList = messages as List<ChatMessage> ?? [.. messages]; // %%% TODO - LIST COPY
+        List<ChatMessage> messageList = messages as List<ChatMessage> ?? [.. messages];
 
         AgentRunContext? currentAgentContext = AIAgent.CurrentRunContext;
         if (currentAgentContext is null ||
             currentAgentContext.Session is null)
         {
             // No session available — no reason to compact
+            return messages;
+        }
+
+        ChatClientAgentSession? chatClientSession = currentAgentContext.Session.GetService<ChatClientAgentSession>();
+        if (chatClientSession is not null &&
+            !string.IsNullOrWhiteSpace(chatClientSession.ConversationId))
+        {
+            // Session is managed by remote service
             return messages;
         }
 
@@ -121,7 +129,7 @@ internal sealed class CompactingChatClient : DelegatingChatClient
 
         if (wasCompacted)
         {
-            state.MessageIndex = [.. messageIndex.Groups]; // %%% TODO - LIST COPY
+            state.MessageIndex = [.. messageIndex.Groups];
         }
 
         return wasCompacted ? messageIndex.GetIncludedMessages() : messageList;

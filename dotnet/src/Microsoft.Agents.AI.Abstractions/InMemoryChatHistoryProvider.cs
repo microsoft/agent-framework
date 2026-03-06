@@ -123,8 +123,6 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
             state.Messages = [.. await this.ChatReducer.ReduceAsync(state.Messages, cancellationToken).ConfigureAwait(false)];
             return;
         }
-
-        // %%% TODO: CONSIDER COMPACTION
     }
 
     /// <summary>
