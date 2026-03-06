@@ -831,6 +831,57 @@ public class MessageIndexTests
     }
 
     [Fact]
+    public void CreateWithSummaryPropertyFalseIsNotSummary()
+    {
+        // Summary property key present but value is false — not a summary
+        ChatMessage assistant = new(ChatRole.Assistant, "Not a summary");
+        (assistant.AdditionalProperties ??= [])[MessageGroup.SummaryPropertyKey] = false;
+
+        MessageIndex index = MessageIndex.Create([assistant]);
+
+        Assert.Single(index.Groups);
+        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
+    }
+
+    [Fact]
+    public void CreateWithSummaryPropertyNonBoolIsNotSummary()
+    {
+        // Summary property key present but value is a string, not a bool
+        ChatMessage assistant = new(ChatRole.Assistant, "Not a summary");
+        (assistant.AdditionalProperties ??= [])[MessageGroup.SummaryPropertyKey] = "true";
+
+        MessageIndex index = MessageIndex.Create([assistant]);
+
+        Assert.Single(index.Groups);
+        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
+    }
+
+    [Fact]
+    public void CreateWithSummaryPropertyNullValueIsNotSummary()
+    {
+        // Summary property key present but value is null
+        ChatMessage assistant = new(ChatRole.Assistant, "Not a summary");
+        (assistant.AdditionalProperties ??= [])[MessageGroup.SummaryPropertyKey] = null!;
+
+        MessageIndex index = MessageIndex.Create([assistant]);
+
+        Assert.Single(index.Groups);
+        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
+    }
+
+    [Fact]
+    public void CreateWithNoAdditionalPropertiesIsNotSummary()
+    {
+        // Assistant message with no AdditionalProperties at all
+        ChatMessage assistant = new(ChatRole.Assistant, "Plain response");
+
+        MessageIndex index = MessageIndex.Create([assistant]);
+
+        Assert.Single(index.Groups);
+        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
+    }
+
+    [Fact]
     public void ComputeByteCountHandlesNullAndNonNullText()
     {
         // Mix of messages: one with text (non-null), one without (null Text)

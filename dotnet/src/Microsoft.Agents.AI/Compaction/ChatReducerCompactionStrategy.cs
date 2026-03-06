@@ -64,11 +64,8 @@ public sealed class ChatReducerCompactionStrategy : CompactionStrategy
     /// <inheritdoc/>
     protected override async Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
     {
+        // No need to short-circuit on empty conversations, this is handled by <see cref="CompactionStrategy.CompactAsync"/>.
         List<ChatMessage> includedMessages = [.. index.GetIncludedMessages()];
-        if (includedMessages.Count == 0)
-        {
-            return false;
-        }
 
         IEnumerable<ChatMessage> reduced = await this.ChatReducer.ReduceAsync(includedMessages, cancellationToken).ConfigureAwait(false);
         IList<ChatMessage> reducedMessages = reduced as IList<ChatMessage> ?? [.. reduced];
