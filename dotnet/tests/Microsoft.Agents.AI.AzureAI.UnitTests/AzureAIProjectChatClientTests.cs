@@ -22,7 +22,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -71,7 +71,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -120,7 +120,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -169,7 +169,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 

@@ -6,7 +6,7 @@ import logging
 import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from copy import copy
-from typing import Any, ClassVar, Union
+from typing import Any, ClassVar, Union, cast
 
 import openai
 from openai import (
@@ -332,8 +332,10 @@ def from_assistant_tools(
     for tool in assistant_tools:
         if hasattr(tool, "type"):
             tool_type = tool.type
-        elif isinstance(tool, dict):
-            tool_type = tool.get("type")
+        elif isinstance(tool, Mapping):
+            typed_tool = cast(Mapping[str, Any], tool)
+            tool_type_value: Any = typed_tool.get("type")
+            tool_type = tool_type_value if isinstance(tool_type_value, str) else None
         else:
             tool_type = None
 

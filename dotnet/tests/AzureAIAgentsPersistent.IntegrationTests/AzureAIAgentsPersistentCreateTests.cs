@@ -6,7 +6,6 @@ using System.IO;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Agents.Persistent;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Shared.IntegrationTests;
@@ -15,7 +14,7 @@ namespace AzureAIAgentsPersistent.IntegrationTests;
 
 public class AzureAIAgentsPersistentCreateTests
 {
-    private readonly PersistentAgentsClient _persistentAgentsClient = new(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint), new AzureCliCredential());
+    private readonly PersistentAgentsClient _persistentAgentsClient = new(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint), TestAzureCliCredentials.CreateAzureCliCredential());
 
     [Theory]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]

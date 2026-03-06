@@ -11,16 +11,16 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
-    <PackageVersion Include="Anthropic" Version="12.3.0" />
-    <PackageVersion Include="Anthropic.Foundry" Version="0.4.1" />
+    <PackageVersion Include="Anthropic" Version="12.8.0" />
+    <PackageVersion Include="Anthropic.Foundry" Version="0.4.2" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0" />
     <!-- Azure.* -->
-    <PackageVersion Include="Azure.AI.Projects" Version="1.2.0-beta.5" />
-    <PackageVersion Include="Azure.AI.Projects.OpenAI" Version="1.0.0-beta.5" />
+    <PackageVersion Include="Azure.AI.Projects" Version="2.0.0-beta.1" />
+    <PackageVersion Include="Azure.AI.Projects.OpenAI" Version="2.0.0-beta.1" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.8" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.8.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.17.1" />
@@ -35,7 +35,7 @@
     <!-- System.* -->
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.3" />
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
-    <PackageVersion Include="System.ClientModel" Version="1.8.1" />
+    <PackageVersion Include="System.ClientModel" Version="1.9.0" />
     <PackageVersion Include="System.CodeDom" Version="10.0.0" />
     <PackageVersion Include="System.Collections.Immutable" Version="10.0.1" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.2.25502.107" />
@@ -140,12 +140,10 @@
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Condition="'$(TargetFramework)' == 'net10.0'" Version="10.0.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.0.0" />
     <PackageVersion Include="Moq" Version="[4.18.4]" />
-    <PackageVersion Include="xunit" Version="2.9.3" />
-    <PackageVersion Include="xunit.abstractions" Version="2.0.3" />
-    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.3" />
-    <PackageVersion Include="Xunit.SkippableFact" Version="1.5.23" />
-    <PackageVersion Include="xretry" Version="1.9.0" />
-    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="xunit.v3.mtp-v2" Version="3.2.2" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <PackageVersion Include="xRetry.v3" Version="1.0.0-rc3" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.4.1" />
     <!-- Symbols -->
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
     <!-- Toolset -->

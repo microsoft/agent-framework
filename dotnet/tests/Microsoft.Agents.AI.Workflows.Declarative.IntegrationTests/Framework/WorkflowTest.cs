@@ -8,7 +8,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Xunit.Abstractions;
 using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;

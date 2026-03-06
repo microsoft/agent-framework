@@ -12,6 +12,8 @@ These samples demonstrate how to build and host AI agents using the [Azure AI Ag
 | [`AgentWithHostedMCP`](./AgentWithHostedMCP/) | Hosted MCP server tool (Microsoft Learn search) |
 | [`AgentWithTextSearchRag`](./AgentWithTextSearchRag/) | RAG with `TextSearchProvider` (Contoso Outdoors) |
 | [`AgentsInWorkflows`](./AgentsInWorkflows/) | Sequential workflow pipeline (translation chain) |
+| [`FoundryMultiAgent`](./FoundryMultiAgent/) | Multi-agent Writer-Reviewer workflow using `AIProjectClient.CreateAIAgentAsync()` from [Microsoft.Agents.AI.AzureAI](https://www.nuget.org/packages/Microsoft.Agents.AI.AzureAI/) |
+| [`FoundrySingleAgent`](./FoundrySingleAgent/) | Single agent with local C# tool execution (hotel search) using `AIProjectClient.CreateAIAgentAsync()` from [Microsoft.Agents.AI.AzureAI](https://www.nuget.org/packages/Microsoft.Agents.AI.AzureAI/) |
 
 ## Common Prerequisites
 
@@ -23,7 +25,7 @@ Before running any sample, ensure you have:
 
 ### Authenticate with Azure CLI
 
-All samples use `AzureCliCredential` for authentication. Make sure you're logged in:
+All samples use `DefaultAzureCredential` for authentication, which automatically probes multiple credential sources (environment variables, managed identity, Azure CLI, etc.). For local development, the simplest approach is to authenticate via Azure CLI:
 
 ```powershell
 az login
@@ -38,9 +40,9 @@ Most samples require one or more of these environment variables:
 |----------|---------|-------------|
 | `AZURE_OPENAI_ENDPOINT` | Most samples | Your Azure OpenAI resource endpoint URL |
 | `AZURE_OPENAI_DEPLOYMENT_NAME` | Most samples | Chat model deployment name (defaults to `gpt-4o-mini`) |
-| `AZURE_AI_PROJECT_ENDPOINT` | AgentWithTools, AgentWithLocalTools | Azure AI Foundry project endpoint |
+| `AZURE_AI_PROJECT_ENDPOINT` | AgentWithTools, AgentWithLocalTools, FoundryMultiAgent, FoundrySingleAgent | Azure AI Foundry project endpoint |
 | `MCP_TOOL_CONNECTION_ID` | AgentWithTools | Foundry MCP tool connection name |
-| `MODEL_DEPLOYMENT_NAME` | AgentWithLocalTools | Chat model deployment name (defaults to `gpt-4o-mini`) |
+| `MODEL_DEPLOYMENT_NAME` | AgentWithLocalTools, FoundryMultiAgent, FoundrySingleAgent | Chat model deployment name (defaults to `gpt-4o-mini`) |
 
 See each sample's README for the specific variables required.
 

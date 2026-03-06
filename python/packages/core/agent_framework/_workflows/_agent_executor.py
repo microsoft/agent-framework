@@ -450,9 +450,9 @@ class AgentExecutor(Executor):
         options: dict[str, Any] = {}
         if options_from_workflow is not None:
             if isinstance(options_from_workflow, Mapping):
-                for key, value in options_from_workflow.items():
-                    if isinstance(key, str):
-                        options[key] = value
+                options_from_workflow_map = cast(Mapping[str, Any], options_from_workflow)
+                for key, value in options_from_workflow_map.items():
+                    options[key] = value
             else:
                 logger.warning(
                     "Ignoring non-mapping workflow 'options' kwarg of type %s for AgentExecutor %s.",
@@ -461,16 +461,17 @@ class AgentExecutor(Executor):
                 )
 
         existing_additional_args = options.get("additional_function_arguments")
+        additional_args: dict[str, Any]
         if isinstance(existing_additional_args, Mapping):
-            additional_args = {key: value for key, value in existing_additional_args.items() if isinstance(key, str)}
+            existing_additional_args_map = cast(Mapping[str, Any], existing_additional_args)
+            additional_args = {key: value for key, value in existing_additional_args_map.items()}
         else:
             additional_args = {}
 
         if workflow_additional_args is not None:
             if isinstance(workflow_additional_args, Mapping):
-                additional_args.update({
-                    key: value for key, value in workflow_additional_args.items() if isinstance(key, str)
-                })
+                workflow_additional_args_map = cast(Mapping[str, Any], workflow_additional_args)
+                additional_args.update({key: value for key, value in workflow_additional_args_map.items()})
             else:
                 logger.warning(
                     "Ignoring non-mapping workflow 'additional_function_arguments' kwarg of type %s for AgentExecutor %s.",  # noqa: E501

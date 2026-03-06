@@ -42,6 +42,15 @@ namespace Microsoft.Agents.AI;
 /// <see cref="JsonElement"/> and the <see cref="AIAgent.DeserializeSessionAsync(JsonElement, JsonSerializerOptions?, System.Threading.CancellationToken)"/> method
 /// can be used to deserialize the session.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> Serialized sessions may contain conversation content, session identifiers,
+/// and other potentially sensitive data including PII. Developers should:
+/// <list type="bullet">
+/// <item><description>Treat serialized session data as sensitive and store it securely with appropriate access controls and encryption at rest.</description></item>
+/// <item><description>Treat restoring a session from an untrusted source as equivalent to accepting untrusted input. A compromised storage backend
+/// could alter message roles to escalate trust, or inject adversarial content that influences LLM behavior.</description></item>
+/// </list>
+/// </para>
 /// </remarks>
 /// <seealso cref="AIAgent"/>
 /// <seealso cref="AIAgent.CreateSessionAsync(System.Threading.CancellationToken)"/>
@@ -67,6 +76,11 @@ public abstract class AgentSession
     /// <summary>
     /// Gets any arbitrary state associated with this session.
     /// </summary>
+    /// <remarks>
+    /// Data stored in the <see cref="StateBag"/> will be included when the session is serialized.
+    /// Avoid storing secrets, credentials, or highly sensitive data in the state bag without appropriate encryption,
+    /// as this data may be persisted to external storage.
+    /// </remarks>
     [JsonPropertyName("stateBag")]
     public AgentSessionStateBag StateBag { get; protected set; } = new();
 

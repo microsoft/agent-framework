@@ -901,7 +901,11 @@ class MCPTool:
         for attempt in range(2):
             try:
                 result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=otel_meta)  # type: ignore
+                if result.isError:
+                    raise ToolExecutionException(parser(result))
                 return parser(result)
+            except ToolExecutionException:
+                raise
             except ClosedResourceError as cl_ex:
                 if attempt == 0:
                     # First attempt failed, try reconnecting

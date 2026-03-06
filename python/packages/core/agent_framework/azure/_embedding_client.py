@@ -17,7 +17,7 @@ from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
-    _apply_azure_defaults,
+    _apply_azure_defaults,  # pyright: ignore[reportPrivateUsage]
 )
 
 if sys.version_info >= (3, 13):
@@ -118,19 +118,22 @@ class AzureOpenAIEmbeddingClient(
         )
         _apply_azure_defaults(azure_openai_settings)
 
-        if not azure_openai_settings.get("embedding_deployment_name"):
+        embedding_deployment_name = azure_openai_settings.get("embedding_deployment_name")
+        if not embedding_deployment_name:
             raise ValueError(
                 "Azure OpenAI embedding deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME' environment variable."
             )
 
+        api_key_secret = azure_openai_settings.get("api_key")
+
         super().__init__(
-            deployment_name=azure_openai_settings["embedding_deployment_name"],  # type: ignore[arg-type]
-            endpoint=azure_openai_settings["endpoint"],
-            base_url=azure_openai_settings["base_url"],
-            api_version=azure_openai_settings["api_version"],  # type: ignore
-            api_key=azure_openai_settings["api_key"].get_secret_value() if azure_openai_settings["api_key"] else None,
-            token_endpoint=azure_openai_settings["token_endpoint"],
+            deployment_name=embedding_deployment_name,
+            endpoint=azure_openai_settings.get("endpoint"),
+            base_url=azure_openai_settings.get("base_url"),
+            api_version=azure_openai_settings.get("api_version") or "",
+            api_key=api_key_secret.get_secret_value() if api_key_secret else None,
+            token_endpoint=azure_openai_settings.get("token_endpoint"),
             credential=credential,
             default_headers=default_headers,
             client=async_client,

@@ -31,6 +31,18 @@ namespace Microsoft.Agents.AI;
 /// to the current request messages when forming the search input. This can improve search relevance by providing
 /// multi-turn context to the retrieval layer without permanently altering the conversation history.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> Search results retrieved from external sources are injected into the LLM context and may
+/// contain adversarial content designed to manipulate LLM behavior via indirect prompt injection. Developers should be aware that:
+/// <list type="bullet">
+/// <item><description>The search query may be constructed from user input or LLM-generated content, both of which are untrusted.
+/// Implementers of the search delegate should validate search inputs and apply appropriate access controls to search results.</description></item>
+/// <item><description>Retrieved documents are formatted and injected as messages in the AI request context. If the external data source
+/// is compromised, adversarial content could influence the LLM's responses.</description></item>
+/// <item><description>When using <see cref="TextSearchProviderOptions.TextSearchBehavior.OnDemandFunctionCalling"/>, the AI model controls
+/// when and what to search for — the search query text is AI-generated and should be treated as untrusted input by the search implementation.</description></item>
+/// </list>
+/// </para>
 /// </remarks>
 public sealed class TextSearchProvider : MessageAIContextProvider
 {

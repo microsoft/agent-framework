@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Sequence
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import Any, ClassVar, Generic, TypedDict, cast
 
 from agent_framework import (
     BaseEmbeddingClient,
@@ -107,9 +107,9 @@ class RawOllamaEmbeddingClient(
             env_file_encoding=env_file_encoding,
         )
 
-        self.model_id = ollama_settings["embedding_model_id"]
+        self.model_id = ollama_settings["embedding_model_id"]  # type: ignore[assignment,reportTypedDictNotRequiredAccess]
         self.client = client or AsyncClient(host=ollama_settings.get("host"))
-        self.host = str(self.client._client.base_url)  # pyright: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
+        self.host = str(self.client._client.base_url)  # type: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
         super().__init__(**kwargs)
 
     def service_url(self) -> str:
@@ -120,8 +120,8 @@ class RawOllamaEmbeddingClient(
         self,
         values: Sequence[str],
         *,
-        options: OllamaEmbeddingOptionsT | None = None,
-    ) -> GeneratedEmbeddings[list[float]]:
+        options: OllamaEmbeddingOptionsT | None = None,  # type: ignore
+    ) -> GeneratedEmbeddings[list[float], OllamaEmbeddingOptionsT]:
         """Call the Ollama embed API.
 
         Args:
@@ -137,7 +137,7 @@ class RawOllamaEmbeddingClient(
         if not values:
             return GeneratedEmbeddings([], options=options)
 
-        opts: dict[str, Any] = dict(options) if options else {}
+        opts: dict[str, Any] = options or {}  # type: ignore
         model = opts.get("model_id") or self.model_id
         if not model:
             raise ValueError("model_id is required")
@@ -156,7 +156,7 @@ class RawOllamaEmbeddingClient(
             Embedding(
                 vector=list(emb),
                 dimensions=len(emb),
-                model_id=response.get("model") or model,
+                model_id=response.get("model") or model,  # type: ignore[assignment]
             )
             for emb in response.get("embeddings", [])
         ]
@@ -166,7 +166,7 @@ class RawOllamaEmbeddingClient(
         if prompt_eval_count is not None:
             usage_dict = {"input_token_count": prompt_eval_count}
 
-        return GeneratedEmbeddings(embeddings, options=options, usage=usage_dict)
+        return GeneratedEmbeddings(embeddings, options=cast(OllamaEmbeddingOptionsT, opts), usage=usage_dict)
 
 
 class OllamaEmbeddingClient(

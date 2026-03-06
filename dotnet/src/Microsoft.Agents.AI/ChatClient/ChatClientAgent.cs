@@ -17,6 +17,25 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides an <see cref="AIAgent"/> that delegates to an <see cref="IChatClient"/> implementation.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <strong>Security considerations:</strong> The <see cref="ChatClientAgent"/> orchestrates data flow across trust boundaries.
+/// The underlying AI service is an external endpoint and LLM responses should be treated as untrusted output. Developers should be aware of:
+/// <list type="bullet">
+/// <item><description><strong>Hallucination:</strong> LLMs may generate plausible-sounding but factually incorrect information.
+/// Do not treat LLM output as authoritative without verification.</description></item>
+/// <item><description><strong>Indirect prompt injection:</strong> Data retrieved by tools, AI context providers, or chat history providers may
+/// contain adversarial content designed to influence LLM behavior or exfiltrate data through tool calls.</description></item>
+/// <item><description><strong>Malicious payloads:</strong> LLM output may contain content that is harmful if rendered or executed without
+/// sanitization — for example, HTML/JavaScript for cross-site scripting, SQL for injection, or shell commands.</description></item>
+/// <item><description><strong>Tool invocation:</strong> By default, all tools provided to the agent are invoked without user approval.
+/// The AI selects which functions to call and with what arguments. Function arguments should be treated as untrusted input.
+/// Developers should require explicit approval for tools with side effects, data sensitivity, or irreversibility.</description></item>
+/// </list>
+/// Developers should validate and sanitize LLM output before rendering it in HTML, executing it as code, using it in database queries,
+/// or passing it to any security-sensitive context. Apply defense-in-depth by combining tool approval requirements with output validation.
+/// </para>
+/// </remarks>
 public sealed partial class ChatClientAgent : AIAgent
 {
     private readonly ChatClientAgentOptions? _agentOptions;
@@ -44,6 +63,9 @@ public sealed partial class ChatClientAgent : AIAgent
     /// Optional collection of tools that the agent can invoke during conversations.
     /// These tools augment any tools that may be provided to the agent via <see cref="ChatOptions.Tools"/> when
     /// the agent is run.
+    /// By default, all provided tools are invoked without user approval. The AI selects which functions to call and chooses
+    /// the arguments — these arguments should be treated as untrusted input. Developers should require explicit approval
+    /// for tools that have side effects, access sensitive data, or perform irreversible operations.
     /// </param>
     /// <param name="loggerFactory">
     /// Optional logger factory for creating loggers used by the agent and its components.
@@ -747,9 +769,15 @@ public sealed partial class ChatClientAgent : AIAgent
             {
                 // The agent has a ChatHistoryProvider configured, but the service returned a conversation id,
                 // meaning the service manages chat history server-side. Both cannot be used simultaneously.
-                if (this._agentOptions?.WarnOnChatHistoryProviderConflict is true)
+                if (this._agentOptions?.WarnOnChatHistoryProviderConflict is true
+                    && this._logger.IsEnabled(LogLevel.Warning))
                 {
-                    this._logger.LogAgentChatClientHistoryProviderConflict(nameof(ChatClientAgentSession.ConversationId), nameof(this.ChatHistoryProvider), this.Id, this.GetLoggingAgentName());
+                    var loggingAgentName = this.GetLoggingAgentName();
+                    this._logger.LogAgentChatClientHistoryProviderConflict(
+                        nameof(ChatClientAgentSession.ConversationId),
+                        nameof(this.ChatHistoryProvider),
+                        this.Id,
+                        loggingAgentName);
                 }
 
                 if (this._agentOptions?.ThrowOnChatHistoryProviderConflict is true)

@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -102,9 +103,15 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
         // Chat Completion does not require/support deleting sessions, so this is a no-op.
         Task.CompletedTask;
 
-    public async Task InitializeAsync() =>
+    public async ValueTask InitializeAsync()
+    {
+        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
         this._agent = await this.CreateChatClientAgentAsync();
+    }
 
-    public Task DisposeAsync() =>
-        Task.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return default;
+    }
 }

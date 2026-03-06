@@ -105,7 +105,7 @@ public class AgentHostingServiceCollectionExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that AddAIAgent registers the agent as a keyed singleton service.
+    /// Verifies that AddAIAgent registers the agent as a keyed singleton service by default.
     /// </summary>
     [Fact]
     public void AddAIAgent_RegistersKeyedSingleton()
@@ -202,5 +202,95 @@ public class AgentHostingServiceCollectionExtensionsTests
             d => (d.ServiceKey as string) == name &&
                  d.ServiceType == typeof(AIAgent));
         Assert.NotNull(descriptor);
+    }
+
+    /// <summary>
+    /// Verifies that AddAIAgent registers with the specified scoped lifetime.
+    /// </summary>
+    [Fact]
+    public void AddAIAgent_WithScopedLifetime_RegistersKeyedScoped()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var mockAgent = new Mock<AIAgent>();
+        const string AgentName = "scopedAgent";
+
+        // Act
+        var result = services.AddAIAgent(AgentName, (sp, key) => mockAgent.Object, ServiceLifetime.Scoped);
+
+        // Assert
+        var descriptor = services.FirstOrDefault(
+            d => (d.ServiceKey as string) == AgentName &&
+                 d.ServiceType == typeof(AIAgent));
+
+        Assert.NotNull(descriptor);
+        Assert.Equal(ServiceLifetime.Scoped, descriptor.Lifetime);
+        Assert.Equal(ServiceLifetime.Scoped, result.Lifetime);
+    }
+
+    /// <summary>
+    /// Verifies that AddAIAgent registers with the specified transient lifetime.
+    /// </summary>
+    [Fact]
+    public void AddAIAgent_WithTransientLifetime_RegistersKeyedTransient()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var mockAgent = new Mock<AIAgent>();
+        const string AgentName = "transientAgent";
+
+        // Act
+        var result = services.AddAIAgent(AgentName, (sp, key) => mockAgent.Object, ServiceLifetime.Transient);
+
+        // Assert
+        var descriptor = services.FirstOrDefault(
+            d => (d.ServiceKey as string) == AgentName &&
+                 d.ServiceType == typeof(AIAgent));
+
+        Assert.NotNull(descriptor);
+        Assert.Equal(ServiceLifetime.Transient, descriptor.Lifetime);
+        Assert.Equal(ServiceLifetime.Transient, result.Lifetime);
+    }
+
+    /// <summary>
+    /// Verifies that the builder exposes the correct lifetime for default registration.
+    /// </summary>
+    [Fact]
+    public void AddAIAgent_DefaultLifetime_BuilderExposesSingleton()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var mockAgent = new Mock<AIAgent>();
+
+        // Act
+        var result = services.AddAIAgent("agentName", (sp, key) => mockAgent.Object);
+
+        // Assert
+        Assert.Equal(ServiceLifetime.Singleton, result.Lifetime);
+    }
+
+    /// <summary>
+    /// Verifies that AddAIAgent with instructions overload respects the lifetime parameter.
+    /// </summary>
+    [Theory]
+    [InlineData(ServiceLifetime.Singleton)]
+    [InlineData(ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Transient)]
+    public void AddAIAgent_InstructionsOverload_RespectsLifetime(ServiceLifetime lifetime)
+    {
+        // Arrange
+        var services = new ServiceCollection();
+
+        // Act
+        var result = services.AddAIAgent("agent", "instructions", lifetime);
+
+        // Assert
+        var descriptor = services.FirstOrDefault(
+            d => (d.ServiceKey as string) == "agent" &&
+                 d.ServiceType == typeof(AIAgent));
+
+        Assert.NotNull(descriptor);
+        Assert.Equal(lifetime, descriptor.Lifetime);
+        Assert.Equal(lifetime, result.Lifetime);
     }
 }
