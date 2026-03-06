@@ -88,7 +88,9 @@ void PrintChatHistory()
 {
     if (session.TryGetInMemoryChatHistory(out var history))
     {
-        Console.WriteLine($"  [Chat history: {history.Count} messages]\n");
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"\n[Messages: x{history.Count}]\n");
+        Console.ResetColor();
     }
 }
 
@@ -106,7 +108,13 @@ string[] prompts =
 
 foreach (string prompt in prompts)
 {
-    Console.WriteLine($"User: {prompt}");
-    Console.WriteLine($"Agent: {await agent.RunAsync(prompt, session)}");
+    Console.ForegroundColor = ConsoleColor.Cyan;
+    Console.Write("\n[User] ");
+    Console.ResetColor();
+    Console.WriteLine(prompt);
+    Console.ForegroundColor = ConsoleColor.Cyan;
+    Console.Write("\n[Agent] ");
+    Console.ResetColor();
+    Console.WriteLine(await agent.RunAsync(prompt, session));
     PrintChatHistory();
 }
