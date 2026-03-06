@@ -297,6 +297,11 @@ public sealed class MessageIndex
     public int IncludedTurnCount => this.Groups.Where(group => !group.IsExcluded).Select(group => group.TurnIndex).Distinct().Count(turnIndex => turnIndex is not null);
 
     /// <summary>
+    /// Gets the total number of groups across all included (non-excluded) groups that are not <see cref="MessageGroupKind.System"/>.
+    /// </summary>
+    public int IncludedNonSystemGroupCount => this.Groups.Count(g => !g.IsExcluded && g.Kind != MessageGroupKind.System);
+
+    /// <summary>
     /// Returns all groups that belong to the specified user turn.
     /// </summary>
     /// <param name="turnIndex">The zero-based turn index.</param>

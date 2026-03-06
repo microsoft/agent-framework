@@ -41,7 +41,7 @@ static string LookupPrice([Description("The product name to look up.")] string p
 // Configure the compaction pipeline with one of each strategy, ordered least to most aggressive.
 PipelineCompactionStrategy compactionPipeline =
     new(// 1. Gentle: collapse old tool-call groups into short summaries like "[Tool calls: LookupPrice]"
-        new ToolResultCompactionStrategy(CompactionTriggers.TokensExceed(0x200)),
+        new ToolResultCompactionStrategy(CompactionTriggers.MessagesExceed(7)),
 
         // 2. Moderate: use an LLM to summarize older conversation spans into a concise message
         new SummarizationCompactionStrategy(summarizerChatClient, CompactionTriggers.TokensExceed(0x500)),

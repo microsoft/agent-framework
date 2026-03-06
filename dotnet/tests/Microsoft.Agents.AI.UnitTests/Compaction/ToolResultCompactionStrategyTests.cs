@@ -243,13 +243,14 @@ public class ToolResultCompactionStrategyTests
         List<ChatMessage> messages =
         [
             new ChatMessage(ChatRole.System, "System prompt"),
+            new ChatMessage(ChatRole.User, "Q0"),
             new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("c1", "fn")]),
             new ChatMessage(ChatRole.Tool, "Result 1"),
             new ChatMessage(ChatRole.User, "Q1"),
         ];
 
         MessageIndex index = MessageIndex.Create(messages);
-        // Pre-exclude the user group
+        // Pre-exclude the last user group
         index.Groups[index.Groups.Count - 1].IsExcluded = true;
 
         // Act

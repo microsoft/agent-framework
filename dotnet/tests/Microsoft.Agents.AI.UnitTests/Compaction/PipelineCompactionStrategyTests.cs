@@ -34,7 +34,11 @@ public class PipelineCompactionStrategyTests
             });
 
         PipelineCompactionStrategy pipeline = new(strategy1, strategy2);
-        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        MessageIndex groups = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.Assistant, "Hi!"),
+        ]);
 
         // Act
         await pipeline.CompactAsync(groups);
@@ -50,7 +54,11 @@ public class PipelineCompactionStrategyTests
         TestCompactionStrategy strategy1 = new(_ => false);
 
         PipelineCompactionStrategy pipeline = new(strategy1);
-        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        MessageIndex groups = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.Assistant, "Hi!"),
+        ]);
 
         // Act
         bool result = await pipeline.CompactAsync(groups);
@@ -67,7 +75,11 @@ public class PipelineCompactionStrategyTests
         TestCompactionStrategy strategy2 = new(_ => true);
 
         PipelineCompactionStrategy pipeline = new(strategy1, strategy2);
-        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        MessageIndex groups = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.Assistant, "Hi!"),
+        ]);
 
         // Act
         bool result = await pipeline.CompactAsync(groups);
@@ -84,7 +96,11 @@ public class PipelineCompactionStrategyTests
         TestCompactionStrategy strategy2 = new(_ => false);
 
         PipelineCompactionStrategy pipeline = new(strategy1, strategy2);
-        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        MessageIndex groups = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.Assistant, "Hi!"),
+        ]);
 
         // Act
         await pipeline.CompactAsync(groups);
