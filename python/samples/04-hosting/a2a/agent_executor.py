@@ -9,6 +9,7 @@ published back through the a2a-sdk event queue.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import TYPE_CHECKING
 
@@ -88,6 +89,8 @@ class AgentFrameworkExecutor(AgentExecutor):
                     final=True,
                 )
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             await event_queue.enqueue_event(
                 TaskStatusUpdateEvent(

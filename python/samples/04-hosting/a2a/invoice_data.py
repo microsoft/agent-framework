@@ -143,8 +143,8 @@ def query_invoices(
         results = [i for i in results if i.invoice_date >= start]
 
     if end_date:
-        end = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        results = [i for i in results if i.invoice_date <= end]
+        end = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+        results = [i for i in results if i.invoice_date < end]
 
     return json.dumps([i.to_dict() for i in results], indent=2)
 
