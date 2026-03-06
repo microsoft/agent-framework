@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -43,13 +44,13 @@ public sealed class MessageCompactionContextProvider : MessageAIContextProvider
     /// An optional key used to store the provider state in the <see cref="AgentSession.StateBag"/>.
     /// Defaults to <c>"MessageCompactionContextProvider"</c>.
     /// </param>
-    /// <exception cref="System.ArgumentNullException"><paramref name="compactionStrategy"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="compactionStrategy"/> is <see langword="null"/>.</exception>
     public MessageCompactionContextProvider(CompactionStrategy compactionStrategy, string? stateKey = null)
     {
         this._compactionStrategy = Throw.IfNull(compactionStrategy);
         this._sessionState = new ProviderSessionState<State>(
             _ => new State(),
-            stateKey ?? nameof(MessageCompactionContextProvider),
+            stateKey ?? $"{nameof(MessageCompactionContextProvider)}:{Convert.ToBase64String(BitConverter.GetBytes(compactionStrategy.GetHashCode()))}",
             AgentJsonUtilities.DefaultOptions);
     }
 
@@ -67,8 +68,8 @@ public sealed class MessageCompactionContextProvider : MessageAIContextProvider
     /// </returns>
     protected override async ValueTask<AIContext> InvokingCoreAsync(AIContextProvider.InvokingContext context, CancellationToken cancellationToken = default)
     {
-        var session = context.Session;
-        var allMessages = context.AIContext.Messages;
+        AgentSession? session = context.Session;
+        IEnumerable<ChatMessage>? allMessages = context.AIContext.Messages;
 
         if (session is null || allMessages is null)
         {
