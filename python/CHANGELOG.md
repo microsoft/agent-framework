@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **agent-framework-redis**: Fix `RedisContextProvider` compatibility with redisvl 0.14.0 by using `AggregateHybridQuery` ([#3954](https://github.com/microsoft/agent-framework/pull/3954))
+
 ## [1.0.0rc3] - 2026-03-04
 
 ### Added
