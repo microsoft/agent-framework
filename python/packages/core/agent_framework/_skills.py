@@ -734,7 +734,8 @@ def _validate_skill_metadata(
     if len(name) > MAX_NAME_LENGTH or not VALID_NAME_RE.match(name):
         return (
             f"Skill from '{source}' has an invalid name '{name}': Must be {MAX_NAME_LENGTH} characters or fewer, "
-            "using only lowercase letters, numbers, and hyphens, and must not start or end with a hyphen or contain consecutive hyphens."
+            "using only lowercase letters, numbers, and hyphens, and must not start or end with a hyphen "
+            "or contain consecutive hyphens."
         )
 
     if not description or not description.strip():
