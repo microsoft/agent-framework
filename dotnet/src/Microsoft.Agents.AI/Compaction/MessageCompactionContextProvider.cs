@@ -108,7 +108,7 @@ public sealed class MessageCompactionContextProvider : MessageAIContextProvider
         return new AIContext
         {
             Instructions = context.AIContext.Instructions,
-            Messages = wasCompacted ? messageIndex.GetIncludedMessages() : (IEnumerable<ChatMessage>)messageList,
+            Messages = wasCompacted ? messageIndex.GetIncludedMessages() : messageList,
             Tools = context.AIContext.Tools
         };
     }
