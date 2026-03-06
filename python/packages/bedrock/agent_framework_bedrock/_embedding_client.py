@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
-
+# type: ignore
+# Because the Bedrock client does not have typing, we are ignoring type issues in this module.
 from __future__ import annotations
 
 import asyncio
@@ -122,25 +123,27 @@ class RawBedrockEmbeddingClient(
         )
         resolved_region = settings.get("region") or DEFAULT_REGION
 
-        if client is None:
+        if client:
+            self._bedrock_client = client
+        else:
             if not boto3_session:
                 session_kwargs: dict[str, Any] = {}
                 if region := settings.get("region"):
                     session_kwargs["region_name"] = region
                 if (access_key := settings.get("access_key")) and (secret_key := settings.get("secret_key")):
-                    session_kwargs["aws_access_key_id"] = access_key.get_secret_value()  # type: ignore[union-attr]
-                    session_kwargs["aws_secret_access_key"] = secret_key.get_secret_value()  # type: ignore[union-attr]
+                    session_kwargs["aws_access_key_id"] = access_key.get_secret_value()
+                    session_kwargs["aws_secret_access_key"] = secret_key.get_secret_value()
                 if session_token := settings.get("session_token"):
-                    session_kwargs["aws_session_token"] = session_token.get_secret_value()  # type: ignore[union-attr]
+                    session_kwargs["aws_session_token"] = session_token.get_secret_value()
                 boto3_session = Boto3Session(**session_kwargs)
-            client = boto3_session.client(
+            region_name = boto3_session.region_name
+            self._bedrock_client = boto3_session.client(
                 "bedrock-runtime",
-                region_name=boto3_session.region_name or resolved_region,
+                region_name=region_name or resolved_region,
                 config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
             )
 
-        self._bedrock_client = client
-        self.model_id = settings["embedding_model_id"]  # type: ignore[assignment]
+        self.model_id: str = settings["embedding_model_id"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
         self.region = resolved_region
         super().__init__(**kwargs)
 
@@ -153,7 +156,7 @@ class RawBedrockEmbeddingClient(
         values: Sequence[str],
         *,
         options: BedrockEmbeddingOptionsT | None = None,
-    ) -> GeneratedEmbeddings[list[float]]:
+    ) -> GeneratedEmbeddings[list[float], BedrockEmbeddingOptionsT]:
         """Call the Bedrock invoke_model API for embeddings.
 
         Uses the Amazon Titan Embeddings model format. Each value is embedded
@@ -211,7 +214,6 @@ class RawBedrockEmbeddingClient(
             accept="application/json",
             body=json.dumps(body),
         )
-
         response_body = json.loads(response["body"].read())
         embedding = Embedding(
             vector=response_body["embedding"],

@@ -44,12 +44,13 @@ from agent_framework._workflows._edge import (
     SingleEdgeGroup,
     SwitchCaseEdgeGroup,
 )
+from agent_framework._workflows._state import State
 from agent_framework_durabletask import AgentSessionId, DurableAgentSession, DurableAIAgent
 from azure.durable_functions import DurableOrchestrationContext
 
 from ._context import CapturingRunnerContext
 from ._orchestration import AzureFunctionsAgentExecutor
-from ._serialization import _resolve_type, deserialize_value, reconstruct_to_type, serialize_value
+from ._serialization import deserialize_value, reconstruct_to_type, resolve_type, serialize_value
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +149,7 @@ def _evaluate_edge_condition_sync(edge: Edge, message: Any) -> bool:
         True if the edge should be traversed, False otherwise
     """
     # Access the internal condition directly since should_route is async
-    condition = edge._condition
+    condition = edge._condition  # pyright: ignore[reportPrivateUsage]
     if condition is None:
         return True
     result = condition(message)
@@ -322,7 +323,8 @@ def _prepare_activity_task(
     activity_input_json = json.dumps(activity_input)
     # Use the prefixed activity name that matches the registered function
     activity_name = f"dafx-{executor_id}"
-    return context.call_activity(activity_name, activity_input_json)
+    orchestration_context: Any = context
+    return orchestration_context.call_activity(activity_name, activity_input_json)
 
 
 # ============================================================================
@@ -346,13 +348,16 @@ def _process_agent_response(
         ExecutorResult containing the processed response
     """
     response_text = agent_response.text if agent_response else None
-    structured_response = None
+    structured_response: dict[str, Any] | None = None
 
     if agent_response and agent_response.value is not None:
-        if hasattr(agent_response.value, "model_dump"):
-            structured_response = agent_response.value.model_dump()
+        model_dump = getattr(agent_response.value, "model_dump", None)
+        if callable(model_dump):
+            dumped = model_dump()
+            if isinstance(dumped, dict):
+                structured_response = dumped  # type: ignore[assignment]
         elif isinstance(agent_response.value, dict):
-            structured_response = agent_response.value
+            structured_response = agent_response.value  # type: ignore[assignment]
 
     output_message = build_agent_executor_response(
         executor_id=executor_id,
@@ -726,7 +731,7 @@ def run_workflow_orchestrator(
 
                 if winner == approval_task:
                     # Cancel the timeout
-                    timeout_task.cancel()
+                    timeout_task.cancel()  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
 
                     # Get the response
                     raw_response = approval_task.result
@@ -756,7 +761,7 @@ def run_workflow_orchestrator(
                     )
                 else:
                     # Timeout occurred — cancel the dangling external event listener
-                    approval_task.cancel()
+                    approval_task.cancel()  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
                     logger.warning("HITL request %s timed out after %s hours", request_id, hitl_timeout_hours)
                     raise TimeoutError(
                         f"Human-in-the-loop request '{request_id}' timed out after {hitl_timeout_hours} hours."
@@ -864,7 +869,8 @@ def _extract_message_content(message: Any) -> str:
         # Extract text from the last message in the request
         message_content = message.messages[-1].text or ""
     elif isinstance(message, dict):
-        logger.warning("Unexpected dict message in _extract_message_content. Keys: %s", list(message.keys()))
+        key_names = list(message.keys())  # type: ignore[union-attr]
+        logger.warning("Unexpected dict message in _extract_message_content. Keys: %s", key_names)  # type: ignore
     elif isinstance(message, str):
         message_content = message
 
@@ -879,7 +885,7 @@ def _extract_message_content(message: Any) -> str:
 async def execute_hitl_response_handler(
     executor: Any,
     hitl_message: dict[str, Any],
-    shared_state: Any,
+    shared_state: State,
     runner_context: CapturingRunnerContext,
 ) -> None:
     """Execute a HITL response handler on an executor.
@@ -910,7 +916,7 @@ async def execute_hitl_response_handler(
     response = _deserialize_hitl_response(response_data, response_type_str)
 
     # Find the matching response handler
-    handler = executor._find_response_handler(original_request, response)
+    handler = executor._find_response_handler(original_request, response)  # pyright: ignore[reportPrivateUsage]
 
     if handler is None:
         logger.warning(
@@ -965,7 +971,7 @@ def _deserialize_hitl_response(response_data: Any, response_type_str: str | None
 
     # Try to deserialize using the type hint
     if response_type_str:
-        response_type = _resolve_type(response_type_str)
+        response_type = resolve_type(response_type_str)
         if response_type:
             logger.debug("Found response type %s, attempting reconstruction", response_type)
             result = reconstruct_to_type(response_data, response_type)

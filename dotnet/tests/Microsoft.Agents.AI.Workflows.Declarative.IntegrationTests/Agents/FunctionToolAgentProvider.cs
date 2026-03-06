@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
-using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Responses;
@@ -25,7 +24,7 @@ internal sealed class FunctionToolAgentProvider(IConfiguration configuration) : 
                 AIFunctionFactory.Create(menuPlugin.GetItemPrice),
             ];
 
-        AIProjectClient aiProjectClient = new(foundryEndpoint, new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(foundryEndpoint, TestAzureCliCredentials.CreateAzureCliCredential());
 
         yield return
             await aiProjectClient.CreateAgentAsync(
