@@ -23,9 +23,13 @@ public class CompactionStrategyTests
     [Fact]
     public async Task CompactAsyncTriggerNotMetReturnsFalseAsync()
     {
-        // Arrange — trigger never fires
+        // Arrange — trigger never fires, but enough non-system groups to pass short-circuit
         TestStrategy strategy = new(_ => false);
-        MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.Assistant, "Hi!"),
+        ]);
 
         // Act
         bool result = await strategy.CompactAsync(index);
@@ -38,9 +42,13 @@ public class CompactionStrategyTests
     [Fact]
     public async Task CompactAsyncTriggerMetCallsApplyAsync()
     {
-        // Arrange — trigger always fires
+        // Arrange — trigger always fires, enough non-system groups
         TestStrategy strategy = new(_ => true, applyFunc: _ => true);
-        MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.Assistant, "Hi!"),
+        ]);
 
         // Act
         bool result = await strategy.CompactAsync(index);
@@ -55,13 +63,70 @@ public class CompactionStrategyTests
     {
         // Arrange — trigger fires but Apply does nothing
         TestStrategy strategy = new(_ => true, applyFunc: _ => false);
-        MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.Assistant, "Hi!"),
+        ]);
 
         // Act
         bool result = await strategy.CompactAsync(index);
 
         // Assert
         Assert.False(result);
+        Assert.Equal(1, strategy.ApplyCallCount);
+    }
+
+    [Fact]
+    public async Task CompactAsyncSingleNonSystemGroupShortCircuitsAsync()
+    {
+        // Arrange — trigger would fire, but only 1 non-system group → short-circuit
+        TestStrategy strategy = new(_ => true, applyFunc: _ => true);
+        MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — short-circuited before trigger or Apply
+        Assert.False(result);
+        Assert.Equal(0, strategy.ApplyCallCount);
+    }
+
+    [Fact]
+    public async Task CompactAsyncSingleNonSystemGroupWithSystemShortCircuitsAsync()
+    {
+        // Arrange — system group + 1 non-system group → still short-circuits
+        TestStrategy strategy = new(_ => true, applyFunc: _ => true);
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.System, "You are helpful."),
+            new ChatMessage(ChatRole.User, "Hello"),
+        ]);
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — system groups don't count, still only 1 non-system group
+        Assert.False(result);
+        Assert.Equal(0, strategy.ApplyCallCount);
+    }
+
+    [Fact]
+    public async Task CompactAsyncTwoNonSystemGroupsProceedsToTriggerAsync()
+    {
+        // Arrange — exactly 2 non-system groups: boundary passes, trigger fires
+        TestStrategy strategy = new(_ => true, applyFunc: _ => true);
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.Assistant, "Hi!"),
+        ]);
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — not short-circuited, Apply was called
+        Assert.True(result);
         Assert.Equal(1, strategy.ApplyCallCount);
     }
 
@@ -121,7 +186,11 @@ public class CompactionStrategyTests
             return true;
         });
 
-        MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.Assistant, "Hi!"),
+        ]);
 
         // Act
         await strategy.CompactAsync(index);

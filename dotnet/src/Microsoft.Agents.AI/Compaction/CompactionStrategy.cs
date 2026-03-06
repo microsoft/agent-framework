@@ -84,7 +84,7 @@ public abstract class CompactionStrategy
     /// <returns>A task representing the asynchronous operation. The task result is <see langword="true"/> if compaction occurred, <see langword="false"/> otherwise.</returns>
     public async Task<bool> CompactAsync(MessageIndex index, CancellationToken cancellationToken = default)
     {
-        if (!this.Trigger(index))
+        if (index.IncludedNonSystemGroupCount <= 1 || !this.Trigger(index))
         {
             return false;
         }
