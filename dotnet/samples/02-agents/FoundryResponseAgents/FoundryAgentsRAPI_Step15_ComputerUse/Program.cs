@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use Computer Use Tool with a FoundryAgentClient using the Responses API directly.
+// This sample shows how to use Computer Use Tool with a FoundryAgentClient.
 
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -25,8 +25,7 @@ internal sealed class Program
 
         const string AgentName = "ComputerAgent-RAPI";
 
-        // Create a FoundryAgentClient with ComputerUseTool using the Responses API directly.
-        // No server-side agent is created.
+        // Create a FoundryAgentClient with ComputerUseTool.
         FoundryResponsesAgent agent = new(
             endpoint: new Uri(endpoint),
             tokenProvider: new DefaultAzureCredential(),
@@ -65,8 +64,8 @@ internal sealed class Program
         // Initial request with screenshot - start with Bing search page
         Console.WriteLine("Starting computer automation session (initial screenshot: cua_browser_search.png)...");
 
-        // With RAPI (no server-side agent), we use PreviousResponseId to chain calls,
-        // sending only the new computer_call_output items instead of re-sending the full context.
+        // We use PreviousResponseId to chain calls, sending only the new computer_call_output items
+        // instead of re-sending the full context.
         AgentSession session = await agent.CreateSessionAsync();
         AgentResponse response = await agent.RunAsync(message, session: session, options: runOptions);
 

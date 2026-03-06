@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use the Web Search Tool with a FoundryAgentClient using the Responses API directly.
+// This sample shows how to use the Web Search Tool with a FoundryAgentClient.
 
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -14,8 +14,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 const string AgentInstructions = "You are a helpful assistant that can search the web to find current information and answer questions accurately.";
 const string AgentName = "WebSearchAgent-RAPI";
 
-// Create a FoundryAgentClient with HostedWebSearchTool using the Responses API directly.
-// No server-side agent is created.
+// Create a FoundryAgentClient with HostedWebSearchTool.
 FoundryResponsesAgent agent = new(
     endpoint: new Uri(endpoint),
     tokenProvider: new DefaultAzureCredential(),

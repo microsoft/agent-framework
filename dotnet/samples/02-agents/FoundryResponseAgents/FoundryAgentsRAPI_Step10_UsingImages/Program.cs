@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use image multi-modality with an agent using the Responses API directly.
+// This sample shows how to use image multi-modality with an agent.
 
 using Azure.Identity;
 using Microsoft.Agents.AI;

@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to configure an agent to produce structured output using the Responses API directly.
+// This sample shows how to configure an agent to produce structured output.
 
 using System.ComponentModel;
 using System.Text.Json;

@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to persist and resume conversations using the Responses API directly.
+// This sample shows how to persist and resume conversations.
 
 using System.Text.Json;
 using Azure.Identity;

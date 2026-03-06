@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use MCP client tools with a FoundryAgentClient using the Responses API directly.
+// This sample shows how to use MCP client tools with a FoundryAgentClient.
 
 using Azure.Identity;
 using Microsoft.Agents.AI.AzureAI;
@@ -23,8 +23,7 @@ await using var mcpClient = await McpClient.CreateAsync(new StdioClientTransport
 // Retrieve the list of tools available on the GitHub server
 IList<McpClientTool> mcpTools = await mcpClient.ListToolsAsync();
 
-// Create a FoundryAgentClient that uses the Responses API directly with MCP tools.
-// No server-side agent is created.
+// Create a FoundryAgentClient with MCP tools.
 FoundryResponsesAgent agent = new(
     endpoint: new Uri(endpoint),
     tokenProvider: new DefaultAzureCredential(),

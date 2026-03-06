@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use File Search Tool with a FoundryAgentClient using the Responses API directly.
+// This sample shows how to use File Search Tool with a FoundryAgentClient.
 
 using Azure.AI.Projects;
 using Azure.Identity;
@@ -49,8 +49,7 @@ var vectorStoreResult = await vectorStoresClient.CreateVectorStoreAsync(
 string vectorStoreId = vectorStoreResult.Value.Id;
 Console.WriteLine($"Created vector store, vector store ID: {vectorStoreId}");
 
-// Create a FoundryAgentClient with HostedFileSearchTool using the Responses API directly.
-// No server-side agent is created.
+// Create a FoundryAgentClient with HostedFileSearchTool.
 FoundryResponsesAgent agent = new(
     endpoint: new Uri(endpoint),
     tokenProvider: new DefaultAzureCredential(),
@@ -77,7 +76,7 @@ foreach (AIAnnotation annotation in response.Messages.SelectMany(m => m.Contents
     }
 }
 
-// Cleanup file resources (no agent cleanup needed - no server-side agent was created).
+// Cleanup file resources.
 Console.WriteLine("\n--- Cleanup ---");
 await vectorStoresClient.DeleteVectorStoreAsync(vectorStoreId);
 await filesClient.DeleteFileAsync(uploadedFile.Id);

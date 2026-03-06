@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use one agent as a function tool for another agent using the Responses API directly.
+// This sample shows how to use one agent as a function tool for another agent.
 
 using System.ComponentModel;
 using Azure.Identity;

@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use OpenAPI Tools with a FoundryAgentClient using the Responses API directly.
+// This sample shows how to use OpenAPI Tools with a FoundryAgentClient.
 
 using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
@@ -75,8 +75,7 @@ var openApiFunction = new OpenAPIFunctionDefinition(
     Description = "Retrieve information about countries by currency code"
 };
 
-// Create a FoundryAgentClient with OpenAPI tool using the Responses API directly.
-// No server-side agent is created.
+// Create a FoundryAgentClient with OpenAPI tool.
 FoundryResponsesAgent agent = new(
     endpoint: new Uri(endpoint),
     tokenProvider: new DefaultAzureCredential(),

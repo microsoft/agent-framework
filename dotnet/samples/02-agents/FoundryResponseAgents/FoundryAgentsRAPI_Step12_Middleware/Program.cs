@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows multiple middleware layers working together with the Responses API:
+// This sample shows multiple middleware layers working together with a FoundryAgentClient:
 // agent run (PII filtering and guardrails),
 // function invocation (logging and result overrides), and human-in-the-loop
 // approval workflows for sensitive function calls.

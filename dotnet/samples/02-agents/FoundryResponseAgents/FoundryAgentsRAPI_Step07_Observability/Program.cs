@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to add OpenTelemetry observability to an agent using the Responses API directly.
+// This sample shows how to add OpenTelemetry observability to an agent.
 
 using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.Exporter;

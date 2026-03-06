@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to create and use a multi-turn conversation agent using the Foundry Responses API directly.
+// This sample shows how to create and use a multi-turn conversation agent with a FoundryAgentClient.
 
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -9,8 +9,7 @@ using Microsoft.Agents.AI.AzureAI;
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-// Create a FoundryAgentClient that uses the Responses API directly.
-// No server-side agent is created — instructions and model are provided locally.
+// Create a FoundryAgentClient.
 FoundryResponsesAgent agent = new(
     endpoint: new Uri(endpoint),
     tokenProvider: new DefaultAzureCredential(),

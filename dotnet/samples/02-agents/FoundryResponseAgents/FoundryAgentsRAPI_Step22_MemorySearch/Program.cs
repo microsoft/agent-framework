@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use the Memory Search Tool with a FoundryAgentClient using the Responses API directly.
+// This sample demonstrates how to use the Memory Search Tool with a FoundryAgentClient.
 // Memories are explicitly stored first via the MemoryStores API, then the MemorySearchPreviewTool
 // is used by the agent to retrieve them during conversation.
 

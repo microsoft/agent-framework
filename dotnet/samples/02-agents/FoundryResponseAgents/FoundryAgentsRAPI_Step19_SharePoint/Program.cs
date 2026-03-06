@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use SharePoint Grounding Tool with a FoundryAgentClient using the Responses API directly.
+// This sample shows how to use SharePoint Grounding Tool with a FoundryAgentClient.
 
 using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
@@ -21,8 +21,7 @@ const string AgentInstructions = """
 var sharepointOptions = new SharePointGroundingToolOptions();
 sharepointOptions.ProjectConnections.Add(new ToolProjectConnection(sharepointConnectionId));
 
-// Create a FoundryAgentClient with SharePoint tool using the Responses API directly.
-// No server-side agent is created.
+// Create a FoundryAgentClient with SharePoint tool.
 FoundryResponsesAgent agent = new(
     endpoint: new Uri(endpoint),
     tokenProvider: new DefaultAzureCredential(),

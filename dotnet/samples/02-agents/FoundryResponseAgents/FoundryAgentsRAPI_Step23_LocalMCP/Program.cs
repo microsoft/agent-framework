@@ -1,7 +1,7 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use a local MCP (Model Context Protocol) client with a FoundryAgentClient
-// using the Responses API directly. The MCP tools are resolved locally by connecting directly to the MCP
+//. The MCP tools are resolved locally by connecting directly to the MCP
 // server via HTTP, and then passed to the agent as client-side tools.
 
 using Azure.Identity;
@@ -32,8 +32,7 @@ Console.WriteLine($"MCP tools available: {string.Join(", ", mcpTools.Select(t =>
 // Wrap each MCP tool with a DelegatingAIFunction to log local invocations.
 List<AITool> wrappedTools = mcpTools.Select(tool => (AITool)new LoggingMcpTool(tool)).ToList();
 
-// Create a FoundryAgentClient with the locally-resolved MCP tools using the Responses API directly.
-// No server-side agent is created.
+// Create a FoundryAgentClient with the locally-resolved MCP tools.
 FoundryResponsesAgent agent = new(
     endpoint: new Uri(endpoint),
     tokenProvider: new DefaultAzureCredential(),

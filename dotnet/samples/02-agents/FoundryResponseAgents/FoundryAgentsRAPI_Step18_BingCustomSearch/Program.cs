@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use Bing Custom Search Tool with a FoundryAgentClient using the Responses API directly.
+// This sample shows how to use Bing Custom Search Tool with a FoundryAgentClient.
 
 using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
@@ -23,8 +23,7 @@ BingCustomSearchToolParameters bingCustomSearchToolParameters = new([
     new BingCustomSearchConfiguration(connectionId, instanceName)
 ]);
 
-// Create a FoundryAgentClient with Bing Custom Search tool using the Responses API directly.
-// No server-side agent is created.
+// Create a FoundryAgentClient with Bing Custom Search tool.
 FoundryResponsesAgent agent = new(
     endpoint: new Uri(endpoint),
     tokenProvider: new DefaultAzureCredential(),

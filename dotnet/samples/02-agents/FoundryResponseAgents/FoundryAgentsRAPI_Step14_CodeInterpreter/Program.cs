@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use Code Interpreter Tool with a FoundryAgentClient using the Responses API directly.
+// This sample shows how to use Code Interpreter Tool with a FoundryAgentClient.
 
 using System.Text;
 using Azure.Identity;
@@ -16,8 +16,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 const string AgentInstructions = "You are a personal math tutor. When asked a math question, write and run code using the python tool to answer the question.";
 const string AgentName = "CoderAgent-RAPI";
 
-// Create a FoundryAgentClient with HostedCodeInterpreterTool using the Responses API directly.
-// No server-side agent is created.
+// Create a FoundryAgentClient with HostedCodeInterpreterTool.
 FoundryResponsesAgent agent = new(
     endpoint: new Uri(endpoint),
     tokenProvider: new DefaultAzureCredential(),

@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use function tools with the Foundry Responses API directly.
+// This sample demonstrates how to use function tools with a FoundryAgentClient.
 
 using System.ComponentModel;
 using Azure.Identity;
@@ -18,7 +18,7 @@ static string GetWeather([Description("The location to get the weather for.")] s
 // Define the function tool.
 AITool tool = AIFunctionFactory.Create(GetWeather);
 
-// Create a FoundryAgentClient that uses the Responses API directly with function tools.
+// Create a FoundryAgentClient with function tools.
 FoundryResponsesAgent agent = new(
     endpoint: new Uri(endpoint),
     tokenProvider: new DefaultAzureCredential(),
