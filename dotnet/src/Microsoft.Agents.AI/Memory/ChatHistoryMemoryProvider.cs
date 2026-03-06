@@ -350,35 +350,37 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
         string? userId = searchScope.UserId;
         string? sessionId = searchScope.SessionId;
 
-        Expression<Func<Dictionary<string, object?>, bool>>? filter = null;
+        // Build a combined filter using a single shared parameter to avoid expression tree
+        // scoping issues when multiple filters are combined with AndAlso.
+        ParameterExpression parameter = Expression.Parameter(typeof(Dictionary<string, object?>), "x");
+        Expression? filterBody = null;
+
         if (applicationId != null)
         {
-            filter = x => (string?)x[ApplicationIdField] == applicationId;
+            filterBody = RebindFilterBody(x => (string?)x[ApplicationIdField] == applicationId, parameter);
         }
 
         if (agentId != null)
         {
-            Expression<Func<Dictionary<string, object?>, bool>> agentIdFilter = x => (string?)x[AgentIdField] == agentId;
-            filter = filter == null ? agentIdFilter : Expression.Lambda<Func<Dictionary<string, object?>, bool>>(
-                Expression.AndAlso(filter.Body, agentIdFilter.Body),
-                filter.Parameters);
+            Expression body = RebindFilterBody(x => (string?)x[AgentIdField] == agentId, parameter);
+            filterBody = filterBody == null ? body : Expression.AndAlso(filterBody, body);
         }
 
         if (userId != null)
         {
-            Expression<Func<Dictionary<string, object?>, bool>> userIdFilter = x => (string?)x[UserIdField] == userId;
-            filter = filter == null ? userIdFilter : Expression.Lambda<Func<Dictionary<string, object?>, bool>>(
-                Expression.AndAlso(filter.Body, userIdFilter.Body),
-                filter.Parameters);
+            Expression body = RebindFilterBody(x => (string?)x[UserIdField] == userId, parameter);
+            filterBody = filterBody == null ? body : Expression.AndAlso(filterBody, body);
         }
 
         if (sessionId != null)
         {
-            Expression<Func<Dictionary<string, object?>, bool>> sessionIdFilter = x => (string?)x[SessionIdField] == sessionId;
-            filter = filter == null ? sessionIdFilter : Expression.Lambda<Func<Dictionary<string, object?>, bool>>(
-                Expression.AndAlso(filter.Body, sessionIdFilter.Body),
-                filter.Parameters);
+            Expression body = RebindFilterBody(x => (string?)x[SessionIdField] == sessionId, parameter);
+            filterBody = filterBody == null ? body : Expression.AndAlso(filterBody, body);
         }
+
+        Expression<Func<Dictionary<string, object?>, bool>>? filter = filterBody != null
+            ? Expression.Lambda<Func<Dictionary<string, object?>, bool>>(filterBody, parameter)
+            : null;
 
         // Use search to find relevant messages
         var searchResults = collection.SearchAsync(
@@ -466,6 +468,27 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
     }
 
     private string? SanitizeLogData(string? data) => this._enableSensitiveTelemetryData ? data : "<redacted>";
+
+    /// <summary>
+    /// Rebinds a filter expression's body to use the specified shared parameter,
+    /// replacing the original lambda parameter so that multiple filters can be safely
+    /// combined with <see cref="Expression.AndAlso(Expression, Expression)"/>.
+    /// </summary>
+    private static Expression RebindFilterBody(
+        Expression<Func<Dictionary<string, object?>, bool>> filter,
+        ParameterExpression sharedParameter)
+    {
+        return new ParameterReplacer(filter.Parameters[0], sharedParameter).Visit(filter.Body);
+    }
+
+    /// <summary>
+    /// An <see cref="ExpressionVisitor"/> that replaces one <see cref="ParameterExpression"/> with another.
+    /// </summary>
+    private sealed class ParameterReplacer(ParameterExpression original, ParameterExpression replacement) : ExpressionVisitor
+    {
+        protected override Expression VisitParameter(ParameterExpression node)
+            => node == original ? replacement : base.VisitParameter(node);
+    }
 
     /// <summary>
     /// Represents the state of a <see cref="ChatHistoryMemoryProvider"/> stored in the <see cref="AgentSession.StateBag"/>.

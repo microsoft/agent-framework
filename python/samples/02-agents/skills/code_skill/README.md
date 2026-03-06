@@ -4,12 +4,13 @@ This sample demonstrates how to create **Agent Skills** in Python code, without 
 
 ## What are Code-Defined Skills?
 
-While file-based skills use `SKILL.md` files discovered on disk, code-defined skills let you define skills entirely in Python using `Skill` and `SkillResource` classes. Two patterns are shown:
+While file-based skills use `SKILL.md` files discovered on disk, code-defined skills let you define skills entirely in Python using `Skill` and `SkillResource` classes. Three patterns are shown:
 
 1. **Basic Code Skill** — Create a `Skill` directly with static resources (inline content)
 2. **Dynamic Resources** — Attach callable resources via the `@skill.resource` decorator that generate content at invocation time
+3. **Dynamic Resources with kwargs** — Attach a callable resource that accepts `**kwargs` to receive runtime arguments passed via `agent.run()`, useful for injecting request-scoped context (user tokens, session data)
 
-Both patterns can be combined with file-based skills in a single `SkillsProvider`.
+All patterns can be combined with file-based skills in a single `SkillsProvider`.
 
 ## Project Structure
 
@@ -47,7 +48,7 @@ uv run samples/02-agents/skills/code_skill/code_skill.py
 The sample runs two examples:
 
 1. **Code style question** — Uses Pattern 1 (static resources): the agent loads the `code-style` skill and reads the `style-guide` resource to answer naming convention questions
-2. **Project info question** — Uses Pattern 2 (dynamic resources): the agent reads dynamically generated `environment` and `team-roster` resources
+2. **Project info question** — Uses Patterns 2 & 3 (dynamic resources with kwargs): the agent reads the dynamically generated `team-roster` resource and the `environment` resource which receives `app_version` via runtime kwargs
 
 ## Learn More
 
