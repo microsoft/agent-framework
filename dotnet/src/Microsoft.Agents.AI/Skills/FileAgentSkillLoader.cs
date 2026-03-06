@@ -256,7 +256,11 @@ internal sealed partial class FileAgentSkillLoader
         string directoryName = Path.GetFileName(Path.GetDirectoryName(skillFilePath)) ?? string.Empty;
         if (!string.Equals(name, directoryName, StringComparison.Ordinal))
         {
-            LogNameDirectoryMismatch(this._logger, skillFilePath, name, directoryName);
+            if (this._logger.IsEnabled(LogLevel.Error))
+            {
+                LogNameDirectoryMismatch(this._logger, SanitizePathForLog(skillFilePath), name, SanitizePathForLog(directoryName));
+            }
+
             return false;
         }
 

@@ -126,7 +126,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     public void DiscoverAndLoadSkills_InvalidName_ExcludesSkill(string invalidName)
     {
         // Arrange
-        string skillDir = Path.Combine(this._testRoot, "invalid-name-test");
+        string skillDir = Path.Combine(this._testRoot, invalidName);
         if (Directory.Exists(skillDir))
         {
             Directory.Delete(skillDir, recursive: true);
