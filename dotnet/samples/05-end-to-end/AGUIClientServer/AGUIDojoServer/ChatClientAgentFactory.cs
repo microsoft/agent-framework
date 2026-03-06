@@ -9,6 +9,7 @@ using AGUIDojoServer.SharedState;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.OpenAI;
 using Microsoft.Extensions.AI;
 using ChatClient = OpenAI.Chat.ChatClient;
 
