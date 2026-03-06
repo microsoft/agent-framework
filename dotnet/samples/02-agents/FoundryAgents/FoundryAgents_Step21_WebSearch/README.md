@@ -15,7 +15,7 @@ This sample demonstrates how to use the Responses API web search tool with AI ag
 Before you begin, ensure you have the following prerequisites:
 
 - .NET 10 SDK or later
-- Azure Foundry service endpoint and deployment configured
+- Microsoft Foundry service endpoint and deployment configured
 - Azure authentication configured for `DefaultAzureCredential` (for example, Azure CLI logged in with `az login`, environment variables, managed identity, or IDE sign-in)
 
 **Note**: This sample authenticates using `DefaultAzureCredential` from the Azure Identity library, which will try several credential sources (including Azure CLI, environment variables, managed identity, and IDE sign-in). Ensure at least one supported credential source is available. For more information, see the [Azure Identity documentation](https://learn.microsoft.com/dotnet/api/overview/azure/identity-readme).
@@ -25,7 +25,7 @@ Before you begin, ensure you have the following prerequisites:
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Azure Foundry resource endpoint
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Microsoft Foundry resource endpoint
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
 

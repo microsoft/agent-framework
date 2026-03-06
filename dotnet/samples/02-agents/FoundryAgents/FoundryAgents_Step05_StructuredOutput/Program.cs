@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to configure an agent to produce structured output.
 
@@ -18,7 +18,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 const string AssistantInstructions = "You are a helpful assistant that extracts structured information about people.";
 const string AssistantName = "StructuredOutputAssistant";
 
-// Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
+// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.

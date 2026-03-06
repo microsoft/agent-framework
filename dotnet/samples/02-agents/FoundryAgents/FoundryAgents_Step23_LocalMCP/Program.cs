@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use a local MCP (Model Context Protocol) client with Azure Foundry Agents.
+// This sample demonstrates how to use a local MCP (Model Context Protocol) client with Microsoft Foundry Agents.
 // The MCP tools are resolved locally by connecting directly to the MCP server via HTTP,
 // and then passed to the Foundry agent as client-side tools.
 // This sample uses the Microsoft Learn MCP endpoint to search documentation.
@@ -34,7 +34,7 @@ Console.WriteLine($"MCP tools available: {string.Join(", ", mcpTools.Select(t =>
 // Wrap each MCP tool with a DelegatingAIFunction to log local invocations.
 List<AITool> wrappedTools = mcpTools.Select(tool => (AITool)new LoggingMcpTool(tool)).ToList();
 
-// Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
+// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.

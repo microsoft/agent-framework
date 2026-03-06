@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use Computer Use Tool with AI Agents.
 
@@ -21,7 +21,7 @@ internal sealed class Program
         // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
         // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
         // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-        // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
+        // Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
         AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
         const string AgentInstructions = @"
                     You are a computer automation assistant. 

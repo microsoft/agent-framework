@@ -15,18 +15,18 @@ This sample demonstrates how to use the Memory Search tool with AI agents. The M
 Before you begin, ensure you have the following prerequisites:
 
 - .NET 10 SDK or later
-- Azure Foundry service endpoint and deployment configured
+- Microsoft Foundry service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 - **A pre-created Memory Store** (see below)
 
-**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure Foundry resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
+**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Microsoft Foundry resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 
 ### Creating a Memory Store
 
 Memory stores must be created before running this sample. The .NET SDK currently only supports **using** existing memory stores with agents. To create a memory store, use one of these methods:
 
 **Option 1: Azure Portal**
-1. Navigate to your Azure AI Foundry project
+1. Navigate to your Microsoft Foundry project
 2. Go to the Memory section
 3. Create a new memory store with your desired settings
 

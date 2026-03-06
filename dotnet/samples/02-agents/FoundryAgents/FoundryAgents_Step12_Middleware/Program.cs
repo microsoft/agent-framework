@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows multiple middleware layers working together with Azure Foundry Agents:
+// This sample shows multiple middleware layers working together with Microsoft Foundry Agents:
 // agent run (PII filtering and guardrails),
 // function invocation (logging and result overrides), and human-in-the-loop
 // approval workflows for sensitive function calls.
@@ -12,14 +12,14 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-// Get Azure AI Foundry configuration from environment variables
+// Get Microsoft Foundry configuration from environment variables
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
 
 const string AssistantInstructions = "You are an AI assistant that helps people find information.";
 const string AssistantName = "InformationAssistant";
 
-// Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
+// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.

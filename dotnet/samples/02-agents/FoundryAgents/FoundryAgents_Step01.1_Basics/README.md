@@ -1,6 +1,6 @@
 # Creating and Managing AI Agents with Versioning
 
-This sample demonstrates how to create and manage AI agents with Azure Foundry Agents, including:
+This sample demonstrates how to create and manage AI agents with Microsoft Foundry Agents, including:
 - Creating agents with different versions
 - Retrieving agents by version or latest version
 - Running multi-turn conversations with agents
@@ -11,15 +11,15 @@ This sample demonstrates how to create and manage AI agents with Azure Foundry A
 Before you begin, ensure you have the following prerequisites:
 
 - .NET 10 SDK or later
-- Azure Foundry service endpoint and deployment configured
+- Microsoft Foundry service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 
-**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure Foundry resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
+**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Microsoft Foundry resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Azure Foundry resource endpoint
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Microsoft Foundry resource endpoint
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
 

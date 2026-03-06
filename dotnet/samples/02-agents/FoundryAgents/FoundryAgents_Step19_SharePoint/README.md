@@ -14,16 +14,16 @@ This sample demonstrates how to use the SharePoint grounding tool with AI agents
 Before you begin, ensure you have the following prerequisites:
 
 - .NET 10 SDK or later
-- Azure Foundry service endpoint and deployment configured
+- Microsoft Foundry service endpoint and deployment configured
 - Azure authentication configured for `DefaultAzureCredential` (for example, Azure CLI logged in with `az login`, environment variables, managed identity, or IDE sign-in)
-- A SharePoint project connection configured in Azure Foundry
+- A SharePoint project connection configured in Microsoft Foundry
 
-**Note**: This demo uses `DefaultAzureCredential` for authentication. This credential will try multiple authentication mechanisms in order (such as environment variables, managed identity, Azure CLI login, and IDE sign-in) and use the first one that works. A common option for local development is to sign in with the Azure CLI using `az login` and ensure you have access to the Azure Foundry resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively) and the [DefaultAzureCredential documentation](https://learn.microsoft.com/dotnet/api/azure.identity.defaultazurecredential).
+**Note**: This demo uses `DefaultAzureCredential` for authentication. This credential will try multiple authentication mechanisms in order (such as environment variables, managed identity, Azure CLI login, and IDE sign-in) and use the first one that works. A common option for local development is to sign in with the Azure CLI using `az login` and ensure you have access to the Microsoft Foundry resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively) and the [DefaultAzureCredential documentation](https://learn.microsoft.com/dotnet/api/azure.identity.defaultazurecredential).
 
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Azure Foundry resource endpoint
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Microsoft Foundry resource endpoint
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 $env:SHAREPOINT_PROJECT_CONNECTION_ID="your-sharepoint-connection-id"  # Required: The full ARM resource URI, e.g., "/subscriptions/.../connections/SharepointTestTool"
 ```

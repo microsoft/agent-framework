@@ -1,19 +1,19 @@
 # Getting started with Foundry Agents
 
 The getting started with Foundry Agents samples demonstrate the fundamental concepts and functionalities
-of Azure Foundry Agents and can be used with Azure Foundry as the AI provider.
+of Microsoft Foundry Agents and can be used with Microsoft Foundry as the AI provider.
 
-These samples showcase how to work with agents managed through Azure Foundry, including agent creation,
+These samples showcase how to work with agents managed through Microsoft Foundry, including agent creation,
 versioning, multi-turn conversations, and advanced features like code interpretation and computer use.
 
 ## Classic vs New Foundry Agents
 
 > [!NOTE]
-> Recently, Azure Foundry introduced a new and improved experience for creating and managing AI agents, which is the target of these samples.
+> Recently, Microsoft Foundry introduced a new and improved experience for creating and managing AI agents, which is the target of these samples.
 
 For more information about the previous classic agents and for what's new in Foundry Agents, see the [Foundry Agents migration documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/migrate?view=foundry).
 
-For a sample demonstrating how to use classic Foundry Agents, see the following: [Agent with Azure AI Persistent](../AgentProviders/Agent_With_AzureAIAgentsPersistent/README.md).
+For a lightweight, code-first alternative that uses the Responses API directly (no server-side agent creation), see [Foundry Response Agents](../FoundryResponseAgents/README.md).
 
 ## Agent Versioning and Static Definitions
 
@@ -31,12 +31,12 @@ The Agent Framework intentionally ignores unsupported runtime parameters rather 
 Before you begin, ensure you have the following prerequisites:
 
 - .NET 10 SDK or later
-- Azure Foundry service endpoint and project configured
+- Microsoft Foundry service endpoint and project configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 
-**Note**: These samples use Azure Foundry Agents. For more information, see [Azure AI Foundry documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/).
+**Note**: These samples use Microsoft Foundry Agents. For more information, see [Microsoft Foundry documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/).
 
-**Note**: These samples use Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure Foundry resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
+**Note**: These samples use Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Microsoft Foundry resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 
 ## Samples
 
@@ -69,11 +69,11 @@ Before you begin, ensure you have the following prerequisites:
 
 ## Evaluation Samples
 
-Evaluation is critical for building trustworthy and high-quality AI applications. The evaluation samples demonstrate how to assess agent safety, quality, and performance using Azure AI Foundry's evaluation capabilities.
+Evaluation is critical for building trustworthy and high-quality AI applications. The evaluation samples demonstrate how to assess agent safety, quality, and performance using Microsoft Foundry's evaluation capabilities.
 
 |Sample|Description|
 |---|---|
-|[Red Team Evaluation](./FoundryAgents_Evaluations_Step01_RedTeaming/)|This sample demonstrates how to use Azure AI Foundry's Red Teaming service to assess model safety against adversarial attacks|
+|[Red Team Evaluation](./FoundryAgents_Evaluations_Step01_RedTeaming/)|This sample demonstrates how to use Microsoft Foundry's Red Teaming service to assess model safety against adversarial attacks|
 |[Self-Reflection with Groundedness](./FoundryAgents_Evaluations_Step02_SelfReflection/)|This sample demonstrates the self-reflection pattern where agents iteratively improve responses based on groundedness evaluation|
 
 For details on safety evaluation, see the [Red Team Evaluation README](./FoundryAgents_Evaluations_Step01_RedTeaming/README.md).
@@ -89,7 +89,7 @@ cd FoundryAgents_Step01.2_Running
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Azure Foundry resource endpoint
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Microsoft Foundry resource endpoint
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
 

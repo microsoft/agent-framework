@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use plugins with an AI agent. Plugin classes can
 // depend on other services that need to be injected. In this sample, the
@@ -29,7 +29,7 @@ services.AddSingleton<AgentPlugin>(); // The plugin depends on WeatherProvider a
 
 IServiceProvider serviceProvider = services.BuildServiceProvider();
 
-// Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
+// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.

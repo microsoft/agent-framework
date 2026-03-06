@@ -16,15 +16,15 @@ This sample demonstrates how to implement multi-turn conversations with AI agent
 Before you begin, ensure you have the following prerequisites:
 
 - .NET 10 SDK or later
-- Azure Foundry service endpoint and deployment configured
+- Microsoft Foundry service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 
-**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure Foundry resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
+**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Microsoft Foundry resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Azure Foundry resource endpoint
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Microsoft Foundry resource endpoint
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
 
@@ -42,7 +42,7 @@ dotnet run --project .\FoundryAgents_Step02_MultiturnConversation
 The sample will:
 
 1. Create an agent named "JokerAgent" with instructions to tell jokes
-2. Create a project conversation to enable visibility in the Azure Foundry UI
+2. Create a project conversation to enable visibility in the Microsoft Foundry UI
 3. Create a thread linked to the conversation ID for context tracking
 4. Run the agent with a text prompt and display the response
 5. Send a follow-up message to the same thread, demonstrating context preservation
@@ -54,6 +54,6 @@ The sample will:
 
 When working with multi-turn conversations, there are two approaches:
 
-- **With Conversation ID**: By passing a `conversation.Id` to `CreateSessionAsync()`, the conversation will be visible in the Azure Foundry Project UI. This is useful for tracking and debugging conversations.
+- **With Conversation ID**: By passing a `conversation.Id` to `CreateSessionAsync()`, the conversation will be visible in the Microsoft Foundry Project UI. This is useful for tracking and debugging conversations.
 - **Without Conversation ID**: Sessions created without a conversation ID still work correctly, maintaining context via `PreviousResponseId`. However, these conversations may not appear in the Foundry UI.
 

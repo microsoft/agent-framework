@@ -24,11 +24,11 @@ Both options produce the same result. Toggle between them by commenting/uncommen
 Before you begin, ensure you have the following prerequisites:
 
 - .NET 10 SDK or later
-- Azure Foundry service endpoint and deployment configured
+- Microsoft Foundry service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 - A Bing Custom Search resource configured in Azure and connected to your Foundry project
 
-**Note**: This demo uses Azure Default credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure Foundry resource.
+**Note**: This demo uses Azure Default credentials for authentication. Make sure you're logged in with `az login` and have access to the Microsoft Foundry resource.
 
 Set the following environment variables:
 

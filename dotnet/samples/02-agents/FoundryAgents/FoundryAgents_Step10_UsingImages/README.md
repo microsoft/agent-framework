@@ -1,6 +1,6 @@
 # Using Images with AI Agents
 
-This sample demonstrates how to use image multi-modality with an AI agent. It shows how to create a vision-enabled agent that can analyze and describe images using Azure Foundry Agents.
+This sample demonstrates how to use image multi-modality with an AI agent. It shows how to create a vision-enabled agent that can analyze and describe images using Microsoft Foundry Agents.
 
 ## What this sample demonstrates
 
@@ -14,7 +14,7 @@ This sample demonstrates how to use image multi-modality with an AI agent. It sh
 
 - **Vision Agent**: Creates an agent specifically instructed to analyze images
 - **Multimodal Input**: Combines text questions with image URI in a single message
-- **Azure Foundry Agents Integration**: Uses Azure Foundry Agents with vision capabilities
+- **Microsoft Foundry Agents Integration**: Uses Microsoft Foundry Agents with vision capabilities
 
 ## Prerequisites
 
@@ -29,7 +29,7 @@ Before running this sample, ensure you have:
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-resource.openai.azure.com/" # Replace with your Azure Foundry Project endpoint
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-resource.openai.azure.com/" # Replace with your Microsoft Foundry Project endpoint
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o" # Replace with your model deployment name (optional, defaults to gpt-4o)
 ```
 

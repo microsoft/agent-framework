@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use Microsoft Fabric Tool with AI Agents.
 
@@ -14,7 +14,7 @@ string fabricConnectionId = Environment.GetEnvironmentVariable("FABRIC_PROJECT_C
 
 const string AgentInstructions = "You are a helpful assistant with access to Microsoft Fabric data. Answer questions based on data available through your Fabric connection.";
 
-// Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
+// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.

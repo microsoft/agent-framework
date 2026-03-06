@@ -1,6 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use Azure AI Foundry's Red Teaming service to assess
+// This sample demonstrates how to use Microsoft Foundry's Red Teaming service to assess
 // the safety and resilience of an AI model against adversarial attacks.
 //
 // It uses the RedTeam API from Azure.AI.Projects to run automated attack simulations
@@ -88,7 +88,7 @@ if (redTeamRun.Status == "Completed")
     Console.WriteLine($"  Status:      {redTeamRun.Status}");
 
     Console.WriteLine();
-    Console.WriteLine("Review the detailed results in the Azure AI Foundry portal:");
+    Console.WriteLine("Review the detailed results in the Microsoft Foundry portal:");
     Console.WriteLine($"  {endpoint}");
 }
 else

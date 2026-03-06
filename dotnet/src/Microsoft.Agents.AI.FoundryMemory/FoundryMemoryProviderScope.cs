@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using Microsoft.Shared.Diagnostics;
@@ -9,7 +9,7 @@ namespace Microsoft.Agents.AI.FoundryMemory;
 /// Allows scoping of memories for the <see cref="FoundryMemoryProvider"/>.
 /// </summary>
 /// <remarks>
-/// Azure AI Foundry memories are scoped by a single string identifier that you control.
+/// Microsoft Foundry memories are scoped by a single string identifier that you control.
 /// Common patterns include using a user ID, team ID, or other unique identifier
 /// to partition memories across different contexts.
 /// </remarks>

@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use Code Interpreter Tool with AI Agents.
 
@@ -18,7 +18,7 @@ const string AgentInstructions = "You are a personal math tutor. When asked a ma
 const string AgentNameMEAI = "CoderAgent-MEAI";
 const string AgentNameNative = "CoderAgent-NATIVE";
 
-// Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
+// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.

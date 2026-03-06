@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use Microsoft.Extensions.AI.Evaluation.Quality to evaluate
 // an Agent Framework agent's response quality with a self-reflection loop.
@@ -46,7 +46,7 @@ IChatClient chatClient = new AzureOpenAIClient(new Uri(openAiEndpoint), credenti
     .GetChatClient(evaluatorDeploymentName)
     .AsIChatClient();
 
-// Configure evaluation: quality evaluators use the LLM, safety evaluators use Azure AI Foundry
+// Configure evaluation: quality evaluators use the LLM, safety evaluators use Microsoft Foundry
 ContentSafetyServiceConfiguration safetyConfig = new(
     credential: credential,
     endpoint: new Uri(endpoint));
@@ -64,11 +64,11 @@ Console.WriteLine();
 
 // Example question and grounding context
 const string Question = """
-    What are the main benefits of using Azure AI Foundry for building AI applications?
+    What are the main benefits of using Microsoft Foundry for building AI applications?
     """;
 
 const string Context = """
-    Azure AI Foundry is a comprehensive platform for building, deploying, and managing AI applications.
+    Microsoft Foundry is a comprehensive platform for building, deploying, and managing AI applications.
     Key benefits include:
     1. Unified development environment with support for multiple AI frameworks and models
     2. Built-in safety and security features including content filtering and red teaming tools

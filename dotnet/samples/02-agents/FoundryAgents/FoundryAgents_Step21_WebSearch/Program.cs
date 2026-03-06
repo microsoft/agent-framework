@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use the Responses API Web Search Tool with AI Agents.
 
@@ -15,7 +15,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 const string AgentInstructions = "You are a helpful assistant that can search the web to find current information and answer questions accurately.";
 const string AgentName = "WebSearchAgent";
 
-// Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
+// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Option 1 - Using HostedWebSearchTool (MEAI + AgentFramework)
