@@ -1461,8 +1461,9 @@ class AzureAIAgentClient(
 
         Keyword Args:
             id: The unique identifier for the agent. Will be created automatically if not provided.
-            name: The name of the agent.
-            description: A brief description of the agent's purpose.
+            name: The name of the agent. Defaults to the client's ``agent_name`` when None.
+            description: A brief description of the agent's purpose. Defaults to the client's
+                ``agent_description`` when None.
             instructions: Optional instructions for the agent.
             tools: The tools to use for the request.
             default_options: A TypedDict containing chat options.
@@ -1475,8 +1476,8 @@ class AzureAIAgentClient(
         """
         return super().as_agent(
             id=id,
-            name=name,
-            description=description,
+            name=self.agent_name if name is None else name,
+            description=self.agent_description if description is None else description,
             instructions=instructions,
             tools=tools,
             default_options=default_options,

@@ -14,6 +14,8 @@ from pydantic import AnyUrl, BaseModel
 
 from agent_framework import (
     Content,
+    FunctionInvocationContext,
+    FunctionMiddleware,
     MCPStdioTool,
     MCPStreamableHTTPTool,
     MCPWebsocketTool,
@@ -30,6 +32,7 @@ from agent_framework._mcp import (
     _prepare_message_for_mcp,
     logger,
 )
+from agent_framework._middleware import FunctionMiddlewarePipeline
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
 # Integration test skip condition
@@ -896,6 +899,147 @@ async def test_local_mcp_server_function_execution_error():
 
         with pytest.raises(ToolExecutionException):
             await func.invoke(param="test_value")
+
+
+async def test_mcp_tool_call_tool_raises_on_is_error():
+    """Test that call_tool raises ToolExecutionException when MCP returns isError=True."""
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(
+                    content=[types.TextContent(type="text", text="Something went wrong")],
+                    isError=True,
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+
+        with pytest.raises(ToolExecutionException, match="Something went wrong"):
+            await func.invoke(param="test_value")
+
+
+async def test_mcp_tool_call_tool_succeeds_when_is_error_false():
+    """Test that call_tool returns normally when MCP returns isError=False."""
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(
+                    content=[types.TextContent(type="text", text="Success")],
+                    isError=False,
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+        result = await func.invoke(param="test_value")
+        assert result == "Success"
+
+
+async def test_mcp_tool_is_error_propagates_through_function_middleware():
+    """Test that MCP isError=True propagates as ToolExecutionException through function middleware."""
+    error_seen_in_middleware = False
+
+    class ErrorCheckMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next):
+            nonlocal error_seen_in_middleware
+            try:
+                await call_next()
+            except ToolExecutionException:
+                error_seen_in_middleware = True
+                raise
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(
+                    content=[types.TextContent(type="text", text="MCP error occurred")],
+                    isError=True,
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+
+        middleware_pipeline = FunctionMiddlewarePipeline(ErrorCheckMiddleware())
+
+        middleware_context = FunctionInvocationContext(
+            function=func,
+            arguments={"param": "test_value"},
+        )
+
+        with pytest.raises(ToolExecutionException, match="MCP error occurred"):
+            await middleware_pipeline.execute(
+                middleware_context,
+                lambda ctx: func.invoke(arguments=ctx.arguments),
+            )
+
+        assert error_seen_in_middleware, "Middleware should have seen the ToolExecutionException"
 
 
 async def test_local_mcp_server_prompt_execution():
@@ -2098,7 +2242,7 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
         tool._tools_loaded = True
 
         # First call should work - connection is valid
-        mock_session.call_tool.return_value = MagicMock(content=[])
+        mock_session.call_tool.return_value = types.CallToolResult(content=[])
         result = await tool.call_tool("test_tool", arg1="value1")
         assert result is not None
 
@@ -2111,7 +2255,7 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
             call_count += 1
             if call_count == 1:
                 raise ClosedResourceError
-            return MagicMock(content=[])
+            return types.CallToolResult(content=[])
 
         mock_session.call_tool = call_tool_with_error
 
