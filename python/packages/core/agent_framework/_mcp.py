@@ -919,7 +919,8 @@ class MCPTool:
             try:
                 result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=otel_meta)  # type: ignore
                 if result.isError:
-                    raise ToolExecutionException(parser(result))
+                    parsed = parser(result)
+                    raise ToolExecutionException(str(parsed) if not isinstance(parsed, str) else parsed)
                 return parser(result)
             except ToolExecutionException:
                 raise
