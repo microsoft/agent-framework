@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -53,13 +52,6 @@ public static class ChatClientExtensions
     internal static IChatClient WithDefaultAgentMiddleware(this IChatClient chatClient, ChatClientAgentOptions? options, IServiceProvider? services = null)
     {
         var chatBuilder = chatClient.AsBuilder();
-
-        // Add compaction as the innermost middleware so it runs before every LLM call,
-        // including those triggered by tool call iterations within FunctionInvokingChatClient.
-        if (options?.CompactionStrategy is { } compactionStrategy)
-        {
-            chatBuilder.Use(innerClient => new CompactingChatClient(innerClient, compactionStrategy));
-        }
 
         if (chatClient.GetService<FunctionInvokingChatClient>() is null)
         {

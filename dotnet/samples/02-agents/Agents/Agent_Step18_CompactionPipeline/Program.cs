@@ -1,7 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use a ChatHistoryCompactionPipeline as the ChatReducer for an agent's
-// in-memory chat history. The pipeline chains multiple compaction strategies from gentle to aggressive:
+// This sample demonstrates how to use a MessageCompactionContextProvider with a compaction pipeline
+// as an AIContextProvider for an agent's in-run context management. The pipeline chains multiple
+// compaction strategies from gentle to aggressive:
 //   1. ToolResultCompactionStrategy - Collapses old tool-call groups into concise summaries
 //   2. SummarizationCompactionStrategy - LLM-compresses older conversation spans
 //   3. SlidingWindowCompactionStrategy - Keeps only the most recent N user turns
@@ -52,7 +53,7 @@ PipelineCompactionStrategy compactionPipeline =
         // 4. Emergency: drop oldest groups until under the token budget
         new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(0x8000)));
 
-// Create the agent with an in-memory chat history provider whose reducer is the compaction pipeline.
+// Create the agent with a MessageCompactionContextProvider that uses the compaction pipeline.
 AIAgent agent =
     agentChatClient.AsAIAgent(
         new ChatClientAgentOptions
@@ -69,7 +70,7 @@ AIAgent agent =
                     """,
                 Tools = [AIFunctionFactory.Create(LookupPrice)],
             },
-            CompactionStrategy = compactionPipeline,
+            AIContextProviders = [new MessageCompactionContextProvider(compactionPipeline)],
         });
 
 AgentSession session = await agent.CreateSessionAsync();
