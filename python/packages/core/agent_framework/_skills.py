@@ -295,8 +295,8 @@ YAML_KV_RE = re.compile(
 )
 
 # Validates skill names: lowercase letters, numbers, hyphens only;
-# must not start or end with a hyphen.
-VALID_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$")
+# must not start or end with a hyphen, and must not contain consecutive hyphens.
+VALID_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9]*-[a-z0-9])*[a-z0-9]*$")
 
 # Default system prompt template for advertising available skills to the model.
 # Use {skills} as the placeholder for the generated skills XML list.
@@ -734,7 +734,7 @@ def _validate_skill_metadata(
     if len(name) > MAX_NAME_LENGTH or not VALID_NAME_RE.match(name):
         return (
             f"Skill from '{source}' has an invalid name '{name}': Must be {MAX_NAME_LENGTH} characters or fewer, "
-            "using only lowercase letters, numbers, and hyphens, and must not start or end with a hyphen."
+            "using only lowercase letters, numbers, and hyphens, and must not start or end with a hyphen or contain consecutive hyphens."
         )
 
     if not description or not description.strip():
@@ -819,6 +819,17 @@ def _read_and_parse_skill_file(
         return None
 
     name, description = result
+
+    dir_name = Path(skill_dir_path).name
+    if name != dir_name:
+        logger.error(
+            "SKILL.md at '%s' has frontmatter name '%s' that does not match the directory name '%s'; skipping.",
+            skill_file,
+            name,
+            dir_name,
+        )
+        return None
+
     return name, description, content
 
 
