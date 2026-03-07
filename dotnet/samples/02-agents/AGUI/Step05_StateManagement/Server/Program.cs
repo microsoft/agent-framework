@@ -4,7 +4,6 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
-using Microsoft.Agents.AI.OpenAI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using OpenAI.Chat;
@@ -38,7 +37,7 @@ ChatClient chatClient = new AzureOpenAIClient(
         new DefaultAzureCredential())
     .GetChatClient(deploymentName);
 
-AIAgent baseAgent = chatClient.AsAIAgent(
+AIAgent baseAgent = chatClient.AsIChatClient().AsAIAgent(
     name: "RecipeAgent",
     instructions: """
         You are a helpful recipe assistant. When users ask you to create or suggest a recipe,

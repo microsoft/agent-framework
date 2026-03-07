@@ -9,7 +9,6 @@ using AGUIDojoServer.SharedState;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.OpenAI;
 using Microsoft.Extensions.AI;
 using ChatClient = OpenAI.Chat.ChatClient;
 
@@ -37,7 +36,7 @@ internal static class ChatClientAgentFactory
     {
         ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
 
-        return chatClient.AsAIAgent(
+        return chatClient.AsIChatClient().AsAIAgent(
             name: "AgenticChat",
             description: "A simple chat agent using Azure OpenAI");
     }
@@ -46,7 +45,7 @@ internal static class ChatClientAgentFactory
     {
         ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
 
-        return chatClient.AsAIAgent(
+        return chatClient.AsIChatClient().AsAIAgent(
             name: "BackendToolRenderer",
             description: "An agent that can render backend tools using Azure OpenAI",
             tools: [AIFunctionFactory.Create(
@@ -60,7 +59,7 @@ internal static class ChatClientAgentFactory
     {
         ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
 
-        return chatClient.AsAIAgent(
+        return chatClient.AsIChatClient().AsAIAgent(
             name: "HumanInTheLoopAgent",
             description: "An agent that involves human feedback in its decision-making process using Azure OpenAI");
     }
@@ -69,7 +68,7 @@ internal static class ChatClientAgentFactory
     {
         ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
 
-        return chatClient.AsAIAgent(
+        return chatClient.AsIChatClient().AsAIAgent(
             name: "ToolBasedGenerativeUIAgent",
             description: "An agent that uses tools to generate user interfaces using Azure OpenAI");
     }
@@ -77,7 +76,7 @@ internal static class ChatClientAgentFactory
     public static AIAgent CreateAgenticUI(JsonSerializerOptions options)
     {
         ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
-        var baseAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
+        var baseAgent = chatClient.AsIChatClient().AsAIAgent(new ChatClientAgentOptions
         {
             Name = "AgenticUIAgent",
             Description = "An agent that generates agentic user interfaces using Azure OpenAI",
@@ -120,7 +119,7 @@ internal static class ChatClientAgentFactory
     {
         ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
 
-        var baseAgent = chatClient.AsAIAgent(
+        var baseAgent = chatClient.AsIChatClient().AsAIAgent(
             name: "SharedStateAgent",
             description: "An agent that demonstrates shared state patterns using Azure OpenAI");
 
@@ -131,7 +130,7 @@ internal static class ChatClientAgentFactory
     {
         ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
 
-        var baseAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
+        var baseAgent = chatClient.AsIChatClient().AsAIAgent(new ChatClientAgentOptions
         {
             Name = "PredictiveStateUpdatesAgent",
             Description = "An agent that demonstrates predictive state updates using Azure OpenAI",

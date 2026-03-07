@@ -6,7 +6,6 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
-using Microsoft.Agents.AI.OpenAI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using OpenAI.Chat;
@@ -83,7 +82,7 @@ ChatClient chatClient = new AzureOpenAIClient(
         new DefaultAzureCredential())
     .GetChatClient(deploymentName);
 
-ChatClientAgent agent = chatClient.AsAIAgent(
+ChatClientAgent agent = chatClient.AsIChatClient().AsAIAgent(
     name: "AGUIAssistant",
     instructions: "You are a helpful assistant with access to restaurant information.",
     tools: tools);

@@ -5,7 +5,6 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
-using Microsoft.Agents.AI.OpenAI;
 using Microsoft.AspNetCore.Http.Json;
 using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.Extensions.AI;
@@ -61,7 +60,7 @@ ChatClient openAIChatClient = new AzureOpenAIClient(
         new DefaultAzureCredential())
     .GetChatClient(deploymentName);
 
-ChatClientAgent baseAgent = openAIChatClient.AsAIAgent(
+ChatClientAgent baseAgent = openAIChatClient.AsIChatClient().AsAIAgent(
     name: "AGUIAssistant",
     instructions: "You are a helpful assistant in charge of approving expenses",
     tools: tools);

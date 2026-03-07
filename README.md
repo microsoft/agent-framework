@@ -2,7 +2,7 @@
 
 # Welcome to Microsoft Agent Framework!
 
-[![Microsoft Azure AI Foundry Discord](https://dcbadge.limes.pink/api/server/b5zjErwbQM?style=flat)](https://discord.gg/b5zjErwbQM)
+[![Microsoft Azure AI Foundry Discord](https://img.shields.io/discord/1260466022557278220?label=Discord&logo=discord&logoColor=white)](https://discord.gg/b5zjErwbQM)
 [![MS Learn Documentation](https://img.shields.io/badge/MS%20Learn-Documentation-blue)](https://learn.microsoft.com/en-us/agent-framework/)
 [![PyPI](https://img.shields.io/pypi/v/agent-framework)](https://pypi.org/project/agent-framework/)
 [![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.AI)](https://www.nuget.org/profiles/MicrosoftAgentFramework/)
