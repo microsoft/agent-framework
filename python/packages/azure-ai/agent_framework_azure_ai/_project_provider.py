@@ -205,7 +205,6 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         response_format = opts.get("response_format")
         rai_config = opts.get("rai_config")
         reasoning = opts.get("reasoning")
-        foundry_features = opts.get("foundry_features")
 
         args: dict[str, Any] = {"model": resolved_model}
 
@@ -252,8 +251,6 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             "definition": PromptAgentDefinition(**args),
             "description": description,
         }
-        if foundry_features:
-            create_version_kwargs["foundry_features"] = foundry_features
 
         created_agent = await self._project_client.agents.create_version(**create_version_kwargs)
 

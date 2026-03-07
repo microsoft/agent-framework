@@ -77,9 +77,6 @@ class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):
     reasoning: Reasoning  # type: ignore[misc]
     """Configuration for enabling reasoning capabilities (requires azure.ai.projects.models.Reasoning)."""
 
-    foundry_features: str
-    """Optional Foundry preview feature key for older Azure AI Projects SDK versions."""
-
 
 AzureAIClientOptionsT = TypeVar(
     "AzureAIClientOptionsT",
@@ -417,8 +414,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 "definition": PromptAgentDefinition(**args),
                 "description": self.agent_description,
             }
-            if foundry_features := run_options.get("foundry_features"):
-                create_version_kwargs["foundry_features"] = foundry_features
 
             created_agent = await self.project_client.agents.create_version(**create_version_kwargs)
 
@@ -517,7 +512,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             "temperature": ("temperature",),
             "top_p": ("top_p",),
             "reasoning": ("reasoning",),
-            "foundry_features": ("foundry_features",),
             "allow_preview": ("allow_preview",),
         }
 
