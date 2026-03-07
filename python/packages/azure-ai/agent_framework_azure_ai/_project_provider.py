@@ -118,8 +118,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             credential: Azure credential for authentication. Accepts a TokenCredential,
                 AsyncTokenCredential, or a callable token provider.
                 Required when project_client is not provided.
-            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``
-                when supported by the installed ``azure-ai-projects`` version.
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
 

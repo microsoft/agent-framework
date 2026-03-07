@@ -251,22 +251,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         credential: AzureCredentialTypes | AzureTokenProvider | None,
         allow_preview: bool | None = None,
     ) -> AsyncOpenAI:
-        """Create an AsyncOpenAI client from an Azure AI Foundry project.
-
-        Args:
-            project_client: An existing AIProjectClient to use.
-            project_endpoint: The Azure AI Foundry project endpoint URL.
-            credential: Azure credential for authentication.
-            allow_preview: Enables preview opt-in when constructing an ``AIProjectClient``
-                and supported by the installed ``azure-ai-projects`` version.
-
-        Returns:
-            An AsyncAzureOpenAI client obtained from the project client.
-
-        Raises:
-            ValueError: If required parameters are missing or
-                the azure-ai-projects package is not installed.
-        """
+        """Create an AsyncOpenAI client from an Azure AI Foundry project."""
         if project_client is not None:
             return project_client.get_openai_client()
 
