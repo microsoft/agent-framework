@@ -126,6 +126,11 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                     if (hadRequestHaltEvent || linkedSource.Token.IsCancellationRequested)
                     {
                         // If we had a completion event, we are done.
+                        if (hadRequestHaltEvent)
+                        {
+                            yield return new WorkflowCompletedEvent();
+                        }
+
                         yield break;
                     }
 
@@ -143,6 +148,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                 }
             } while (!ShouldBreak());
 
+            yield return new WorkflowCompletedEvent();
             runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
         }
         finally
