@@ -5,7 +5,7 @@ import os
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import Annotated, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -28,6 +28,7 @@ from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
+    AutoCodeInterpreterToolParam,
     CodeInterpreterTool,
     FileSearchTool,
     ImageGenTool,
@@ -44,14 +45,6 @@ from pytest import fixture, param
 
 from agent_framework_azure_ai import AzureAIClient, AzureAISettings
 from agent_framework_azure_ai._shared import from_azure_ai_tools
-
-if TYPE_CHECKING:
-    from azure.ai.projects.models import CodeInterpreterContainerAuto as AutoCodeInterpreterToolParam
-else:
-    try:
-        from azure.ai.projects.models import AutoCodeInterpreterToolParam
-    except ImportError:  # pragma: no cover - compatibility with azure-ai-projects<2.0.0
-        from azure.ai.projects.models import CodeInterpreterContainerAuto as AutoCodeInterpreterToolParam
 
 skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/")

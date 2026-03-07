@@ -9,7 +9,7 @@ import re
 import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast
+from typing import Any, ClassVar, Generic, Literal, TypedDict, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -38,6 +38,7 @@ from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
+    AutoCodeInterpreterToolParam,
     CodeInterpreterTool,
     ImageGenTool,
     MCPTool,
@@ -64,14 +65,6 @@ if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # type: ignore # pragma: no cover
 else:
     from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
-
-if TYPE_CHECKING:
-    from azure.ai.projects.models import CodeInterpreterContainerAuto as AutoCodeInterpreterToolParam
-else:
-    try:
-        from azure.ai.projects.models import AutoCodeInterpreterToolParam
-    except ImportError:  # pragma: no cover - compatibility with azure-ai-projects<2.0.0
-        from azure.ai.projects.models import CodeInterpreterContainerAuto as AutoCodeInterpreterToolParam
 
 logger = logging.getLogger("agent_framework.azure")
 

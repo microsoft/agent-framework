@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Mapping, MutableMapping, Sequence
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from agent_framework import (
     Content,
@@ -19,7 +19,9 @@ from azure.ai.agents.models import (
 from azure.ai.projects.models import (
     CodeInterpreterTool,
     MCPTool,
+    TextResponseFormatJsonObject,
     TextResponseFormatJsonSchema,
+    TextResponseFormatText,
     Tool,
     WebSearchPreviewTool,
 )
@@ -35,24 +37,6 @@ if sys.version_info >= (3, 11):
     from typing import TypedDict  # pragma: no cover
 else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
-
-if TYPE_CHECKING:
-    from azure.ai.projects.models import (
-        TextResponseFormatConfigurationResponseFormatJsonObject as TextResponseFormatJsonObject,
-    )
-    from azure.ai.projects.models import (
-        TextResponseFormatConfigurationResponseFormatText as TextResponseFormatText,
-    )
-else:
-    try:
-        from azure.ai.projects.models import TextResponseFormatJsonObject, TextResponseFormatText
-    except ImportError:  # pragma: no cover - compatibility with azure-ai-projects<2.0.0
-        from azure.ai.projects.models import (
-            TextResponseFormatConfigurationResponseFormatJsonObject as TextResponseFormatJsonObject,
-        )
-        from azure.ai.projects.models import (
-            TextResponseFormatConfigurationResponseFormatText as TextResponseFormatText,
-        )
 
 logger = logging.getLogger("agent_framework.azure")
 
