@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.DiagnosticIds;
@@ -68,24 +69,19 @@ public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
     protected override Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
     {
         // Identify protected groups: the N most-recent non-system, non-excluded groups
-        List<int> nonSystemIncludedIndices = [];
-        foreach (MessageGroup group in index.Groups)
-        {
-            if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
-            {
-                nonSystemIncludedIndices.Add(index.Groups.IndexOf(group));
-            }
-        }
+        int[] nonSystemIncludedIndices =
+            index.Groups
+                .Select((group, index) => (group, index))
+                .Where(tuple => !tuple.group.IsExcluded && tuple.group.Kind != MessageGroupKind.System)
+                .Select(tuple => tuple.index)
+                .ToArray();
 
-        int protectedStart = Math.Max(0, nonSystemIncludedIndices.Count - this.MinimumPreserved);
-        HashSet<int> protectedGroupIndices = [];
-        for (int i = protectedStart; i < nonSystemIncludedIndices.Count; i++)
-        {
-            protectedGroupIndices.Add(nonSystemIncludedIndices[i]);
-        }
+        int protectedStart = Math.Max(0, nonSystemIncludedIndices.Length - this.MinimumPreserved);
+        HashSet<int> protectedGroupIndices = [.. nonSystemIncludedIndices.Skip(protectedStart)];
 
         // Collect distinct included turn indices in order (oldest first), excluding protected groups
         List<int> excludableTurns = [];
+        HashSet<int> processedTurns = [];
         for (int i = 0; i < index.Groups.Count; i++)
         {
             MessageGroup group = index.Groups[i];
@@ -93,9 +89,10 @@ public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
                 && group.Kind != MessageGroupKind.System
                 && !protectedGroupIndices.Contains(i)
                 && group.TurnIndex is int turnIndex
-                && !excludableTurns.Contains(turnIndex))
+                && !processedTurns.Contains(turnIndex))
             {
                 excludableTurns.Add(turnIndex);
+                processedTurns.Add(turnIndex);
             }
         }
 

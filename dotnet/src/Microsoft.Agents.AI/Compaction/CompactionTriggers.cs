@@ -24,7 +24,7 @@ public static class CompactionTriggers
         _ => true;
 
     /// <summary>
-    /// Always trigger compaction, regardless of the message index state.
+    /// Never trigger compaction, regardless of the message index state.
     /// </summary>
     public static readonly CompactionTrigger Never =
         _ => false;

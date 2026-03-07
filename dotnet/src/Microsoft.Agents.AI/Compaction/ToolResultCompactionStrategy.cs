@@ -27,10 +27,8 @@ namespace Microsoft.Agents.AI.Compaction;
 /// has not been reached, compaction will not touch the last <see cref="MinimumPreserved"/> non-system groups.
 /// </para>
 /// <para>
-/// The <see cref="CompactionTrigger"/> predicate controls when compaction proceeds.
-/// When <see langword="null"/>, a default compound trigger of
-/// <see cref="CompactionTriggers.TokensExceed"/> AND <see cref="CompactionTriggers.HasToolCalls"/>
-/// is used.
+/// The <see cref="CompactionTrigger"/> predicate controls when compaction proceeds. Use
+/// <see cref="CompactionTriggers"/> for common trigger conditions such as token thresholds.
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
