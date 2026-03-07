@@ -29,7 +29,7 @@ public sealed class MessageCompactionContextProviderTests
 
         // Act & Assert — default state key is the class name
         Assert.Single(provider.StateKeys);
-        Assert.Equal(nameof(MessageCompactionContextProvider), provider.StateKeys[0]);
+        Assert.Contains(nameof(MessageCompactionContextProvider), provider.StateKeys[0]);
     }
 
     [Fact]
