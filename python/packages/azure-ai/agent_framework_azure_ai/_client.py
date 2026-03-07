@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import json
 import logging
 import re
@@ -90,20 +89,6 @@ AzureAIClientOptionsT = TypeVar(
 )
 
 _DOC_INDEX_PATTERN = re.compile(r"doc_(\d+)")
-
-
-def _supports_keyword_argument(value: Any, keyword: str) -> bool:
-    """Return True when *value* has an explicit parameter named *keyword*."""
-    with suppress(TypeError, ValueError):
-        signature = inspect.signature(value)
-        return keyword in signature.parameters
-    return False
-
-
-def _project_client_allows_preview(project_client: AIProjectClient) -> bool:
-    """Return whether the project client is configured to allow preview operations."""
-    allow_preview = getattr(getattr(project_client, "_config", None), "allow_preview", None)
-    return bool(allow_preview)
 
 
 class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[AzureAIClientOptionsT]):
@@ -229,7 +214,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 "credential": credential,  # type: ignore[arg-type]
                 "user_agent": AGENT_FRAMEWORK_USER_AGENT,
             }
-            if allow_preview is not None and _supports_keyword_argument(AIProjectClient, "allow_preview"):
+            if allow_preview is not None:
                 project_client_kwargs["allow_preview"] = allow_preview
             project_client = AIProjectClient(**project_client_kwargs)
             should_close_client = True
@@ -248,11 +233,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         self.credential = credential
         self.model_id = azure_ai_settings.get("model_deployment_name")
         self.conversation_id = conversation_id
-        self._allow_preview = bool(allow_preview) or _project_client_allows_preview(project_client)
-        self._supports_create_version_foundry_features = _supports_keyword_argument(
-            self.project_client.agents.create_version,
-            "foundry_features",
-        )
 
         # Track whether the application endpoint is used
         self._is_application_endpoint = "/applications/" in project_client._config.endpoint  # type: ignore
@@ -438,13 +418,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 "description": self.agent_description,
             }
             if foundry_features := run_options.get("foundry_features"):
-                if self._supports_create_version_foundry_features:
-                    create_version_kwargs["foundry_features"] = foundry_features
-                elif not self._allow_preview:
-                    raise ValueError(
-                        "Preview agent features require allow_preview=True on AIProjectClient "
-                        "when using azure-ai-projects 2.0 GA."
-                    )
+                create_version_kwargs["foundry_features"] = foundry_features
 
             created_agent = await self.project_client.agents.create_version(**create_version_kwargs)
 

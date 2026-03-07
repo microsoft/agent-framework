@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import inspect
 import logging
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
-from contextlib import suppress
 from typing import Any, Generic
 
 from agent_framework import (
@@ -45,20 +43,6 @@ else:
 
 
 logger = logging.getLogger("agent_framework.azure")
-
-
-def _supports_keyword_argument(value: Any, keyword: str) -> bool:
-    """Return True when *value* has an explicit parameter named *keyword*."""
-    with suppress(TypeError, ValueError):
-        signature = inspect.signature(value)
-        return keyword in signature.parameters
-    return False
-
-
-def _project_client_allows_preview(project_client: AIProjectClient) -> bool:
-    """Return whether the project client is configured to allow preview operations."""
-    allow_preview = getattr(getattr(project_client, "_config", None), "allow_preview", None)
-    return bool(allow_preview)
 
 
 # Type variable for options - allows typed Agent[OptionsT] returns
@@ -170,17 +154,12 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
                 "credential": credential,  # type: ignore[arg-type]
                 "user_agent": AGENT_FRAMEWORK_USER_AGENT,
             }
-            if allow_preview is not None and _supports_keyword_argument(AIProjectClient, "allow_preview"):
+            if allow_preview is not None:
                 project_client_kwargs["allow_preview"] = allow_preview
             project_client = AIProjectClient(**project_client_kwargs)
             self._should_close_client = True
 
         self._project_client = project_client
-        self._allow_preview = bool(allow_preview) or _project_client_allows_preview(project_client)
-        self._supports_create_version_foundry_features = _supports_keyword_argument(
-            self._project_client.agents.create_version,
-            "foundry_features",
-        )
 
     async def create_agent(
         self,
@@ -274,13 +253,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             "description": description,
         }
         if foundry_features:
-            if self._supports_create_version_foundry_features:
-                create_version_kwargs["foundry_features"] = foundry_features
-            elif not self._allow_preview:
-                raise ValueError(
-                    "Preview agent features require allow_preview=True on AIProjectClient "
-                    "when using azure-ai-projects 2.0 GA."
-                )
+            create_version_kwargs["foundry_features"] = foundry_features
 
         created_agent = await self._project_client.agents.create_version(**create_version_kwargs)
 

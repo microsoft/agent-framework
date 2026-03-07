@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import inspect
 import sys
 from collections.abc import Mapping, Sequence
-from contextlib import suppress
 from typing import TYPE_CHECKING, Any, Generic
 from urllib.parse import urljoin, urlparse
 
@@ -49,14 +47,6 @@ AzureOpenAIResponsesOptionsT = TypeVar(
     default="OpenAIResponsesOptions",
     covariant=True,
 )
-
-
-def _supports_keyword_argument(value: Any, keyword: str) -> bool:
-    """Return True when *value* has an explicit parameter named *keyword*."""
-    with suppress(TypeError, ValueError):
-        signature = inspect.signature(value)
-        return keyword in signature.parameters
-    return False
 
 
 class AzureOpenAIResponsesClient(  # type: ignore[misc]
@@ -290,7 +280,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             "credential": credential,  # type: ignore[arg-type]
             "user_agent": AGENT_FRAMEWORK_USER_AGENT,
         }
-        if allow_preview is not None and _supports_keyword_argument(AIProjectClient, "allow_preview"):
+        if allow_preview is not None:
             project_client_kwargs["allow_preview"] = allow_preview
         project_client = AIProjectClient(**project_client_kwargs)
         return project_client.get_openai_client()

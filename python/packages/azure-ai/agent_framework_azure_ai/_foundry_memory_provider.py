@@ -18,6 +18,7 @@ from agent_framework._sessions import AgentSession, BaseContextProvider, Session
 from agent_framework._settings import load_settings
 from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.ai.projects.aio import AIProjectClient
+from openai.types.responses import ResponseInputItemParam
 
 from ._shared import AzureAISettings
 
@@ -169,8 +170,8 @@ class FoundryMemoryProvider(BaseContextProvider):
             return
 
         # Convert input messages to memory search item format
-        items = [
-            {"type": "text", "text": msg.text}
+        items: list[ResponseInputItemParam] = [
+            {"type": "message", "role": "user", "content": msg.text}
             for msg in context.input_messages
             if msg and msg.text and msg.text.strip()
         ]
@@ -224,7 +225,7 @@ class FoundryMemoryProvider(BaseContextProvider):
             messages_to_store.extend(context.response.messages)
 
         # Filter and convert messages to memory update item format
-        items: list[dict[str, str]] = []
+        items: list[ResponseInputItemParam] = []
         for message in messages_to_store:
             if message.role in {"user", "assistant", "system"} and message.text and message.text.strip():
                 if message.role == "user":
