@@ -7,6 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Google.Protobuf;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
@@ -74,6 +75,14 @@ public sealed class MessageCompactionContextProvider : MessageAIContextProvider
         if (session is null || allMessages is null)
         {
             // No session available or no messages — pass through unchanged.
+            return context.AIContext;
+        }
+
+        ChatClientAgentSession? chatClientSession = session.GetService<ChatClientAgentSession>();
+        if (chatClientSession is not null &&
+            !string.IsNullOrWhiteSpace(chatClientSession.ConversationId))
+        {
+            // Session is managed by remote service
             return context.AIContext;
         }
 
