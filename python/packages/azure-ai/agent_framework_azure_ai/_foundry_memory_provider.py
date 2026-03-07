@@ -59,6 +59,7 @@ class FoundryMemoryProvider(BaseContextProvider):
         project_client: AIProjectClient | None = None,
         project_endpoint: str | None = None,
         credential: AzureCredentialTypes | None = None,
+        allow_preview: bool | None = None,
         memory_store_name: str,
         scope: str | None = None,
         context_prompt: str | None = None,
@@ -75,6 +76,7 @@ class FoundryMemoryProvider(BaseContextProvider):
             credential: Azure credential for authentication. Accepts a TokenCredential,
                 AsyncTokenCredential, or a callable token provider.
                 Required when project_client is not provided.
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``.
             memory_store_name: The name of the memory store to use.
             scope: The namespace that logically groups and isolates memories (e.g., user ID).
                 If None, `session_id` will be used.
@@ -101,11 +103,14 @@ class FoundryMemoryProvider(BaseContextProvider):
                 )
             if not credential:
                 raise ValueError("Azure credential is required when project_client is not provided.")
-            project_client = AIProjectClient(
-                endpoint=resolved_endpoint,
-                credential=credential,  # type: ignore[arg-type]
-                user_agent=AGENT_FRAMEWORK_USER_AGENT,
-            )
+            project_client_kwargs: dict[str, Any] = {
+                "endpoint": resolved_endpoint,
+                "credential": credential,  # type: ignore[arg-type]
+                "user_agent": AGENT_FRAMEWORK_USER_AGENT,
+            }
+            if allow_preview is not None:
+                project_client_kwargs["allow_preview"] = allow_preview
+            project_client = AIProjectClient(**project_client_kwargs)
 
         if not memory_store_name:
             raise ValueError("memory_store_name is required")

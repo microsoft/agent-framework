@@ -144,8 +144,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 AsyncTokenCredential, or a callable token provider.
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
-            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``
-                when supported by the installed ``azure-ai-projects`` version.
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             kwargs: Additional keyword arguments passed to the parent class.
@@ -1243,6 +1242,7 @@ class AzureAIClient(
         model_deployment_name: str | None = None,
         credential: AzureCredentialTypes | None = None,
         use_latest_version: bool | None = None,
+        allow_preview: bool | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
@@ -1267,6 +1267,7 @@ class AzureAIClient(
                 or AsyncTokenCredential.
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``
             middleware: Optional sequence of chat middlewares to include.
             function_invocation_configuration: Optional function invocation configuration.
             env_file_path: Path to environment file for loading settings.
@@ -1317,6 +1318,7 @@ class AzureAIClient(
             model_deployment_name=model_deployment_name,
             credential=credential,
             use_latest_version=use_latest_version,
+            allow_preview=allow_preview,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
             env_file_path=env_file_path,

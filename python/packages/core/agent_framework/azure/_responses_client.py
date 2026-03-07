@@ -121,8 +121,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             project_endpoint: The Azure AI Foundry project endpoint URL.
                 When provided with ``credential``, an ``AIProjectClient`` will be created
                 and used to obtain the OpenAI client. Requires the ``azure-ai-projects`` package.
-            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``
-                when supported by the installed ``azure-ai-projects`` version.
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``.
             env_file_path: Use the environment settings file as a fallback to using env vars.
             env_file_encoding: The encoding of the environment settings file, defaults to 'utf-8'.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
