@@ -5,8 +5,6 @@ using System.Diagnostics;
 using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Xunit.Abstractions;
-
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 
 /// <summary>
@@ -61,7 +59,7 @@ public abstract class SamplesValidationBase : IAsyncLifetime
     protected virtual string TaskHubPrefix => "sample";
 
     /// <inheritdoc />
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         await EnsureDtsInfrastructureStartedAsync(this.OutputHelper, this.StartDtsEmulatorAsync);
 
@@ -128,7 +126,11 @@ public abstract class SamplesValidationBase : IAsyncLifetime
     }
 
     /// <inheritdoc />
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return default;
+    }
 
     protected sealed record OutputLog(DateTime Timestamp, LogLevel Level, string Message);
 

@@ -5,8 +5,6 @@ using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Xunit.Abstractions;
-
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests;
 
 /// <summary>
@@ -36,7 +34,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
 
     private readonly ITestOutputHelper _outputHelper = outputHelper;
 
-    async Task IAsyncLifetime.InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         if (!s_infrastructureStarted)
         {
@@ -45,9 +43,10 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         }
     }
 
-    async Task IAsyncLifetime.DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        await Task.CompletedTask;
+        GC.SuppressFinalize(this);
+        return default;
     }
 
     [Fact]

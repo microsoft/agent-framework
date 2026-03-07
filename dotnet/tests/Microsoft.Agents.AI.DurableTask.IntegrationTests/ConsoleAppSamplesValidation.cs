@@ -3,8 +3,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
-using Xunit.Abstractions;
-
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 
 /// <summary>

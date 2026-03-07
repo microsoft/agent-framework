@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Xunit.Abstractions;
-
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 
 /// <summary>
