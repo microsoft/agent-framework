@@ -3,10 +3,10 @@
 import asyncio
 import os
 import sys
+from dataclasses import dataclass
 from textwrap import dedent
-from typing import Any
 
-from agent_framework import Agent, Skill, SkillResource, SkillsProvider
+from agent_framework import Agent, Skill, SkillContext, SkillResource, SkillsProvider
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -25,12 +25,12 @@ Pattern 2: Dynamic Resources
   decorator. Resources can be sync or async functions that generate content at
   invocation time.
 
-Pattern 3: Dynamic Resources with kwargs
-  Attach a callable resource that accepts **kwargs to receive runtime
-  arguments passed via agent.run(). This is useful for injecting
-  request-scoped context (user tokens, session data) into skill resources.
+Pattern 3: Typed Dependencies via SkillContext
+  Attach a callable resource whose first parameter is SkillContext[DepsT].
+  The provider injects a typed context object at invocation time, giving
+  the resource access to shared dependencies (database clients, config, etc.).
 
-Both patterns can be combined with file-based skills in a single SkillsProvider.
+All patterns can be combined with file-based skills in a single SkillsProvider.
 """
 
 # Load environment variables from .env file
@@ -77,16 +77,22 @@ project_info_skill = Skill(
 )
 
 
+# Pattern 3: Typed Dependencies via SkillContext
+@dataclass
+class ProjectDeps:
+    """Shared dependencies for project-info skill resources."""
+
+    app_version: str = "unknown"
+
+
 @project_info_skill.resource
-def environment(**kwargs: Any) -> str:
+def environment(ctx: SkillContext[ProjectDeps]) -> str:
     """Get current environment configuration."""
-    # Access runtime kwargs passed via agent.run(app_version="...")
-    app_version = kwargs.get("app_version", "unknown")
     env = os.environ.get("APP_ENV", "development")
     region = os.environ.get("APP_REGION", "us-east-1")
     return f"""\
       # Environment Configuration
-      - App Version: {app_version}
+      - App Version: {ctx.deps.app_version}
       - Environment: {env}
       - Region: {region}
       - Python: {sys.version}
@@ -117,9 +123,10 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    # Create the skills provider with both code-defined skills
+    # Create the skills provider with both code-defined skills and typed deps
     skills_provider = SkillsProvider(
         skills=[code_style_skill, project_info_skill],
+        deps=ProjectDeps(app_version="2.4.1"),
     )
 
     async with Agent(
@@ -133,11 +140,10 @@ async def main() -> None:
         response = await agent.run("What naming convention should I use for class attributes?")
         print(f"Agent: {response}\n")
 
-        # Example 2: Project info question (Pattern 2 & 3 — dynamic resources with kwargs)
+        # Example 2: Project info question (Patterns 2 & 3 — dynamic resources with SkillContext)
         print("Example 2: Project info question")
         print("---------------------------------")
-        # Pass app_version as a runtime kwarg; it flows to the environment() resource via **kwargs
-        response = await agent.run("What environment are we running in and who is on the team?", app_version="2.4.1")
+        response = await agent.run("What environment are we running in and who is on the team?")
         print(f"Agent: {response}\n")
 
     """
