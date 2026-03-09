@@ -36,16 +36,14 @@ logger = logging.getLogger(__name__)
 
 # Local copies of the checkpoint marker keys used by strip_pickle_markers().
 # Defined here to avoid tight coupling to core's private names.  The import-
-# time assertions below ensure we stay in sync if core ever changes them.
+# time checks below ensure we stay in sync if core ever changes them.
 _PICKLE_MARKER: str = "__pickled__"
 _TYPE_MARKER: str = "__type__"
 
-assert _PICKLE_MARKER == _CORE_PICKLE_MARKER, (
-    f"Pickle marker mismatch: local={_PICKLE_MARKER!r}, core={_CORE_PICKLE_MARKER!r}"
-)
-assert _TYPE_MARKER == _CORE_TYPE_MARKER, (
-    f"Type marker mismatch: local={_TYPE_MARKER!r}, core={_CORE_TYPE_MARKER!r}"
-)
+if _PICKLE_MARKER != _CORE_PICKLE_MARKER:
+    raise RuntimeError(f"Pickle marker mismatch: local={_PICKLE_MARKER!r}, core={_CORE_PICKLE_MARKER!r}")
+if _TYPE_MARKER != _CORE_TYPE_MARKER:
+    raise RuntimeError(f"Type marker mismatch: local={_TYPE_MARKER!r}, core={_CORE_TYPE_MARKER!r}")
 
 
 def resolve_type(type_key: str) -> type | None:
