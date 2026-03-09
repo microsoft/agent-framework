@@ -6,6 +6,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using OpenAI.Responses;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
@@ -49,14 +50,14 @@ Console.WriteLine($"\nDeleted agent: {agent.Name}");
 
 // --- Agent Creation Options ---
 
-// Option 1 - Using AsAITool wrapping for the ResponseTool returned by AgentTool.CreateBingCustomSearchTool (MEAI + AgentFramework)
+// Option 1 - Using FoundryAITool wrapping for BingCustomSearchTool (MEAI + AgentFramework)
 async Task<AIAgent> CreateAgentWithMEAIAsync()
 {
     return await aiProjectClient.CreateAIAgentAsync(
         model: deploymentName,
         name: "BingCustomSearchAgent-MEAI",
         instructions: AgentInstructions,
-        tools: [((ResponseTool)AgentTool.CreateBingCustomSearchTool(bingCustomSearchToolParameters)).AsAITool()]);
+        tools: [FoundryAITool.CreateBingCustomSearchTool(bingCustomSearchToolParameters)]);
 }
 
 // Option 2 - Using PromptAgentDefinition with AgentTool.CreateBingCustomSearchTool (Native SDK)

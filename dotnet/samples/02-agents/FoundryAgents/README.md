@@ -1,6 +1,6 @@
 # Getting started with Foundry Response Agents
 
-These samples demonstrate how to use the `FoundryResponsesAgent` (backed by the **Responses API**) to work with
+These samples demonstrate how to use the `FoundryAgent` (backed by the **Responses API**) to work with
 Microsoft Foundry models directly, without creating server-side agent definitions.
 
 ## How these differ from [Foundry Versioned Agents](../FoundryVersionedAgents/README.md)
@@ -11,7 +11,7 @@ Microsoft Foundry models directly, without creating server-side agent definition
 | **Versioning** | Agent versions are immutable; behavior is locked at creation time | No versioning; agent behavior changes when you redeploy code |
 | **Lifecycle** | Create → Run → Delete | Instantiate → Run (nothing to clean up) |
 | **Backing API** | Foundry Agents API (`GetProjectResponsesClientForAgent`) | Responses API (`GetProjectResponsesClientForModel`) |
-| **Type** | `AIAgent` via `AIProjectClient.CreateAIAgentAsync` | `FoundryResponsesAgent` (wraps `ChatClientAgent` internally) |
+| **Type** | `AIAgent` via `AIProjectClient.CreateAIAgentAsync` | `FoundryAgent` (wraps `ChatClientAgent` internally) |
 
 Choose **Foundry Agents** when you need managed, versioned agent definitions visible in the Foundry portal.
 Choose **Foundry Response Agents** when you want a lightweight, code-first agent with no server-side state.
@@ -31,11 +31,11 @@ $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.c
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
 ```
 
-The `FoundryResponsesAgent` auto-discovers these environment variables at construction time and uses `DefaultAzureCredential` for authentication. This means most samples require **no endpoint or credential code** — just set the environment variables and go:
+The `FoundryAgent` auto-discovers these environment variables at construction time and uses `DefaultAzureCredential` for authentication. This means most samples require **no endpoint or credential code** — just set the environment variables and go:
 
 ```csharp
 // That's it! Endpoint, model, and credential are resolved automatically.
-FoundryResponsesAgent agent = new(
+FoundryAgent agent = new(
     instructions: "You are good at telling jokes.",
     name: "JokerAgent");
 ```
@@ -43,7 +43,7 @@ FoundryResponsesAgent agent = new(
 For advanced scenarios (structured output, plugins with DI, etc.), use the options-based constructor:
 
 ```csharp
-FoundryResponsesAgent agent = new(
+FoundryAgent agent = new(
     options: new ChatClientAgentOptions
     {
         Name = "StructuredAgent",
@@ -58,7 +58,7 @@ FoundryResponsesAgent agent = new(
 If you need full control, explicit constructors are also available:
 
 ```csharp
-FoundryResponsesAgent agent = new(
+FoundryAgent agent = new(
     endpoint: new Uri("https://..."),
     tokenProvider: new DefaultAzureCredential(),
     model: "gpt-4o-mini",

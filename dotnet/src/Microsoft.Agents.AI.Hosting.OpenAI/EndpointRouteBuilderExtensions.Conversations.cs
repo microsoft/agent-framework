@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI.Hosting.OpenAI.Conversations;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -17,6 +18,8 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// Maps OpenAI Conversations API endpoints to the specified <see cref="IEndpointRouteBuilder"/>.
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Conversations endpoints to.</param>
+    [RequiresUnreferencedCode()]
+    [RequiresDynamicCode()]
     public static IEndpointConventionBuilder MapOpenAIConversations(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);

@@ -6,6 +6,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using OpenAI.Responses;
 
 // Warning: DefaultAzureCredential is intended for simplicity in development. For production scenarios, consider using a more specific credential.
@@ -91,14 +92,14 @@ await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
 
 // --- Agent Creation Options ---
 
-// Option 1 - Using AsAITool wrapping for OpenApiTool (MEAI + AgentFramework)
+// Option 1 - Using FoundryAITool wrapping for OpenApiTool (MEAI + AgentFramework)
 async Task<AIAgent> CreateAgentWithMEAI()
 {
     return await aiProjectClient.CreateAIAgentAsync(
         model: deploymentName,
         name: "OpenAPIToolsAgent-MEAI",
         instructions: AgentInstructions,
-        tools: [((ResponseTool)AgentTool.CreateOpenApiTool(openApiFunction)).AsAITool()]);
+        tools: [FoundryAITool.CreateOpenApiTool(openApiFunction)]);
 }
 
 // Option 2 - Using PromptAgentDefinition with AgentTool.CreateOpenApiTool (Native SDK)

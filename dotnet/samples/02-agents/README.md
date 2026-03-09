@@ -8,7 +8,7 @@ of the agent framework.
 |Sample|Description|
 |---|---|
 |[Agents](./Agents/README.md)|Step by step instructions for getting started with agents|
-|[Foundry Agents](./FoundryAgents/README.md)|Getting started with `FoundryResponsesAgent` using the Responses API (code-first, no server-side agent)|
+|[Foundry Agents](./FoundryAgents/README.md)|Getting started with `FoundryAgent` using the Responses API (code-first, no server-side agent)|
 |[Foundry Versioned Agents](./FoundryVersionedAgents/README.md)|Getting started with Microsoft Foundry Versioned Agents (server-side, versioned)|
 |[Agent Providers](./AgentProviders/README.md)|Getting started with creating agents using various providers|
 |[Agents With Retrieval Augmented Generation (RAG)](./AgentWithRAG/README.md)|Adding Retrieval Augmented Generation (RAG) capabilities to your agents.|

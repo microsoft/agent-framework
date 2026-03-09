@@ -6,7 +6,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI.Responses;
+using Microsoft.Agents.AI.AzureAI;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -44,14 +44,14 @@ Console.WriteLine($"\nDeleted agent: {agent.Name}");
 
 // --- Agent Creation Options ---
 
-// Option 1 - Using AsAITool wrapping for the ResponseTool returned by AgentTool.CreateMicrosoftFabricTool (MEAI + AgentFramework)
+// Option 1 - Using FoundryAITool wrapping for MicrosoftFabricTool (MEAI + AgentFramework)
 async Task<AIAgent> CreateAgentWithMEAIAsync()
 {
     return await aiProjectClient.CreateAIAgentAsync(
         model: deploymentName,
         name: "FabricAgent-MEAI",
         instructions: AgentInstructions,
-        tools: [((ResponseTool)AgentTool.CreateMicrosoftFabricTool(fabricToolOptions)).AsAITool()]);
+        tools: [FoundryAITool.CreateMicrosoftFabricTool(fabricToolOptions)]);
 }
 
 // Option 2 - Using PromptAgentDefinition with AgentTool.CreateMicrosoftFabricTool (Native SDK)

@@ -9,6 +9,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using OpenAI.Responses;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
@@ -119,7 +120,7 @@ async Task<AIAgent> CreateAgentWithMEAI()
         model: deploymentName,
         name: AgentNameMEAI,
         instructions: AgentInstructions,
-        tools: [((ResponseTool)memorySearchTool).AsAITool()]);
+        tools: [FoundryAITool.FromResponseTool(memorySearchTool)]);
 }
 
 // Option 2 - Using PromptAgentDefinition with MemorySearchTool (Native SDK)
