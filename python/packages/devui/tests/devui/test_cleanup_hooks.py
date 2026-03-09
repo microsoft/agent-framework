@@ -2,7 +2,6 @@
 
 """Tests for cleanup hook registration and execution."""
 
-import asyncio
 import inspect
 import tempfile
 from pathlib import Path
