@@ -42,6 +42,8 @@ $env:AZURE_OPENAI_ENDPOINT="https://your-openai.openai.azure.com/"         # Azu
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"                   # Model deployment name
 ```
 
+> These environment variables are auto-discovered by `FoundryVersionedAgent` — no manual `AIProjectClient` construction needed.
+
 **Note**: For best evaluation results, use GPT-4o or GPT-4o-mini as the evaluator model. The groundedness evaluator has been tested and tuned for these models.
 
 ## Run the sample
@@ -49,7 +51,7 @@ $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"                   # Model depl
 Navigate to the sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents/FoundryAgents_Evaluations_Step02_SelfReflection
+cd dotnet/samples/02-agents/FoundryVersionedAgents/FoundryAgents_Evaluations_Step02_SelfReflection
 dotnet run
 ```
 

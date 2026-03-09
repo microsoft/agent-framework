@@ -5,7 +5,7 @@ This sample demonstrates how to use dependency injection to register and manage 
 ## What this sample demonstrates
 
 - Setting up dependency injection with HostApplicationBuilder
-- Registering AIProjectClient as a singleton service
+- Using `FoundryVersionedAgent` with dependency injection
 - Registering AIAgent as a singleton service
 - Using agents in hosted services
 - Interactive chat loop with streaming responses
@@ -28,13 +28,15 @@ $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.c
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
 
+> These environment variables are auto-discovered by `FoundryVersionedAgent` — no manual `AIProjectClient` construction needed.
+
 ## Run the sample
 
 Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step08_DependencyInjection
+cd dotnet/samples/02-agents/FoundryVersionedAgents
+dotnet run --project .\FoundryVersionedAgents_Step08_DependencyInjection
 ```
 
 ## Expected behavior
@@ -42,7 +44,7 @@ dotnet run --project .\FoundryAgents_Step08_DependencyInjection
 The sample will:
 
 1. Create a host with dependency injection configured
-2. Register AIProjectClient and AIAgent as services
+2. Register `FoundryVersionedAgent` and AIAgent as services
 3. Create an agent named "JokerAgent" with instructions to tell jokes
 4. Start an interactive chat loop where you can ask the agent questions
 5. The agent will respond with streaming output

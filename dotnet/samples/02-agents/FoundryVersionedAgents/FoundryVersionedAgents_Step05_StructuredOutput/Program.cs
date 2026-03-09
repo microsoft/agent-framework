@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to configure an agent to produce structured output.
 
@@ -8,8 +8,6 @@ using System.Text.Json.Serialization;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using SampleApp;
-
-#pragma warning disable CA5399
 
 const string AssistantInstructions = "You are a helpful assistant that extracts structured information about people.";
 const string AssistantName = "StructuredOutputAssistant";

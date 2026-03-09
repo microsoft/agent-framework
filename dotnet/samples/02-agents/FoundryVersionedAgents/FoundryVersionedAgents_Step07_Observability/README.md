@@ -35,8 +35,8 @@ $env:APPLICATIONINSIGHTS_CONNECTION_STRING="your-connection-string"  # Optional,
 Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step07_Observability
+cd dotnet/samples/02-agents/FoundryVersionedAgents
+dotnet run --project .\FoundryVersionedAgents_Step07_Observability
 ```
 
 ## Expected behavior

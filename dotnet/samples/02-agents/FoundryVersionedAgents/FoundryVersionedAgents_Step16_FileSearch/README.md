@@ -7,7 +7,7 @@ This sample demonstrates how to use the file search tool with AI agents. The fil
 - Uploading files and creating vector stores
 - Creating agents with file search capabilities
 - Using HostedFileSearchTool (MEAI abstraction)
-- Using native SDK file search tools (ResponseTool.CreateFileSearchTool)
+- Using `FoundryAITool.CreateFileSearchTool`
 - Handling file citation annotations
 - Managing agent and resource lifecycle (creation and deletion)
 
@@ -28,13 +28,15 @@ $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.c
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
 
+> These environment variables are auto-discovered by `FoundryVersionedAgent` — no manual `AIProjectClient` construction needed.
+
 ## Run the sample
 
 Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step16_FileSearch
+cd dotnet/samples/02-agents/FoundryVersionedAgents
+dotnet run --project .\FoundryVersionedAgents_Step16_FileSearch
 ```
 
 ## Expected behavior

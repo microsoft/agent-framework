@@ -17,7 +17,7 @@ This sample demonstrates how to use the computer use tool with AI agents. The co
 
 - Creating agents with computer use capabilities
 - Using HostedComputerTool (MEAI abstraction)
-- Using native SDK computer use tools (ResponseTool.CreateComputerTool)
+- Using `FoundryAITool.CreateComputerTool`
 - Extracting computer action information from agent responses
 - Handling computer tool results (text output and screenshots)
 - Managing agent lifecycle (creation and deletion)
@@ -39,13 +39,15 @@ $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.c
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="computer-use-preview"  # Optional, defaults to computer-use-preview
 ```
 
+> These environment variables are auto-discovered by `FoundryVersionedAgent` — no manual `AIProjectClient` construction needed.
+
 ## Run the sample
 
 Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step15_ComputerUse
+cd dotnet/samples/02-agents/FoundryVersionedAgents
+dotnet run --project .\FoundryVersionedAgents_Step15_ComputerUse
 ```
 
 ## Expected behavior

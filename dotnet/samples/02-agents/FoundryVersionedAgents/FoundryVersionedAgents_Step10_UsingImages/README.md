@@ -33,13 +33,15 @@ $env:AZURE_AI_PROJECT_ENDPOINT="https://your-resource.openai.azure.com/" # Repla
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o" # Replace with your model deployment name (optional, defaults to gpt-4o)
 ```
 
+> These environment variables are auto-discovered by `FoundryVersionedAgent` — no manual `AIProjectClient` construction needed.
+
 ## Run the sample
 
 Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step10_UsingImages
+cd dotnet/samples/02-agents/FoundryVersionedAgents
+dotnet run --project .\FoundryVersionedAgents_Step10_UsingImages
 ```
 
 ## Expected behavior

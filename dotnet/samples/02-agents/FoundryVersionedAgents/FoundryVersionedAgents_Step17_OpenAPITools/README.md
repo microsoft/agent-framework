@@ -5,7 +5,7 @@ This sample demonstrates how to use OpenAPI tools with AI agents. OpenAPI tools 
 ## What this sample demonstrates
 
 - Creating agents with OpenAPI tool capabilities
-- Using AgentTool.CreateOpenApiTool with an embedded OpenAPI specification
+- Using `FoundryAITool.CreateOpenApiTool` with an embedded OpenAPI specification
 - Anonymous authentication for public APIs
 - Running an agent that can call external REST APIs
 - Managing agent lifecycle (creation and deletion)
@@ -27,13 +27,15 @@ $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.c
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
 
+> These environment variables are auto-discovered by `FoundryVersionedAgent` — no manual `AIProjectClient` construction needed.
+
 ## Run the sample
 
 Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step17_OpenAPITools
+cd dotnet/samples/02-agents/FoundryVersionedAgents
+dotnet run --project .\FoundryVersionedAgents_Step17_OpenAPITools
 ```
 
 ## Expected behavior

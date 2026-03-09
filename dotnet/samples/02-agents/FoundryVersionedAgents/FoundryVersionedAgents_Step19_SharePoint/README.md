@@ -5,7 +5,7 @@ This sample demonstrates how to use the SharePoint grounding tool with AI agents
 ## What this sample demonstrates
 
 - Creating agents with SharePoint grounding capabilities
-- Using AgentTool.CreateSharepointTool (MEAI abstraction)
+- Using `FoundryAITool.CreateSharepointTool`
 - Using native SDK SharePoint tools (PromptAgentDefinition)
 - Managing agent lifecycle (creation and deletion)
 
@@ -33,8 +33,8 @@ $env:SHAREPOINT_PROJECT_CONNECTION_ID="your-sharepoint-connection-id"  # Require
 Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step19_SharePoint
+cd dotnet/samples/02-agents/FoundryVersionedAgents
+dotnet run --project .\FoundryVersionedAgents_Step19_SharePoint
 ```
 
 ## Expected behavior
@@ -42,7 +42,7 @@ dotnet run --project .\FoundryAgents_Step19_SharePoint
 The sample will:
 
 1. Create two agents with SharePoint grounding capabilities:
-   - Option 1: Using AgentTool.CreateSharepointTool (MEAI abstraction)
+   - Option 1: Using `FoundryAITool.CreateSharepointTool`
    - Option 2: Using native SDK SharePoint tools
 2. Run the agent with a query: "List the documents available in SharePoint"
 3. The agent will use SharePoint grounding to search and retrieve relevant documents

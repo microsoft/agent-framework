@@ -42,8 +42,8 @@ $env:FABRIC_PROJECT_CONNECTION_ID="your-fabric-connection-id"  # The full ARM re
 Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step20_MicrosoftFabric
+cd dotnet/samples/02-agents/FoundryVersionedAgents
+dotnet run --project .\FoundryVersionedAgents_Step20_MicrosoftFabric
 ```
 
 ## Expected behavior

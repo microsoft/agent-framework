@@ -4,7 +4,7 @@ This sample demonstrates how to add middleware to intercept agent runs and funct
 
 ## What This Sample Shows
 
-1. Microsoft Foundry Agents integration via `AIProjectClient` and `DefaultAzureCredential`
+1. Microsoft Foundry Agents integration via `FoundryVersionedAgent`
 2. Agent run middleware (logging and monitoring)
 3. Function invocation middleware (logging and overriding tool results)
 4. Per-request agent run middleware
@@ -34,13 +34,15 @@ $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.c
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
 
+> These environment variables are auto-discovered by `FoundryVersionedAgent` — no manual `AIProjectClient` construction needed.
+
 ## Running the Sample
 
 Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step12_Middleware
+cd dotnet/samples/02-agents/FoundryVersionedAgents
+dotnet run --project .\FoundryVersionedAgents_Step12_Middleware
 ```
 
 ## Expected Behavior

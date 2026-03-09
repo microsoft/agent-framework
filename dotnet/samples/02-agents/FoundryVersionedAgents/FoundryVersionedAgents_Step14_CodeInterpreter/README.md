@@ -6,7 +6,7 @@ This sample demonstrates how to use the code interpreter tool with AI agents. Th
 
 - Creating agents with code interpreter capabilities
 - Using HostedCodeInterpreterTool (MEAI abstraction)
-- Using native SDK code interpreter tools (ResponseTool.CreateCodeInterpreterTool)
+- Using `FoundryAITool.CreateCodeInterpreterTool`
 - Extracting code inputs and results from agent responses
 - Handling code interpreter annotations
 - Managing agent lifecycle (creation and deletion)
@@ -28,13 +28,15 @@ $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.c
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
 
+> These environment variables are auto-discovered by `FoundryVersionedAgent` — no manual `AIProjectClient` construction needed.
+
 ## Run the sample
 
 Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents
-dotnet run --project .\FoundryAgents_Step14_CodeInterpreter
+cd dotnet/samples/02-agents/FoundryVersionedAgents
+dotnet run --project .\FoundryVersionedAgents_Step14_CodeInterpreter
 ```
 
 ## Expected behavior
