@@ -1458,7 +1458,7 @@ def _update_conversation_id(
     if conversation_id is None:
         return
     if "chat_options" in kwargs:
-        kwargs["chat_options"].conversation_id = conversation_id
+        kwargs["chat_options"]["conversation_id"] = conversation_id
     else:
         kwargs["conversation_id"] = conversation_id
 

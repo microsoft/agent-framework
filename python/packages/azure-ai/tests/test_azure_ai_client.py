@@ -28,7 +28,7 @@ from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
-    CodeInterpreterContainerAuto,
+    AutoCodeInterpreterToolParam,
     CodeInterpreterTool,
     FileSearchTool,
     ImageGenTool,
@@ -1296,7 +1296,7 @@ def test_from_azure_ai_tools_mcp() -> None:
 
 def test_from_azure_ai_tools_code_interpreter() -> None:
     """Test from_azure_ai_tools with Code Interpreter tool."""
-    ci_tool = CodeInterpreterTool(container=CodeInterpreterContainerAuto(file_ids=["file-1"]))
+    ci_tool = CodeInterpreterTool(container=AutoCodeInterpreterToolParam(file_ids=["file-1"]))
     parsed_tools = from_azure_ai_tools([ci_tool])
     assert len(parsed_tools) == 1
     assert parsed_tools[0]["type"] == "code_interpreter"
