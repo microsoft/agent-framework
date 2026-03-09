@@ -176,10 +176,27 @@ def validate_workflow_context_annotation(
             if type_arg is Any:
                 continue
 
+            # Check for unresolved TypeVar early with an actionable error message
+            if isinstance(type_arg, TypeVar):
+                raise ValueError(
+                    f"{context_description} {parameter_name} {param_description} "
+                    f"has an unresolved TypeVar '{type_arg}'. "
+                    f"Use @handler(input=ConcreteType, output=ConcreteType) with concrete types "
+                    f"for parameterized executors."
+                )
+
             # Check if it's a union type and validate each member
             union_origin = get_origin(type_arg)
             if union_origin in (Union, UnionType):
                 union_members = get_args(type_arg)
+                typevar_members = [m for m in union_members if isinstance(m, TypeVar)]
+                if typevar_members:
+                    raise ValueError(
+                        f"{context_description} {parameter_name} {param_description} "
+                        f"contains unresolved TypeVar(s): {typevar_members}. "
+                        f"Use @handler(input=ConcreteType, output=ConcreteType) with concrete types "
+                        f"for parameterized executors."
+                    )
                 invalid_members = [m for m in union_members if not _is_type_like(m) and m is not Any]
                 if invalid_members:
                     raise ValueError(

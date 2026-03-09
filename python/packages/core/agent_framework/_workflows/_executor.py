@@ -622,6 +622,20 @@ def handler(
                 resolve_type_annotation(workflow_output, func.__globals__) if workflow_output is not None else None
             )
 
+            # Check for unresolved TypeVars in explicit type parameters
+            for param_name, param_type in [
+                ("input", resolved_input_type),
+                ("output", resolved_output_type),
+                ("workflow_output", resolved_workflow_output_type),
+            ]:
+                if param_type is not None and isinstance(param_type, TypeVar):
+                    raise ValueError(
+                        f"Handler '{func.__name__}' has an unresolved TypeVar '{param_type}' "
+                        f"as its {param_name} type. "
+                        f"Use @handler(input=ConcreteType, output=ConcreteType) with concrete types "
+                        f"for parameterized executors."
+                    )
+
             # Validate signature structure (correct number of params, ctx is WorkflowContext)
             # but skip type extraction since we're using explicit types
             _validate_handler_signature(func, skip_message_annotation=True)
@@ -650,6 +664,15 @@ def handler(
                 raise ValueError(
                     f"Handler {func.__name__} requires either a message parameter type annotation "
                     "or explicit type parameters (input, output, workflow_output)"
+                )
+
+            # Check for unresolved TypeVar in introspected message type
+            if isinstance(message_type, TypeVar):
+                raise ValueError(
+                    f"Handler '{func.__name__}' has an unresolved TypeVar '{message_type}' "
+                    f"as its message type. "
+                    f"Use @handler(input=ConcreteType, output=ConcreteType) with concrete types "
+                    f"for parameterized executors."
                 )
 
             final_output_types = inferred_output_types
