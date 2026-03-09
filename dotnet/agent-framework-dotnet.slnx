@@ -103,6 +103,7 @@
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step01_ChatHistoryMemory/AgentWithMemory_Step01_ChatHistoryMemory.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step02_MemoryUsingMem0/AgentWithMemory_Step02_MemoryUsingMem0.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step04_MemoryUsingFoundry/AgentWithMemory_Step04_MemoryUsingFoundry.csproj" />
+    <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step05_BoundedChatHistory/AgentWithMemory_Step05_BoundedChatHistory.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AgentWithOpenAI/">
     <File Path="samples/02-agents/AgentWithOpenAI/README.md" />
@@ -284,8 +285,11 @@
   </Folder>
   <Folder Name="/Samples/05-end-to-end/HostedAgents/">
     <Project Path="samples/05-end-to-end/HostedAgents/AgentsInWorkflows/AgentsInWorkflows.csproj" />
+    <Project Path="samples/05-end-to-end/HostedAgents/AgentThreadAndHITL/AgentThreadAndHITL.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithHostedMCP/AgentWithHostedMCP.csproj" />
+    <Project Path="samples/05-end-to-end/HostedAgents/AgentWithLocalTools/AgentWithLocalTools.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
+    <Project Path="samples/05-end-to-end/HostedAgents/AgentWithTools/AgentWithTools.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/FoundryMultiAgent/FoundryMultiAgent.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/FoundrySingleAgent/FoundrySingleAgent.csproj" />
   </Folder>

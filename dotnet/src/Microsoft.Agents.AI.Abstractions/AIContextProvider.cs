@@ -28,6 +28,14 @@ namespace Microsoft.Agents.AI;
 /// <see cref="InvokingAsync"/> to provide context, and optionally called at the end of invocation via
 /// <see cref="InvokedAsync"/> to process results.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> Context providers may inject messages with any role, including <c>system</c>, which
+/// has the highest trust level and directly shapes LLM behavior. Developers must ensure that all providers attached to an agent
+/// are trusted. Agent Framework does not validate or filter the data returned by providers — it is accepted as-is and merged into
+/// the request context. If a provider retrieves data from an external source (e.g., a vector database or memory service), be aware
+/// that a compromised data source could introduce adversarial content designed to manipulate LLM behavior via indirect prompt injection.
+/// Implementers should validate and sanitize data retrieved from external sources before returning it.
+/// </para>
 /// </remarks>
 public abstract class AIContextProvider
 {
@@ -95,6 +103,11 @@ public abstract class AIContextProvider
     /// <item><description>Providing function tools for the current invocation</description></item>
     /// <item><description>Injecting contextual messages from conversation history</description></item>
     /// </list>
+    /// </para>
+    /// <para>
+    /// <strong>Security consideration:</strong> Data retrieved from external sources (e.g., vector databases, memory services, or
+    /// knowledge bases) may contain adversarial content designed to influence LLM behavior via indirect prompt injection.
+    /// Implementers should validate data integrity and consider the trustworthiness of the data source.
     /// </para>
     /// </remarks>
     public ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
@@ -194,6 +207,11 @@ public abstract class AIContextProvider
     /// <para>
     /// In contrast with <see cref="InvokingCoreAsync"/>, this method only returns additional context to be merged with the input,
     /// while <see cref="InvokingCoreAsync"/> is responsible for returning the full merged <see cref="AIContext"/> for the invocation.
+    /// </para>
+    /// <para>
+    /// <strong>Security consideration:</strong> Any messages, tools, or instructions returned by this method will be merged into the
+    /// AI request context. If data is retrieved from external or untrusted sources, implementers should validate and sanitize it
+    /// to prevent indirect prompt injection attacks.
     /// </para>
     /// </remarks>
     /// <param name="context">Contains the request context including the caller provided messages that will be used by the agent for this invocation.</param>
@@ -298,6 +316,10 @@ public abstract class AIContextProvider
     /// </para>
     /// <para>
     /// The default implementation of <see cref="InvokedCoreAsync"/> only calls this method if the invocation succeeded.
+    /// </para>
+    /// <para>
+    /// <strong>Security consideration:</strong> Messages being processed/stored may contain PII and sensitive conversation content.
+    /// Implementers should ensure appropriate encryption at rest and access controls for the storage backend.
     /// </para>
     /// </remarks>
     protected virtual ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default) =>

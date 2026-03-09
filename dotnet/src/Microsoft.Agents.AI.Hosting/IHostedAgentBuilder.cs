@@ -18,4 +18,9 @@ public interface IHostedAgentBuilder
     /// Gets the service collection for configuration.
     /// </summary>
     IServiceCollection ServiceCollection { get; }
+
+    /// <summary>
+    /// Gets the DI service lifetime used for the agent registration.
+    /// </summary>
+    ServiceLifetime Lifetime { get; }
 }

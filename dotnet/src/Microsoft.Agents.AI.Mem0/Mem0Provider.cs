@@ -13,16 +13,38 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Mem0;
 
+#pragma warning disable IDE0001 // Simplify Names - Microsoft.Extensions.Logging.LogLevel.Trace doesn't get found in net472 when removing the namespace.
 /// <summary>
 /// Provides a Mem0 backed <see cref="MessageAIContextProvider"/> that persists conversation messages as memories
 /// and retrieves related memories to augment the agent invocation context.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The provider stores user, assistant and system messages as Mem0 memories and retrieves relevant memories
 /// for new invocations using a semantic search endpoint. Retrieved memories are injected as user messages
 /// to the model, prefixed by a configurable context prompt.
+/// </para>
+/// <para>
+/// <strong>Security considerations:</strong>
+/// <list type="bullet">
+/// <item><description><strong>External service trust:</strong> This provider communicates with an external Mem0 service over HTTP.
+/// Agent Framework does not manage authentication, encryption, or connection details for this service — these are the responsibility
+/// of the <see cref="HttpClient"/> configuration. Ensure the HTTP client is configured with appropriate authentication
+/// and uses HTTPS to protect data in transit.</description></item>
+/// <item><description><strong>PII and sensitive data:</strong> Conversation messages (including user inputs, LLM responses, and system
+/// instructions) are sent to the external Mem0 service for storage. These messages may contain PII or sensitive information.
+/// Ensure the Mem0 service is configured with appropriate data retention policies and access controls.</description></item>
+/// <item><description><strong>Indirect prompt injection:</strong> Memories retrieved from the Mem0 service are injected into the LLM
+/// context as user messages. If the memory store is compromised, adversarial content could influence LLM behavior. The data
+/// returned from the service is accepted as-is without validation or sanitization.</description></item>
+/// <item><description><strong>Trace logging:</strong> When <see cref="Microsoft.Extensions.Logging.LogLevel.Trace"/> is enabled,
+/// full memory content (including search queries and results) may be logged. This data may contain PII and should not be enabled
+/// in production environments.</description></item>
+/// </list>
+/// </para>
 /// </remarks>
 public sealed class Mem0Provider : MessageAIContextProvider
+#pragma warning restore IDE0001 // Simplify Names
 {
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
 

@@ -37,6 +37,14 @@ namespace Microsoft.Agents.AI;
 /// A <see cref="ChatHistoryProvider"/> is only relevant for scenarios where the underlying AI service that the agent is using
 /// does not use in-service chat history storage.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> Agent Framework does not validate or filter the messages returned by the provider
+/// during load — they are accepted as-is and treated identically to user-supplied messages. Implementers must ensure that only
+/// trusted data is returned. If the underlying storage is compromised, adversarial content could influence LLM behavior via
+/// indirect prompt injection — for example, injected messages could alter the conversation context or impersonate different roles.
+/// Messages stored in chat history may contain PII and sensitive conversation content; implementers should consider encryption
+/// at rest and appropriate access controls for the storage backend.
+/// </para>
 /// </remarks>
 public abstract class ChatHistoryProvider
 {
@@ -159,6 +167,11 @@ public abstract class ChatHistoryProvider
     /// Messages are returned in chronological order to maintain proper conversation flow and context for the agent.
     /// The oldest messages appear first in the collection, followed by more recent messages.
     /// </para>
+    /// <para>
+    /// <strong>Security consideration:</strong> Messages loaded from storage should be treated with the same caution as user-supplied
+    /// messages. A compromised storage backend could alter message roles to escalate trust (e.g., changing <c>user</c> messages to
+    /// <c>system</c> messages) or inject adversarial content that influences LLM behavior.
+    /// </para>
     /// </remarks>
     /// <param name="context">Contains the request context including the caller provided messages that will be used by the agent for this invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
@@ -272,6 +285,10 @@ public abstract class ChatHistoryProvider
     /// </para>
     /// <para>
     /// The default implementation of <see cref="InvokedCoreAsync"/> only calls this method if the invocation succeeded.
+    /// </para>
+    /// <para>
+    /// <strong>Security consideration:</strong> Messages being stored may contain PII and sensitive conversation content.
+    /// Implementers should ensure appropriate encryption at rest and access controls for the storage backend.
     /// </para>
     /// </remarks>
     protected virtual ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default) =>

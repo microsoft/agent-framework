@@ -17,6 +17,24 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides a Cosmos DB implementation of the <see cref="ChatHistoryProvider"/> abstract class.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <strong>Security considerations:</strong>
+/// <list type="bullet">
+/// <item><description><strong>PII and sensitive data:</strong> Chat history stored in Cosmos DB may contain PII, sensitive conversation
+/// content, and system instructions. Ensure the Cosmos DB account is configured with appropriate access controls, encryption at rest,
+/// and network security (e.g., private endpoints, virtual network rules). The <see cref="MessageTtlSeconds"/> property can be used to
+/// automatically expire messages and limit data retention.</description></item>
+/// <item><description><strong>Compromised store risks:</strong> Agent Framework does not validate or filter messages loaded from the
+/// store — they are accepted as-is. If the Cosmos DB store is compromised, adversarial content could be injected into the conversation
+/// context, potentially influencing LLM behavior via indirect prompt injection. Altered message roles (e.g., changing <c>user</c> to
+/// <c>system</c>) could escalate trust levels.</description></item>
+/// <item><description><strong>Authentication:</strong> Agent Framework does not manage authentication or encryption for the Cosmos DB
+/// connection — these are the responsibility of the <see cref="CosmosClient"/> configuration. Use managed identity
+/// or token-based authentication where possible, and avoid embedding connection strings with keys in source code.</description></item>
+/// </list>
+/// </para>
+/// </remarks>
 [RequiresUnreferencedCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with trimming.")]
 [RequiresDynamicCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with NativeAOT.")]
 public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
