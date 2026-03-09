@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use a MessageCompactionContextProvider with a compaction pipeline
+// This sample demonstrates how to use a CompactionProvider with a compaction pipeline
 // as an AIContextProvider for an agent's in-run context management. The pipeline chains multiple
 // compaction strategies from gentle to aggressive:
 //   1. ToolResultCompactionStrategy - Collapses old tool-call groups into concise summaries
