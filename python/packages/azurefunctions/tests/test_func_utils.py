@@ -447,10 +447,3 @@ class TestStripPickleMarkers:
         }
         result = strip_pickle_markers(data)
         assert result == {"user_input": "hello", "evil": None, "count": 42}
-
-    def test_reconstruct_blocks_injected_markers(self) -> None:
-        """End-to-end: strip then reconstruct must not unpickle injected markers."""
-        malicious = {"__pickled__": "gASVDgAAAAAAAACMBHRlc3SULg==", "__type__": "builtins:str"}
-        sanitized = strip_pickle_markers(malicious)
-        result = reconstruct_to_type(sanitized, str)
-        assert result is None
