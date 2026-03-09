@@ -122,10 +122,11 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     [InlineData("-leading-hyphen")]
     [InlineData("trailing-hyphen-")]
     [InlineData("has spaces")]
+    [InlineData("consecutive--hyphens")]
     public void DiscoverAndLoadSkills_InvalidName_ExcludesSkill(string invalidName)
     {
         // Arrange
-        string skillDir = Path.Combine(this._testRoot, "invalid-name-test");
+        string skillDir = Path.Combine(this._testRoot, invalidName);
         if (Directory.Exists(skillDir))
         {
             Directory.Delete(skillDir, recursive: true);
@@ -147,15 +148,19 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     public void DiscoverAndLoadSkills_DuplicateNames_KeepsFirstOnly()
     {
         // Arrange
-        string dir1 = Path.Combine(this._testRoot, "skill-a");
-        string dir2 = Path.Combine(this._testRoot, "skill-b");
+        string dir1 = Path.Combine(this._testRoot, "dupe");
+        string dir2 = Path.Combine(this._testRoot, "subdir");
         Directory.CreateDirectory(dir1);
         Directory.CreateDirectory(dir2);
+
+        // Create a nested duplicate: subdir/dupe/SKILL.md
+        string nestedDir = Path.Combine(dir2, "dupe");
+        Directory.CreateDirectory(nestedDir);
         File.WriteAllText(
             Path.Combine(dir1, "SKILL.md"),
             "---\nname: dupe\ndescription: First\n---\nFirst body.");
         File.WriteAllText(
-            Path.Combine(dir2, "SKILL.md"),
+            Path.Combine(nestedDir, "SKILL.md"),
             "---\nname: dupe\ndescription: Second\n---\nSecond body.");
 
         // Act
@@ -166,6 +171,21 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Single(skills);
         string desc = skills["dupe"].Frontmatter.Description;
         Assert.True(desc == "First" || desc == "Second", $"Unexpected description: {desc}");
+    }
+
+    [Fact]
+    public void DiscoverAndLoadSkills_NameMismatchesDirectory_ExcludesSkill()
+    {
+        // Arrange — directory name differs from the frontmatter name
+        _ = this.CreateSkillDirectoryWithRawContent(
+            "wrong-dir-name",
+            "---\nname: actual-skill-name\ndescription: A skill\n---\nBody.");
+
+        // Act
+        var skills = this._loader.DiscoverAndLoadSkills(new[] { this._testRoot });
+
+        // Assert
+        Assert.Empty(skills);
     }
 
     [Fact]

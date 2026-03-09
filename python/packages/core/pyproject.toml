@@ -34,7 +34,7 @@ dependencies = [
     # connectors and functions
     "openai>=1.99.0",
     "azure-identity>=1,<2",
-    "azure-ai-projects == 2.0.0b4",
+    "azure-ai-projects>=2.0.0,<3.0",
     "mcp[ws]>=1.24.0,<2",
     "packaging>=24.1",
 ]
@@ -55,7 +55,7 @@ all = [
     "agent-framework-devui",
     "agent-framework-durabletask",
     "agent-framework-foundry-local",
-    "agent-framework-github-copilot",
+    "agent-framework-github-copilot; python_version >= '3.11'",
     "agent-framework-lab",
     "agent-framework-mem0",
     "agent-framework-ollama",

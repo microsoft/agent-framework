@@ -3449,3 +3449,66 @@ async def test_streaming_function_calling_response_includes_reasoning_and_tool_r
     reasoning_contents = [c for msg in response.messages for c in msg.contents if c.type == "text_reasoning"]
     assert len(reasoning_contents) >= 1
     assert reasoning_contents[0].id == "rs_test123"
+
+
+# region _update_conversation_id unit tests
+
+
+class TestUpdateConversationId:
+    """Tests for _update_conversation_id handling dict chat_options."""
+
+    def test_chat_options_as_dict(self):
+        """When chat_options is a plain dict, conversation_id should be set via key access."""
+        from agent_framework._tools import _update_conversation_id
+
+        kwargs: dict[str, Any] = {"chat_options": {}}
+        _update_conversation_id(kwargs, "conv_1")
+        assert kwargs["chat_options"]["conversation_id"] == "conv_1"
+
+    def test_chat_options_as_typed_dict(self):
+        """When chat_options is a ChatOptions TypedDict, conversation_id should be set via key access."""
+        from agent_framework import ChatOptions
+        from agent_framework._tools import _update_conversation_id
+
+        opts: ChatOptions = {"temperature": 0.5}
+        kwargs: dict[str, Any] = {"chat_options": opts}
+        _update_conversation_id(kwargs, "conv_2")
+        assert kwargs["chat_options"]["conversation_id"] == "conv_2"
+
+    def test_no_chat_options_falls_back_to_kwargs(self):
+        """When chat_options is absent, conversation_id should be set directly on kwargs."""
+        from agent_framework._tools import _update_conversation_id
+
+        kwargs: dict[str, Any] = {}
+        _update_conversation_id(kwargs, "conv_4")
+        assert kwargs["conversation_id"] == "conv_4"
+
+    def test_none_conversation_id_is_noop(self):
+        """When conversation_id is None, kwargs should not be modified."""
+        from agent_framework._tools import _update_conversation_id
+
+        kwargs: dict[str, Any] = {"chat_options": {}}
+        _update_conversation_id(kwargs, None)
+        assert "conversation_id" not in kwargs["chat_options"]
+        assert "conversation_id" not in kwargs
+
+    def test_options_dict_also_updated(self):
+        """The optional options dict should also receive conversation_id."""
+        from agent_framework._tools import _update_conversation_id
+
+        kwargs: dict[str, Any] = {"chat_options": {}}
+        options: dict[str, Any] = {}
+        _update_conversation_id(kwargs, "conv_5", options)
+        assert kwargs["chat_options"]["conversation_id"] == "conv_5"
+        assert options["conversation_id"] == "conv_5"
+
+    def test_dict_overwrites_existing_conversation_id(self):
+        """When a dict already has a conversation_id, it should be overwritten."""
+        from agent_framework._tools import _update_conversation_id
+
+        kwargs: dict[str, Any] = {"chat_options": {"conversation_id": "old_id"}}
+        _update_conversation_id(kwargs, "new_id")
+        assert kwargs["chat_options"]["conversation_id"] == "new_id"
+
+
+# endregion

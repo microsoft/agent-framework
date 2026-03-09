@@ -327,7 +327,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
 
         # Start with a copy of options
-        run_options = {k: v for k, v in options.items() if v is not None and k not in {"instructions", "tools"}}
+        run_options = {
+            k: v for k, v in options.items() if v is not None and k not in {"instructions", "tools", "conversation_id"}
+        }
 
         # messages
         if messages and "messages" not in run_options:
