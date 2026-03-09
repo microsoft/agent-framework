@@ -82,7 +82,7 @@ def strip_pickle_markers(data: Any) -> Any:
         return {k: strip_pickle_markers(v) for k, v in typed_dict.items()}
 
     if isinstance(data, list):
-        typed_list = cast(list[Any], data)
+        typed_list = cast(list[Any], data)  # type: ignore[redundant-cast]
         return [strip_pickle_markers(item) for item in typed_list]
 
     return data
