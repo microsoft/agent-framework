@@ -104,7 +104,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                         yield break; // Exit if cancellation is requested
                     }
 
-                    bool hadRequestHaltEvent = false;
+                    RequestHaltEvent? haltEvent = null;
                     foreach (WorkflowEvent raisedEvent in Interlocked.Exchange(ref eventSink, []))
                     {
                         if (linkedSource.Token.IsCancellationRequested)
@@ -113,9 +113,9 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                         }
 
                         // TODO: Do we actually want to interpret this as a termination request?
-                        if (raisedEvent is RequestHaltEvent)
+                        if (raisedEvent is RequestHaltEvent halt)
                         {
-                            hadRequestHaltEvent = true;
+                            haltEvent = halt;
                         }
                         else
                         {
@@ -123,12 +123,12 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                         }
                     }
 
-                    if (hadRequestHaltEvent || linkedSource.Token.IsCancellationRequested)
+                    if (haltEvent is not null || linkedSource.Token.IsCancellationRequested)
                     {
                         // If we had a completion event, we are done.
-                        if (hadRequestHaltEvent)
+                        if (haltEvent is not null)
                         {
-                            yield return new WorkflowCompletedEvent();
+                            yield return new WorkflowCompletedEvent(haltEvent.Data);
                             runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
                         }
 
