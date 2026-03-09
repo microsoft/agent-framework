@@ -282,7 +282,7 @@ public sealed class FoundryVersionedAgent : AIAgent
 
         var agentOptions = AzureAIProjectChatClientExtensions.CreateChatClientAgentOptions(
             agentVersion,
-            chatOptions: (ChatOptions?)null,
+            chatOptions: null,
             requireInvocableTools: false);
 
         var innerAgent = AzureAIProjectChatClientExtensions.CreateChatClientAgent(aiProjectClient, agentVersion, agentOptions, chatClientFactory, services: null);
@@ -431,10 +431,10 @@ public sealed class FoundryVersionedAgent : AIAgent
 
     #endregion
 
-    #region DeleteAIAgentAsync
+    #region DeleteAIAgentAsync / DeleteAIAgentVersionAsync
 
     /// <summary>
-    /// Deletes the server-side agent associated with the specified <see cref="FoundryVersionedAgent"/>.
+    /// Deletes the server-side agent and all its versions associated with the specified <see cref="FoundryVersionedAgent"/>.
     /// </summary>
     /// <param name="agent">The agent to delete. Cannot be <see langword="null"/>.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
@@ -451,6 +451,30 @@ public sealed class FoundryVersionedAgent : AIAgent
         }
 
         await agent._aiProjectClient.Agents.DeleteAgentAsync(agent.Name, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Deletes only the specific server-side agent version associated with the specified <see cref="FoundryVersionedAgent"/>.
+    /// Other versions of the same agent are not affected.
+    /// </summary>
+    /// <param name="agent">The agent whose specific version should be deleted. Cannot be <see langword="null"/>.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A task representing the asynchronous delete operation.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="agent"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">The agent does not have a name or version information.</exception>
+    public static async Task DeleteAIAgentVersionAsync(FoundryVersionedAgent agent, CancellationToken cancellationToken = default)
+    {
+        Throw.IfNull(agent);
+
+        if (string.IsNullOrWhiteSpace(agent.Name))
+        {
+            throw new InvalidOperationException("The agent does not have a name and cannot be deleted.");
+        }
+
+        string version = agent._agentVersion?.Version
+            ?? throw new InvalidOperationException("The agent does not have version information. Use DeleteAIAgentAsync to delete the agent by name.");
+
+        await agent._aiProjectClient.Agents.DeleteAgentVersionAsync(agent.Name, version, cancellationToken).ConfigureAwait(false);
     }
 
     #endregion
