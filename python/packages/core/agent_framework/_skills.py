@@ -945,9 +945,9 @@ class SkillsProvider(BaseContextProvider):
         if not script:
             return f"Error: Script '{script_name}' not found in skill '{skill_name}'."
 
-        try:
-            # Code-defined scripts: execute the function directly
-            if script.function is not None and script.path is None:
+        # Code-defined scripts: execute the function directly
+        if script.function is not None and script.path is None:
+            try:
                 if script._accepts_kwargs:  # pyright: ignore[reportPrivateUsage]
                     merged = {**kwargs, **(args or {})}
                     result = script.function(**merged)
@@ -956,16 +956,20 @@ class SkillsProvider(BaseContextProvider):
                 if inspect.isawaitable(result):
                     result = await result
                 return result
+            except Exception:
+                logger.exception("Error executing code-defined script '%s' in skill '%s'", script_name, skill_name)
+                return f"Error: Failed to execute script '{script_name}' in skill '{skill_name}'."
 
-            # File-based scripts: delegate to the executor
-            if self._script_executor is None:
-                return (
-                    f"Error: Script '{script_name}' in skill '{skill_name}' requires an executor. "
-                    "Provide a script_executor for file-based scripts."
-                )
+        # File-based scripts: delegate to the executor
+        if self._script_executor is None:
+            return (
+                f"Error: Script '{script_name}' in skill '{skill_name}' requires an executor. "
+                "Provide a script_executor for file-based scripts."
+            )
+        try:
             return await self._script_executor.execute(skill, script, args)
-        except Exception as ex:
-            logger.exception("Error executing script '%s' in skill '%s'", script_name, skill_name)
+        except Exception:
+            logger.exception("Error executing file-based script '%s' in skill '%s'", script_name, skill_name)
             return f"Error: Failed to execute script '{script_name}' in skill '{skill_name}'."
 
     async def _read_skill_resource(self, skill_name: str, resource_name: str, **kwargs: Any) -> str:
