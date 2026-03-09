@@ -809,7 +809,11 @@ class Content:
         elif isinstance(result, str):
             items_list = [Content.from_text(result)]
         elif result is not None:
-            items_list = [Content.from_text(str(result))]
+            try:
+                text = json.dumps(result, default=str)
+            except (TypeError, ValueError):
+                text = str(result)
+            items_list = [Content.from_text(text)]
         else:
             items_list = [Content.from_text("")]
 

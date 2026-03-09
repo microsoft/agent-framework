@@ -591,8 +591,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         args["content"] = "\n".join(text_parts) if text_parts else ""
                     else:
                         args["content"] = content.result if content.result is not None else ""
-                    if args:
-                        all_messages.append(args)
+                    all_messages.append(args)
                     continue
                 case "text_reasoning" if (protected_data := content.protected_data) is not None:
                     # Buffer reasoning to attach to the next message with content/tool_calls

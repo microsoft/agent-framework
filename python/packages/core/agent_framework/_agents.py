@@ -1338,10 +1338,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 ) from e
 
             # Convert result to MCP content
-            if isinstance(result, str):
-                return [types.TextContent(type="text", text=result)]  # type: ignore[attr-defined]
-
-            return [types.TextContent(type="text", text=str(result))]  # type: ignore[attr-defined]
+            mcp_content: list[types.TextContent | types.ImageContent | types.EmbeddedResource] = []  # type: ignore[attr-defined]
+            for c in result:
+                if c.type == "text" and c.text:
+                    mcp_content.append(types.TextContent(type="text", text=c.text))  # type: ignore[attr-defined]
+            return mcp_content or [types.TextContent(type="text", text="")]  # type: ignore[attr-defined]
 
         @server.set_logging_level()  # type: ignore
         async def _set_logging_level(level: types.LoggingLevel) -> None:  # type: ignore

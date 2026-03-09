@@ -535,8 +535,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     result = await ai_func.invoke(arguments=args_instance)
                 else:
                     result = await ai_func.invoke(arguments=args)
+                text = "\n".join(c.text for c in result if c.type == "text" and c.text)
                 return ToolResult(
-                    text_result_for_llm=str(result),
+                    text_result_for_llm=text,
                     result_type="success",
                 )
             except Exception as e:

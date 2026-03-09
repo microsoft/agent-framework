@@ -867,7 +867,9 @@ class MCPTool:
             kwargs: Arguments to pass to the tool.
 
         Returns:
-            A string for text-only results, or a list of Content for rich media results.
+            A list of Content items representing the tool output.  The default
+            ``parse_tool_results`` always returns ``list[Content]``; a custom
+            callback may return a plain ``str`` which is also accepted.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected, tools are not loaded,

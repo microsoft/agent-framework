@@ -653,8 +653,6 @@ class FunctionTool(SerializationMixin):
         if isinstance(result, str):
             return [Content.from_text(result)]
         if isinstance(result, Content):
-            if result.type == "text":
-                return [Content.from_text(result.text or "")]
             return [result]
         if isinstance(result, list) and any(isinstance(item, Content) for item in result):  # type: ignore[reportUnknownVariableType]
             parsed_items: list[Content] = []
