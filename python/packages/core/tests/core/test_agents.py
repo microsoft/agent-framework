@@ -1452,4 +1452,72 @@ async def test_stores_by_default_with_store_false_injects_inmemory(client: Suppo
 # endregion
 
 
+# region as_tool user_input_request propagation
+
+
+async def test_as_tool_raises_on_user_input_request_non_streaming(client: SupportsChatGetResponse) -> None:
+    """Test that as_tool raises UserInputRequiredException when the sub-agent response has user_input_requests."""
+    from agent_framework.exceptions import UserInputRequiredException
+
+    # Configure mock client to return a response with oauth_consent_request content
+    consent_content = Content.from_oauth_consent_request(
+        consent_link="https://login.microsoftonline.com/consent",
+    )
+    client.responses = [  # type: ignore[attr-defined]
+        ChatResponse(messages=Message(role="assistant", contents=[consent_content])),
+    ]
+
+    agent = Agent(client=client, name="OAuthAgent", description="Agent requiring consent")
+    agent_tool = agent.as_tool()
+
+    with raises(UserInputRequiredException) as exc_info:
+        await agent_tool.invoke(arguments=agent_tool.input_model(task="Do something"))
+
+    assert len(exc_info.value.contents) == 1
+    assert exc_info.value.contents[0].type == "oauth_consent_request"
+    assert exc_info.value.contents[0].consent_link == "https://login.microsoftonline.com/consent"
+
+
+async def test_as_tool_raises_on_user_input_request_streaming(client: SupportsChatGetResponse) -> None:
+    """Test that as_tool raises UserInputRequiredException in streaming mode."""
+    from agent_framework.exceptions import UserInputRequiredException
+
+    consent_content = Content.from_oauth_consent_request(
+        consent_link="https://login.microsoftonline.com/consent",
+    )
+    client.streaming_responses = [  # type: ignore[attr-defined]
+        [ChatResponseUpdate(contents=[consent_content], role="assistant")],
+    ]
+
+    collected_updates: list[AgentResponseUpdate] = []
+
+    def stream_callback(update: AgentResponseUpdate) -> None:
+        collected_updates.append(update)
+
+    agent = Agent(client=client, name="OAuthAgent", description="Agent requiring consent")
+    agent_tool = agent.as_tool(stream_callback=stream_callback)
+
+    with raises(UserInputRequiredException) as exc_info:
+        await agent_tool.invoke(arguments=agent_tool.input_model(task="Do something"))
+
+    assert len(exc_info.value.contents) == 1
+    assert exc_info.value.contents[0].type == "oauth_consent_request"
+    # Stream callback should still have received the update before the exception
+    assert len(collected_updates) > 0
+
+
+async def test_as_tool_returns_text_when_no_user_input_request(client: SupportsChatGetResponse) -> None:
+    """Test that as_tool returns text normally when there are no user_input_requests."""
+    client.responses = [  # type: ignore[attr-defined]
+        ChatResponse(messages=Message(role="assistant", text="Here is the result")),
+    ]
+
+    agent = Agent(client=client, name="NormalAgent", description="Normal agent")
+    agent_tool = agent.as_tool()
+
+    result = await agent_tool.invoke(arguments=agent_tool.input_model(task="Do something"))
+
+    assert result == "Here is the result"
+
+
 # endregion

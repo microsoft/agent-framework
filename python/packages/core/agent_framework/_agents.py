@@ -51,7 +51,7 @@ from ._types import (
     map_chat_to_agent_update,
     normalize_messages,
 )
-from .exceptions import AgentInvalidResponseException
+from .exceptions import AgentInvalidResponseException, UserInputRequiredException
 from .observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 13):
@@ -532,7 +532,10 @@ class BaseAgent(SerializationMixin):
 
             if stream_callback is None:
                 # Use non-streaming mode
-                return (await self.run(input_text, stream=False, session=parent_session, **forwarded_kwargs)).text
+                response = await self.run(input_text, stream=False, session=parent_session, **forwarded_kwargs)
+                if response.user_input_requests:
+                    raise UserInputRequiredException(contents=response.user_input_requests)
+                return response.text
 
             # Use streaming mode - accumulate updates and create final response
             response_updates: list[AgentResponseUpdate] = []
@@ -544,7 +547,10 @@ class BaseAgent(SerializationMixin):
                     stream_callback(update)
 
             # Create final text from accumulated updates
-            return AgentResponse.from_updates(response_updates).text
+            final_response = AgentResponse.from_updates(response_updates)
+            if final_response.user_input_requests:
+                raise UserInputRequiredException(contents=final_response.user_input_requests)
+            return final_response.text
 
         agent_tool: FunctionTool = FunctionTool(
             name=tool_name,

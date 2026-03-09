@@ -37,7 +37,7 @@ from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from ._serialization import SerializationMixin
-from .exceptions import ToolException
+from .exceptions import ToolException, UserInputRequiredException
 from .observability import (
     OPERATION_DURATION_BUCKET_BOUNDARIES,
     OtelAttr,
@@ -1228,6 +1228,8 @@ async def _auto_invoke_function(
                 result=function_result,
                 additional_properties=function_call_content.additional_properties,
             )
+        except UserInputRequiredException:
+            raise
         except Exception as exc:
             message = "Error: Function failed."
             if config.get("include_detailed_errors", False):
@@ -1273,6 +1275,8 @@ async def _auto_invoke_function(
                 result=middleware_context.result,
                 additional_properties=function_call_content.additional_properties,
             )
+        raise
+    except UserInputRequiredException:
         raise
     except Exception as exc:
         message = "Error: Function failed."
@@ -1407,6 +1411,21 @@ async def _try_execute_function_calls(
                 result=exc.result,
             )
             return (result_content, True)
+        except UserInputRequiredException as exc:
+            # Sub-agent requires user input — propagate the Content items so
+            # _handle_function_call_results can surface them to the parent response.
+            if exc.contents:
+                content = exc.contents[0]
+                content.call_id = function_call.call_id  # type: ignore[attr-defined]
+                return (content, False)
+            return (
+                Content.from_function_result(
+                    call_id=function_call.call_id,  # type: ignore[arg-type]
+                    result="Tool requires user input but no request details were provided.",
+                    exception="UserInputRequiredException",
+                ),
+                False,
+            )
 
     execution_results = await asyncio.gather(*[
         invoke_with_termination_handling(function_call, seq_idx) for seq_idx, function_call in enumerate(function_calls)
@@ -1645,7 +1664,10 @@ def _handle_function_call_results(
 ) -> FunctionRequestResult:
     from ._types import Message
 
-    if any(fccr.type in {"function_approval_request", "function_call"} for fccr in function_call_results):
+    if any(
+        fccr.type in {"function_approval_request", "function_call"} or fccr.user_input_request
+        for fccr in function_call_results
+    ):
         # Only add items that aren't already in the message (e.g. function_approval_request wrappers).
         # Declaration-only function_call items are already present from the LLM response.
         new_items = [fccr for fccr in function_call_results if fccr.type != "function_call"]
