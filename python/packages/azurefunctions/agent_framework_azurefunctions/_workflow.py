@@ -976,7 +976,7 @@ def _deserialize_hitl_response(response_data: Any, response_type_str: str | None
         logger.debug("Response data is not a dict, returning as-is: %s", type(response_data).__name__)
         return response_data
 
-    # Try to deserialize using the type hint
+    # Try to reconstruct using the type hint (Pydantic / dataclass)
     if response_type_str:
         response_type = resolve_type(response_type_str)
         if response_type:
@@ -986,6 +986,8 @@ def _deserialize_hitl_response(response_data: Any, response_type_str: str | None
             return result
         logger.warning("Could not resolve response type: %s", response_type_str)
 
-    # Fall back to generic deserialization
-    logger.debug("Falling back to generic deserialization")
-    return deserialize_value(response_data)
+    # No type hint available — return the sanitized dict as-is.
+    # We intentionally do NOT call deserialize_value() here because HITL
+    # response data is untrusted and must never flow into pickle.loads().
+    logger.debug("No type hint; returning sanitized data as-is")
+    return response_data

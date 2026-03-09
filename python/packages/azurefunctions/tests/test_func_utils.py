@@ -354,18 +354,17 @@ class TestReconstructToType:
         assert result.comment == "Great"
 
     def test_reconstruct_from_checkpoint_markers(self) -> None:
-        """Test that data with checkpoint markers is stripped (security).
+        """Test that data with checkpoint markers is decoded via deserialize_value.
 
-        reconstruct_to_type is used for untrusted HITL responses, so pickle
-        markers must be neutralised.  Legitimate internal roundtrips use
-        deserialize_value directly instead.
+        reconstruct_to_type is general-purpose and handles trusted checkpoint
+        data.  Untrusted HITL callers must call strip_pickle_markers() first.
         """
         original = SampleData(value=99, name="marker-test")
         encoded = serialize_value(original)
 
-        # Pickle markers are stripped — returns None (attack blocked)
         result = reconstruct_to_type(encoded, SampleData)
-        assert result is None
+        assert isinstance(result, SampleData)
+        assert result.value == 99
 
     def test_unrecognized_dict_returns_original(self) -> None:
         """Test that unrecognized dicts are returned as-is."""
@@ -380,9 +379,13 @@ class TestReconstructToType:
         assert result == data
 
     def test_reconstruct_strips_injected_pickle_markers(self) -> None:
-        """Test that reconstruct_to_type neutralises injected pickle markers."""
+        """End-to-end: strip_pickle_markers + reconstruct_to_type blocks attack.
+
+        This mirrors the real HITL flow where callers sanitize before reconstruction.
+        """
         malicious = {"__pickled__": "gASVDgAAAAAAAACMBHRlc3SULg==", "__type__": "builtins:str"}
-        result = reconstruct_to_type(malicious, str)
+        sanitized = strip_pickle_markers(malicious)
+        result = reconstruct_to_type(sanitized, str)
         assert result is None
 
 
@@ -446,7 +449,8 @@ class TestStripPickleMarkers:
         assert result == {"user_input": "hello", "evil": None, "count": 42}
 
     def test_reconstruct_blocks_injected_markers(self) -> None:
-        """End-to-end: reconstruct_to_type must not unpickle injected markers."""
+        """End-to-end: strip then reconstruct must not unpickle injected markers."""
         malicious = {"__pickled__": "gASVDgAAAAAAAACMBHRlc3SULg==", "__type__": "builtins:str"}
-        result = reconstruct_to_type(malicious, str)
+        sanitized = strip_pickle_markers(malicious)
+        result = reconstruct_to_type(sanitized, str)
         assert result is None
