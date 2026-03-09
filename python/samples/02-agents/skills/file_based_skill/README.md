@@ -13,16 +13,16 @@ Agent Skills are modular packages of instructions and resources that enable AI a
 
 ## Skills Included
 
-### password-generator
-Generates secure passwords via a Python script following [agentskills.io guidelines](https://agentskills.io/skill-creation/using-scripts).
-- `references/PASSWORD_GUIDELINES.md` — Password length and character set recommendations
-- `scripts/generate.py` — Executable script with `--length` flag, JSON output, and `--help` support
+### unit-converter
+Converts between common units (miles↔km, pounds↔kg) using a multiplication factor following [agentskills.io guidelines](https://agentskills.io/skill-creation/using-scripts).
+- `references/CONVERSION_TABLES.md` — Supported conversions and their factors
+- `scripts/convert.py` — Executable script with `--value` and `--factor` flags, JSON output, and `--help` support
 
 ## Key Components
 
 - **`SkillsProvider`** — Discovers skills from `SKILL.md` files in a directory and registers tools for the agent
 - **`CallbackSkillScriptExecutor`** — Wraps a callback function as a script executor, enabling the `execute_skill_script` tool
-- **`subprocess_script_runner`** — Sample callback that runs scripts as local Python subprocesses, converting argument dicts to CLI flags (e.g. `{"length": 24}` → `--length 24`). Shared across samples in [`../subprocess_script_runner.py`](../subprocess_script_runner.py).
+- **`subprocess_script_runner`** — Sample callback that runs scripts as local Python subprocesses, converting argument dicts to CLI flags (e.g. `{"value": 26.2, "factor": 1.60934}` → `--value 26.2 --factor 1.60934`). Shared across samples in [`../subprocess_script_runner.py`](../subprocess_script_runner.py).
 
 ## Project Structure
 
@@ -31,12 +31,12 @@ file_based_skill/
 ├── file_based_skill.py
 ├── README.md
 └── skills/
-    └── password-generator/
+    └── unit-converter/
         ├── SKILL.md
         ├── references/
-        │   └── PASSWORD_GUIDELINES.md
+        │   └── CONVERSION_TABLES.md
         └── scripts/
-            └── generate.py
+            └── convert.py
 ```
 
 ## Running the Sample

@@ -3,8 +3,6 @@
 import asyncio
 import json
 import os
-import random
-import string
 from textwrap import dedent
 from typing import Any
 
@@ -18,7 +16,7 @@ Code-Defined Agent Skills — Define skills in Python code
 
 This sample demonstrates how to create Agent Skills in code,
 without needing SKILL.md files on disk. Three approaches are shown
-using a password-generator skill:
+using a unit-converter skill:
 
 1. Static Resources
    Pass inline content directly via the ``resources`` parameter when
@@ -43,34 +41,31 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 # 1. Static Resources — inline content passed at construction time
 # ---------------------------------------------------------------------------
-password_skill = Skill(
-    name="password-generator",
-    description="Generate secure passwords for accounts and services",
+unit_converter_skill = Skill(
+    name="unit-converter",
+    description="Convert between common units using a conversion factor",
     content=dedent("""\
-        Use this skill when the user asks to generate a password.
+        Use this skill when the user asks to convert between units.
 
-        1. Review the password-guidelines resource for recommended settings.
-        2. Check the password-policy resource for the current policy.
-        3. Use the generate-password script to create a password of the appropriate length.
+        1. Review the conversion-tables resource to find the factor for the
+           requested conversion.
+        2. Check the conversion-policy resource for rounding and formatting rules.
+        3. Use the convert script, passing the value and factor from the table.
     """),
     resources=[
         SkillResource(
-            name="password-guidelines",
+            name="conversion-tables",
             content=dedent("""\
-                # Password Generation Guidelines
+                # Conversion Tables
 
-                ## Recommended Settings by Use Case
-                | Use Case              | Min Length | Character Set                     |
-                |-----------------------|-----------|-----------------------------------|
-                | Web account           | 16        | Upper + lower + digits + symbols  |
-                | Database credential   | 24        | Upper + lower + digits + symbols  |
-                | Wi-Fi / network key   | 20        | Upper + lower + digits + symbols  |
-                | API key / token       | 32        | Upper + lower + digits (no symbols)|
+                Formula: **result = value × factor**
 
-                ## General Rules
-                - Never reuse passwords across services.
-                - Always use cryptographically secure randomness.
-                - Avoid dictionary words, keyboard patterns, and personal information.
+                | From        | To          | Factor   |
+                |-------------|-------------|----------|
+                | miles       | kilometers  | 1.60934  |
+                | kilometers  | miles       | 0.621371 |
+                | pounds      | kilograms   | 0.453592 |
+                | kilograms   | pounds      | 2.20462  |
             """),
         ),
     ],
@@ -80,9 +75,9 @@ password_skill = Skill(
 # ---------------------------------------------------------------------------
 # 2. Dynamic Resources — callable function via @skill.resource
 # ---------------------------------------------------------------------------
-@password_skill.resource(name="password-policy", description="Current password policy with today's rotation schedule")
-def password_policy(**kwargs: Any) -> str:
-    """Return the current password policy.
+@unit_converter_skill.resource(name="conversion-policy", description="Current conversion formatting and rounding policy")
+def conversion_policy(**kwargs: Any) -> str:
+    """Return the current conversion policy.
 
     Dynamic resources are evaluated at runtime, so they can include
     live data such as dates, configuration values, or database lookups.
@@ -92,51 +87,41 @@ def password_policy(**kwargs: Any) -> str:
 
     Args:
         **kwargs: Runtime keyword arguments from ``agent.run()``.
-            For example, ``agent.run(..., environment="production")``
-            makes ``kwargs["environment"]`` available here.
+            For example, ``agent.run(..., precision=2)``
+            makes ``kwargs["precision"]`` available here.
     """
-    from datetime import datetime, timezone
-
-    environment = kwargs.get("environment", "development")
-    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    precision = kwargs.get("precision", 4)
     return dedent(f"""\
-        # Current Password Policy
+        # Conversion Policy
 
-        **Policy date:** {today}
-        **Environment:** {environment}
-
-        - Must include uppercase, lowercase, digits, and symbols
-        - Passwords expire every 90 days
-        - Cannot reuse the last 5 passwords
+        **Decimal places:** {precision}
+        **Format:** Always show both the original and converted values with units
     """)
 
 
 # ---------------------------------------------------------------------------
 # 3. Dynamic Scripts — in-process callable function
 # ---------------------------------------------------------------------------
-@password_skill.script(name="generate-password", description="Generate a secure random password")
-def generate_password(length: int = 16, **kwargs: Any) -> str:
-    """Generate a cryptographically secure password.
+@unit_converter_skill.script(name="convert", description="Convert a value: result = value × factor")
+def convert_units(value: float, factor: float, **kwargs: Any) -> str:
+    """Convert a value using a multiplication factor: result = value × factor.
+
+    The caller looks up the correct factor from the conversion-tables
+    resource and passes it here.
 
     Args:
-        length: Password length (minimum 4, default 16).
+        value: The numeric value to convert.
+        factor: Conversion factor from the conversion table.
         **kwargs: Runtime keyword arguments from ``agent.run()``.
+            The ``precision`` kwarg controls how many decimal places
+            the result is rounded to (default 4).
 
     Returns:
-        JSON string with the generated password and its length.
+        JSON string with the inputs and converted result.
     """
-    if length < 4:
-        return json.dumps({"error": "Password length must be >= 4"})
-
-    pool = string.ascii_lowercase + string.ascii_uppercase + string.digits + string.punctuation
-    rng = random.SystemRandom()
-    password = "".join(rng.choice(pool) for _ in range(length))
-
-    return json.dumps({
-        "password": password,
-        "length": length,
-        "environment": kwargs.get("environment", "development"),
-    })
+    precision = kwargs.get("precision", 4)
+    result = round(value * factor, precision)
+    return json.dumps({"value": value, "factor": factor, "result": result})
 
 
 async def main() -> None:
@@ -152,20 +137,20 @@ async def main() -> None:
 
     # Create the skills provider with the code-defined skill
     skills_provider = SkillsProvider(
-        skills=[password_skill],
+        skills=[unit_converter_skill],
     )
 
     async with Agent(
         client=client,
-        instructions="You are a helpful assistant that can generate passwords.",
+        instructions="You are a helpful assistant that can convert units.",
         context_providers=[skills_provider],
     ) as agent:
-        print("Generating a secure password")
+        print("Converting units")
         print("-" * 60)
         response = await agent.run(
-            "I need a secure password for a new PostgreSQL database. "
-            "Please generate one following best practices.",
-            environment="production",
+            "How many kilometers is a marathon (26.2 miles)? "
+            "And how many pounds is 75 kilograms?",
+            precision=2,
         )
         print(f"Agent: {response}\n")
 
@@ -176,15 +161,13 @@ if __name__ == "__main__":
 """
 Sample output:
 
-Generating a secure password
+Converting units
 ------------------------------------------------------------
-Agent: Based on the password guidelines, database credentials should use
-at least 24 characters with upper + lower case letters, digits, and symbols.
+Agent: Here are your conversions:
 
-I generated a password for you:
+1. **26.2 miles → 42.16 km** (a marathon distance)
+2. **75 kg → 165.35 lbs**
 
-{"password": "aR3$vK8!mN2@pQ7&xL5#wY9b", "length": 24}
-
-This password was generated using a cryptographically secure random
-generator. Remember to store it securely and never reuse it across services.
+I used the conversion factors from the reference table:
+miles × 1.60934 and kilograms × 2.20462.
 """

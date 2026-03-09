@@ -29,9 +29,9 @@ capabilities. They follow progressive disclosure:
 3. Read resources — supplementary files are read via the read_skill_resource tool
 4. Execute scripts — skill scripts are executed via the execute_skill_script tool
 
-This sample includes the password-generator skill which demonstrates all three
-file-based capabilities: instructions (SKILL.md), resources (PASSWORD_GUIDELINES.md),
-and scripts (generate.py).
+This sample includes the unit-converter skill which demonstrates all three
+file-based capabilities: instructions (SKILL.md), resources (CONVERSION_TABLES.md),
+and scripts (convert.py).
 """
 
 # Load environment variables from .env file
@@ -69,13 +69,13 @@ async def main() -> None:
         instructions="You are a helpful assistant.",
         context_providers=[skills_provider],
     ) as agent:
-        # The agent will: load the password-generator skill, read the guidelines
-        # resource, then execute the generate.py script with the right length.
-        print("Generating a secure password")
+        # The agent will: load the unit-converter skill, read the conversion
+        # tables resource, then execute the convert.py script.
+        print("Converting units")
         print("-" * 60)
         response = await agent.run(
-            "I need a secure password for a new PostgreSQL database. "
-            "Please generate one following best practices."
+            "How many kilometers is a marathon (26.2 miles)? "
+            "And how many pounds is 75 kilograms?"
         )
         print(f"Agent: {response}\n")
 
@@ -86,14 +86,13 @@ if __name__ == "__main__":
 """
 Sample output:
 
-Generating a secure password
+Converting units
 ------------------------------------------------------------
-Agent: Based on the password guidelines, database credentials should use at least 24
-characters with upper + lower case letters, digits, and symbols. I ran the password
-generator script with --length 24 and here's your result:
+Agent: Here are your conversions:
 
-{"password": "aR3$vK8!mN2@pQ7&xL5#wY9b", "length": 24}
+1. **26.2 miles → 42.16 km** (a marathon distance)
+2. **75 kg → 165.35 lbs**
 
-This password was generated using a cryptographically secure random generator.
-Remember to store it securely and never reuse it across services.
+I used the conversion factors from the reference table:
+miles × 1.60934 and kilograms × 2.20462.
 """

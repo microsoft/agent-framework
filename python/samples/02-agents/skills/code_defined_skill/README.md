@@ -1,12 +1,12 @@
 # Code-Defined Agent Skills
 
-This sample demonstrates how to create **Agent Skills** in Python code, without needing `SKILL.md` files on disk. A password-generator skill shows three approaches:
+This sample demonstrates how to create **Agent Skills** in Python code, without needing `SKILL.md` files on disk. A unit-converter skill shows three approaches:
 
 ## What's Demonstrated
 
 1. **Static Resources** — Pass inline content via the `resources` parameter when constructing a `Skill`
 2. **Dynamic Resources** — Attach callable functions via the `@skill.resource` decorator that return content computed at runtime
-3. **Dynamic Scripts** — Attach callable scripts via the `@skill.script` decorator (password generation)
+3. **Dynamic Scripts** — Attach callable scripts via the `@skill.script` decorator (unit conversion via a single factor parameter)
 
 All three can be combined with file-based skills in a single `SkillsProvider`.
 

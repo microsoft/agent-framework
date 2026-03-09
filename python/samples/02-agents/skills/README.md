@@ -8,9 +8,9 @@ Start with file-based or code-defined skills, then explore combining them and ad
 
 | Sample | Description |
 |--------|-------------|
-| [**file_based_skill**](file_based_skill/) | Define skills as `SKILL.md` files on disk with reference documents and executable scripts. Uses the password-generator skill. |
-| [**code_defined_skill**](code_defined_skill/) | Define skills entirely in Python code using `Skill`, `@skill.resource`, and `@skill.script` decorators. Uses a code-defined password-generator skill. |
-| [**mixed_skills**](mixed_skills/) | Combine code-defined and file-based skills in a single agent. Uses a code-defined pin-generator and a file-based password-generator. |
+| [**file_based_skill**](file_based_skill/) | Define skills as `SKILL.md` files on disk with reference documents and executable scripts. Uses the unit-converter skill. |
+| [**code_defined_skill**](code_defined_skill/) | Define skills entirely in Python code using `Skill`, `@skill.resource`, and `@skill.script` decorators. Uses a code-defined unit-converter skill. |
+| [**mixed_skills**](mixed_skills/) | Combine code-defined and file-based skills in a single agent. Uses a code-defined volume-converter and a file-based unit-converter. |
 | [**script_approval**](script_approval/) | Require human-in-the-loop approval before executing skill scripts |
 
 ## Key Concepts

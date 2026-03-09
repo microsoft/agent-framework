@@ -3,7 +3,6 @@
 import asyncio
 import json
 import os
-import random
 import sys
 from pathlib import Path
 from textwrap import dedent
@@ -45,11 +44,11 @@ Key concepts shown:
   Code-defined scripts (``@skill.script``) run in-process automatically.
 
 The sample registers two skills:
-1. **pin-generator** (code skill) — generates numeric PINs using
-   ``@skill.script`` for generation and ``@skill.resource`` for guidelines.
-2. **password-generator** (file skill) — generates secure passwords via a
-   subprocess-executed Python script discovered from
-   ``skills/password-generator/SKILL.md``.
+1. **volume-converter** (code skill) — converts between gallons and liters using
+   ``@skill.script`` for conversion and ``@skill.resource`` for the factor table.
+2. **unit-converter** (file skill) — converts between common units (miles↔km,
+   pounds↔kg) via a subprocess-executed Python script discovered from
+   ``skills/unit-converter/SKILL.md``.
 """
 
 # Load environment variables from .env file
@@ -59,56 +58,46 @@ load_dotenv()
 # 1. Define a code skill with @skill.script and @skill.resource decorators
 # ---------------------------------------------------------------------------
 
-pin_generator_skill = Skill(
-    name="pin-generator",
-    description="Generate numeric PINs for accounts, devices, and verification",
+volume_converter_skill = Skill(
+    name="volume-converter",
+    description="Convert between gallons and liters using a conversion factor",
     content=dedent("""\
-        Use this skill when the user asks for a numeric PIN (personal
-        identification number).
+        Use this skill when the user asks to convert between gallons and liters.
 
-        1. Review the pin-guidelines resource for length recommendations.
-        2. Use the generate-pin script with the desired length.
+        1. Review the conversion-table resource to find the correct factor.
+        2. Use the convert script, passing the value and factor.
     """),
 )
 
 
-@pin_generator_skill.resource(name="pin-guidelines", description="PIN length recommendations by use case")
-def pin_guidelines() -> str:
-    """Return PIN generation guidelines."""
+@volume_converter_skill.resource(name="conversion-table", description="Volume conversion factors")
+def volume_table() -> str:
+    """Return the volume conversion factor table."""
     return dedent("""\
-        # PIN Generation Guidelines
+        # Volume Conversion Table
 
-        | Use Case              | Length | Notes                    |
-        |-----------------------|--------|--------------------------|
-        | Bank / ATM            | 4      | Standard 4-digit PIN     |
-        | Phone unlock          | 6      | Recommended for phones   |
-        | Two-factor auth       | 6      | Common for OTP codes     |
-        | Secure vault / safe   | 8      | Higher security          |
-        | Device pairing        | 4      | Bluetooth / IoT pairing  |
+        Formula: **result = value × factor**
 
-        Always use cryptographically secure randomness.
-        Never reuse PINs across accounts.
+        | From    | To     | Factor  |
+        |---------|--------|---------|
+        | gallons | liters | 3.78541 |
+        | liters  | gallons| 0.264172|
     """)
 
 
-@pin_generator_skill.script(name="generate-pin", description="Generate a random numeric PIN of the given length")
-def generate_pin(length: int) -> str:
-    """Generate a cryptographically secure numeric PIN.
+@volume_converter_skill.script(name="convert", description="Convert a value: result = value × factor")
+def convert_volume(value: float, factor: float) -> str:
+    """Convert a value using a multiplication factor.
 
     Args:
-        length: Number of digits (default 4, minimum 4, maximum 12).
+        value: The numeric value to convert.
+        factor: Conversion factor from the table.
 
     Returns:
-        JSON string with the generated PIN and its length.
+        JSON string with the conversion result.
     """
-    if length < 4:
-        return json.dumps({"error": "PIN length must be >= 4"})
-    if length > 12:
-        return json.dumps({"error": "PIN length must be <= 12"})
-
-    rng = random.SystemRandom()
-    pin = "".join(str(rng.randint(0, 9)) for _ in range(length))
-    return json.dumps({"pin": pin, "length": length})
+    result = round(value * factor, 4)
+    return json.dumps({"value": value, "factor": factor, "result": result})
 
 
 # ---------------------------------------------------------------------------
@@ -137,24 +126,22 @@ async def main() -> None:
     skills_dir = Path(__file__).parent / "skills"
     skills_provider = SkillsProvider(
         skill_paths=str(skills_dir),
-        skills=[pin_generator_skill],
+        skills=[volume_converter_skill],
         script_executor=executor,
     )
 
     # Run the agent
     async with Agent(
         client=client,
-        instructions="You are a helpful assistant that can generate PINs and passwords.",
+        instructions="You are a helpful assistant that can convert units.",
         context_providers=[skills_provider],
     ) as agent:
-        # Ask the agent to generate both a PIN and a password
-        print("Generating a PIN and a password")
+        # Ask the agent to use both skills
+        print("Converting units")
         print("-" * 60)
         response = await agent.run(
-            "I'm setting up a new bank account and need two "
-            "things: a 6-digit PIN for ATM access, and a "
-            "secure password for online banking. "
-            "Please generate both."
+            "How many kilometers is a marathon (26.2 miles)? "
+            "And how many liters is a 5-gallon bucket?"
         )
         print(f"Agent: {response}\n")
 
@@ -165,19 +152,12 @@ if __name__ == "__main__":
 """
 Sample output:
 
-Generating a PIN and a password
+Converting units
 ------------------------------------------------------------
-Agent: Here are your new credentials:
+Agent: Here are your conversions:
 
-**ATM PIN (6 digits):** `839201`
+1. **26.2 miles → 42.16 km** (a marathon distance)
+2. **5 gallons → 18.93 liters**
 
-**Online Banking Password (24 characters):**
-`aR3$vK8!mN2@pQ7&xL5#wY9b`
-
-The PIN was generated using a cryptographically secure random number
-generator. The password follows the recommended guidelines for database
-credentials — 24 characters with upper + lower case letters, digits,
-and symbols.
-
-Remember to store both securely and never reuse them across services.
+I used the conversion factors from each skill's reference table.
 """

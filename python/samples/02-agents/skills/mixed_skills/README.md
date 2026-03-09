@@ -15,21 +15,21 @@ and `SkillsProvider`.
 
 ## Skills in This Sample
 
-### pin-generator (code skill)
+### volume-converter (code skill)
 
 Defined entirely in Python code using decorators:
 
-- **`@skill.resource`** — `pin-guidelines`: PIN length recommendations by use case
-- **`@skill.script`** — `generate-pin`: generates a cryptographically secure numeric PIN of configurable length
+- **`@skill.resource`** — `conversion-table`: gallons↔liters conversion factors
+- **`@skill.script`** — `convert`: converts a value using a multiplication factor
 
 Code scripts run **in-process** — no subprocess or external executor needed.
 
-### password-generator (file skill)
+### unit-converter (file skill)
 
-Discovered from `skills/password-generator/SKILL.md`:
+Discovered from `skills/unit-converter/SKILL.md`:
 
-- **Reference**: `references/PASSWORD_GUIDELINES.md` — password length and character set recommendations
-- **Script**: `scripts/generate.py` — generates a secure password with configurable length
+- **Reference**: `references/CONVERSION_TABLES.md` — supported unit conversions and their factors
+- **Script**: `scripts/convert.py` — converts a value using a multiplication factor (e.g. miles to kilometers)
 
 File scripts are executed as **local Python subprocesses** via the
 `CallbackSkillScriptExecutor` callback.
@@ -37,22 +37,22 @@ File scripts are executed as **local Python subprocesses** via the
 ## How It Works
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  SkillsProvider(                                     │
-│      skill_paths="./skills",         # file skills   │
-│      skills=[pin_generator_skill],   # code skills   │
-│      script_executor=executor,                       │
-│  )                                                   │
-└─────────────┬───────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  SkillsProvider(                                             │
+│      skill_paths="./skills",              # file skills      │
+│      skills=[volume_converter_skill],    # code skills      │
+│      script_executor=executor,                               │
+│  )                                                           │
+└─────────────┬───────────────────────────────────────────────┘
               │
               ▼
-┌─────────────────────────────────────────────────────┐
-│  CallbackSkillScriptExecutor(callback=...)          │
-│                                                     │
-│  • Code scripts (@skill.script) → in-process call   │
-│  • File scripts (scripts/*.py) → subprocess via     │
-│    the callback function                            │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  CallbackSkillScriptExecutor(callback=...)                  │
+│                                                             │
+│  • Code scripts (@skill.script) → in-process call           │
+│  • File scripts (scripts/*.py) → subprocess via             │
+│    the callback function                                    │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Prerequisites
@@ -84,12 +84,12 @@ mixed_skills/
 ├── mixed_skills.py                # Main sample — wires code + file skills together
 ├── README.md
 └── skills/
-    └── password-generator/        # File-based skill (discovered from SKILL.md)
+    └── unit-converter/            # File-based skill (discovered from SKILL.md)
         ├── SKILL.md
         ├── references/
-        │   └── PASSWORD_GUIDELINES.md
+        │   └── CONVERSION_TABLES.md
         └── scripts/
-            └── generate.py
+            └── convert.py
 ```
 
 ## Learn More
