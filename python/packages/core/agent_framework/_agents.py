@@ -1033,6 +1033,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         kwargs: dict[str, Any],
     ) -> _RunContext:
         opts = dict(options) if options else {}
+        # Merge default options with runtime options (runtime takes precedence)
+        opts = {**self.default_options, **opts}
 
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
@@ -1046,8 +1048,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             and not self.context_providers
             and not session.service_session_id
             and not opts.get("conversation_id")
-            and not opts.get("store")
-            and not (getattr(self.client, "STORES_BY_DEFAULT", False) and opts.get("store") is not False)
+            # `store` takes precedence over client-level storage indicators. If `store` is
+            # explicitly set to False, we won't inject the InMemoryHistoryProvider, even if
+            # the client indicates that stores are used by default.
+            and not opts.get("store", getattr(self.client, "STORES_BY_DEFAULT", False))
         ):
             self.context_providers.append(InMemoryHistoryProvider())
 
