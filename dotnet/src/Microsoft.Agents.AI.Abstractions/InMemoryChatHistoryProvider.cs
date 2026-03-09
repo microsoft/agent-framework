@@ -90,6 +90,7 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     {
         State state = this._sessionState.GetOrInitializeState(context.Session);
 
+        if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval)
         {
             // Apply pre-invocation compaction strategy if configured
             await this.CompactMessagesAsync(state, cancellationToken).ConfigureAwait(false);
@@ -118,7 +119,6 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     {
         if (this.ChatReducer is not null)
         {
-            // ChatReducer takes precedence, if configured
             state.Messages = [.. await this.ChatReducer.ReduceAsync(state.Messages, cancellationToken).ConfigureAwait(false)];
             return;
         }
