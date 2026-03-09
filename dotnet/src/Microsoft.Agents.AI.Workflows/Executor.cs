@@ -3,6 +3,7 @@
 #pragma warning disable CS0618 // Type or member is obsolete - Internal use of obsolete types for backward compatibility
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -133,7 +134,14 @@ internal sealed class ExecutorProtocol(MessageRouter router, ISet<Type> sendType
 
     public bool CanHandle(Type type) => router.CanHandle(type);
 
+    private readonly ConcurrentDictionary<Type, bool> _canOutputCache = new();
+
     public bool CanOutput(Type type)
+    {
+        return this._canOutputCache.GetOrAdd(type, this.CanOutputCore);
+    }
+
+    private bool CanOutputCore(Type type)
     {
         foreach (TypeId yieldType in this._yieldTypes)
         {
