@@ -15,16 +15,18 @@ SECURITY NOTE: Only enable file permissions when you trust the agent's actions.
 import asyncio
 
 from agent_framework.github import GitHubCopilotAgent
-from copilot.types import PermissionRequest, PermissionRequestResult
+from copilot.generated.session_events import PermissionRequest
+from copilot.types import PermissionRequestResult
 
 
-def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+def prompt_permission(
+    request: PermissionRequest, context: dict[str, str]
+) -> PermissionRequestResult:
     """Permission handler that prompts the user for approval."""
-    kind = request.get("kind", "unknown")
-    print(f"\n[Permission Request: {kind}]")
+    print(f"\n[Permission Request: {request.kind}]")
 
-    if "path" in request:
-        print(f"  Path: {request.get('path')}")
+    if request.path is not None:
+        print(f"  Path: {request.path}")
 
     response = input("Approve? (y/n): ").strip().lower()
     if response in ("y", "yes"):
