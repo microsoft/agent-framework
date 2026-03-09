@@ -16,6 +16,7 @@ using Azure.AI.OpenAI;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Evaluation;
 using Microsoft.Extensions.AI.Evaluation.Quality;
@@ -39,7 +40,6 @@ Console.WriteLine();
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 DefaultAzureCredential credential = new();
-AIProjectClient aiProjectClient = new(new Uri(endpoint), credential);
 
 // Set up the LLM-based chat client for quality evaluators
 IChatClient chatClient = new AzureOpenAIClient(new Uri(openAiEndpoint), credential)
@@ -55,7 +55,7 @@ ChatConfiguration chatConfiguration = safetyConfig.ToChatConfiguration(
     originalChatConfiguration: new ChatConfiguration(chatClient));
 
 // Create a test agent
-AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
+FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
     name: "KnowledgeAgent",
     model: deploymentName,
     instructions: "You are a helpful assistant. Answer questions accurately based on the provided context.");
@@ -93,7 +93,7 @@ try
 finally
 {
     // Cleanup
-    await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+    await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
     Console.WriteLine();
     Console.WriteLine("Cleanup: Agent deleted.");
 }

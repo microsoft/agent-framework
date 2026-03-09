@@ -6,12 +6,10 @@
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using OpenAI.Responses;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 string embeddingModelName = Environment.GetEnvironmentVariable("AZURE_AI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-ada-002";
 string memoryStoreName = Environment.GetEnvironmentVariable("AZURE_AI_MEMORY_STORE_ID") ?? $"rapi-memory-sample-{Guid.NewGuid():N}";
@@ -19,23 +17,22 @@ string memoryStoreName = Environment.GetEnvironmentVariable("AZURE_AI_MEMORY_STO
 const string AgentName = "MemorySearchAgent-RAPI";
 string memoryScope = "travel-preferences";
 
-DefaultAzureCredential credential = new();
-AIProjectClient aiProjectClient = new(new Uri(endpoint), credential);
+// Create the agent first — it internally manages the AIProjectClient.
+MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, memoryScope) { UpdateDelay = 0 };
+
+FoundryAgent agent = new(
+    instructions: "You are a helpful travel assistant. Use the memory search tool to recall what you know about the user from past conversations.",
+    name: AgentName,
+    tools: [FoundryAITool.FromResponseTool(memorySearchTool)]);
+
+// Get the AIProjectClient from the agent for memory store operations.
+AIProjectClient aiProjectClient = agent.GetService<AIProjectClient>()!;
 
 // Ensure the memory store exists and has memories to retrieve.
 await EnsureMemoryStoreAsync();
 
 try
 {
-    // Create a FoundryAgent with the Memory Search tool.
-    // The tool retrieves memories — it does NOT store new ones during conversation.
-    MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, memoryScope) { UpdateDelay = 0 };
-
-    FoundryAgent agent = new(
-        instructions: "You are a helpful travel assistant. Use the memory search tool to recall what you know about the user from past conversations.",
-        name: AgentName,
-        tools: [FoundryAITool.FromResponseTool(memorySearchTool)]);
-
     Console.WriteLine("Agent created. Asking about previously stored memories...\n");
 
     // The agent uses the memory search tool to recall stored information.

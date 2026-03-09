@@ -38,8 +38,8 @@ await EnsureMemoryStoreAsync();
 MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope) { UpdateDelayInSecs = 0 };
 
 // Create agent using Option 1 (MEAI) or Option 2 (Native SDK)
-AIAgent agent = await CreateAgentWithMEAI();
-// AIAgent agent = await CreateAgentWithNativeSDK();
+FoundryVersionedAgent agent = await CreateAgentWithMEAI();
+// FoundryVersionedAgent agent = await CreateAgentWithNativeSDK();
 
 try
 {
@@ -73,7 +73,7 @@ finally
 {
     // Cleanup: Delete the agent and memory store.
     Console.WriteLine("\nCleaning up...");
-    await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+    await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
     Console.WriteLine("Agent deleted.");
     await aiProjectClient.MemoryStores.DeleteMemoryStoreAsync(memoryStoreName);
     Console.WriteLine("Memory store deleted.");
@@ -114,9 +114,9 @@ async Task EnsureMemoryStoreAsync()
 #pragma warning disable CS8321 // Local function is declared but never used
 
 // Option 1 - Using MemorySearchTool wrapped as MEAI AITool
-async Task<AIAgent> CreateAgentWithMEAI()
+async Task<FoundryVersionedAgent> CreateAgentWithMEAI()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
+    return await FoundryVersionedAgent.CreateAIAgentAsync(
         model: deploymentName,
         name: AgentNameMEAI,
         instructions: AgentInstructions,
@@ -124,9 +124,9 @@ async Task<AIAgent> CreateAgentWithMEAI()
 }
 
 // Option 2 - Using PromptAgentDefinition with MemorySearchTool (Native SDK)
-async Task<AIAgent> CreateAgentWithNativeSDK()
+async Task<FoundryVersionedAgent> CreateAgentWithNativeSDK()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
+    return await FoundryVersionedAgent.CreateAIAgentAsync(
         name: AgentNameNative,
         creationOptions: new AgentVersionCreationOptions(
             new PromptAgentDefinition(model: deploymentName)

@@ -62,8 +62,7 @@ Console.WriteLine($"\nDeleted agent: {agent.Name}");
 // Option 1 - Using FoundryAITool.CreateSharepointTool (MEAI + AgentFramework)
 async Task<AIAgent> CreateAgentWithMEAIAsync()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
-        model: deploymentName,
+    return await FoundryVersionedAgent.CreateAIAgentAsync(
         name: "SharePointAgent-MEAI",
         instructions: AgentInstructions,
         tools: [FoundryAITool.CreateSharepointTool(sharepointOptions)]);

@@ -6,6 +6,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -34,7 +35,7 @@ AgentVersion createdAgentVersion = aiProjectClient.Agents.CreateAgentVersion(age
 AIAgent existingJokerAgent = aiProjectClient.AsAIAgent(createdAgentVersion);
 
 // You can also create another AIAgent version by providing the same name with a different definition/instruction.
-AIAgent newJokerAgent = await aiProjectClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: "You are extremely hilarious at telling jokes.");
+FoundryVersionedAgent newJokerAgent = await FoundryVersionedAgent.CreateAIAgentAsync(name: JokerName, instructions: "You are extremely hilarious at telling jokes.");
 
 // You can also get the AIAgent latest version by just providing its name.
 AIAgent jokerAgentLatest = await aiProjectClient.GetAIAgentAsync(name: JokerName);

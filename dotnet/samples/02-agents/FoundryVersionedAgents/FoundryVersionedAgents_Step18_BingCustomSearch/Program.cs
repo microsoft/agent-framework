@@ -53,8 +53,7 @@ Console.WriteLine($"\nDeleted agent: {agent.Name}");
 // Option 1 - Using FoundryAITool wrapping for BingCustomSearchTool (MEAI + AgentFramework)
 async Task<AIAgent> CreateAgentWithMEAIAsync()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
-        model: deploymentName,
+    return await FoundryVersionedAgent.CreateAIAgentAsync(
         name: "BingCustomSearchAgent-MEAI",
         instructions: AgentInstructions,
         tools: [FoundryAITool.CreateBingCustomSearchTool(bingCustomSearchToolParameters)]);

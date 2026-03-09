@@ -4,41 +4,30 @@
 
 using System.ClientModel;
 using Azure.AI.Projects;
-using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string JokerInstructions = "You are good at telling jokes.";
 const string JokerName = "JokerAgent";
 
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient aIProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
-
 // Create a new agent if one doesn't exist already.
-ChatClientAgent agent;
+FoundryVersionedAgent agent;
 try
 {
-    agent = await aIProjectClient.GetAIAgentAsync(name: JokerName);
+    agent = await FoundryVersionedAgent.GetAIAgentAsync(name: JokerName);
 }
 catch (ClientResultException ex) when (ex.Status == 404)
 {
-    agent = await aIProjectClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: JokerInstructions);
+    agent = await FoundryVersionedAgent.CreateAIAgentAsync(name: JokerName, instructions: JokerInstructions);
 }
 
 // Create a host builder that we will register services with and then run.
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
-// Add the agents client to the service collection.
-builder.Services.AddSingleton((sp) => aIProjectClient);
-
 // Add the AI agent to the service collection.
-builder.Services.AddSingleton<AIAgent>((sp) => agent);
+builder.Services.AddSingleton<FoundryVersionedAgent>(agent);
 
 // Add a sample service that will use the agent to respond to user input.
 builder.Services.AddHostedService<SampleService>();
@@ -50,7 +39,7 @@ await host.RunAsync().ConfigureAwait(false);
 /// <summary>
 /// A sample service that uses an AI agent to respond to user input.
 /// </summary>
-internal sealed class SampleService(AIProjectClient client, AIAgent agent, IHostApplicationLifetime appLifetime) : IHostedService
+internal sealed class SampleService(FoundryVersionedAgent agent, IHostApplicationLifetime appLifetime) : IHostedService
 {
     private AgentSession? _session;
 
@@ -92,6 +81,6 @@ internal sealed class SampleService(AIProjectClient client, AIAgent agent, IHost
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         Console.WriteLine("\nDeleting agent ...");
-        await client.Agents.DeleteAgentAsync(agent.Name, cancellationToken).ConfigureAwait(false);
+        await FoundryVersionedAgent.DeleteAIAgentAsync(agent, cancellationToken).ConfigureAwait(false);
     }
 }

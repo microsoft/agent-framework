@@ -2,25 +2,15 @@
 
 // This sample shows how to use Image Multi-Modality with an AI agent.
 
-using Azure.AI.Projects;
-using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
-
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
 
 const string VisionInstructions = "You are a helpful agent that can analyze images";
 const string VisionName = "VisionAgent";
 
-// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
-
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: VisionName, model: deploymentName, instructions: VisionInstructions);
+FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(name: VisionName, instructions: VisionInstructions);
 
 ChatMessage message = new(ChatRole.User, [
     new TextContent("What do you see in this image?"),
@@ -35,4 +25,4 @@ await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(message, se
 }
 
 // Cleanup by agent name removes the agent version created.
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+await FoundryVersionedAgent.DeleteAIAgentAsync(agent);

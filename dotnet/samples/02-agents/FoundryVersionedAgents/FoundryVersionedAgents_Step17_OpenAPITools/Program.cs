@@ -95,8 +95,7 @@ await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
 // Option 1 - Using FoundryAITool wrapping for OpenApiTool (MEAI + AgentFramework)
 async Task<AIAgent> CreateAgentWithMEAI()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
-        model: deploymentName,
+    return await FoundryVersionedAgent.CreateAIAgentAsync(
         name: "OpenAPIToolsAgent-MEAI",
         instructions: AgentInstructions,
         tools: [FoundryAITool.CreateOpenApiTool(openApiFunction)]);

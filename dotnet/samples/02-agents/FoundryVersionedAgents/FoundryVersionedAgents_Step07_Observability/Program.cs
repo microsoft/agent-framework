@@ -2,15 +2,12 @@
 
 // This sample shows how to create and use a simple AI agent with Microsoft Foundry Agents as the backend that logs telemetry using OpenTelemetry.
 
-using Azure.AI.Projects;
-using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using OpenTelemetry;
 using OpenTelemetry.Trace;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 string? applicationInsightsConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING");
 
 const string JokerInstructions = "You are good at telling jokes.";
@@ -28,14 +25,9 @@ if (!string.IsNullOrWhiteSpace(applicationInsightsConnectionString))
 }
 using var tracerProvider = tracerProviderBuilder.Build();
 
-// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
-
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent agent = (await aiProjectClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: JokerInstructions))
+FoundryVersionedAgent foundryAgent = await FoundryVersionedAgent.CreateAIAgentAsync(name: JokerName, instructions: JokerInstructions);
+AIAgent agent = foundryAgent
     .AsBuilder()
     .UseOpenTelemetry(sourceName: sourceName)
     .Build();
@@ -52,4 +44,4 @@ await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Tell me a 
 }
 
 // Cleanup by agent name removes the agent version created.
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+await FoundryVersionedAgent.DeleteAIAgentAsync(foundryAgent);

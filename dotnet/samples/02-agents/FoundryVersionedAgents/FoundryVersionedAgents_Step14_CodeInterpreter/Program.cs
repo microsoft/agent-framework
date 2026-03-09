@@ -7,6 +7,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Assistants;
 using OpenAI.Responses;
@@ -26,8 +27,7 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredent
 
 // Option 1 - Using HostedCodeInterpreterTool + AgentOptions (MEAI + AgentFramework)
 // Create the server side agent version
-AIAgent agentOption1 = await aiProjectClient.CreateAIAgentAsync(
-    model: deploymentName,
+FoundryVersionedAgent agentOption1 = await FoundryVersionedAgent.CreateAIAgentAsync(
     name: AgentNameMEAI,
     instructions: AgentInstructions,
     tools: [new HostedCodeInterpreterTool() { Inputs = [] }]);

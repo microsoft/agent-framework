@@ -35,9 +35,8 @@ internal sealed class Program
 
         // Option 1 - Using ComputerUseTool + AgentOptions (MEAI + AgentFramework)
         // Create AIAgent directly
-        AIAgent agentOption1 = await aiProjectClient.CreateAIAgentAsync(
+        FoundryVersionedAgent agentOption1 = await FoundryVersionedAgent.CreateAIAgentAsync(
             name: AgentNameMEAI,
-            model: deploymentName,
             instructions: AgentInstructions,
             description: "Computer automation agent with screen interaction capabilities.",
             tools: [

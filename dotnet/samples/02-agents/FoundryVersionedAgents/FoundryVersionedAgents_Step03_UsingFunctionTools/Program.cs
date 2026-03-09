@@ -4,13 +4,9 @@
 // It shows both non-streaming and streaming agent interactions using weather-related tools.
 
 using System.ComponentModel;
-using Azure.AI.Projects;
-using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
-
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 [Description("Get the weather for a given location.")]
 static string GetWeather([Description("The location to get the weather for.")] string location)
@@ -19,17 +15,11 @@ static string GetWeather([Description("The location to get the weather for.")] s
 const string AssistantInstructions = "You are a helpful assistant that can get weather information.";
 const string AssistantName = "WeatherAssistant";
 
-// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
-
 // Define the agent with function tools.
 AITool tool = AIFunctionFactory.Create(GetWeather);
 
 // Create AIAgent directly
-var newAgent = await aiProjectClient.CreateAIAgentAsync(name: AssistantName, model: deploymentName, instructions: AssistantInstructions, tools: [tool]);
+FoundryVersionedAgent newAgent = await FoundryVersionedAgent.CreateAIAgentAsync(name: AssistantName, instructions: AssistantInstructions, tools: [tool]);
 
 // Getting an already existing agent by name with tools.
 /* 
@@ -37,7 +27,7 @@ var newAgent = await aiProjectClient.CreateAIAgentAsync(name: AssistantName, mod
  * you need to provided all invocable function tools when retrieving the agent so it can invoke them automatically.
  * If no invocable tools are provided, the function calling needs to handled manually.
  */
-var existingAgent = await aiProjectClient.GetAIAgentAsync(name: AssistantName, tools: [tool]);
+FoundryVersionedAgent existingAgent = await FoundryVersionedAgent.GetAIAgentAsync(name: AssistantName, tools: [tool]);
 
 // Non-streaming agent interaction with function tools.
 AgentSession session = await existingAgent.CreateSessionAsync();
@@ -51,4 +41,4 @@ await foreach (AgentResponseUpdate update in existingAgent.RunStreamingAsync("Wh
 }
 
 // Cleanup by agent name removes the agent version created.
-await aiProjectClient.Agents.DeleteAgentAsync(existingAgent.Name);
+await FoundryVersionedAgent.DeleteAIAgentAsync(existingAgent);

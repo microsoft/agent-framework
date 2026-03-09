@@ -267,6 +267,34 @@ public sealed class FoundryAgent : AIAgent
     protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
         => this._innerAgent.CreateSessionAsync(cancellationToken);
 
+    /// <summary>
+    /// Creates a new server-side conversation in the Foundry project and returns a <see cref="ChatClientAgentSession"/>
+    /// linked to it.
+    /// </summary>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A <see cref="ChatClientAgentSession"/> associated with the newly created conversation.</returns>
+    /// <remarks>
+    /// <para>
+    /// This method combines two steps into one: creating a server-side <c>ProjectConversation</c> and
+    /// creating a <see cref="ChatClientAgentSession"/> linked to its conversation ID. Sessions created this way
+    /// will appear in the Foundry Project UI under conversations.
+    /// </para>
+    /// <para>
+    /// For sessions that do not need to appear in the Foundry UI, use
+    /// <see cref="AIAgent.CreateSessionAsync(CancellationToken)"/> instead, which works based on <c>PreviousResponseId</c> only.
+    /// </para>
+    /// </remarks>
+    public async Task<ChatClientAgentSession> CreateConversationSessionAsync(CancellationToken cancellationToken = default)
+    {
+        var conversationsClient = this._aiProjectClient
+            .GetProjectOpenAIClient()
+            .GetProjectConversationsClient();
+
+        var conversation = (await conversationsClient.CreateProjectConversationAsync(options: null, cancellationToken).ConfigureAwait(false)).Value;
+
+        return (ChatClientAgentSession)await this._innerAgent.CreateSessionAsync(conversation.Id, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <inheritdoc/>
     protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => this._innerAgent.SerializeSessionAsync(session, jsonSerializerOptions, cancellationToken);

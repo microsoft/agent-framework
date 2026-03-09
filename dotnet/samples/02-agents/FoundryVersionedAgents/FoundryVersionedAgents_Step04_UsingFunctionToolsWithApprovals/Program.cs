@@ -6,13 +6,9 @@
 // while the agent is waiting for user input.
 
 using System.ComponentModel;
-using Azure.AI.Projects;
-using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
-
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Create a sample function tool that the agent can use.
 [Description("Get the weather for a given location.")]
@@ -22,16 +18,10 @@ static string GetWeather([Description("The location to get the weather for.")] s
 const string AssistantInstructions = "You are a helpful assistant that can get weather information.";
 const string AssistantName = "WeatherAssistant";
 
-// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
-
 ApprovalRequiredAIFunction approvalTool = new(AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather)));
 
 // Create AIAgent directly
-AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: AssistantName, model: deploymentName, instructions: AssistantInstructions, tools: [approvalTool]);
+FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(name: AssistantName, instructions: AssistantInstructions, tools: [approvalTool]);
 
 // Call the agent with approval-required function tools.
 // The agent will request approval before invoking the function.
@@ -62,4 +52,4 @@ while (approvalRequests.Count > 0)
 Console.WriteLine($"\nAgent: {response}");
 
 // Cleanup by agent name removes the agent version created.
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+await FoundryVersionedAgent.DeleteAIAgentAsync(agent);

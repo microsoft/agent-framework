@@ -6,6 +6,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Assistants;
 using OpenAI.Files;
@@ -87,8 +88,7 @@ Console.WriteLine("Cleanup completed successfully.");
 // Option 1 - Using HostedFileSearchTool (MEAI + AgentFramework)
 async Task<AIAgent> CreateAgentWithMEAI()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
-        model: deploymentName,
+    return await FoundryVersionedAgent.CreateAIAgentAsync(
         name: "FileSearchAgent-MEAI",
         instructions: AgentInstructions,
         tools: [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreId)] }]);

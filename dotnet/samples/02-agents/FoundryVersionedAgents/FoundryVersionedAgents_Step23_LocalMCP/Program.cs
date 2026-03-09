@@ -6,13 +6,10 @@
 // This sample uses the Microsoft Learn MCP endpoint to search documentation.
 
 using Azure.AI.Projects;
-using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
-
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AgentInstructions = "You are a helpful assistant that can help with Microsoft documentation questions. Use the Microsoft Learn MCP tool to search for documentation.";
 const string AgentName = "DocsAgent";
@@ -34,15 +31,8 @@ Console.WriteLine($"MCP tools available: {string.Join(", ", mcpTools.Select(t =>
 // Wrap each MCP tool with a DelegatingAIFunction to log local invocations.
 List<AITool> wrappedTools = mcpTools.Select(tool => (AITool)new LoggingMcpTool(tool)).ToList();
 
-// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
-
 // Create the agent with the locally-resolved MCP tools.
-AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
-    model: deploymentName,
+FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
     name: AgentName,
     instructions: AgentInstructions,
     tools: wrappedTools);
@@ -68,7 +58,7 @@ try
 finally
 {
     // Cleanup by removing the agent when done
-    await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+    await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
     Console.WriteLine($"\nAgent '{agent.Name}' deleted.");
 }
 

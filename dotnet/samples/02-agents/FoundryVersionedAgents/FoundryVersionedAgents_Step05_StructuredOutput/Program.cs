@@ -5,28 +5,17 @@
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Azure.AI.Projects;
-using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using SampleApp;
 
 #pragma warning disable CA5399
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-
 const string AssistantInstructions = "You are a helpful assistant that extracts structured information about people.";
 const string AssistantName = "StructuredOutputAssistant";
 
-// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
-
-// Create ChatClientAgent directly
-ChatClientAgent agent = await aiProjectClient.CreateAIAgentAsync(
-    model: deploymentName,
+// Create FoundryVersionedAgent directly
+FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
     new ChatClientAgentOptions()
     {
         Name = AssistantName,
@@ -46,9 +35,8 @@ Console.WriteLine($"Name: {response.Result.Name}");
 Console.WriteLine($"Age: {response.Result.Age}");
 Console.WriteLine($"Occupation: {response.Result.Occupation}");
 
-// Create the ChatClientAgent with the specified name, instructions, and expected structured output the agent should produce.
-ChatClientAgent agentWithPersonInfo = await aiProjectClient.CreateAIAgentAsync(
-    model: deploymentName,
+// Create the FoundryVersionedAgent with the specified name, instructions, and expected structured output the agent should produce.
+FoundryVersionedAgent agentWithPersonInfo = await FoundryVersionedAgent.CreateAIAgentAsync(
     new ChatClientAgentOptions()
     {
         Name = AssistantName,
@@ -73,7 +61,7 @@ Console.WriteLine($"Age: {personInfo.Age}");
 Console.WriteLine($"Occupation: {personInfo.Occupation}");
 
 // Cleanup by agent name removes the agent version created.
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
 
 namespace SampleApp
 {

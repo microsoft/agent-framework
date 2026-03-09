@@ -47,8 +47,7 @@ Console.WriteLine($"\nDeleted agent: {agent.Name}");
 // Option 1 - Using FoundryAITool wrapping for MicrosoftFabricTool (MEAI + AgentFramework)
 async Task<AIAgent> CreateAgentWithMEAIAsync()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
-        model: deploymentName,
+    return await FoundryVersionedAgent.CreateAIAgentAsync(
         name: "FabricAgent-MEAI",
         instructions: AgentInstructions,
         tools: [FoundryAITool.CreateMicrosoftFabricTool(fabricToolOptions)]);

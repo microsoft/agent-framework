@@ -8,22 +8,13 @@
 using System.ComponentModel;
 using System.Text.RegularExpressions;
 using Azure.AI.Projects;
-using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 
 // Get Microsoft Foundry configuration from environment variables
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-string deploymentName = System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
-
 const string AssistantInstructions = "You are an AI assistant that helps people find information.";
 const string AssistantName = "InformationAssistant";
-
-// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 [Description("Get the weather for a given location.")]
 static string GetWeather([Description("The location to get the weather for.")] string location)
@@ -37,9 +28,8 @@ AITool dateTimeTool = AIFunctionFactory.Create(GetDateTime, name: nameof(GetDate
 AITool getWeatherTool = AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather));
 
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent originalAgent = await aiProjectClient.CreateAIAgentAsync(
+FoundryVersionedAgent originalAgent = await FoundryVersionedAgent.CreateAIAgentAsync(
     name: AssistantName,
-    model: deploymentName,
     instructions: AssistantInstructions,
     tools: [getWeatherTool, dateTimeTool]);
 
@@ -72,9 +62,8 @@ Console.WriteLine($"Function calling response: {functionCallResponse}");
 // Special per-request middleware agent.
 Console.WriteLine("\n\n=== Example 4: Middleware with human in the loop function approval ===");
 
-AIAgent humanInTheLoopAgent = await aiProjectClient.CreateAIAgentAsync(
+AIAgent humanInTheLoopAgent = await FoundryVersionedAgent.CreateAIAgentAsync(
     name: "HumanInTheLoopAgent",
-    model: deploymentName,
     instructions: "You are an Human in the loop testing AI assistant that helps people find information.",
 
     // Adding a function with approval required
@@ -220,4 +209,4 @@ async Task<AgentResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMes
 }
 
 // Cleanup by agent name removes the agent version created.
-await aiProjectClient.Agents.DeleteAgentAsync(middlewareEnabledAgent.Name);
+await FoundryVersionedAgent.DeleteAIAgentAsync(originalAgent);

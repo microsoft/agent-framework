@@ -6,6 +6,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
@@ -47,9 +48,8 @@ await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
 
 // Creates the agent using the HostedWebSearchTool MEAI abstraction that maps to the built-in Responses API web search tool.
 async Task<AIAgent> CreateAgentWithMEAIAsync()
-    => await aiProjectClient.CreateAIAgentAsync(
+    => await FoundryVersionedAgent.CreateAIAgentAsync(
         name: AgentName,
-        model: deploymentName,
         instructions: AgentInstructions,
         tools: [new HostedWebSearchTool()]);
 
