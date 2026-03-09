@@ -5,25 +5,17 @@
 using System.Text;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Assistants;
 using OpenAI.Responses;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AgentInstructions = "You are a personal math tutor. When asked a math question, write and run code using the python tool to answer the question.";
 const string AgentNameMEAI = "CoderAgent-MEAI";
 const string AgentNameNative = "CoderAgent-NATIVE";
-
-// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Option 1 - Using HostedCodeInterpreterTool + AgentOptions (MEAI + AgentFramework)
 // Create the server side agent version
@@ -31,6 +23,8 @@ FoundryVersionedAgent agentOption1 = await FoundryVersionedAgent.CreateAIAgentAs
     name: AgentNameMEAI,
     instructions: AgentInstructions,
     tools: [new HostedCodeInterpreterTool() { Inputs = [] }]);
+
+AIProjectClient aiProjectClient = agentOption1.GetService<AIProjectClient>()!;
 
 // Option 2 - Using PromptAgentDefinition SDK native type
 // Create the server side agent version
@@ -89,5 +83,5 @@ foreach (AIAnnotation annotation in response.Messages.SelectMany(m => m.Contents
 }
 
 // Cleanup by agent name removes the agent version created.
-await aiProjectClient.Agents.DeleteAgentAsync(agentOption1.Name);
+await FoundryVersionedAgent.DeleteAIAgentAsync(agentOption1);
 await aiProjectClient.Agents.DeleteAgentAsync(agentOption2.Name);

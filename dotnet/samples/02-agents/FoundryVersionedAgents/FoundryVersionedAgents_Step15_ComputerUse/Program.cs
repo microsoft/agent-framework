@@ -4,7 +4,6 @@
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -16,14 +15,8 @@ internal sealed class Program
 {
     private static async Task Main(string[] args)
     {
-        string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
         string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "computer-use-preview";
 
-        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-        // Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
-        AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
         const string AgentInstructions = @"
                     You are a computer automation assistant. 
                     
@@ -42,6 +35,8 @@ internal sealed class Program
             tools: [
                     FoundryAITool.CreateComputerTool(ComputerToolEnvironment.Browser, 1026, 769),
                 ]);
+
+        AIProjectClient aiProjectClient = agentOption1.GetService<AIProjectClient>()!;
 
         // Option 2 - Using PromptAgentDefinition SDK native type
         // Create the server side agent version
@@ -66,7 +61,7 @@ internal sealed class Program
         //await InvokeComputerUseAgentAsync(agentOption2);
 
         // Cleanup by agent name removes the agent version created.
-        await aiProjectClient.Agents.DeleteAgentAsync(agentOption1.Name);
+        await FoundryVersionedAgent.DeleteAIAgentAsync(agentOption1);
         await aiProjectClient.Agents.DeleteAgentAsync(agentOption2.Name);
     }
 

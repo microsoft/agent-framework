@@ -4,13 +4,10 @@
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using OpenAI.Responses;
 
-// Warning: DefaultAzureCredential is intended for simplicity in development. For production scenarios, consider using a more specific credential.
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AgentInstructions = "You are a helpful assistant that can use the countries API to retrieve information about countries by their currency code.";
@@ -69,9 +66,6 @@ const string CountriesOpenApiSpec = """
 }
 """;
 
-// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
-
 // Create the OpenAPI function definition
 var openApiFunction = new OpenApiFunctionDefinition(
     "get_countries",
@@ -81,19 +75,21 @@ var openApiFunction = new OpenApiFunctionDefinition(
     Description = "Retrieve information about countries by currency code"
 };
 
-AIAgent agent = await CreateAgentWithMEAI();
+FoundryVersionedAgent agent = await CreateAgentWithMEAI();
 // AIAgent agent = await CreateAgentWithNativeSDK();
+
+AIProjectClient aiProjectClient = agent.GetService<AIProjectClient>()!;
 
 // Run the agent with a question about countries
 Console.WriteLine(await agent.RunAsync("What countries use the Euro (EUR) as their currency? Please list them."));
 
 // Cleanup by deleting the agent
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
 
 // --- Agent Creation Options ---
 
 // Option 1 - Using FoundryAITool wrapping for OpenApiTool (MEAI + AgentFramework)
-async Task<AIAgent> CreateAgentWithMEAI()
+async Task<FoundryVersionedAgent> CreateAgentWithMEAI()
 {
     return await FoundryVersionedAgent.CreateAIAgentAsync(
         name: "OpenAPIToolsAgent-MEAI",

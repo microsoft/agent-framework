@@ -7,12 +7,10 @@
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using OpenAI.Responses;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 string embeddingModelName = Environment.GetEnvironmentVariable("AZURE_AI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-ada-002";
 string memoryStoreName = Environment.GetEnvironmentVariable("AZURE_AI_MEMORY_STORE_ID") ?? $"foundry-memory-sample-{Guid.NewGuid():N}";
@@ -28,18 +26,16 @@ const string AgentNameNative = "MemorySearchAgent-NATIVE";
 
 string userScope = $"user_{Environment.MachineName}";
 
-// Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-DefaultAzureCredential credential = new();
-AIProjectClient aiProjectClient = new(new Uri(endpoint), credential);
-
-// Ensure the memory store exists and has memories to retrieve.
-await EnsureMemoryStoreAsync();
-// Create the Memory Search tool configuration
-MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope) { UpdateDelayInSecs = 0 };
+MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope) { UpdateDelay = 0 };
 
 // Create agent using Option 1 (MEAI) or Option 2 (Native SDK)
 FoundryVersionedAgent agent = await CreateAgentWithMEAI();
 // FoundryVersionedAgent agent = await CreateAgentWithNativeSDK();
+
+AIProjectClient aiProjectClient = agent.GetService<AIProjectClient>()!;
+
+// Ensure the memory store exists and has memories to retrieve.
+await EnsureMemoryStoreAsync();
 
 try
 {

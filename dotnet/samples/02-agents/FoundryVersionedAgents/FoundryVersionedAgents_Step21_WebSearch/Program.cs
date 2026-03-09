@@ -4,26 +4,23 @@
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AgentInstructions = "You are a helpful assistant that can search the web to find current information and answer questions accurately.";
 const string AgentName = "WebSearchAgent";
 
-// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
-
 // Option 1 - Using HostedWebSearchTool (MEAI + AgentFramework)
-AIAgent agent = await CreateAgentWithMEAIAsync();
+FoundryVersionedAgent agent = await CreateAgentWithMEAIAsync();
 
 // Option 2 - Using PromptAgentDefinition with the Responses API native type
 // AIAgent agent = await CreateAgentWithNativeSDKAsync();
+
+AIProjectClient aiProjectClient = agent.GetService<AIProjectClient>()!;
 
 AgentResponse response = await agent.RunAsync("What's the weather today in Seattle?");
 
@@ -44,10 +41,10 @@ foreach (AIAnnotation annotation in response.Messages.SelectMany(m => m.Contents
 }
 
 // Cleanup by agent name removes the agent version created.
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
 
 // Creates the agent using the HostedWebSearchTool MEAI abstraction that maps to the built-in Responses API web search tool.
-async Task<AIAgent> CreateAgentWithMEAIAsync()
+async Task<FoundryVersionedAgent> CreateAgentWithMEAIAsync()
     => await FoundryVersionedAgent.CreateAIAgentAsync(
         name: AgentName,
         instructions: AgentInstructions,

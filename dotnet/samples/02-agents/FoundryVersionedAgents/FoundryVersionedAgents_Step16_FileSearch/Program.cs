@@ -4,7 +4,6 @@
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -12,16 +11,15 @@ using OpenAI.Assistants;
 using OpenAI.Files;
 using OpenAI.Responses;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AgentInstructions = "You are a helpful assistant that can search through uploaded files to answer questions.";
 
-// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+// Create an initial agent to obtain the AIProjectClient
+FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    name: "FileSearchAgent-MEAI",
+    instructions: AgentInstructions);
+AIProjectClient aiProjectClient = agent.GetService<AIProjectClient>()!;
 var projectOpenAIClient = aiProjectClient.GetProjectOpenAIClient();
 var filesClient = projectOpenAIClient.GetProjectFilesClient();
 var vectorStoresClient = projectOpenAIClient.GetProjectVectorStoresClient();
@@ -53,7 +51,12 @@ var vectorStoreResult = await vectorStoresClient.CreateVectorStoreAsync(
 string vectorStoreId = vectorStoreResult.Value.Id;
 Console.WriteLine($"Created vector store, vector store ID: {vectorStoreId}");
 
-AIAgent agent = await CreateAgentWithMEAI();
+// Option 1 - Recreate the agent with the file search tool (MEAI + AgentFramework)
+agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    name: "FileSearchAgent-MEAI",
+    instructions: AgentInstructions,
+    tools: [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreId)] }]);
+// Option 2 - Using PromptAgentDefinition with ResponseTool.CreateFileSearchTool (Native SDK)
 // AIAgent agent = await CreateAgentWithNativeSDK();
 
 // Run the agent
@@ -76,7 +79,7 @@ foreach (AIAnnotation annotation in response.Messages.SelectMany(m => m.Contents
 
 // Cleanup.
 Console.WriteLine("\n--- Cleanup ---");
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
 await vectorStoresClient.DeleteVectorStoreAsync(vectorStoreId);
 await filesClient.DeleteFileAsync(uploadedFile.Id);
 File.Delete(searchFilePath);
@@ -85,15 +88,6 @@ Console.WriteLine("Cleanup completed successfully.");
 // --- Agent Creation Options ---
 
 #pragma warning disable CS8321 // Local function is declared but never used
-// Option 1 - Using HostedFileSearchTool (MEAI + AgentFramework)
-async Task<AIAgent> CreateAgentWithMEAI()
-{
-    return await FoundryVersionedAgent.CreateAIAgentAsync(
-        name: "FileSearchAgent-MEAI",
-        instructions: AgentInstructions,
-        tools: [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreId)] }]);
-}
-
 // Option 2 - Using PromptAgentDefinition with ResponseTool.CreateFileSearchTool (Native SDK)
 async Task<AIAgent> CreateAgentWithNativeSDK()
 {

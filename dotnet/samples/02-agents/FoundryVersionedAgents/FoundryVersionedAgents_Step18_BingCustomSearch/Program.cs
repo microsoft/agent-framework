@@ -4,12 +4,10 @@
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using OpenAI.Responses;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 string connectionId = Environment.GetEnvironmentVariable("AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID") ?? throw new InvalidOperationException("AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID is not set.");
 string instanceName = Environment.GetEnvironmentVariable("AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME") ?? throw new InvalidOperationException("AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME is not set.");
@@ -19,19 +17,15 @@ const string AgentInstructions = """
     Use the available Bing Custom Search tools to answer questions and perform tasks.
     """;
 
-// Get a client to create/retrieve/delete server side agents with Microsoft Foundry Agents.
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
-
 // Bing Custom Search tool parameters shared by both options
 BingCustomSearchToolOptions bingCustomSearchToolParameters = new([
     new BingCustomSearchConfiguration(connectionId, instanceName)
 ]);
 
-AIAgent agent = await CreateAgentWithMEAIAsync();
+FoundryVersionedAgent agent = await CreateAgentWithMEAIAsync();
 // AIAgent agent = await CreateAgentWithNativeSDKAsync();
+
+AIProjectClient aiProjectClient = agent.GetService<AIProjectClient>()!;
 
 Console.WriteLine($"Created agent: {agent.Name}");
 
@@ -45,13 +39,13 @@ foreach (var message in response.Messages)
 }
 
 // Cleanup by deleting the agent
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
 Console.WriteLine($"\nDeleted agent: {agent.Name}");
 
 // --- Agent Creation Options ---
 
 // Option 1 - Using FoundryAITool wrapping for BingCustomSearchTool (MEAI + AgentFramework)
-async Task<AIAgent> CreateAgentWithMEAIAsync()
+async Task<FoundryVersionedAgent> CreateAgentWithMEAIAsync()
 {
     return await FoundryVersionedAgent.CreateAIAgentAsync(
         name: "BingCustomSearchAgent-MEAI",
