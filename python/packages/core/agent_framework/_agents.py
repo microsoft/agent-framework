@@ -1123,7 +1123,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         opts = _merge_options(self.default_options, dict(options) if options else {})
 
         # Get tools from options or named parameter (named param takes precedence)
-        tools_ = tools if tools is not None else opts.pop("tools", None)
+        # Remove tools from options to prevent overwrite merged tools list later when
+        # we merge opts into chat_options
+        options_tools = opts.pop("tools", None)
+        tools_ = tools if tools is not None else options_tools
 
         input_messages = normalize_messages(messages)
 
@@ -1136,6 +1139,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             and not opts.get("conversation_id")
             # `store` takes precedence over client-level storage indicators. An explicit
             # `store=False` forces local (in-memory) history injection, even if the client
+            # is configured to use service-side storage by default.
             and not opts.get("store", getattr(self.client, "STORES_BY_DEFAULT", False))
         ):
             self.context_providers.append(InMemoryHistoryProvider())
