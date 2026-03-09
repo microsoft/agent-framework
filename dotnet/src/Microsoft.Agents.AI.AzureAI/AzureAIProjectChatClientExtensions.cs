@@ -267,7 +267,6 @@ public static partial class AzureAIProjectChatClientExtensions
         Throw.IfNull(aiProjectClient);
         Throw.IfNull(options);
         Throw.IfNullOrWhitespace(model);
-        const bool RequireInvocableTools = true;
 
         if (string.IsNullOrWhiteSpace(options.Name))
         {
@@ -276,36 +275,9 @@ public static partial class AzureAIProjectChatClientExtensions
 
         ThrowIfInvalidAgentName(options.Name);
 
-        PromptAgentDefinition agentDefinition = new(model)
-        {
-            Instructions = options.ChatOptions?.Instructions,
-            Temperature = options.ChatOptions?.Temperature,
-            TopP = options.ChatOptions?.TopP,
-            TextOptions = new() { TextFormat = ToOpenAIResponseTextFormat(options.ChatOptions?.ResponseFormat, options.ChatOptions) }
-        };
+        AgentVersion agentVersion = await CreateAgentVersionFromOptionsAsync(aiProjectClient, model, options, cancellationToken).ConfigureAwait(false);
 
-        // Map reasoning options from the abstraction-level ChatOptions.Reasoning,
-        // falling back to extracting from the raw representation factory for breaking glass scenarios.
-        if (options.ChatOptions?.Reasoning is { } reasoning)
-        {
-            agentDefinition.ReasoningOptions = ToResponseReasoningOptions(reasoning);
-        }
-        else if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is CreateResponseOptions respCreationOptions)
-        {
-            agentDefinition.ReasoningOptions = respCreationOptions.ReasoningOptions;
-        }
-
-        ApplyToolsToAgentDefinition(agentDefinition, options.ChatOptions?.Tools);
-
-        AgentVersionCreationOptions? creationOptions = new(agentDefinition);
-        if (!string.IsNullOrWhiteSpace(options.Description))
-        {
-            creationOptions.Description = options.Description;
-        }
-
-        AgentVersion agentVersion = await CreateAgentVersionWithProtocolAsync(aiProjectClient, options.Name, creationOptions, cancellationToken).ConfigureAwait(false);
-
-        var agentOptions = CreateChatClientAgentOptions(agentVersion, options, RequireInvocableTools);
+        var agentOptions = CreateChatClientAgentOptions(agentVersion, options, requireInvocableTools: true);
 
         return AsChatClientAgent(
             aiProjectClient,
@@ -358,7 +330,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <summary>
     /// Asynchronously retrieves an agent record by name using the protocol method to inject user-agent headers.
     /// </summary>
-    private static async Task<AgentRecord> GetAgentRecordByNameAsync(AIProjectClient aiProjectClient, string agentName, CancellationToken cancellationToken)
+    internal static async Task<AgentRecord> GetAgentRecordByNameAsync(AIProjectClient aiProjectClient, string agentName, CancellationToken cancellationToken)
     {
         ClientResult protocolResponse = await aiProjectClient.Agents.GetAgentAsync(agentName, cancellationToken.ToRequestOptions(false)).ConfigureAwait(false);
         var rawResponse = protocolResponse.GetRawResponse();
@@ -369,7 +341,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <summary>
     /// Asynchronously creates an agent version using the protocol method to inject user-agent headers.
     /// </summary>
-    private static async Task<AgentVersion> CreateAgentVersionWithProtocolAsync(AIProjectClient aiProjectClient, string agentName, AgentVersionCreationOptions creationOptions, CancellationToken cancellationToken)
+    internal static async Task<AgentVersion> CreateAgentVersionWithProtocolAsync(AIProjectClient aiProjectClient, string agentName, AgentVersionCreationOptions creationOptions, CancellationToken cancellationToken)
     {
         BinaryData serializedOptions = ModelReaderWriter.Write(creationOptions, s_modelWriterOptionsWire, AzureAIProjectsAgentsContext.Default);
         BinaryContent content = BinaryContent.Create(serializedOptions);
@@ -406,8 +378,58 @@ public static partial class AzureAIProjectChatClientExtensions
             services);
     }
 
-    /// <summary>This method creates an <see cref="ChatClientAgent"/> with the specified ChatClientAgentOptions.</summary>
-    private static ChatClientAgent AsChatClientAgent(
+    /// <summary>
+    /// Creates an agent version with optional tool application, using the protocol method to inject user-agent headers.
+    /// </summary>
+    internal static async Task<AgentVersion> CreateAgentVersionWithProtocolAsync(AIProjectClient aiProjectClient, string agentName, AgentVersionCreationOptions creationOptions, IList<AITool>? tools, CancellationToken cancellationToken)
+    {
+        if (tools is { Count: > 0 })
+        {
+            ApplyToolsToAgentDefinition(creationOptions.Definition, tools);
+        }
+
+        return await CreateAgentVersionWithProtocolAsync(aiProjectClient, agentName, creationOptions, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Creates an agent version from <see cref="ChatClientAgentOptions"/>, mapping options to a <see cref="PromptAgentDefinition"/>.
+    /// </summary>
+    internal static async Task<AgentVersion> CreateAgentVersionFromOptionsAsync(
+        AIProjectClient aiProjectClient,
+        string model,
+        ChatClientAgentOptions options,
+        CancellationToken cancellationToken)
+    {
+        PromptAgentDefinition agentDefinition = new(model)
+        {
+            Instructions = options.ChatOptions?.Instructions,
+            Temperature = options.ChatOptions?.Temperature,
+            TopP = options.ChatOptions?.TopP,
+            TextOptions = new() { TextFormat = ToOpenAIResponseTextFormat(options.ChatOptions?.ResponseFormat, options.ChatOptions) }
+        };
+
+        if (options.ChatOptions?.Reasoning is { } reasoning)
+        {
+            agentDefinition.ReasoningOptions = ToResponseReasoningOptions(reasoning);
+        }
+        else if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is CreateResponseOptions respCreationOptions)
+        {
+            agentDefinition.ReasoningOptions = respCreationOptions.ReasoningOptions;
+        }
+
+        ApplyToolsToAgentDefinition(agentDefinition, options.ChatOptions?.Tools);
+
+        AgentVersionCreationOptions creationOptions = new(agentDefinition);
+        if (!string.IsNullOrWhiteSpace(options.Description))
+        {
+            creationOptions.Description = options.Description;
+        }
+
+        return await CreateAgentVersionWithProtocolAsync(aiProjectClient, options.Name!, creationOptions, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Creates a <see cref="ChatClientAgent"/> with the specified options.</summary>
+    internal static ChatClientAgent CreateChatClientAgent(
         AIProjectClient aiProjectClient,
         AgentVersion agentVersion,
         ChatClientAgentOptions agentOptions,
@@ -423,6 +445,15 @@ public static partial class AzureAIProjectChatClientExtensions
 
         return new ChatClientAgent(chatClient, agentOptions, services: services);
     }
+
+    /// <summary>This method creates an <see cref="ChatClientAgent"/> with the specified ChatClientAgentOptions.</summary>
+    private static ChatClientAgent AsChatClientAgent(
+        AIProjectClient aiProjectClient,
+        AgentVersion agentVersion,
+        ChatClientAgentOptions agentOptions,
+        Func<IChatClient, IChatClient>? clientFactory,
+        IServiceProvider? services)
+        => CreateChatClientAgent(aiProjectClient, agentVersion, agentOptions, clientFactory, services);
 
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with the specified ChatClientAgentOptions.</summary>
     private static ChatClientAgent AsChatClientAgent(
@@ -503,7 +534,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// This method rebuilds the agent options from the agent definition returned by the version and combine with the in-proc tools when provided
     /// this ensures that all required tools are provided and the definition of the agent options are consistent with the agent definition coming from the server.
     /// </remarks>
-    private static ChatClientAgentOptions CreateChatClientAgentOptions(AgentVersion agentVersion, ChatOptions? chatOptions, bool requireInvocableTools)
+    internal static ChatClientAgentOptions CreateChatClientAgentOptions(AgentVersion agentVersion, ChatOptions? chatOptions, bool requireInvocableTools)
     {
         var agentDefinition = agentVersion.Definition;
 
@@ -591,7 +622,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <param name="requireInvocableTools">Specifies whether the returned options must include invocable tools. Set to <see langword="true"/> to require
     /// invocable tools; otherwise, <see langword="false"/>.</param>
     /// <returns>A <see cref="ChatClientAgentOptions"/> instance configured according to the specified parameters.</returns>
-    private static ChatClientAgentOptions CreateChatClientAgentOptions(AgentVersion agentVersion, ChatClientAgentOptions? options, bool requireInvocableTools)
+    internal static ChatClientAgentOptions CreateChatClientAgentOptions(AgentVersion agentVersion, ChatClientAgentOptions? options, bool requireInvocableTools)
     {
         var agentOptions = CreateChatClientAgentOptions(agentVersion, options?.ChatOptions, requireInvocableTools);
         if (options is not null)
@@ -768,7 +799,7 @@ public static partial class AzureAIProjectChatClientExtensions
     private static Regex AgentNameValidationRegex() => new("^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$");
 #endif
 
-    private static string ThrowIfInvalidAgentName(string? name)
+    internal static string ThrowIfInvalidAgentName(string? name)
     {
         Throw.IfNullOrWhitespace(name);
         if (!AgentNameValidationRegex().IsMatch(name))
