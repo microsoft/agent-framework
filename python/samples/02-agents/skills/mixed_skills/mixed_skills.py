@@ -40,8 +40,9 @@ Key concepts shown:
   on demand.
 - File skills from disk: ``SKILL.md`` files with reference documents and
   executable script files.
-- ``CallbackSkillScriptExecutor``: routes all script execution (both code
-  and file-based) through a single executor, enabling a unified experience.
+- ``CallbackSkillScriptExecutor``: routes **file-based** script execution
+  through a callback, enabling custom handling (e.g. subprocess calls).
+  Code-defined scripts (``@skill.script``) run in-process automatically.
 
 The sample registers two skills:
 1. **pin-generator** (code skill) — generates numeric PINs using

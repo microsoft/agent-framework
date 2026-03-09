@@ -525,7 +525,7 @@ class CallbackSkillScriptExecutor(SkillScriptExecutor):
         Returns:
             The execution result.
         """
-        result = self._callback(skill=skill, script=script, args=args)  # type: ignore[arg-type]
+        result = self._callback(skill, script, args)  # type: ignore[arg-type]
         if inspect.isawaitable(result):
             result = await result
         return result
@@ -683,9 +683,7 @@ class SkillsProvider(BaseContextProvider):
                 affects scripts discovered from disk (via *skill_paths*);
                 code-defined scripts (registered with ``@skill.script``) are
                 always executed in-process and ignore this setting.
-                When ``None`` and code-defined *skills* are provided, a default
-                in-process :class:`CallbackSkillScriptExecutor` is used
-                automatically.  Otherwise scripts are not executed.
+                When ``None``, file-based scripts are not executable.
             instruction_template: Custom system-prompt template for
                 advertising skills.  Must contain a ``{skills}`` placeholder for the
                 generated skills list.  Uses a built-in template when ``None``.
@@ -1535,22 +1533,22 @@ def _create_script_element(script: SkillScript) -> str:
     """Create an XML ``<script …>`` element from a :class:`SkillScript`.
 
     When the script has a ``parameters_schema``, the element includes a
-    ``<parameters>`` child element containing the JSON schema.  Otherwise
-    the element is self-closing.
+    ``<parameters_schema>`` child element containing the JSON schema.
+    Otherwise the element is self-closing.
 
     Args:
         script: The script to create the element from.
 
     Returns:
         An indented XML element string with ``name``, optional
-        ``description`` attributes, and an optional ``<parameters>``
-        child element.
+        ``description`` attributes, and an optional
+        ``<parameters_schema>`` child element.
     """
     attrs = f'name="{xml_escape(script.name, quote=True)}"'
     if script.description:
         attrs += f' description="{xml_escape(script.description, quote=True)}"'
     if script.parameters_schema:
-        params_json = json.dumps(script.parameters_schema)
+        params_json = xml_escape(json.dumps(script.parameters_schema), quote=False)
         return f"  <script {attrs}>\n    <parameters_schema>{params_json}</parameters_schema>\n  </script>"
     return f"  <script {attrs}/>"
 

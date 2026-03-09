@@ -33,7 +33,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.length < 4:
-        print("Error: --length must be >= 4. Received: {}.".format(args.length), file=sys.stderr)
+        print(f"Error: --length must be >= 4. Received: {args.length}.", file=sys.stderr)
         sys.exit(1)
 
     password = generate(length=args.length)
