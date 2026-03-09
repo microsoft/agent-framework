@@ -101,16 +101,16 @@ public sealed class CompactionProvider : AIContextProvider
         }
 
         // Apply compaction
-        bool wasCompacted = await this._compactionStrategy.CompactAsync(messageIndex, cancellationToken).ConfigureAwait(false);
-        if (wasCompacted)
-        {
-            state.MessageGroups = [.. messageIndex.Groups];
-        }
+        await this._compactionStrategy.CompactAsync(messageIndex, cancellationToken).ConfigureAwait(false);
+
+        // Persist the index
+        state.MessageGroups.Clear();
+        state.MessageGroups.AddRange(messageIndex.Groups);
 
         return new AIContext
         {
             Instructions = context.AIContext.Instructions,
-            Messages = wasCompacted ? messageIndex.GetIncludedMessages() : messageList,
+            Messages = messageIndex.GetIncludedMessages(),
             Tools = context.AIContext.Tools
         };
     }
