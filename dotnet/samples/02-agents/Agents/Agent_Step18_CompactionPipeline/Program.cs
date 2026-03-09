@@ -50,11 +50,6 @@ PipelineCompactionStrategy compactionPipeline =
         // 3. Aggressive: keep only the last N user turns and their responses
         new SlidingWindowCompactionStrategy(CompactionTriggers.TurnsExceed(4)),
 
-        //MessageGroup
-        //MessageIndex
-        //CompactionTrigger
-        //CompactionTriggers.TurnsExceed(4)
-
         // 4. Emergency: drop oldest groups until under the token budget
         new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(0x8000)));
 
@@ -62,7 +57,7 @@ PipelineCompactionStrategy compactionPipeline =
 AIAgent agent =
     agentChatClient
         .AsBuilder()
-        //.UseAIContextProviders(new CompactionProvider(compactionPipeline))
+        .UseAIContextProviders(new CompactionProvider(compactionPipeline))
         .BuildAIAgent(
             new ChatClientAgentOptions
             {
@@ -79,7 +74,7 @@ AIAgent agent =
                     Tools = [AIFunctionFactory.Create(LookupPrice)]
                 },
                 // Note: AIContextProviders may be specified here instead of ChatClientBuilder.UseAIContextProviders.
-                AIContextProviders = [new CompactionProvider(compactionPipeline)]
+                //AIContextProviders = [new CompactionProvider(compactionPipeline)]
             });
 
 AgentSession session = await agent.CreateSessionAsync();
