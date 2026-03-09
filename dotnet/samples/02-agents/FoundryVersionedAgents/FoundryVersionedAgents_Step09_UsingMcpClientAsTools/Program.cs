@@ -2,8 +2,6 @@
 
 // This sample shows how to expose an AI agent as an MCP tool.
 
-using Azure.AI.Projects;
-using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
