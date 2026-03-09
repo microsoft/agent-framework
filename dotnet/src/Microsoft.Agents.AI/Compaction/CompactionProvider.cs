@@ -123,7 +123,7 @@ public sealed class CompactionProvider : AIContextProvider
         /// <summary>
         /// Gets or sets the message index groups used for incremental compaction updates.
         /// </summary>
-        [JsonPropertyName("messages")]
+        [JsonPropertyName("messagegroups")]
         public List<MessageGroup> MessageGroups { get; set; } = [];
     }
 }

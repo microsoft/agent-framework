@@ -53,7 +53,7 @@ PipelineCompactionStrategy compactionPipeline =
         // 4. Emergency: drop oldest groups until under the token budget
         new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(0x8000)));
 
-// Create the agent with a MessageCompactionContextProvider that uses the compaction pipeline.
+// Create the agent with a CompactionProvider that uses the compaction pipeline.
 AIAgent agent =
     agentChatClient
         .AsBuilder()

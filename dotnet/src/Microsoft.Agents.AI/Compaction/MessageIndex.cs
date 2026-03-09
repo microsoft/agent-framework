@@ -47,8 +47,9 @@ public sealed class MessageIndex
     /// <param name="tokenizer">An optional tokenizer retained for computing token counts when adding new groups.</param>
     public MessageIndex(IList<MessageGroup> groups, Tokenizer? tokenizer = null)
     {
-        this.Groups = groups;
         this.Tokenizer = tokenizer;
+        this.Groups = groups;
+        this.ProcessedMessageCount = this.TotalMessageCount;
 
         // Restore turn counter from the last group that has a TurnIndex
         for (int index = groups.Count - 1; index >= 0; --index)

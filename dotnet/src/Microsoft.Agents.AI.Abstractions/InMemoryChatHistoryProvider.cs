@@ -90,10 +90,10 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     {
         State state = this._sessionState.GetOrInitializeState(context.Session);
 
-        if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval)
+        if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval && this.ChatReducer is not null)
         {
-            // Apply pre-invocation compaction strategy if configured
-            await this.CompactMessagesAsync(state, cancellationToken).ConfigureAwait(false);
+            // Apply pre-retrieval compaction strategy if configured
+            await CompactMessagesAsync(this.ChatReducer, state, cancellationToken).ConfigureAwait(false);
         }
 
         return state.Messages;
@@ -108,20 +108,17 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
         var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);
         state.Messages.AddRange(allNewMessages);
 
-        if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded)
+        if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded && this.ChatReducer is not null)
         {
             // Apply pre-write compaction strategy if configured
-            await this.CompactMessagesAsync(state, cancellationToken).ConfigureAwait(false);
+            await CompactMessagesAsync(this.ChatReducer, state, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private async Task CompactMessagesAsync(State state, CancellationToken cancellationToken = default)
+    private static async Task CompactMessagesAsync(IChatReducer reducer, State state, CancellationToken cancellationToken = default)
     {
-        if (this.ChatReducer is not null)
-        {
-            state.Messages = [.. await this.ChatReducer.ReduceAsync(state.Messages, cancellationToken).ConfigureAwait(false)];
-            return;
-        }
+        state.Messages = [.. await reducer.ReduceAsync(state.Messages, cancellationToken).ConfigureAwait(false)];
+        return;
     }
 
     /// <summary>

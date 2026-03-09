@@ -89,7 +89,7 @@ public sealed class MessageGroup
     /// <summary>
     /// Gets the zero-based user turn index this group belongs to, or <see langword="null"/>
     /// for groups that precede the first user message (e.g., system messages).  A turn index
-    /// of 0 corresponds with any non-system message that preceeds the first user message,
+    /// of 0 corresponds with any non-system message that precedes the first user message,
     /// turn index 1 corresponds with the first user message and its subsequent non-user
     /// messages, and so on.
     /// </summary>
