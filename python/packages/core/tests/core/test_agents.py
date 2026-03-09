@@ -384,6 +384,42 @@ async def test_chat_client_agent_streaming_session_id_set_without_get_final_resp
     assert session.service_session_id == "resp_123"
 
 
+async def test_chat_client_agent_streaming_session_history_saved_without_get_final_response(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Test that session history is saved after streaming iteration without get_final_response().
+
+    Auto-finalization on iteration completion should trigger after_run providers,
+    persisting conversation history to the session.
+    """
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_text("Hello Alice!")],
+                role="assistant",
+                response_id="resp_1",
+                finish_reason="stop",
+            ),
+        ]
+    ]
+
+    agent = Agent(client=chat_client_base)
+    session = agent.create_session()
+
+    # Only iterate — do NOT call get_final_response()
+    async for _ in agent.run("My name is Alice", session=session, stream=True):
+        pass
+
+    chat_messages: list[Message] = session.state.get(
+        InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {}
+    ).get("messages", [])
+    assert len(chat_messages) == 2
+    assert chat_messages[0].text == "My name is Alice"
+    assert chat_messages[1].text == "Hello Alice!"
+
+
 async def test_chat_client_agent_update_session_messages(
     client: SupportsChatGetResponse,
 ) -> None:
