@@ -29,6 +29,7 @@ import inspect
 import logging
 import os
 import re
+import typing
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from html import escape as xml_escape
@@ -97,33 +98,38 @@ class SkillContext(Generic[DepsT]):
     deps: DepsT
 
 
-def _is_skill_context_annotation(annotation: Any) -> bool:
-    """Return whether *annotation* refers to :class:`SkillContext`.
+def _is_skill_ctx(annotation: Any) -> bool:
+    """Return whether *annotation* is the ``SkillContext`` class, parameterized or not."""
+    return annotation is SkillContext or get_origin(annotation) is SkillContext
 
-    Handles both bare ``SkillContext`` and parameterized forms such as
-    ``SkillContext[MyDeps]``.  Also resolves string annotations produced
-    by ``from __future__ import annotations``.
 
-    Args:
-        annotation: The annotation value from an :class:`inspect.Parameter`.
+def _resolve_takes_ctx(func: Callable[..., Any]) -> bool:
+    """Return whether *func*'s first positional parameter is :class:`SkillContext`.
 
-    Returns:
-        ``True`` if *annotation* is a ``SkillContext`` type.
+    Uses :func:`typing.get_type_hints` to resolve annotations, including
+    stringified forms produced by ``from __future__ import annotations``.
+
+    .. note::
+
+        Deps classes must be defined at **module level** so that
+        :func:`typing.get_type_hints` can resolve them.
     """
-    if annotation is inspect.Parameter.empty:
+    sig = inspect.signature(func)
+    first = next(
+        (p for p in sig.parameters.values() if p.kind in (_POS_ONLY, _POS_OR_KW)),
+        None,
+    )
+    if first is None or first.annotation is inspect.Parameter.empty:
+        return False
+    try:
+        resolved = typing.get_type_hints(func).get(first.name)
+        return resolved is not None and _is_skill_ctx(resolved)
+    except Exception:
         return False
 
-    # Handle stringified annotations from `from __future__ import annotations`
-    if isinstance(annotation, str):
-        stripped = annotation.strip()
-        return stripped == "SkillContext" or stripped.startswith("SkillContext[")
 
-    # Direct class reference
-    if annotation is SkillContext:
-        return True
-
-    # Parameterized generic: SkillContext[SomeType]
-    return get_origin(annotation) is SkillContext
+_POS_ONLY = inspect.Parameter.POSITIONAL_ONLY
+_POS_OR_KW = inspect.Parameter.POSITIONAL_OR_KEYWORD
 
 
 class SkillResource:
@@ -188,20 +194,8 @@ class SkillResource:
         self.function = function
 
         # Precompute whether the first positional parameter is typed as
-        # SkillContext to avoid repeated inspect.signature() calls.
-        self._takes_ctx: bool = False
-        if function is not None:
-            sig = inspect.signature(function)
-
-            # Detect if the first positional parameter is typed as SkillContext.
-            positional_kinds = (
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            )
-            for param in sig.parameters.values():
-                if param.kind in positional_kinds:
-                    self._takes_ctx = _is_skill_context_annotation(param.annotation)
-                    break
+        # SkillContext to avoid repeated inspection at invocation time.
+        self._takes_ctx: bool = _resolve_takes_ctx(function) if function is not None else False
 
 
 class Skill:

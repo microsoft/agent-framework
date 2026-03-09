@@ -24,8 +24,28 @@ from agent_framework._skills import (
     _normalize_resource_path,
     _read_and_parse_skill_file,
     _read_file_skill_resource,
+    _resolve_takes_ctx,
     _validate_skill_metadata,
 )
+
+
+# Module-level deps classes for SkillContext tests.
+# Must be at module level so typing.get_type_hints() can resolve them
+# when ``from __future__ import annotations`` is active.
+class _SyncDeps:
+    value = "hello"
+
+
+class _AsyncDeps:
+    data = "async-data"
+
+
+class _MutableDeps:
+    loaded: bool = False
+
+
+class _EmptyDeps:
+    pass
 
 
 def _symlinks_supported(tmp: Path) -> bool:
@@ -995,33 +1015,25 @@ class TestSkillsProviderCodeSkill:
 
     async def test_read_resource_sync_with_skill_context(self) -> None:
         """Sync resource receiving SkillContext gets typed deps."""
-
-        class FakeDeps:
-            value = "hello"
-
         skill = Skill(name="prog-skill", description="A skill.", content="Body")
 
         @skill.resource
-        def get_info(ctx: SkillContext[FakeDeps]) -> str:
+        def get_info(ctx: SkillContext[_SyncDeps]) -> str:
             return f"info: {ctx.deps.value}"
 
-        provider = SkillsProvider(skills=[skill], deps=FakeDeps())
+        provider = SkillsProvider(skills=[skill], deps=_SyncDeps())
         result = await provider._read_skill_resource("prog-skill", "get_info")
         assert result == "info: hello"
 
     async def test_read_resource_async_with_skill_context(self) -> None:
         """Async resource receiving SkillContext gets typed deps."""
-
-        class FakeDeps:
-            data = "async-data"
-
         skill = Skill(name="prog-skill", description="A skill.", content="Body")
 
         @skill.resource
-        async def get_data(ctx: SkillContext[FakeDeps]) -> str:
+        async def get_data(ctx: SkillContext[_AsyncDeps]) -> str:
             return f"result: {ctx.deps.data}"
 
-        provider = SkillsProvider(skills=[skill], deps=FakeDeps())
+        provider = SkillsProvider(skills=[skill], deps=_AsyncDeps())
         result = await provider._read_skill_resource("prog-skill", "get_data")
         assert result == "result: async-data"
 
@@ -1051,15 +1063,11 @@ class TestSkillsProviderCodeSkill:
 
     async def test_read_resource_skill_context_mutates_deps(self) -> None:
         """Resource can mutate deps for use by subsequent resource calls."""
-
-        class MutableDeps:
-            loaded: bool = False
-
         skill = Skill(name="prog-skill", description="A skill.", content="Body")
-        deps = MutableDeps()
+        deps = _MutableDeps()
 
         @skill.resource
-        def load_data(ctx: SkillContext[MutableDeps]) -> str:
+        def load_data(ctx: SkillContext[_MutableDeps]) -> str:
             ctx.deps.loaded = True
             return "loaded"
 
@@ -1103,6 +1111,64 @@ class TestSkillsProviderCodeSkill:
 
         resource = SkillResource(name="r", function=with_ctx)
         assert resource._takes_ctx is True
+
+
+class TestResolveSkillContextAnnotationForms:
+    """Tests for _resolve_takes_ctx covering all annotation forms.
+
+    Because this test file uses ``from __future__ import annotations``,
+    inline annotations are strings and exercise the ``get_type_hints()``
+    resolution path.
+    """
+
+    # -- Forms resolved via get_type_hints() (stringified by __future__) --
+
+    def test_parameterized_skill_context_via_future_annotations(self) -> None:
+        """SkillContext[T] with from __future__ import annotations."""
+
+        def func(ctx: SkillContext[_EmptyDeps]) -> str:
+            return ""
+
+        assert _resolve_takes_ctx(func) is True
+
+    def test_bare_skill_context_via_future_annotations(self) -> None:
+        """Bare SkillContext with from __future__ import annotations."""
+
+        def func(ctx: SkillContext) -> str:  # type: ignore[type-arg]
+            return ""
+
+        assert _resolve_takes_ctx(func) is True
+
+    # -- Negative cases --
+
+    def test_unresolvable_string_annotation_returns_false(self) -> None:
+        """String annotation that get_type_hints can't resolve returns False."""
+
+        def func(ctx) -> str:  # noqa: ANN001
+            return ""
+
+        func.__annotations__["ctx"] = "SomeOtherContext[Deps]"
+        assert _resolve_takes_ctx(func) is False
+
+    def test_no_positional_params(self) -> None:
+        """Function with only **kwargs returns False."""
+
+        def func(**kwargs) -> str:  # noqa: ANN003
+            return ""
+
+        assert _resolve_takes_ctx(func) is False
+
+    def test_keyword_only_param_not_detected(self) -> None:
+        """Keyword-only param with SkillContext annotation is not detected."""
+
+        def func(*, ctx: SkillContext) -> str:  # type: ignore[type-arg]
+            return ""
+
+        assert _resolve_takes_ctx(func) is False
+
+
+class TestSkillsProviderCodeSkillBeforeRun:
+    """Tests for SkillsProvider before_run and combined scenarios."""
 
     async def test_before_run_injects_code_skills(self) -> None:
         skill = Skill(name="prog-skill", description="A code-defined skill.", content="Body")
