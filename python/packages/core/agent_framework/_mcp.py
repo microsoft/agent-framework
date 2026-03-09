@@ -142,30 +142,27 @@ def _parse_message_from_mcp(
 
 def _parse_tool_result_from_mcp(
     mcp_type: types.CallToolResult,
-) -> str | list[Content]:
-    """Parse an MCP CallToolResult into a string or rich content list.
+) -> list[Content]:
+    """Parse an MCP CallToolResult into a list of Content items.
 
-    Converts each content item in the MCP result to its appropriate form.
-    Text-only results are returned as strings. When the result contains
-    image or audio content, returns a list of Content objects so the
-    framework can forward the rich media to the model.
+    Converts each content item in the MCP result to its appropriate
+    Content form.  Text items become ``Content(type="text")`` and media
+    items (images, audio) are preserved as rich Content.
 
     Args:
         mcp_type: The MCP CallToolResult object to convert.
 
     Returns:
-        A string for text-only results, or a list of Content for rich media results.
+        A list of Content items representing the tool result.
     """
     import json
 
     result: list[Content] = []
-    has_rich = False
     for item in mcp_type.content:
         match item:
             case types.TextContent():
                 result.append(Content.from_text(item.text))
             case types.ImageContent():
-                has_rich = True
                 result.append(
                     Content.from_uri(
                         uri=f"data:{item.mimeType};base64,{item.data}",
@@ -173,7 +170,6 @@ def _parse_tool_result_from_mcp(
                     )
                 )
             case types.AudioContent():
-                has_rich = True
                 result.append(
                     Content.from_uri(
                         uri=f"data:{item.mimeType};base64,{item.data}",
@@ -213,15 +209,9 @@ def _parse_tool_result_from_mcp(
             case _:
                 result.append(Content.from_text(str(item)))
 
-    if has_rich:
-        return result
-
-    text_parts = [c.text for c in result if c.text]
-    if not text_parts:
-        return ""
-    if len(text_parts) == 1:
-        return text_parts[0]
-    return json.dumps(text_parts, default=str)
+    if not result:
+        result.append(Content.from_text(""))
+    return result
 
 
 def _parse_content_from_mcp(
@@ -920,7 +910,12 @@ class MCPTool:
                 result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=otel_meta)  # type: ignore
                 if result.isError:
                     parsed = parser(result)
-                    raise ToolExecutionException(str(parsed) if not isinstance(parsed, str) else parsed)
+                    text = (
+                        "\n".join(c.text for c in parsed if c.type == "text" and c.text)
+                        if isinstance(parsed, list)
+                        else str(parsed)
+                    )
+                    raise ToolExecutionException(text or str(parsed))
                 return parser(result)
             except ToolExecutionException:
                 raise

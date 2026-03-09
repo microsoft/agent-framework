@@ -778,7 +778,6 @@ class Content:
         call_id: str,
         *,
         result: Any = None,
-        items: Sequence[Content] | None = None,
         exception: str | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -786,49 +785,42 @@ class Content:
     ) -> ContentT:
         """Create function result content.
 
+        All tool output is represented uniformly as Content items in the
+        ``items`` field.  The ``result`` field is populated with the concatenated
+        text from text items for backwards compatibility.
+
         Args:
             call_id: The ID of the function call this result corresponds to.
 
         Keyword Args:
-            result: The text result, or a list of Content items. When a list is
-                provided, text items are concatenated as the text result and
-                media items (images, audio, files) are stored in ``items``.
-            items: Optional rich content items (e.g. images, audio) produced by the tool.
-                Ignored when ``result`` is a list (items are extracted from it instead).
+            result: The tool output.  Accepts a ``list[Content]`` (the canonical
+                form produced by :meth:`~FunctionTool.parse_result`), a plain
+                ``str``, or any other value (which is stringified).
             exception: The exception message if the function call failed.
             annotations: Optional annotations for the content.
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from the provider.
         """
         if isinstance(result, list):
-            if not all(isinstance(c, Content) for c in result):  # type: ignore[reportUnknownVariableType]
-                return cls(
-                    "function_result",
-                    call_id=call_id,
-                    result=str(result),  # type: ignore[reportUnknownArgumentType]
-                    items=list(items) if items else None,
-                    exception=exception,
-                    annotations=annotations,
-                    additional_properties=additional_properties,
-                    raw_representation=raw_representation,
-                )
-            text_parts = [c.text for c in result if c.type == "text" and c.text]  # type: ignore[reportUnknownVariableType, reportUnknownMemberType]
-            rich_items = [c for c in result if c.type in ("data", "uri")]  # type: ignore[reportUnknownVariableType, reportUnknownMemberType]
-            return cls(
-                "function_result",
-                call_id=call_id,
-                result="\n".join(text_parts) if text_parts else "",  # type: ignore[reportUnknownArgumentType]
-                items=rich_items or None,  # type: ignore[reportUnknownArgumentType]
-                exception=exception,
-                annotations=annotations,
-                additional_properties=additional_properties,
-                raw_representation=raw_representation,
-            )
+            if all(isinstance(c, Content) for c in result):  # type: ignore[reportUnknownVariableType]
+                items_list: list[Content] = list(result)  # type: ignore[reportUnknownArgumentType]
+            else:
+                items_list = [Content.from_text(str(result))]  # type: ignore[reportUnknownArgumentType]
+        elif isinstance(result, str):
+            items_list = [Content.from_text(result)]
+        elif result is not None:
+            items_list = [Content.from_text(str(result))]
+        else:
+            items_list = [Content.from_text("")]
+
+        text_parts = [c.text for c in items_list if c.type == "text" and c.text]
+        text_result = "\n".join(text_parts) if text_parts else ""
+
         return cls(
             "function_result",
             call_id=call_id,
-            result=result,
-            items=list(items) if items else None,
+            result=text_result,
+            items=items_list,
             exception=exception,
             annotations=annotations,
             additional_properties=additional_properties,

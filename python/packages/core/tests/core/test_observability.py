@@ -2385,7 +2385,8 @@ async def test_tool_result_preserves_non_ascii_characters(span_exporter: InMemor
     span_exporter.clear()
     result = await echo.invoke(text=arabic_text)
 
-    assert result == arabic_text
+    assert isinstance(result, list)
+    assert result[0].text == arabic_text
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]

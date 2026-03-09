@@ -396,12 +396,13 @@ def test_function_result_with_rich_items_warns_and_omits(
 
 
 def test_parse_result_string_passthrough():
-    """Test that string values are passed through directly without JSON encoding."""
+    """Test that string values are wrapped in Content."""
     from agent_framework import FunctionTool
 
     result = FunctionTool.parse_result("simple string")
-    assert result == "simple string"
-    assert isinstance(result, str)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].text == "simple string"
 
 
 def test_prepare_content_for_openai_data_content_image(

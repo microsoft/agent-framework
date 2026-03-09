@@ -717,12 +717,11 @@ class AnthropicClient(
                     })
                 case "function_result":
                     if content.items:
-                        # Rich content: build array with text + image blocks
                         tool_content: list[dict[str, Any]] = []
-                        if content.result:
-                            tool_content.append({"type": "text", "text": content.result})
                         for item in content.items:
-                            if item.type == "data" and item.has_top_level_media_type("image"):
+                            if item.type == "text":
+                                tool_content.append({"type": "text", "text": item.text or ""})
+                            elif item.type == "data" and item.has_top_level_media_type("image"):
                                 tool_content.append({
                                     "type": "image",
                                     "source": {
@@ -742,9 +741,7 @@ class AnthropicClient(
                                     item.media_type,
                                 )
                         tool_result_content = (
-                            tool_content
-                            if tool_content
-                            else (content.result if content.result is not None else "")
+                            tool_content if tool_content else (content.result if content.result is not None else "")
                         )
                         a_content.append({
                             "type": "tool_result",

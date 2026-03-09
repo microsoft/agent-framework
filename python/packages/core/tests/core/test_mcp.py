@@ -99,26 +99,34 @@ def test_parse_tool_result_from_mcp_single_text():
     mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="Simple result")])
     result = _parse_tool_result_from_mcp(mcp_result)
 
-    # Single text item returns just the text
-    assert result == "Simple result"
+    # Single text item returns list with one text Content
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "Simple result"
 
 
 def test_parse_tool_result_from_mcp_meta_not_in_string():
-    """Test that _meta data is not included in the string result (it's tool-level, not content-level)."""
+    """Test that _meta data is not included in the result (it's tool-level, not content-level)."""
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="Error occurred")],
         _meta={"isError": True, "errorCode": "TOOL_ERROR"},
     )
 
     result = _parse_tool_result_from_mcp(mcp_result)
-    assert result == "Error occurred"
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].text == "Error occurred"
 
 
 def test_parse_tool_result_from_mcp_empty_content():
-    """Test that empty content produces empty string."""
+    """Test that empty content produces list with empty text Content."""
     mcp_result = types.CallToolResult(content=[])
     result = _parse_tool_result_from_mcp(mcp_result)
-    assert result == ""
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == ""
 
 
 def test_parse_tool_result_from_mcp_audio_content():
@@ -786,7 +794,10 @@ async def test_mcp_tool_call_tool_with_meta_integration():
         func = server.functions[0]
         result = await func.invoke(param="test_value")
 
-        assert result == "Tool executed with metadata"
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0].type == "text"
+        assert result[0].text == "Tool executed with metadata"
 
 
 async def test_local_mcp_server_function_execution():
@@ -825,7 +836,8 @@ async def test_local_mcp_server_function_execution():
         func = server.functions[0]
         result = await func.invoke(param="test_value")
 
-        assert result == "Tool executed successfully"
+        assert isinstance(result, list)
+        assert result[0].text == "Tool executed successfully"
 
 
 async def test_local_mcp_server_function_execution_with_nested_object():
@@ -872,7 +884,8 @@ async def test_local_mcp_server_function_execution_with_nested_object():
         # Call with nested object
         result = await func.invoke(params={"customer_id": 251})
 
-        assert result == '{"name": "John Doe", "id": 251}'
+        assert isinstance(result, list)
+        assert result[0].text == '{"name": "John Doe", "id": 251}'
 
         # Verify the session.call_tool was called with the correct nested structure
         server.session.call_tool.assert_called_once()
@@ -994,7 +1007,8 @@ async def test_mcp_tool_call_tool_succeeds_when_is_error_false():
         await server.load_tools()
         func = server.functions[0]
         result = await func.invoke(param="test_value")
-        assert result == "Success"
+        assert isinstance(result, list)
+        assert result[0].text == "Success"
 
 
 async def test_mcp_tool_is_error_propagates_through_function_middleware():
@@ -1097,7 +1111,8 @@ async def test_local_mcp_server_prompt_execution():
         prompt = server.functions[0]
         result = await prompt.invoke(arg="test_value")
 
-        assert result == "Test message"
+        assert isinstance(result, list)
+        assert result[0].text == "Test message"
 
 
 @pytest.mark.parametrize(

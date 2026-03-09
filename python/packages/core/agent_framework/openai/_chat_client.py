@@ -579,15 +579,18 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         args["tool_calls"] = [self._prepare_content_for_openai(content)]  # type: ignore
                 case "function_result":
                     args["tool_call_id"] = content.call_id
-                    # Always include content for tool results - API requires it even if empty
-                    # Functions returning None should still have a tool result message
-                    args["content"] = content.result if content.result is not None else ""
                     if content.items:
-                        logger.warning(
-                            "OpenAI Chat Completions API does not support rich content (images, audio) "
-                            "in tool results. Rich content items will be omitted. "
-                            "Use the Responses API client for rich tool results."
-                        )
+                        text_parts = [item.text or "" for item in content.items if item.type == "text"]
+                        rich_items = [item for item in content.items if item.type in ("data", "uri")]
+                        if rich_items:
+                            logger.warning(
+                                "OpenAI Chat Completions API does not support rich content (images, audio) "
+                                "in tool results. Rich content items will be omitted. "
+                                "Use the Responses API client for rich tool results."
+                            )
+                        args["content"] = "\n".join(text_parts) if text_parts else ""
+                    else:
+                        args["content"] = content.result if content.result is not None else ""
                     if args:
                         all_messages.append(args)
                     continue
@@ -653,9 +656,13 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     "function": {"name": content.name, "arguments": args},
                 }
             case "function_result":
+                text = content.result if content.result is not None else ""
+                if content.items:
+                    text_parts = [item.text or "" for item in content.items if item.type == "text"]
+                    text = "\n".join(text_parts) if text_parts else ""
                 return {
                     "tool_call_id": content.call_id,
-                    "content": content.result,
+                    "content": text,
                 }
             case "data" | "uri" if content.has_top_level_media_type("image"):
                 return {

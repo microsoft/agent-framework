@@ -211,9 +211,12 @@ def test_prepare_message_for_anthropic_function_result(
     assert len(result["content"]) == 1
     assert result["content"][0]["type"] == "tool_result"
     assert result["content"][0]["tool_use_id"] == "call_123"
-    # The degree symbol might be escaped differently depending on JSON encoder
-    assert "Sunny" in result["content"][0]["content"]
-    assert "72" in result["content"][0]["content"]
+    tool_content = result["content"][0]["content"]
+    assert isinstance(tool_content, list)
+    assert len(tool_content) == 1
+    assert tool_content[0]["type"] == "text"
+    assert "Sunny" in tool_content[0]["text"]
+    assert "72" in tool_content[0]["text"]
     assert result["content"][0]["is_error"] is False
 
 
@@ -801,7 +804,9 @@ async def test_anthropic_shell_tool_is_invoked_in_function_loop(
     ]
     assert len(tool_results) == 1
     assert tool_results[0]["tool_use_id"] == "call_bash_loop"
-    assert "executed: pwd" in tool_results[0]["content"]
+    tool_content = tool_results[0]["content"]
+    assert isinstance(tool_content, list)
+    assert any("executed: pwd" in item.get("text", "") for item in tool_content)
 
 
 async def test_prepare_options_with_tool_choice_auto(
