@@ -99,7 +99,7 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
     public string SummarizationPrompt { get; }
 
     /// <inheritdoc/>
-    protected override async Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
+    protected override async ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken)
     {
         // Count non-system, non-excluded groups to determine which are protected
         int nonSystemIncludedCount = 0;

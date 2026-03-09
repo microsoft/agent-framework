@@ -12,29 +12,13 @@ using Microsoft.Shared.DiagnosticIds;
 namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
-/// Represents a collection of <see cref="MessageGroup"/> instances derived from a flat list of <see cref="ChatMessage"/> objects.
+/// A collection of <see cref="MessageGroup"/> instances and derived metrics based on a flat list of <see cref="ChatMessage"/> objects.
 /// </summary>
 /// <remarks>
-/// <para>
-/// <see cref="MessageIndex"/> provides structural grouping of messages into logical units that
-/// respect the atomic group preservation constraint: tool call assistant messages and their corresponding
-/// tool result messages are always grouped together.
-/// </para>
-/// <para>
-/// This collection supports exclusion-based projection, where groups can be marked as excluded
-/// without being removed, allowing compaction strategies to toggle visibility while preserving
-/// the full history for diagnostics or storage.
-/// </para>
-/// <para>
-/// Each group tracks its own <see cref="MessageGroup.MessageCount"/>, <see cref="MessageGroup.ByteCount"/>,
-/// and <see cref="MessageGroup.TokenCount"/>. The collection provides aggregate properties for both
-/// the total (all groups) and included (non-excluded groups only) counts.
-/// </para>
-/// <para>
-/// Instances created via <see cref="Create"/> track internal state that enables efficient incremental
-/// updates via <see cref="Update"/>. This allows caching a <see cref="MessageIndex"/> instance and
-/// appending only new messages without reprocessing the entire history.
-/// </para>
+/// <see cref="MessageIndex"/> provides structural grouping of messages into logical <see cref="MessageGroup"/> units.  Individual
+/// groups can be marked as excluded without being removed, allowing compaction strategies to toggle visibility while preserving
+/// the full history for diagnostics or storage.  Metrics are provided both including and excluding excluded groups,
+/// allowing strategies to make informed decisions based on the impact of potential exclusions.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class MessageIndex
@@ -54,10 +38,6 @@ public sealed class MessageIndex
     /// <summary>
     /// Gets the number of raw messages that have been processed into groups.
     /// </summary>
-    /// <remarks>
-    /// This value is set by <see cref="Create"/> and updated by <see cref="Update"/>.
-    /// It is used by <see cref="Update"/> to determine which messages are new and need processing.
-    /// </remarks>
     public int ProcessedMessageCount { get; private set; }
 
     /// <summary>
@@ -100,7 +80,7 @@ public sealed class MessageIndex
     /// <item><description>Assistant messages without tool calls become <see cref="MessageGroupKind.AssistantText"/> groups.</description></item>
     /// </list>
     /// </remarks>
-    public static MessageIndex Create(IList<ChatMessage> messages, Tokenizer? tokenizer = null)
+    internal static MessageIndex Create(IList<ChatMessage> messages, Tokenizer? tokenizer = null)
     {
         Debug.WriteLine("COMPACTION: Creating index x{messages.Count} messages");
         MessageIndex instance = new([], tokenizer);
@@ -129,7 +109,7 @@ public sealed class MessageIndex
     /// If the message count equals <see cref="ProcessedMessageCount"/>, no work is performed.
     /// </para>
     /// </remarks>
-    public void Update(IList<ChatMessage> allMessages)
+    internal void Update(IList<ChatMessage> allMessages)
     {
         if (allMessages.Count == this.ProcessedMessageCount)
         {
@@ -294,7 +274,7 @@ public sealed class MessageIndex
     /// <summary>
     /// Gets the number of user turns that have at least one non-excluded group.
     /// </summary>
-    public int IncludedTurnCount => this.Groups.Where(group => !group.IsExcluded).Select(group => group.TurnIndex).Distinct().Count(turnIndex => turnIndex is not null);
+    public int IncludedTurnCount => this.Groups.Where(group => !group.IsExcluded && group.TurnIndex > 0).Select(group => group.TurnIndex).Distinct().Count(turnIndex => turnIndex is not null);
 
     /// <summary>
     /// Gets the total number of groups across all included (non-excluded) groups that are not <see cref="MessageGroupKind.System"/>.
@@ -314,7 +294,7 @@ public sealed class MessageIndex
     /// </summary>
     /// <param name="messages">The messages to compute byte count for.</param>
     /// <returns>The total UTF-8 byte count of all message text content.</returns>
-    public static int ComputeByteCount(IReadOnlyList<ChatMessage> messages)
+    internal static int ComputeByteCount(IReadOnlyList<ChatMessage> messages)
     {
         int total = 0;
         for (int i = 0; i < messages.Count; i++)
@@ -335,7 +315,7 @@ public sealed class MessageIndex
     /// <param name="messages">The messages to compute token count for.</param>
     /// <param name="tokenizer">The tokenizer to use for counting tokens.</param>
     /// <returns>The total token count across all message text content.</returns>
-    public static int ComputeTokenCount(IReadOnlyList<ChatMessage> messages, Tokenizer tokenizer)
+    internal static int ComputeTokenCount(IReadOnlyList<ChatMessage> messages, Tokenizer tokenizer)
     {
         int total = 0;
         for (int i = 0; i < messages.Count; i++)

@@ -68,7 +68,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     public int MinimumPreserved { get; }
 
     /// <inheritdoc/>
-    protected override Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
+    protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken)
     {
         // Identify protected groups: the N most-recent non-system, non-excluded groups
         List<int> nonSystemIncludedIndices = [];
@@ -101,7 +101,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
 
         if (eligibleIndices.Count == 0)
         {
-            return Task.FromResult(false);
+            return new ValueTask<bool>(false);
         }
 
         // Collapse one tool group at a time from oldest, re-checking target after each
@@ -146,6 +146,6 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
             }
         }
 
-        return Task.FromResult(compacted);
+        return new ValueTask<bool>(compacted);
     }
 }

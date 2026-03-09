@@ -10,14 +10,14 @@ using Moq;
 namespace Microsoft.Agents.AI.UnitTests.Compaction;
 
 /// <summary>
-/// Contains tests for the <see cref="MessageCompactionContextProvider"/> class.
+/// Contains tests for the <see cref="CompactionProvider"/> class.
 /// </summary>
-public sealed class MessageCompactionContextProviderTests
+public sealed class CompactionProviderTests
 {
     [Fact]
     public void ConstructorThrowsOnNullStrategy()
     {
-        Assert.Throws<ArgumentNullException>(() => new MessageCompactionContextProvider(null!));
+        Assert.Throws<ArgumentNullException>(() => new CompactionProvider(null!));
     }
 
     [Fact]
@@ -25,11 +25,11 @@ public sealed class MessageCompactionContextProviderTests
     {
         // Arrange
         TruncationCompactionStrategy strategy = new(CompactionTriggers.TokensExceed(100000));
-        MessageCompactionContextProvider provider = new(strategy);
+        CompactionProvider provider = new(strategy);
 
         // Act & Assert — default state key is the class name
         Assert.Single(provider.StateKeys);
-        Assert.Contains(nameof(MessageCompactionContextProvider), provider.StateKeys[0]);
+        Assert.Contains(nameof(CompactionProvider), provider.StateKeys[0]);
     }
 
     [Fact]
@@ -37,7 +37,7 @@ public sealed class MessageCompactionContextProviderTests
     {
         // Arrange
         TruncationCompactionStrategy strategy = new(CompactionTriggers.TokensExceed(100000));
-        MessageCompactionContextProvider provider = new(strategy, stateKey: "my-custom-key");
+        CompactionProvider provider = new(strategy, stateKey: "my-custom-key");
 
         // Act & Assert
         Assert.Single(provider.StateKeys);
@@ -49,7 +49,7 @@ public sealed class MessageCompactionContextProviderTests
     {
         // Arrange — no session → passthrough
         TruncationCompactionStrategy strategy = new(CompactionTriggers.TokensExceed(100000));
-        MessageCompactionContextProvider provider = new(strategy);
+        CompactionProvider provider = new(strategy);
 
         Mock<AIAgent> mockAgent = new() { CallBase = true };
         List<ChatMessage> messages =
@@ -74,7 +74,7 @@ public sealed class MessageCompactionContextProviderTests
     {
         // Arrange — messages is null → passthrough
         TruncationCompactionStrategy strategy = new(CompactionTriggers.TokensExceed(100000));
-        MessageCompactionContextProvider provider = new(strategy);
+        CompactionProvider provider = new(strategy);
 
         Mock<AIAgent> mockAgent = new() { CallBase = true };
         TestAgentSession session = new();
@@ -95,7 +95,7 @@ public sealed class MessageCompactionContextProviderTests
     {
         // Arrange — strategy that always triggers and keeps only 1 group
         TruncationCompactionStrategy strategy = new(_ => true, minimumPreserved: 1);
-        MessageCompactionContextProvider provider = new(strategy);
+        CompactionProvider provider = new(strategy);
 
         Mock<AIAgent> mockAgent = new() { CallBase = true };
         TestAgentSession session = new();
@@ -125,7 +125,7 @@ public sealed class MessageCompactionContextProviderTests
     {
         // Arrange — trigger never fires → no compaction
         TruncationCompactionStrategy strategy = new(CompactionTriggers.TokensExceed(100000));
-        MessageCompactionContextProvider provider = new(strategy);
+        CompactionProvider provider = new(strategy);
 
         Mock<AIAgent> mockAgent = new() { CallBase = true };
         TestAgentSession session = new();
@@ -154,7 +154,7 @@ public sealed class MessageCompactionContextProviderTests
     {
         // Arrange
         TruncationCompactionStrategy strategy = new(CompactionTriggers.TokensExceed(100000));
-        MessageCompactionContextProvider provider = new(strategy);
+        CompactionProvider provider = new(strategy);
 
         Mock<AIAgent> mockAgent = new() { CallBase = true };
         TestAgentSession session = new();
@@ -184,7 +184,7 @@ public sealed class MessageCompactionContextProviderTests
     {
         // Arrange — call twice to exercise the "existing index" path
         TruncationCompactionStrategy strategy = new(_ => true, minimumPreserved: 1);
-        MessageCompactionContextProvider provider = new(strategy);
+        CompactionProvider provider = new(strategy);
 
         Mock<AIAgent> mockAgent = new() { CallBase = true };
         TestAgentSession session = new();
@@ -230,7 +230,7 @@ public sealed class MessageCompactionContextProviderTests
     {
         // Arrange — pass IEnumerable (not List<ChatMessage>) to exercise the list copy branch
         TruncationCompactionStrategy strategy = new(CompactionTriggers.TokensExceed(100000));
-        MessageCompactionContextProvider provider = new(strategy);
+        CompactionProvider provider = new(strategy);
 
         Mock<AIAgent> mockAgent = new() { CallBase = true };
         TestAgentSession session = new();

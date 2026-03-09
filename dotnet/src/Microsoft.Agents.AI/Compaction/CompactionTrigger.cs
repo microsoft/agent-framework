@@ -6,9 +6,10 @@ using Microsoft.Shared.DiagnosticIds;
 namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
-/// A predicate that evaluates whether compaction should proceed based on current <see cref="MessageIndex"/> metrics.
+/// Defines a condition based on <see cref="MessageIndex"/> metrics used by a <see cref="CompactionStrategy"/>
+/// to determine when to trigger compaction and when the target compaction threshold has been met.
 /// </summary>
-/// <param name="index">The current message index with group, token, message, and turn metrics.</param>
-/// <returns><see langword="true"/> if compaction should proceed; <see langword="false"/> to skip.</returns>
+/// <param name="index">An index over conversation messages that provides group, token, message, and turn metrics.</param>
+/// <returns><see langword="true"/> to the trigger that the condition has been met; otherwise <see langword="false"/>.</returns>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public delegate bool CompactionTrigger(MessageIndex index);

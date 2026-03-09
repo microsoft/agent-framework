@@ -198,10 +198,10 @@ public class PipelineCompactionStrategyTests
 
         public int ApplyCallCount { get; private set; }
 
-        protected override Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
+        protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken)
         {
             this.ApplyCallCount++;
-            return Task.FromResult(this._applyFunc(index));
+            return new(this._applyFunc(index));
         }
     }
 }

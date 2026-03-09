@@ -62,7 +62,7 @@ public sealed class TruncationCompactionStrategy : CompactionStrategy
     public int MinimumPreserved { get; }
 
     /// <inheritdoc/>
-    protected override Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
+    protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken)
     {
         // Count removable (non-system, non-excluded) groups
         int removableCount = 0;
@@ -78,7 +78,7 @@ public sealed class TruncationCompactionStrategy : CompactionStrategy
         int maxRemovable = removableCount - this.MinimumPreserved;
         if (maxRemovable <= 0)
         {
-            return Task.FromResult(false);
+            return new ValueTask<bool>(false);
         }
 
         // Exclude oldest non-system groups one at a time, re-checking target after each
@@ -104,6 +104,6 @@ public sealed class TruncationCompactionStrategy : CompactionStrategy
             }
         }
 
-        return Task.FromResult(compacted);
+        return new ValueTask<bool>(compacted);
     }
 }

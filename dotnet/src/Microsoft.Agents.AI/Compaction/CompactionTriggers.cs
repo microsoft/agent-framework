@@ -7,12 +7,17 @@ using Microsoft.Shared.DiagnosticIds;
 namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
-/// Provides factory methods for common <see cref="CompactionTrigger"/> predicates.
+/// Factory to create <see cref="CompactionTrigger"/> predicates.
 /// </summary>
 /// <remarks>
-/// These triggers evaluate included (non-excluded) metrics from the <see cref="MessageIndex"/>.
-/// Combine triggers with <see cref="All"/> or <see cref="Any"/> for compound conditions,
-/// or write a custom lambda for full flexibility.
+/// <para>
+/// A <see cref="CompactionTrigger"/> defines a condition based on <see cref="MessageIndex"/> metrics used
+/// by a <see cref="CompactionStrategy"/> to determine when to trigger compaction and when the target
+/// compaction threshold has been met.
+/// </para>
+/// <para>
+/// Combine triggers with <see cref="All"/> or <see cref="Any"/> for compound conditions.
+/// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class CompactionTriggers
@@ -58,6 +63,18 @@ public static class CompactionTriggers
     /// </summary>
     /// <param name="maxTurns">The turn threshold. Compaction proceeds when included turns exceed this value.</param>
     /// <returns>A <see cref="CompactionTrigger"/> that evaluates included turn count.</returns>
+    /// <remarks>
+    /// <para>
+    /// A user turn starts with a <see cref="MessageGroupKind.User"/> group and includes all subsequent
+    /// non-user, non-system groups until the next user group or end of conversation.  Each group is assigned
+    /// a <see cref="MessageGroup.TurnIndex"/> indicating which user turn it belongs to.
+    /// System messages (<see cref="MessageGroupKind.System"/>) are always assigned a <see langword="null"/>
+    /// <see cref="MessageGroup.TurnIndex"/> since they never belong to a user turn.
+    /// </para>
+    /// <para>
+    /// The turn count is the number of distinct values defined by <see cref="MessageGroup.TurnIndex"/>.
+    /// </para>
+    /// </remarks>
     public static CompactionTrigger TurnsExceed(int maxTurns) =>
         index => index.IncludedTurnCount > maxTurns;
 

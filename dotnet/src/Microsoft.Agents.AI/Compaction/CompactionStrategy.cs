@@ -77,12 +77,12 @@ public abstract class CompactionStrategy
 
     /// <summary>
     /// Evaluates the <see cref="Trigger"/> and, when it fires, delegates to
-    /// <see cref="ApplyCompactionAsync"/> and reports compaction metrics.
+    /// <see cref="CompactCoreAsync"/> and reports compaction metrics.
     /// </summary>
     /// <param name="index">The message index to compact. The strategy mutates this collection in place.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A task representing the asynchronous operation. The task result is <see langword="true"/> if compaction occurred, <see langword="false"/> otherwise.</returns>
-    public async Task<bool> CompactAsync(MessageIndex index, CancellationToken cancellationToken = default)
+    public async ValueTask<bool> CompactAsync(MessageIndex index, CancellationToken cancellationToken = default)
     {
         if (index.IncludedNonSystemGroupCount <= 1 || !this.Trigger(index))
         {
@@ -95,7 +95,7 @@ public abstract class CompactionStrategy
 
         Stopwatch stopwatch = Stopwatch.StartNew();
 
-        bool compacted = await this.ApplyCompactionAsync(index, cancellationToken).ConfigureAwait(false);
+        bool compacted = await this.CompactCoreAsync(index, cancellationToken).ConfigureAwait(false);
 
         stopwatch.Stop();
 
@@ -126,5 +126,5 @@ public abstract class CompactionStrategy
     /// <param name="index">The message index to compact. The strategy mutates this collection in place.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A task whose result is <see langword="true"/> if any compaction was performed, <see langword="false"/> otherwise.</returns>
-    protected abstract Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken);
+    protected abstract ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken);
 }

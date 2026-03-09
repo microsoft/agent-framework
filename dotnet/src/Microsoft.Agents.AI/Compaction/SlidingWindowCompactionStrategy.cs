@@ -66,7 +66,7 @@ public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
     public int MinimumPreserved { get; }
 
     /// <inheritdoc/>
-    protected override Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
+    protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken)
     {
         // Identify protected groups: the N most-recent non-system, non-excluded groups
         int[] nonSystemIncludedIndices =
@@ -125,6 +125,6 @@ public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
             }
         }
 
-        return Task.FromResult(compacted);
+        return new ValueTask<bool>(compacted);
     }
 }

@@ -50,28 +50,37 @@ PipelineCompactionStrategy compactionPipeline =
         // 3. Aggressive: keep only the last N user turns and their responses
         new SlidingWindowCompactionStrategy(CompactionTriggers.TurnsExceed(4)),
 
+        //MessageGroup
+        //MessageIndex
+        //CompactionTrigger
+        //CompactionTriggers.TurnsExceed(4)
+
         // 4. Emergency: drop oldest groups until under the token budget
         new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(0x8000)));
 
 // Create the agent with a MessageCompactionContextProvider that uses the compaction pipeline.
 AIAgent agent =
-    agentChatClient.AsAIAgent(
-        new ChatClientAgentOptions
-        {
-            Name = "ShoppingAssistant",
-            ChatOptions = new()
+    agentChatClient
+        .AsBuilder()
+        //.UseAIContextProviders(new CompactionProvider(compactionPipeline))
+        .BuildAIAgent(
+            new ChatClientAgentOptions
             {
-                Instructions =
-                    """
-                    You are a helpful, but long winded, shopping assistant.
-                    Help the user look up prices and compare products.
-                    When responding, Be sure to be extra descriptive and use as
-                    many words as possible without sounding ridiculous.
-                    """,
-                Tools = [AIFunctionFactory.Create(LookupPrice)],
-            },
-            AIContextProviders = [new MessageCompactionContextProvider(compactionPipeline)],
-        });
+                Name = "ShoppingAssistant",
+                ChatOptions = new()
+                {
+                    Instructions =
+                        """
+                        You are a helpful, but long winded, shopping assistant.
+                        Help the user look up prices and compare products.
+                        When responding, Be sure to be extra descriptive and use as
+                        many words as possible without sounding ridiculous.
+                        """,
+                    Tools = [AIFunctionFactory.Create(LookupPrice)]
+                },
+                // Note: AIContextProviders may be specified here instead of ChatClientBuilder.UseAIContextProviders.
+                AIContextProviders = [new CompactionProvider(compactionPipeline)]
+            });
 
 AgentSession session = await agent.CreateSessionAsync();
 

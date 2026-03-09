@@ -225,11 +225,11 @@ public class CompactionStrategyTests
         /// </summary>
         public bool InvokeTarget(MessageIndex index) => this.Target(index);
 
-        protected override Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
+        protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken)
         {
             this.ApplyCallCount++;
             bool result = this._applyFunc?.Invoke(index) ?? false;
-            return Task.FromResult(result);
+            return new(result);
         }
     }
 }

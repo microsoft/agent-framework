@@ -25,7 +25,6 @@ namespace Microsoft.Agents.AI.Compaction;
 /// <para>
 /// Each group tracks its <see cref="MessageCount"/>, <see cref="ByteCount"/>, and <see cref="TokenCount"/>
 /// so that <see cref="MessageIndex"/> can efficiently aggregate totals across all or only included groups.
-/// These values are computed by <see cref="MessageIndex.Create"/> and passed into the constructor.
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
@@ -52,7 +51,7 @@ public sealed class MessageGroup
     /// the first user message (e.g., system messages).
     /// </param>
     [JsonConstructor]
-    public MessageGroup(MessageGroupKind kind, IReadOnlyList<ChatMessage> messages, int byteCount, int tokenCount, int? turnIndex = null)
+    internal MessageGroup(MessageGroupKind kind, IReadOnlyList<ChatMessage> messages, int byteCount, int tokenCount, int? turnIndex = null)
     {
         this.Kind = kind;
         this.Messages = messages;
@@ -89,11 +88,16 @@ public sealed class MessageGroup
 
     /// <summary>
     /// Gets the zero-based user turn index this group belongs to, or <see langword="null"/>
-    /// for groups that precede the first user message (e.g., system messages).
+    /// for groups that precede the first user message (e.g., system messages).  A turn index
+    /// of 0 corresponds with any non-system message that preceeds the first user message,
+    /// turn index 1 corresponds with the first user message and its subsequent non-user
+    /// messages, and so on.
     /// </summary>
     /// <remarks>
     /// A turn starts with a <see cref="MessageGroupKind.User"/> group and includes all subsequent
-    /// non-user, non-system groups until the next user group or end of conversation.
+    /// non-user, non-system groups until the next user group or end of conversation.  System messages
+    /// (<see cref="MessageGroupKind.System"/>) are always assigned a <see langword="null"/> turn index
+    /// since they never belong to a user turn.
     /// </remarks>
     public int? TurnIndex { get; }
 

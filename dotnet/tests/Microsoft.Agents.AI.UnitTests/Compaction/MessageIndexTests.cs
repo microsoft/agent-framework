@@ -79,11 +79,31 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void CreateToolCallWithResultsCreatesAtomicToolCallGroup()
+    public void CreateToolCallWithResultsCreatesAtomicGroup()
     {
         // Arrange
         ChatMessage assistantMessage = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather", new Dictionary<string, object?> { ["city"] = "Seattle" })]);
-        ChatMessage toolResult = new(ChatRole.Tool, "Sunny, 72°F");
+        ChatMessage toolResult = new(ChatRole.Tool, [new FunctionResultContent("call1", "Sunny, 72°F")]);
+
+        List<ChatMessage> messages = [assistantMessage, toolResult];
+
+        // Act
+        MessageIndex groups = MessageIndex.Create(messages);
+
+        // Assert
+        Assert.Single(groups.Groups);
+        Assert.Equal(MessageGroupKind.ToolCall, groups.Groups[0].Kind);
+        Assert.Equal(2, groups.Groups[0].Messages.Count);
+        Assert.Same(assistantMessage, groups.Groups[0].Messages[0]);
+        Assert.Same(toolResult, groups.Groups[0].Messages[1]);
+    }
+
+    [Fact]
+    public void CreateToolCallWithTextCreatesAtomicGroup()
+    {
+        // Arrange
+        ChatMessage assistantMessage = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather", new Dictionary<string, object?> { ["city"] = "Seattle" })]);
+        ChatMessage toolResult = new(ChatRole.Tool, [new TextContent("Sunny, 72°F"), new FunctionResultContent("call1", "Sunny, 72°F")]);
 
         List<ChatMessage> messages = [assistantMessage, toolResult];
 

@@ -43,7 +43,7 @@ public sealed class PipelineCompactionStrategy : CompactionStrategy
     public IReadOnlyList<CompactionStrategy> Strategies { get; }
 
     /// <inheritdoc/>
-    protected override async Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
+    protected override async ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken)
     {
         bool anyCompacted = false;
 

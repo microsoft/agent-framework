@@ -43,15 +43,8 @@ public sealed class ChatReducerCompactionStrategy : CompactionStrategy
     /// <param name="trigger">
     /// The <see cref="CompactionTrigger"/> that controls when compaction proceeds.
     /// </param>
-    /// <param name="target">
-    /// An optional target condition that controls when compaction stops. When <see langword="null"/>,
-    /// defaults to the inverse of the <paramref name="trigger"/> — compaction stops as soon as the trigger would no longer fire.
-    /// Note that the <see cref="IChatReducer"/> performs reduction in a single call, so the target is
-    /// not evaluated incrementally; it is available for composition with other strategies via
-    /// <see cref="PipelineCompactionStrategy"/>.
-    /// </param>
-    public ChatReducerCompactionStrategy(IChatReducer chatReducer, CompactionTrigger trigger, CompactionTrigger? target = null)
-        : base(trigger, target)
+    public ChatReducerCompactionStrategy(IChatReducer chatReducer, CompactionTrigger trigger)
+        : base(trigger)
     {
         this.ChatReducer = Throw.IfNull(chatReducer);
     }
@@ -62,7 +55,7 @@ public sealed class ChatReducerCompactionStrategy : CompactionStrategy
     public IChatReducer ChatReducer { get; }
 
     /// <inheritdoc/>
-    protected override async Task<bool> ApplyCompactionAsync(MessageIndex index, CancellationToken cancellationToken)
+    protected override async ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken)
     {
         // No need to short-circuit on empty conversations, this is handled by <see cref="CompactionStrategy.CompactAsync"/>.
         List<ChatMessage> includedMessages = [.. index.GetIncludedMessages()];
