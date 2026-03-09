@@ -82,7 +82,7 @@ public sealed class MessageIndex
     /// </remarks>
     internal static MessageIndex Create(IList<ChatMessage> messages, Tokenizer? tokenizer = null)
     {
-        Debug.WriteLine("COMPACTION: Creating index x{messages.Count} messages");
+        Debug.WriteLine($"COMPACTION: Creating index x{messages.Count} messages");
         MessageIndex instance = new([], tokenizer);
         instance.AppendFromMessages(messages, 0);
         return instance;
