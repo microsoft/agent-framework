@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.AI.Workflows.Sample;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -114,6 +115,55 @@ public class WorkflowCompletedEventTests
         // Assert
         events.OfType<WorkflowFailedEvent>().Should().ContainSingle()
             .Which.ErrorMessage.Should().Be("custom error from executor");
+    }
+
+    [Fact]
+    public async Task WorkflowCompletedEvent_NotEmitted_WhenPendingRequests_LockstepAsync()
+    {
+        // Arrange: Use a workflow that makes external requests (guessing game from Sample 04).
+        // The RequestPort is the entry executor — it immediately posts an external request
+        // and the workflow pauses with RunStatus.PendingRequests.
+        Workflow workflow = Step4EntryPoint.WorkflowInstance;
+
+        // Act: Run in lockstep mode with blockOnPendingRequest: false so the stream exits
+        // when the workflow pauses instead of waiting for a response.
+        await using StreamingRun run = await InProcessExecution.Lockstep
+            .RunStreamingAsync(workflow, NumberSignal.Init);
+
+        List<WorkflowEvent> events = [];
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false))
+        {
+            events.Add(evt);
+        }
+
+        // Assert: The workflow is paused (not completed), so WorkflowCompletedEvent should NOT appear.
+        events.Should().NotContain(e => e is WorkflowCompletedEvent,
+            "WorkflowCompletedEvent should not be emitted when the workflow is paused with pending requests");
+        events.OfType<RequestInfoEvent>().Should().NotBeEmpty(
+            "workflow should have emitted at least one external request before pausing");
+    }
+
+    [Fact]
+    public async Task WorkflowCompletedEvent_NotEmitted_WhenPendingRequests_OffThreadAsync()
+    {
+        // Arrange: Same workflow, but verify the streaming (off-thread) path is also correct.
+        Workflow workflow = Step4EntryPoint.WorkflowInstance;
+
+        // Act
+        await using StreamingRun run = await InProcessExecution.OffThread
+            .RunStreamingAsync(workflow, NumberSignal.Init);
+
+        List<WorkflowEvent> events = [];
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        events.Should().NotContain(e => e is WorkflowCompletedEvent,
+            "WorkflowCompletedEvent should not be emitted when the workflow is paused with pending requests");
+        events.OfType<RequestInfoEvent>().Should().NotBeEmpty(
+            "workflow should have emitted at least one external request before pausing");
     }
 }
 

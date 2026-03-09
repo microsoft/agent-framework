@@ -129,6 +129,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                         if (hadRequestHaltEvent)
                         {
                             yield return new WorkflowCompletedEvent();
+                            runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
                         }
 
                         yield break;
@@ -148,8 +149,14 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                 }
             } while (!ShouldBreak());
 
-            yield return new WorkflowCompletedEvent();
-            runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
+            // Only signal workflow completion when the run has actually reached a terminal state.
+            // When breaking due to PendingRequests (paused, not completed) or cancellation,
+            // the stream ends silently — matching StreamingRunEventStream behavior.
+            if (this.RunStatus is RunStatus.Idle or RunStatus.Ended)
+            {
+                yield return new WorkflowCompletedEvent();
+                runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
+            }
         }
         finally
         {
