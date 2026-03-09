@@ -496,7 +496,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                     result = await func_tool.invoke(arguments=args_instance)
                 else:
                     result = await func_tool.invoke(arguments=args)
-                content_blocks = []
+                content_blocks: list[dict[str, str]] = []
                 for c in result:
                     if c.type == "text" and c.text:
                         content_blocks.append({"type": "text", "text": c.text})
