@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use function tools with a FoundryAgentClient.
+// This sample demonstrates how to use function tools.
 
 using System.ComponentModel;
 using Microsoft.Agents.AI;
@@ -27,5 +27,3 @@ await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("What is th
 {
     Console.Write(update);
 }
-
-Console.WriteLine();

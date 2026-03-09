@@ -5,7 +5,10 @@
 // If the agent is hosted in a service, with a remote user, combine this sample with the Persisted Conversations sample to persist the chat history
 // while the agent is waiting for user input.
 
+using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;

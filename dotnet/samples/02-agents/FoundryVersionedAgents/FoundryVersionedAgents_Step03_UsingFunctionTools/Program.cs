@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use an agent with function tools.
-// It shows both non-streaming and streaming agent interactions using weather-related tools.
+// This sample demonstrates how to use function tools.
 
 using System.ComponentModel;
 using Microsoft.Agents.AI;
@@ -29,7 +28,6 @@ FoundryVersionedAgent newAgent = await FoundryVersionedAgent.CreateAIAgentAsync(
  */
 FoundryVersionedAgent existingAgent = await FoundryVersionedAgent.GetAIAgentAsync(name: AssistantName, tools: [tool]);
 
-// Non-streaming agent interaction with function tools.
 AgentSession session = await existingAgent.CreateSessionAsync();
 Console.WriteLine(await existingAgent.RunAsync("What is the weather like in Amsterdam?", session));
 
@@ -40,5 +38,5 @@ await foreach (AgentResponseUpdate update in existingAgent.RunStreamingAsync("Wh
     Console.WriteLine(update);
 }
 
-// Cleanup by agent name removes the agent version created.
+// Cleanup by agent removes the agent.
 await FoundryVersionedAgent.DeleteAIAgentAsync(existingAgent);
