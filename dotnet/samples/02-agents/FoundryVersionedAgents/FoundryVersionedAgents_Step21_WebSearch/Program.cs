@@ -18,9 +18,7 @@ const string AgentName = "WebSearchAgent";
 FoundryVersionedAgent agent = await CreateAgentWithMEAIAsync();
 
 // Option 2 - Using PromptAgentDefinition with the Responses API native type
-// AIAgent agent = await CreateAgentWithNativeSDKAsync();
-
-AIProjectClient aiProjectClient = agent.GetService<AIProjectClient>()!;
+// FoundryVersionedAgent agent = await CreateAgentWithNativeSDKAsync();
 
 AgentResponse response = await agent.RunAsync("What's the weather today in Seattle?");
 
@@ -51,8 +49,8 @@ async Task<FoundryVersionedAgent> CreateAgentWithMEAIAsync()
         tools: [new HostedWebSearchTool()]);
 
 // Creates the agent using the PromptAgentDefinition with the Responses API native ResponseTool.CreateWebSearchTool().
-async Task<AIAgent> CreateAgentWithNativeSDKAsync()
-    => await aiProjectClient.CreateAIAgentAsync(
+async Task<FoundryVersionedAgent> CreateAgentWithNativeSDKAsync()
+    => await FoundryVersionedAgent.CreateAIAgentAsync(
         AgentName,
         new AgentVersionCreationOptions(
             new PromptAgentDefinition(model: deploymentName)

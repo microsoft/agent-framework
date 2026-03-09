@@ -3,7 +3,6 @@
 // This sample shows how to use dependency injection to register an AIAgent and use it from a hosted service with a user input chat loop.
 
 using System.ClientModel;
-using Azure.AI.Projects;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.DependencyInjection;
@@ -27,7 +26,7 @@ catch (ClientResultException ex) when (ex.Status == 404)
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
 // Add the AI agent to the service collection.
-builder.Services.AddSingleton<FoundryVersionedAgent>(agent);
+builder.Services.AddSingleton(agent);
 
 // Add a sample service that will use the agent to respond to user input.
 builder.Services.AddHostedService<SampleService>();

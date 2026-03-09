@@ -17,9 +17,7 @@ var fabricToolOptions = new FabricDataAgentToolOptions();
 fabricToolOptions.ProjectConnections.Add(new ToolProjectConnection(fabricConnectionId));
 
 FoundryVersionedAgent agent = await CreateAgentWithMEAIAsync();
-// AIAgent agent = await CreateAgentWithNativeSDKAsync();
-
-AIProjectClient aiProjectClient = agent.GetService<AIProjectClient>()!;
+// FoundryVersionedAgent agent = await CreateAgentWithNativeSDKAsync();
 
 Console.WriteLine($"Created agent: {agent.Name}");
 
@@ -48,9 +46,9 @@ async Task<FoundryVersionedAgent> CreateAgentWithMEAIAsync()
 }
 
 // Option 2 - Using PromptAgentDefinition with AgentTool.CreateMicrosoftFabricTool (Native SDK)
-async Task<AIAgent> CreateAgentWithNativeSDKAsync()
+async Task<FoundryVersionedAgent> CreateAgentWithNativeSDKAsync()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
+    return await FoundryVersionedAgent.CreateAIAgentAsync(
         name: "FabricAgent-NATIVE",
         creationOptions: new AgentVersionCreationOptions(
             new PromptAgentDefinition(model: deploymentName)
@@ -60,6 +58,5 @@ async Task<AIAgent> CreateAgentWithNativeSDKAsync()
                 {
                     AgentTool.CreateMicrosoftFabricTool(fabricToolOptions),
                 }
-            })
-    );
+            }));
 }

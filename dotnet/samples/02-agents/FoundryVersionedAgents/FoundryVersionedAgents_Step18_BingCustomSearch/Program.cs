@@ -23,9 +23,7 @@ BingCustomSearchToolOptions bingCustomSearchToolParameters = new([
 ]);
 
 FoundryVersionedAgent agent = await CreateAgentWithMEAIAsync();
-// AIAgent agent = await CreateAgentWithNativeSDKAsync();
-
-AIProjectClient aiProjectClient = agent.GetService<AIProjectClient>()!;
+// FoundryVersionedAgent agent = await CreateAgentWithNativeSDKAsync();
 
 Console.WriteLine($"Created agent: {agent.Name}");
 
@@ -54,9 +52,9 @@ async Task<FoundryVersionedAgent> CreateAgentWithMEAIAsync()
 }
 
 // Option 2 - Using PromptAgentDefinition with AgentTool.CreateBingCustomSearchTool (Native SDK)
-async Task<AIAgent> CreateAgentWithNativeSDKAsync()
+async Task<FoundryVersionedAgent> CreateAgentWithNativeSDKAsync()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
+    return await FoundryVersionedAgent.CreateAIAgentAsync(
         name: "BingCustomSearchAgent-NATIVE",
         creationOptions: new AgentVersionCreationOptions(
             new PromptAgentDefinition(model: deploymentName)

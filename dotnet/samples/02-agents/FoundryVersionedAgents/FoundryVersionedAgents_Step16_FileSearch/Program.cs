@@ -57,7 +57,7 @@ agent = await FoundryVersionedAgent.CreateAIAgentAsync(
     instructions: AgentInstructions,
     tools: [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreId)] }]);
 // Option 2 - Using PromptAgentDefinition with ResponseTool.CreateFileSearchTool (Native SDK)
-// AIAgent agent = await CreateAgentWithNativeSDK();
+// FoundryVersionedAgent agent = await CreateAgentWithNativeSDK();
 
 // Run the agent
 Console.WriteLine("\n--- Running File Search Agent ---");
@@ -89,9 +89,9 @@ Console.WriteLine("Cleanup completed successfully.");
 
 #pragma warning disable CS8321 // Local function is declared but never used
 // Option 2 - Using PromptAgentDefinition with ResponseTool.CreateFileSearchTool (Native SDK)
-async Task<AIAgent> CreateAgentWithNativeSDK()
+async Task<FoundryVersionedAgent> CreateAgentWithNativeSDK()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
+    return await FoundryVersionedAgent.CreateAIAgentAsync(
         name: "FileSearchAgent-NATIVE",
         creationOptions: new AgentVersionCreationOptions(
             new PromptAgentDefinition(model: deploymentName)

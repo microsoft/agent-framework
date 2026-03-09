@@ -20,9 +20,7 @@ var sharepointOptions = new SharePointGroundingToolOptions();
 sharepointOptions.ProjectConnections.Add(new ToolProjectConnection(sharepointConnectionId));
 
 FoundryVersionedAgent agent = await CreateAgentWithMEAIAsync();
-// AIAgent agent = await CreateAgentWithNativeSDKAsync();
-
-AIProjectClient aiProjectClient = agent.GetService<AIProjectClient>()!;
+// FoundryVersionedAgent agent = await CreateAgentWithNativeSDKAsync();
 
 Console.WriteLine($"Created agent: {agent.Name}");
 
@@ -63,9 +61,9 @@ async Task<FoundryVersionedAgent> CreateAgentWithMEAIAsync()
 }
 
 // Option 2 - Using PromptAgentDefinition SDK native type
-async Task<AIAgent> CreateAgentWithNativeSDKAsync()
+async Task<FoundryVersionedAgent> CreateAgentWithNativeSDKAsync()
 {
-    return await aiProjectClient.CreateAIAgentAsync(
+    return await FoundryVersionedAgent.CreateAIAgentAsync(
         name: "SharePointAgent-NATIVE",
         creationOptions: new AgentVersionCreationOptions(
             new PromptAgentDefinition(model: deploymentName)

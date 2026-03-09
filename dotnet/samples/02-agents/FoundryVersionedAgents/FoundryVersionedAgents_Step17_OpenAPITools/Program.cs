@@ -12,8 +12,44 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 
 const string AgentInstructions = "You are a helpful assistant that can use the countries API to retrieve information about countries by their currency code.";
 
-// A simple OpenAPI specification for the REST Countries API
-const string CountriesOpenApiSpec = """
+FoundryVersionedAgent agent = await CreateAgentWithMEAI();
+// FoundryVersionedAgent agent = await CreateAgentWithNativeSDK();
+
+// Run the agent with a question about countries
+Console.WriteLine(await agent.RunAsync("What countries use the Euro (EUR) as their currency? Please list them."));
+
+// Cleanup by deleting the agent
+await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
+
+// --- Agent Creation Options ---
+
+// Option 1 - Using FoundryAITool wrapping for OpenApiTool (MEAI + AgentFramework)
+async Task<FoundryVersionedAgent> CreateAgentWithMEAI()
+{
+    return await FoundryVersionedAgent.CreateAIAgentAsync(
+        name: "OpenAPIToolsAgent-MEAI",
+        instructions: AgentInstructions,
+        tools: [FoundryAITool.CreateOpenApiTool(CreateOpenAPIFunctionDefinition())]);
+}
+
+// Option 2 - Using PromptAgentDefinition with AgentTool.CreateOpenApiTool (Native SDK)
+async Task<FoundryVersionedAgent> CreateAgentWithNativeSDK()
+{
+    return await FoundryVersionedAgent.CreateAIAgentAsync(
+        name: "OpenAPIToolsAgent-NATIVE",
+        creationOptions: new AgentVersionCreationOptions(
+            new PromptAgentDefinition(model: deploymentName)
+            {
+                Instructions = AgentInstructions,
+                Tools = { (ResponseTool)AgentTool.CreateOpenApiTool(CreateOpenAPIFunctionDefinition()) }
+            })
+    );
+}
+
+OpenAPIFunctionDefinition CreateOpenAPIFunctionDefinition()
+{
+    // A simple OpenAPI specification for the REST Countries API
+    const string CountriesOpenApiSpec = """
 {
   "openapi": "3.1.0",
   "info": {
@@ -66,47 +102,12 @@ const string CountriesOpenApiSpec = """
 }
 """;
 
-// Create the OpenAPI function definition
-var openApiFunction = new OpenApiFunctionDefinition(
-    "get_countries",
-    BinaryData.FromString(CountriesOpenApiSpec),
-    new OpenAPIAnonymousAuthenticationDetails())
-{
-    Description = "Retrieve information about countries by currency code"
-};
-
-FoundryVersionedAgent agent = await CreateAgentWithMEAI();
-// AIAgent agent = await CreateAgentWithNativeSDK();
-
-AIProjectClient aiProjectClient = agent.GetService<AIProjectClient>()!;
-
-// Run the agent with a question about countries
-Console.WriteLine(await agent.RunAsync("What countries use the Euro (EUR) as their currency? Please list them."));
-
-// Cleanup by deleting the agent
-await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
-
-// --- Agent Creation Options ---
-
-// Option 1 - Using FoundryAITool wrapping for OpenApiTool (MEAI + AgentFramework)
-async Task<FoundryVersionedAgent> CreateAgentWithMEAI()
-{
-    return await FoundryVersionedAgent.CreateAIAgentAsync(
-        name: "OpenAPIToolsAgent-MEAI",
-        instructions: AgentInstructions,
-        tools: [FoundryAITool.CreateOpenApiTool(openApiFunction)]);
-}
-
-// Option 2 - Using PromptAgentDefinition with AgentTool.CreateOpenApiTool (Native SDK)
-async Task<AIAgent> CreateAgentWithNativeSDK()
-{
-    return await aiProjectClient.CreateAIAgentAsync(
-        name: "OpenAPIToolsAgent-NATIVE",
-        creationOptions: new AgentVersionCreationOptions(
-            new PromptAgentDefinition(model: deploymentName)
-            {
-                Instructions = AgentInstructions,
-                Tools = { (ResponseTool)AgentTool.CreateOpenApiTool(openApiFunction) }
-            })
-    );
+    // Create the OpenAPI function definition
+    return new(
+        "get_countries",
+        BinaryData.FromString(CountriesOpenApiSpec),
+        new OpenAPIAnonymousAuthenticationDetails())
+    {
+        Description = "Retrieve information about countries by currency code"
+    };
 }

@@ -36,11 +36,9 @@ internal sealed class Program
                     FoundryAITool.CreateComputerTool(ComputerToolEnvironment.Browser, 1026, 769),
                 ]);
 
-        AIProjectClient aiProjectClient = agentOption1.GetService<AIProjectClient>()!;
-
         // Option 2 - Using PromptAgentDefinition SDK native type
         // Create the server side agent version
-        AIAgent agentOption2 = await aiProjectClient.CreateAIAgentAsync(
+        FoundryVersionedAgent agentOption2 = await FoundryVersionedAgent.CreateAIAgentAsync(
             name: AgentNameNative,
             creationOptions: new AgentVersionCreationOptions(
                 new PromptAgentDefinition(model: deploymentName)
@@ -62,7 +60,7 @@ internal sealed class Program
 
         // Cleanup by agent name removes the agent version created.
         await FoundryVersionedAgent.DeleteAIAgentAsync(agentOption1);
-        await aiProjectClient.Agents.DeleteAgentAsync(agentOption2.Name);
+        await FoundryVersionedAgent.DeleteAIAgentAsync(agentOption2);
     }
 
     private static async Task InvokeComputerUseAgentAsync(AIAgent agent)
