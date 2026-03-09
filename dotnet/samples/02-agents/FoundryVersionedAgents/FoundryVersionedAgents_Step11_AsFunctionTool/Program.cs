@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to create and use an Microsoft Foundry Agents AI agent as a function tool.
 
@@ -33,6 +33,6 @@ FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
 AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?", session));
 
-// Cleanup by agent name removes the agent versions created.
+// Cleanup: deletes the agent and all its versions.
 await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
 await FoundryVersionedAgent.DeleteAIAgentAsync(weatherAgent);

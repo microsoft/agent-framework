@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to configure an agent to produce structured output.
 
@@ -60,7 +60,7 @@ Console.WriteLine($"Name: {personInfo.Name}");
 Console.WriteLine($"Age: {personInfo.Age}");
 Console.WriteLine($"Occupation: {personInfo.Occupation}");
 
-// Cleanup by agent name removes the agent version created.
+// Cleanup: deletes the agent and all its versions.
 await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
 
 namespace SampleApp

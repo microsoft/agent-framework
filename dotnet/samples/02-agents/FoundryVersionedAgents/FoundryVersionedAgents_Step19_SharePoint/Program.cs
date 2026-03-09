@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use SharePoint Grounding Tool with AI Agents.
 
@@ -45,7 +45,7 @@ foreach (var message in response.Messages)
     }
 }
 
-// Cleanup by agent name removes the agent version created.
+// Cleanup: deletes the agent and all its versions.
 await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
 Console.WriteLine($"\nDeleted agent: {agent.Name}");
 

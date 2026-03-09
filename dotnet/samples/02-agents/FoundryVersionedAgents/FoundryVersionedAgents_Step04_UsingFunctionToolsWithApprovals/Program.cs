@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use an agent with function tools that require a human in the loop for approvals.
 // It shows both non-streaming and streaming agent interactions using weather-related tools.
@@ -54,5 +54,5 @@ while (approvalRequests.Count > 0)
 
 Console.WriteLine($"\nAgent: {response}");
 
-// Cleanup by agent name removes the agent version created.
+// Cleanup: deletes the agent and all its versions.
 await FoundryVersionedAgent.DeleteAIAgentAsync(agent);

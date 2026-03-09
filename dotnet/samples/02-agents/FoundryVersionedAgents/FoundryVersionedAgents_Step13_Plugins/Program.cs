@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use plugins with an AI agent. Plugin classes can
 // depend on other services that need to be injected. In this sample, the
@@ -37,7 +37,7 @@ FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
 AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Tell me current time and weather in Seattle.", session));
 
-// Cleanup by agent name removes the agent version created.
+// Cleanup: deletes the agent and all its versions.
 await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
 
 /// <summary>

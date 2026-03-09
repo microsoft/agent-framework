@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to create and use a simple AI agent with a conversation that can be persisted to disk.
 
@@ -33,5 +33,5 @@ AgentSession resumedSession = await agent.DeserializeSessionAsync(reloadedSerial
 // Run the agent again with the resumed session.
 Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedSession));
 
-// Cleanup by agent name removes the agent version created.
+// Cleanup: deletes the agent and all its versions.
 await FoundryVersionedAgent.DeleteAIAgentAsync(agent);

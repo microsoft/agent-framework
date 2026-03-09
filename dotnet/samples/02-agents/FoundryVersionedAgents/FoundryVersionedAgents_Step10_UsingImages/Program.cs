@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use Image Multi-Modality with an AI agent.
 
@@ -24,5 +24,5 @@ await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(message, se
     Console.WriteLine(update);
 }
 
-// Cleanup by agent name removes the agent version created.
+// Cleanup: deletes the agent and all its versions.
 await FoundryVersionedAgent.DeleteAIAgentAsync(agent);

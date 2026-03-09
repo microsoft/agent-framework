@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to create and use a simple AI agent with a multi-turn conversation.
 
@@ -28,5 +28,5 @@ await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Now a
     Console.WriteLine(update);
 }
 
-// Cleanup by agent name removes the agent version created.
+// Cleanup: deletes the agent and all its versions.
 await FoundryVersionedAgent.DeleteAIAgentAsync(jokerAgent);

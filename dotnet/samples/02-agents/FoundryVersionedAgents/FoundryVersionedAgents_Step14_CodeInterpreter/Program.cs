@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use Code Interpreter Tool with AI Agents.
 
@@ -80,6 +80,6 @@ foreach (AIAnnotation annotation in response.Messages.SelectMany(m => m.Contents
     }
 }
 
-// Cleanup by agent name removes the agent version created.
+// Cleanup: deletes the agent and all its versions.
 await FoundryVersionedAgent.DeleteAIAgentAsync(agentOption1);
 await FoundryVersionedAgent.DeleteAIAgentAsync(agentOption2);

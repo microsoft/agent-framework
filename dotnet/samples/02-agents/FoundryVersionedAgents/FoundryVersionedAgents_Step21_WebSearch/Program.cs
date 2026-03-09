@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use the Responses API Web Search Tool with AI Agents.
 
@@ -38,7 +38,7 @@ foreach (AIAnnotation annotation in response.Messages.SelectMany(m => m.Contents
     }
 }
 
-// Cleanup by agent name removes the agent version created.
+// Cleanup: deletes the agent and all its versions.
 await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
 
 // Creates the agent using the HostedWebSearchTool MEAI abstraction that maps to the built-in Responses API web search tool.

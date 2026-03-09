@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use Computer Use Tool with AI Agents.
 
@@ -58,7 +58,7 @@ internal sealed class Program
         // Option 2
         //await InvokeComputerUseAgentAsync(agentOption2);
 
-        // Cleanup by agent name removes the agent version created.
+        // Cleanup: deletes the agent and all its versions.
         await FoundryVersionedAgent.DeleteAIAgentAsync(agentOption1);
         await FoundryVersionedAgent.DeleteAIAgentAsync(agentOption2);
     }

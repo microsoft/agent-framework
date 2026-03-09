@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to create and use AI agents with Microsoft Foundry Agents as the backend.
 
@@ -29,5 +29,5 @@ Console.WriteLine($"Latest agent version id: {latestAgentVersion.Id}");
 // Once you have the agent, you can invoke it like any other AIAgent.
 Console.WriteLine(await jokerAgentLatest.RunAsync("Tell me a joke about a pirate."));
 
-// Cleanup by agent name removes both agent versions created.
+// Cleanup: deletes the agent and all its versions.
 await FoundryVersionedAgent.DeleteAIAgentAsync(jokerAgentLatest);
