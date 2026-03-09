@@ -25,8 +25,8 @@ from dataclasses import is_dataclass
 from typing import Any
 
 from agent_framework._workflows._checkpoint_encoding import (
-    _PICKLE_MARKER as _CORE_PICKLE_MARKER,
-    _TYPE_MARKER as _CORE_TYPE_MARKER,
+    _PICKLE_MARKER as _CORE_PICKLE_MARKER,  # pyright: ignore[reportPrivateUsage]
+    _TYPE_MARKER as _CORE_TYPE_MARKER,  # pyright: ignore[reportPrivateUsage]  # pyright: ignore[reportPrivateUsage]
     decode_checkpoint_value,
     encode_checkpoint_value,
 )
