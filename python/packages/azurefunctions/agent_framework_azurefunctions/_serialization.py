@@ -22,28 +22,17 @@ import importlib
 import logging
 from contextlib import suppress
 from dataclasses import is_dataclass
-from typing import Any
+from typing import Any, cast
 
 from agent_framework._workflows._checkpoint_encoding import (
-    _PICKLE_MARKER as _CORE_PICKLE_MARKER,  # pyright: ignore[reportPrivateUsage]
-    _TYPE_MARKER as _CORE_TYPE_MARKER,  # pyright: ignore[reportPrivateUsage]  # pyright: ignore[reportPrivateUsage]
+    _PICKLE_MARKER,  # pyright: ignore[reportPrivateUsage]
+    _TYPE_MARKER,  # pyright: ignore[reportPrivateUsage]
     decode_checkpoint_value,
     encode_checkpoint_value,
 )
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-
-# Local copies of the checkpoint marker keys used by strip_pickle_markers().
-# Defined here to avoid tight coupling to core's private names.  The import-
-# time checks below ensure we stay in sync if core ever changes them.
-_PICKLE_MARKER: str = "__pickled__"
-_TYPE_MARKER: str = "__type__"
-
-if _PICKLE_MARKER != _CORE_PICKLE_MARKER:
-    raise RuntimeError(f"Pickle marker mismatch: local={_PICKLE_MARKER!r}, core={_CORE_PICKLE_MARKER!r}")
-if _TYPE_MARKER != _CORE_TYPE_MARKER:
-    raise RuntimeError(f"Type marker mismatch: local={_TYPE_MARKER!r}, core={_CORE_TYPE_MARKER!r}")
 
 
 def resolve_type(type_key: str) -> type | None:
@@ -89,10 +78,12 @@ def strip_pickle_markers(data: Any) -> Any:
         if _PICKLE_MARKER in data or _TYPE_MARKER in data:
             logger.debug("Stripped pickle/type markers from untrusted input.")
             return None
-        return {k: strip_pickle_markers(v) for k, v in data.items()}
+        typed_dict = cast(dict[str, Any], data)
+        return {k: strip_pickle_markers(v) for k, v in typed_dict.items()}
 
     if isinstance(data, list):
-        return [strip_pickle_markers(item) for item in data]
+        typed_list = cast(list[Any], data)
+        return [strip_pickle_markers(item) for item in typed_list]
 
     return data
 

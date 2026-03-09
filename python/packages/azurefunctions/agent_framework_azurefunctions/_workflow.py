@@ -986,8 +986,8 @@ def _deserialize_hitl_response(response_data: Any, response_type_str: str | None
             return result
         logger.warning("Could not resolve response type: %s", response_type_str)
 
-    # No type hint available — return the sanitized dict as-is.
+    # No type hint available - return the sanitized dict as-is.
     # We intentionally do NOT call deserialize_value() here because HITL
     # response data is untrusted and must never flow into pickle.loads().
     logger.debug("No type hint; returning sanitized data as-is")
-    return response_data
+    return response_data  # type: ignore[reportUnknownVariableType]
