@@ -41,7 +41,6 @@ public sealed class CompactionProvider : AIContextProvider
     /// <param name="compactionStrategy">The compaction strategy to apply before each invocation.</param>
     /// <param name="stateKey">
     /// An optional key used to store the provider state in the <see cref="AgentSession.StateBag"/>.
-    /// Defaults to <c>"MessageCompactionContextProvider"</c>.
     /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="compactionStrategy"/> is <see langword="null"/>.</exception>
     public CompactionProvider(CompactionStrategy compactionStrategy, string? stateKey = null)
