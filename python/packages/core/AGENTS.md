@@ -13,6 +13,7 @@ agent_framework/
 ├── _tools.py            # Tool definitions and function invocation
 ├── _middleware.py       # Middleware system for request/response interception
 ├── _sessions.py         # AgentSession and context provider abstractions
+├── _skills.py           # Agent Skills system (models, executors, provider)
 ├── _mcp.py              # Model Context Protocol support
 ├── _workflows/          # Workflow orchestration (sequential, concurrent, handoff, etc.)
 ├── openai/              # Built-in OpenAI client
