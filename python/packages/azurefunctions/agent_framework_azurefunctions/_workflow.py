@@ -50,7 +50,7 @@ from azure.durable_functions import DurableOrchestrationContext
 
 from ._context import CapturingRunnerContext
 from ._orchestration import AzureFunctionsAgentExecutor
-from ._serialization import deserialize_value, reconstruct_to_type, resolve_type, serialize_value
+from ._serialization import deserialize_value, reconstruct_to_type, resolve_type, serialize_value, strip_pickle_markers
 
 logger = logging.getLogger(__name__)
 
@@ -961,6 +961,13 @@ def _deserialize_hitl_response(response_data: Any, response_type_str: str | None
         type(response_data).__name__,
     )
 
+    if response_data is None:
+        return None
+
+    # Sanitize untrusted external input before deserialization.
+    # HITL response data originates from an HTTP POST and must not contain
+    # pickle/type markers that would reach pickle.loads().
+    response_data = strip_pickle_markers(response_data)
     if response_data is None:
         return None
 
