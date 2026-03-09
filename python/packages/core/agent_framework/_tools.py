@@ -1385,6 +1385,8 @@ async def _try_execute_function_calls(
     # Run all function calls concurrently, handling MiddlewareTermination
     from ._middleware import MiddlewareTermination
 
+    extra_user_input_contents: list[Content] = []
+
     async def invoke_with_termination_handling(
         function_call: Content,
         seq_idx: int,
@@ -1415,9 +1417,18 @@ async def _try_execute_function_calls(
             # Sub-agent requires user input — propagate the Content items so
             # _handle_function_call_results can surface them to the parent response.
             if exc.contents:
-                content = exc.contents[0]
-                content.call_id = function_call.call_id  # type: ignore[attr-defined]
-                return (content, False)
+                propagated: list[Content] = []
+                for item in exc.contents:
+                    if isinstance(item, Content):
+                        item.call_id = function_call.call_id  # type: ignore[attr-defined]
+                        if not item.id:  # type: ignore[attr-defined]
+                            item.id = function_call.call_id  # type: ignore[attr-defined]
+                        propagated.append(item)
+                if propagated:
+                    # Return the first item; any additional items are appended to
+                    # execution_results via extra_user_input_contents below.
+                    extra_user_input_contents.extend(propagated[1:])
+                    return (propagated[0], False)
             return (
                 Content.from_function_result(
                     call_id=function_call.call_id,  # type: ignore[arg-type]
@@ -1433,6 +1444,8 @@ async def _try_execute_function_calls(
 
     # Unpack results - each is (Content, terminate_flag)
     contents: list[Content] = [result[0] for result in execution_results]
+    # Append any additional user_input_request Content items from multi-item exceptions
+    contents.extend(extra_user_input_contents)
     # If any function requested termination, terminate the loop
     should_terminate = any(result[1] for result in execution_results)
     return (contents, should_terminate)

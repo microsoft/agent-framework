@@ -204,7 +204,7 @@ class UserInputRequiredException(ToolException):
             contents: The user-input-request Content items from the sub-agent response.
             message: Human-readable description of why user input is needed.
         """
-        super().__init__(message, log_level=10)
+        super().__init__(message, log_level=None)
         self.contents = contents
 
 
