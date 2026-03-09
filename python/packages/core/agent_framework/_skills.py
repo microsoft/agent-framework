@@ -845,11 +845,11 @@ class SkillsProvider(BaseContextProvider):
                                 ),
                             },
                             "args": {
-                                "anyOf": [  
-                                    { "additionalProperties": True, "type": "object"},  
-                                    { "type": "null" }  
-                                ],  
-                                "default": None,  
+                                "anyOf": [
+                                    { "additionalProperties": True, "type": "object"},
+                                    { "type": "null" }
+                                ],
+                                "default": None,
                                 "description": (
                                     "Arguments to pass to the script as key-value pairs. "
                                     "Use parameter names as keys without leading dashes "
