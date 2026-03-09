@@ -89,7 +89,7 @@ def strip_pickle_markers(data: Any) -> Any:
     """
     if isinstance(data, dict):
         if _PICKLE_MARKER in data or _TYPE_MARKER in data:
-            logger.warning("Stripped pickle/type markers from untrusted input.")
+            logger.debug("Stripped pickle/type markers from untrusted input.")
             return None
         return {k: strip_pickle_markers(v) for k, v in data.items()}
 
