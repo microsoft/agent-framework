@@ -19,9 +19,9 @@ from azure.ai.agents.models import (
 from azure.ai.projects.models import (
     CodeInterpreterTool,
     MCPTool,
-    TextResponseFormatConfigurationResponseFormatJsonObject,
-    TextResponseFormatConfigurationResponseFormatText,
+    TextResponseFormatJsonObject,
     TextResponseFormatJsonSchema,
+    TextResponseFormatText,
     Tool,
     WebSearchPreviewTool,
 )
@@ -479,11 +479,7 @@ def _prepare_mcp_tool_dict_for_azure_ai(tool_dict: dict[str, Any]) -> MCPTool:
 
 def create_text_format_config(
     response_format: type[BaseModel] | Mapping[str, Any],
-) -> (
-    TextResponseFormatJsonSchema
-    | TextResponseFormatConfigurationResponseFormatJsonObject
-    | TextResponseFormatConfigurationResponseFormatText
-):
+) -> TextResponseFormatJsonSchema | TextResponseFormatJsonObject | TextResponseFormatText:
     """Convert response_format into Azure text format configuration."""
     if isinstance(response_format, type) and issubclass(response_format, BaseModel):
         schema = response_format.model_json_schema()
@@ -513,9 +509,9 @@ def create_text_format_config(
                 config_kwargs["description"] = format_config["description"]
             return TextResponseFormatJsonSchema(**config_kwargs)
         if format_type == "json_object":
-            return TextResponseFormatConfigurationResponseFormatJsonObject()
+            return TextResponseFormatJsonObject()
         if format_type == "text":
-            return TextResponseFormatConfigurationResponseFormatText()
+            return TextResponseFormatText()
 
     raise IntegrationInvalidRequestException("response_format must be a Pydantic model or mapping.")
 

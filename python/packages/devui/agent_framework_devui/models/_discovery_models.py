@@ -5,8 +5,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, cast
 from collections.abc import Callable
+from typing import Any, cast
 
 from pydantic import BaseModel, Field, field_validator
 

@@ -112,9 +112,7 @@ class SkillResource:
         self._accepts_kwargs: bool = False
         if function is not None:
             sig = inspect.signature(function)
-            self._accepts_kwargs = any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-            )
+            self._accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
 
 
 class Skill:
