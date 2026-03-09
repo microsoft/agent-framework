@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 contact: rogerbarreto
 date: 2026-03-06
 deciders: rogerbarreto, alliscode
@@ -114,17 +114,103 @@ The key operational difference from the Responses API path is:
 - Bad, because 3 of the 4 kinds are experimental and may change
 - Bad, because `FoundryPromptAgent` could be confused with `FoundryResponsesAgent` (both use prompts)
 
+### Option 6: `FoundryAgent` + `FoundryVersionedAgent` with self-contained factories, `FoundryAITool`, and env-var auto-discovery
+
+Combines **Option 1** naming for the Responses API path with **Option 2** naming for the versioned path, plus architectural decisions about construction patterns, tool factories, and sample conventions.
+
+#### Naming
+
+| Type | Wraps | Description |
+|------|-------|-------------|
+| `FoundryAgent` | Responses API directly | No server-side agent. Uses `GetProjectResponsesClientForModel()`. Public constructors (env-var + explicit). |
+| `FoundryVersionedAgent` | Versioned agent (any kind) | Creates/manages an `AgentVersion`. Private constructor, async static factory methods only. |
+| `FoundryAITool` | `AgentTool` + `ResponseTool` factories | Static factory returning `AITool` directly, eliminating cast+`.AsAITool()` ceremony. |
+
+#### `FoundryAgent` (Responses API)
+
+Self-contained agent that creates its own `AIProjectClient` internally. Offers two construction tiers:
+
+- **Env-var constructors**: Read `AZURE_AI_PROJECT_ENDPOINT` (required) and `AZURE_AI_MODEL_DEPLOYMENT_NAME` (optional) from environment, use `DefaultAzureCredential`. Accept optional `AIProjectClientOptions` for client fine-tuning.
+- **Explicit constructors**: Accept `Uri endpoint` + `AuthenticationTokenProvider` + `model` directly.
+
+Both tiers inject MEAI user-agent headers via `clientOptions.AddPolicy(UserAgentPolicy, PerCall)`.
+
+#### `FoundryVersionedAgent` (Versioned Agents)
+
+Self-contained agent with **private constructor** — only instantiated via async static factory methods:
+
+- **`CreateAIAgentAsync`** — Creates a new server-side agent version (3 overloads: simple params, `ChatClientAgentOptions`, `AgentVersionCreationOptions`).
+- **`GetAIAgentAsync`** — Retrieves an existing agent by name (2 overloads: by name, by `ChatClientAgentOptions`).
+- **`DeleteAIAgentAsync`** — Deletes the server-side agent.
+
+Each factory has two tiers (env-var + explicit endpoint). Env-var tier auto-resolves `AZURE_AI_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME`. Both tiers accept optional `AIProjectClientOptions`.
+
+Both agents expose `CreateConversationSessionAsync()` — creates a server-side `ProjectConversation` and returns a `ChatClientAgentSession` linked to it, so conversations appear in the Foundry Project UI.
+
+Internally, `FoundryVersionedAgent` reuses the same shared helpers as the existing `AIProjectClient` extension methods (`CreateChatClientAgentOptions`, `ApplyToolsToAgentDefinition`, `CreateAgentVersionWithProtocolAsync`, etc.), which were refactored from `private` to `internal` to enable code sharing.
+
+#### `FoundryAITool` (Tool Factory)
+
+Static class wrapping all `AgentTool.Create*` (Azure SDK, 9 methods) and `ResponseTool.Create*` (OpenAI SDK, 8+ methods) factory methods, each returning `AITool` directly:
+
+```csharp
+// Before
+tools: [((ResponseTool)AgentTool.CreateOpenApiTool(definition)).AsAITool()]
+
+// After
+tools: [FoundryAITool.CreateOpenApiTool(definition)]
+```
+
+Also provides `FromResponseTool(ResponseTool)` for converting existing `ResponseTool` instances (e.g., `MemorySearchPreviewTool`).
+
+#### `GetService` surface
+
+Both `FoundryAgent` and `FoundryVersionedAgent` expose via `GetService<T>()`:
+- `AIProjectClient` — the internally-managed client
+- `ChatClientAgent` — the inner agent
+- `AIAgentMetadata` — `"microsoft.foundry"` for both types
+- `AgentVersion` — (FoundryVersionedAgent only) the server-side agent version
+
+#### Sample conventions
+
+- Samples use **env-var auto-discovery** — no manual `Environment.GetEnvironmentVariable` for `AZURE_AI_PROJECT_ENDPOINT` or `AZURE_AI_MODEL_DEPLOYMENT_NAME`
+- Non-discoverable env vars (tool connection IDs, App Insights, etc.) are still read explicitly
+- **Explicit types** preferred over `var` for agent and session variables
+- **One-liner constructors** for simple `FoundryAgent` cases (instructions + name only)
+- Folder structure: `FoundryAgents/` (Responses API, default path), `FoundryVersionedAgents/` (versioned, alternative)
+
+#### Pros
+
+- Good, because both types are fully self-contained — no external `AIProjectClient` required
+- Good, because env-var auto-discovery dramatically reduces sample boilerplate
+- Good, because `FoundryAITool` eliminates the `((ResponseTool)...).AsAITool()` casting ceremony
+- Good, because `FoundryAgent` naming positions the Responses API as the primary/default path
+- Good, because private constructor + async factories enforce correct async initialization for `FoundryVersionedAgent`
+- Good, because `DeleteAIAgentAsync` centralizes cleanup in the factory
+- Good, because `CreateConversationSessionAsync` eliminates multi-step conversation setup boilerplate
+- Good, because shared internal helpers avoid code duplication between `FoundryVersionedAgent` and extension methods
+
 ## Decision Outcome
 
-*To be decided by the team.*
+**Chosen option: Option 6** — `FoundryAgent` + `FoundryVersionedAgent` with self-contained factories, `FoundryAITool`, and env-var auto-discovery.
+
+This option was chosen because it:
+
+1. **Positions the Responses API as the default path** — `FoundryAgent` is the simplest name, signaling this is the recommended starting point. `FoundryVersionedAgent` clearly marks the server-side versioned alternative.
+2. **Eliminates boilerplate** — Env-var auto-discovery, `FoundryAITool` factory, `CreateConversationSessionAsync`, and `DeleteAIAgentAsync` collectively reduce sample code by 40-60% compared to the original extension-method approach.
+3. **Enforces correct patterns** — Private constructor + async factories prevent misuse of the versioned agent path. Self-contained client management prevents credential/endpoint misconfiguration.
+4. **Maintains backward compatibility** — The existing `AIProjectClient` extension methods continue to work unchanged; they now delegate to the same shared internal helpers.
+5. **Uses shared metadata** — Both types use `AIAgentMetadata("microsoft.foundry")` since they share the same backing service.
 
 ## More Information
 
 ### Current State
 
-- `FoundryResponsesAgent` exists in `Microsoft.Agents.AI.AzureAI` — wraps the Responses API path via `GetProjectResponsesClientForModel(modelId)`.
-- The non-RAPI path currently has no MAF wrapper. Users use the Azure SDK directly (`AIProjectClient.Agents.CreateAgentVersionAsync()` → `GetProjectResponsesClientForAgent()`).
-- PR [#4502](https://github.com/microsoft/agent-framework/pull/4502) introduces `FoundryResponsesAgent` and related samples.
+- `FoundryAgent` (renamed from `FoundryResponsesAgent`) exists in `Microsoft.Agents.AI.AzureAI` — wraps the Responses API path with env-var auto-discovery constructors.
+- `FoundryVersionedAgent` exists in `Microsoft.Agents.AI.AzureAI` — wraps the versioned agent path with async static factory methods.
+- `FoundryAITool` exists in `Microsoft.Agents.AI.AzureAI` — static factory for creating `AITool` from Azure SDK and OpenAI SDK tool types.
+- Existing `AIProjectClient` extension methods (`CreateAIAgentAsync`, `GetAIAgentAsync`, `AsAIAgent`) continue to work and delegate to shared internal helpers.
+- Samples are organized under `FoundryAgents/` (23 Responses API samples) and `FoundryVersionedAgents/` (26 versioned agent samples).
 
 ### Azure SDK Entry Points for Reference
 
@@ -137,6 +223,6 @@ AgentVersion agentVersion = await projectClient.Agents.CreateAgentVersionAsync(a
 ProjectResponsesClient responseClient = projectClient.OpenAI.GetProjectResponsesClientForAgent(agentVersion, conversationId);
 ```
 
-### Metadata Consideration
+### Metadata
 
-The current `FoundryResponsesAgent` uses metadata provider `"microsoft.foundry"`. If a new type is introduced, consider whether it should share the same provider or use a distinct one (e.g., `"microsoft.foundry.versioned"` or `"microsoft.foundry.agents"`).
+Both `FoundryAgent` and `FoundryVersionedAgent` use metadata provider `"microsoft.foundry"` — they share the same backing service and the distinction is in construction pattern, not service identity.
