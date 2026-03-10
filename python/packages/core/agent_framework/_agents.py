@@ -33,7 +33,13 @@ from ._clients import BaseChatClient, SupportsChatGetResponse
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._middleware import AgentMiddlewareLayer, MiddlewareTypes
 from ._serialization import SerializationMixin
-from ._sessions import AgentSession, BaseContextProvider, BaseHistoryProvider, InMemoryHistoryProvider, SessionContext
+from ._sessions import (
+    AgentSession,
+    BaseContextProvider,
+    BaseHistoryProvider,
+    InMemoryHistoryProvider,
+    SessionContext,
+)
 from ._tools import (
     FunctionInvocationLayer,
     FunctionTool,
@@ -532,7 +538,14 @@ class BaseAgent(SerializationMixin):
 
             if stream_callback is None:
                 # Use non-streaming mode
-                return (await self.run(input_text, stream=False, session=parent_session, **forwarded_kwargs)).text
+                return (
+                    await self.run(
+                        input_text,
+                        stream=False,
+                        session=parent_session,
+                        **forwarded_kwargs,
+                    )
+                ).text
 
             # Use streaming mode - accumulate updates and create final response
             response_updates: list[AgentResponseUpdate] = []
@@ -951,7 +964,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 **ctx["filtered_kwargs"],
             )
 
-        def _propagate_conversation_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
+        def _propagate_conversation_id(
+            update: AgentResponseUpdate,
+        ) -> AgentResponseUpdate:
             """Eagerly propagate conversation_id to session as updates arrive.
 
             This ensures session.service_session_id is set even when the user
@@ -975,8 +990,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             return self._finalize_response_updates(updates, response_format=rf)
 
         return (
-            ResponseStream  # type: ignore[reportUnknownMemberType]
-            .from_awaitable(_get_stream())
+            ResponseStream
+            .from_awaitable(_get_stream())  # type: ignore[reportUnknownMemberType]
             .map(
                 transform=partial(
                     map_chat_to_agent_update,
@@ -1002,7 +1017,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         )
 
     @staticmethod
-    def _extract_conversation_id_from_streaming_response(response: AgentResponse[Any]) -> str | None:
+    def _extract_conversation_id_from_streaming_response(
+        response: AgentResponse[Any],
+    ) -> str | None:
         """Extract conversation_id from streaming raw updates, if present."""
         raw = response.raw_representation
         if raw is None:
@@ -1039,6 +1056,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         input_messages = normalize_messages(messages)
 
+        # `store` in runtime or agent options takes precedence over client-level storage
+        # indicators. An explicit `store=False` forces local (in-memory) history injection,
+        # even if the client is configured to use service-side storage by default.
+        store_ = opts.get("store", self.default_options.get("store", getattr(self.client, "STORES_BY_DEFAULT", False)))
         # Auto-inject InMemoryHistoryProvider when session is provided, no context providers
         # registered, and no service-side storage indicators
         if (
@@ -1046,8 +1067,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             and not self.context_providers
             and not session.service_session_id
             and not opts.get("conversation_id")
-            and not opts.get("store")
-            and not (getattr(self.client, "STORES_BY_DEFAULT", False) and opts.get("store") is not False)
+            and not store_
         ):
             self.context_providers.append(InMemoryHistoryProvider())
 

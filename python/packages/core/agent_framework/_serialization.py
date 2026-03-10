@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
@@ -263,6 +264,25 @@ class SerializationMixin:
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = set()
     INJECTABLE: ClassVar[set[str]] = set()
+    _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> SerializationMixin:
+        """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
+
+        Fields listed in ``_SHALLOW_COPY_FIELDS`` may contain LLM SDK objects
+        (e.g., proto/gRPC responses) that are not safe to deep-copy.  They are
+        kept as shallow references in the copy; all other attributes are
+        deep-copied normally.
+        """
+        cls = type(self)
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k in cls._SHALLOW_COPY_FIELDS:
+                object.__setattr__(result, k, v)
+            else:
+                object.__setattr__(result, k, copy.deepcopy(v, memo))
+        return result
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance and any nested objects to a dictionary.

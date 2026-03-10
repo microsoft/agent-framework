@@ -44,7 +44,7 @@ from ._context import CapturingRunnerContext
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
-from ._serialization import deserialize_value, serialize_value
+from ._serialization import deserialize_value, serialize_value, strip_pickle_markers
 from ._workflow import (
     SOURCE_HITL_RESPONSE,
     SOURCE_ORCHESTRATOR,
@@ -514,6 +514,10 @@ class AgentFunctionApp(DFAppBase):
                 response_data = req.get_json()
             except ValueError:
                 return self._build_error_response("Request body must be valid JSON.")
+
+            # Sanitize untrusted HTTP input before it reaches pickle.loads().
+            # See strip_pickle_markers() docstring for details on the attack vector.
+            response_data = strip_pickle_markers(response_data)
 
             # Send the response as an external event
             # The request_id is used as the event name for correlation
