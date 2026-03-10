@@ -15,6 +15,7 @@ from typing import (
     runtime_checkable,
 )
 
+from ._sessions import BaseContextProvider
 from ._types import Content, Message
 
 if TYPE_CHECKING:
@@ -1135,26 +1136,40 @@ async def apply_compaction(
 COMPACTION_STATE_KEY: Final[str] = "_compaction_messages"
 
 
-class CompactionProvider:
-    """Context provider that applies compaction before and stores state after each run.
+class CompactionProvider(BaseContextProvider):
+    """Context provider that compacts messages before and after agent runs.
 
-    This provider hooks into the agent's context-provider pipeline
-    (``BaseContextProvider``) and manages a compacted message history inside
-    ``session.state``. Before each run it loads existing compacted history,
-    applies the configured compaction strategy, and injects the projected
-    messages. After each run it appends the new input/output messages to the
-    compacted history for the next turn.
+    This provider accepts two separate strategies:
+
+    - ``before_strategy``: Runs in ``before_run`` on messages already in the
+      context (loaded by earlier providers such as a history provider).
+      Compacts the loaded history before it reaches the model.
+    - ``after_strategy``: Runs in ``after_run`` on the accumulated messages
+      stored by a history provider in session state. This compacts the
+      persisted history so the next turn starts with a smaller context.
+
+    Either strategy may be ``None`` to skip that phase.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import Agent, CompactionProvider
-            from agent_framework._compaction import ToolResultCompactionStrategy
-
-            provider = CompactionProvider(
-                strategy=ToolResultCompactionStrategy(keep_last_tool_call_groups=1),
+            from agent_framework import Agent, CompactionProvider, InMemoryHistoryProvider
+            from agent_framework._compaction import (
+                SlidingWindowStrategy,
+                ToolResultCompactionStrategy,
             )
-            agent = Agent(client=client, name="assistant", context_providers=[provider])
+
+            history = InMemoryHistoryProvider()
+            compaction = CompactionProvider(
+                before_strategy=SlidingWindowStrategy(keep_last_groups=20),
+                after_strategy=ToolResultCompactionStrategy(keep_last_tool_call_groups=1),
+                history_source_id=history.source_id,
+            )
+            agent = Agent(
+                client=client,
+                name="assistant",
+                context_providers=[history, compaction],
+            )
             session = agent.create_session()
             await agent.run("Hello", session=session)
     """
@@ -1162,42 +1177,31 @@ class CompactionProvider:
     def __init__(
         self,
         *,
-        strategy: CompactionStrategy,
+        before_strategy: CompactionStrategy | None = None,
+        after_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         source_id: str = "compaction",
-        state_key: str | None = None,
+        history_source_id: str = "in_memory",
     ) -> None:
         """Create a compaction provider.
 
         Keyword Args:
-            strategy: The compaction strategy to apply.
+            before_strategy: Strategy applied to loaded context messages before
+                the model runs. ``None`` to skip pre-run compaction.
+            after_strategy: Strategy applied to stored history messages after
+                the model runs. Requires ``history_source_id`` to locate the
+                messages in session state. ``None`` to skip post-run compaction.
             tokenizer: Optional tokenizer for token-aware strategies.
             source_id: Provider source id (default ``"compaction"``).
-            state_key: Session state key for persisting compacted messages
-                (default ``"_compaction_messages"``).
+            history_source_id: The ``source_id`` of the history provider whose
+                stored messages the ``after_strategy`` should compact
+                (default ``"in_memory_history"``).
         """
-        self.strategy = strategy
+        super().__init__(source_id)
+        self.before_strategy = before_strategy
+        self.after_strategy = after_strategy
         self.tokenizer = tokenizer
-        self.source_id = source_id
-        self._state_key = state_key or COMPACTION_STATE_KEY
-
-    def _load_messages(self, state: dict[str, Any]) -> list[Message]:
-        raw = state.get(self._state_key)
-        if not isinstance(raw, list):
-            return []
-        messages: list[Message] = []
-        for item in raw:
-            if isinstance(item, Message):
-                messages.append(item)
-            elif isinstance(item, dict):
-                try:
-                    messages.append(Message.from_dict(item))
-                except Exception:
-                    logger.debug("Skipping non-deserializable compaction state entry.")
-        return messages
-
-    def _save_messages(self, state: dict[str, Any], messages: list[Message]) -> None:
-        state[self._state_key] = [msg.to_dict() for msg in messages]
+        self.history_source_id = history_source_id
 
     async def before_run(
         self,
@@ -1207,21 +1211,23 @@ class CompactionProvider:
         context: Any,
         state: dict[str, Any],
     ) -> None:
-        """Load compacted history, apply compaction, and inject projected messages."""
-        compacted_messages = self._load_messages(state)
-        if not compacted_messages:
+        """Compact messages already present in the context from earlier providers."""
+        if self.before_strategy is None:
             return
 
-        annotate_message_groups(compacted_messages)
+        all_messages: list[Message] = context.get_messages()
+        if not all_messages:
+            return
+
+        annotate_message_groups(all_messages)
         if self.tokenizer is not None:
-            annotate_token_counts(compacted_messages, tokenizer=self.tokenizer)
-        await self.strategy(compacted_messages)
+            annotate_token_counts(all_messages, tokenizer=self.tokenizer)
+        await self.before_strategy(all_messages)
 
-        projected = project_included_messages(compacted_messages)
-        if projected:
-            context.extend_messages(self, projected)
-
-        self._save_messages(state, compacted_messages)
+        projected = project_included_messages(all_messages)
+        projected_set = {id(m) for m in projected}
+        for sid in list(context.context_messages):
+            context.context_messages[sid] = [m for m in context.context_messages[sid] if id(m) in projected_set]
 
     async def after_run(
         self,
@@ -1231,24 +1237,26 @@ class CompactionProvider:
         context: Any,
         state: dict[str, Any],
     ) -> None:
-        """Append new input and output messages to the compacted history."""
-        compacted_messages = self._load_messages(state)
+        """Compact stored history messages after the model runs."""
+        if self.after_strategy is None:
+            return
 
-        new_messages: list[Message] = []
-        if hasattr(context, "input_messages") and context.input_messages:
-            new_messages.extend(context.input_messages)
-        if hasattr(context, "response") and context.response and hasattr(context.response, "messages"):
-            new_messages.extend(context.response.messages)
+        # Access the history provider's stored messages from session state.
+        history_state = session.state.get(self.history_source_id) if session else None
+        if not isinstance(history_state, dict):
+            return
+        stored_messages = history_state.get("messages")
+        if not isinstance(stored_messages, list) or not stored_messages:
+            return
 
-        if new_messages:
-            # Ensure unique message IDs across the full compacted history to avoid group-id collisions.
-            offset = len(compacted_messages)
-            for idx, msg in enumerate(new_messages):
-                if not msg.message_id:
-                    msg.message_id = f"msg_{offset + idx}"
-            extend_compaction_messages(compacted_messages, new_messages, tokenizer=self.tokenizer)
+        annotate_message_groups(stored_messages)
+        if self.tokenizer is not None:
+            annotate_token_counts(stored_messages, tokenizer=self.tokenizer)
+        await self.after_strategy(stored_messages)
 
-        self._save_messages(state, compacted_messages)
+        # Keep all messages (including excluded) in storage so annotations are
+        # preserved. The history provider's ``skip_excluded`` flag controls
+        # whether excluded messages are loaded on the next turn.
 
 
 __all__ = [

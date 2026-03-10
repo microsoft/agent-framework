@@ -1164,7 +1164,6 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     "type": "function_call",
                     "name": content.name,
                     "arguments": content.arguments,
-                    "status": None,
                 }
             case "function_result":
                 shell_output_type = (

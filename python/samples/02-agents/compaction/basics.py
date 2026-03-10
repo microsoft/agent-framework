@@ -12,6 +12,7 @@ from agent_framework import (
     SlidingWindowStrategy,
     SummarizationStrategy,
     TokenBudgetComposedStrategy,
+    ToolResultCompactionStrategy,
     TruncationStrategy,
     apply_compaction,
 )
@@ -33,6 +34,7 @@ AVAILABLE_STRATEGY_TYPES = (
     CharacterEstimatorTokenizer,
     SlidingWindowStrategy,
     SelectiveToolCallCompactionStrategy,
+    ToolResultCompactionStrategy,
     SummarizationStrategy,
     TokenBudgetComposedStrategy,
 )
@@ -49,11 +51,7 @@ class LocalSummaryClient:
         options: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
-        return ChatResponse(
-            messages=[
-                Message(role="assistant", text=f"Summary for {len(messages)} messages.")
-            ]
-        )
+        return ChatResponse(messages=[Message(role="assistant", text=f"Summary for {len(messages)} messages.")])
 
 
 async def main() -> None:
@@ -88,9 +86,7 @@ async def main() -> None:
     print("\n--- Before compaction ---")
     print(f"Message count: {len(messages)}")
     for index, message in enumerate(messages, start=1):
-        message_text = message.text or ", ".join(
-            content.type for content in message.contents
-        )
+        message_text = message.text or ", ".join(content.type for content in message.contents)
         print(f"{index:02d}. [{message.role}] {message_text}")
 
     # 2. Select exactly one strategy (default shown below).
@@ -108,9 +104,13 @@ async def main() -> None:
     # plus matching tool result messages). In this example, setting to 0 removes
     # the single assistant+tool pair.
     selected_strategy_name = "SelectiveToolCallCompactionStrategy"
-    selected_strategy = SelectiveToolCallCompactionStrategy(
-        keep_last_tool_call_groups=0
-    )
+    selected_strategy = SelectiveToolCallCompactionStrategy(keep_last_tool_call_groups=0)
+
+    # Collapse older tool-call groups into short "[Tool calls: tool_name]" summaries
+    # while keeping the most recent group verbatim. Unlike SelectiveToolCallCompactionStrategy
+    # which fully excludes groups, this preserves a readable trace of tool usage.
+    # selected_strategy_name = "ToolResultCompactionStrategy"
+    # selected_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=0)
 
     # Summarize older messages so only recent context remains, and attach summary
     # trace metadata linking summary -> originals and originals -> summary.
@@ -136,9 +136,7 @@ async def main() -> None:
     print(f"\n--- After compaction ({selected_strategy_name}) ---")
     print(f"Message count: {len(projected)}")
     for index, message in enumerate(projected, start=1):
-        message_text = message.text or ", ".join(
-            content.type for content in message.contents
-        )
+        message_text = message.text or ", ".join(content.type for content in message.contents)
         print(f"{index:02d}. [{message.role}] {message_text}")
 
     summaries = []
@@ -156,17 +154,13 @@ async def main() -> None:
         for message in summaries:
             group_annotation = message.additional_properties.get("_group")
             summarized_ids = (
-                group_annotation.get(SUMMARY_OF_MESSAGE_IDS_KEY)
-                if isinstance(group_annotation, dict)
-                else None
+                group_annotation.get(SUMMARY_OF_MESSAGE_IDS_KEY) if isinstance(group_annotation, dict) else None
             )
             print(f"  summary_id={message.message_id} summarizes={summarized_ids}")
         for message in summarized:
             group_annotation = message.additional_properties.get("_group")
             summarized_by = (
-                group_annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY)
-                if isinstance(group_annotation, dict)
-                else None
+                group_annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY) if isinstance(group_annotation, dict) else None
             )
             print(f"  original_id={message.message_id} summarized_by={summarized_by}")
 
@@ -214,6 +208,16 @@ Message count: 6
 04. [assistant] I found three core tables.
 05. [user] Estimate effort and risks.
 06. [assistant] Primary risk is schema drift.
+
+--- After compaction (ToolResultCompactionStrategy) ---
+Message count: 7
+01. [system] You are a helpful assistant.
+02. [assistant] [Tool calls: list_tables]
+03. [user] Plan a data migration.
+04. [assistant] I will gather requirements.
+05. [assistant] I found three core tables.
+06. [user] Estimate effort and risks.
+07. [assistant] Primary risk is schema drift.
 
 --- After compaction (SummarizationStrategy) ---
 Message count: 5

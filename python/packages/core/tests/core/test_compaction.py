@@ -574,80 +574,212 @@ class _MockSessionContext:
         source_id = getattr(provider, "source_id", "unknown")
         self.context_messages.setdefault(source_id, []).extend(messages)
 
+    def get_messages(self) -> list[Message]:
+        result: list[Message] = []
+        for msgs in self.context_messages.values():
+            result.extend(msgs)
+        return result
 
-class _MockResponse:
-    def __init__(self, messages: list[Message]) -> None:
-        self.messages = messages
 
-
-async def test_compaction_provider_before_run_injects_projected_messages() -> None:
-    """CompactionProvider.before_run loads, compacts, and injects messages."""
-    state: dict[str, Any] = {
-        "_compaction_messages": [
-            Message(role="system", text="sys").to_dict(),
-            Message(role="user", text="u1").to_dict(),
-            Message(role="assistant", text="a1").to_dict(),
-            Message(role="user", text="u2").to_dict(),
-            Message(role="assistant", text="a2").to_dict(),
-            Message(role="user", text="u3").to_dict(),
-            Message(role="assistant", text="a3").to_dict(),
-        ]
-    }
-    strategy = SlidingWindowStrategy(keep_last_groups=2, preserve_system=True)
-    provider = CompactionProvider(strategy=strategy)
+async def test_compaction_provider_compacts_existing_context_messages() -> None:
+    """CompactionProvider.before_run compacts messages already in context from earlier providers."""
+    provider = CompactionProvider(
+        before_strategy=SlidingWindowStrategy(keep_last_groups=2, preserve_system=True),
+    )
 
     context = _MockSessionContext()
-    await provider.before_run(agent=None, session=None, context=context, state=state)
+    context.context_messages["history"] = [
+        Message(role="system", text="sys"),
+        Message(role="user", text="u1"),
+        Message(role="assistant", text="a1"),
+        Message(role="user", text="u2"),
+        Message(role="assistant", text="a2"),
+        Message(role="user", text="u3"),
+        Message(role="assistant", text="a3"),
+    ]
 
-    injected = context.context_messages.get("compaction", [])
-    assert len(injected) > 0
-    assert injected[0].role == "system"
-    assert len(injected) < 7
+    await provider.before_run(agent=None, session=None, context=context, state={})
 
-
-async def test_compaction_provider_after_run_appends_messages_to_state() -> None:
-    """CompactionProvider.after_run appends new input/output messages."""
-    state: dict[str, Any] = {"_compaction_messages": []}
-    strategy = SlidingWindowStrategy(keep_last_groups=10)
-    provider = CompactionProvider(strategy=strategy)
-
-    context = _MockSessionContext()
-    context.input_messages = [Message(role="user", text="hello")]
-    context._response = _MockResponse([Message(role="assistant", text="hi")])
-
-    await provider.after_run(agent=None, session=None, context=context, state=state)
-
-    stored = state["_compaction_messages"]
-    assert len(stored) == 2
+    remaining = context.context_messages["history"]
+    assert len(remaining) == 3
+    assert remaining[0].role == "system"
+    assert remaining[1].text == "u3"
+    assert remaining[2].text == "a3"
 
 
-async def test_compaction_provider_round_trip() -> None:
-    """Full round trip: after_run stores, before_run loads and compacts."""
-    strategy = SlidingWindowStrategy(keep_last_groups=2, preserve_system=True)
-    provider = CompactionProvider(strategy=strategy)
-    state: dict[str, Any] = {}
-
-    for i in range(5):
-        context = _MockSessionContext()
-        context.input_messages = [Message(role="user", text=f"user turn {i}")]
-        context._response = _MockResponse([Message(role="assistant", text=f"response {i}")])
-        await provider.after_run(agent=None, session=None, context=context, state=state)
-
-    inject_context = _MockSessionContext()
-    await provider.before_run(agent=None, session=None, context=inject_context, state=state)
-
-    injected = inject_context.context_messages.get("compaction", [])
-    # 5 turns = 10 messages = 10 groups; sliding window keeps last 2 non-system groups
-    assert len(injected) == 2
-
-
-async def test_compaction_provider_empty_state_noop() -> None:
-    """before_run with empty state should not inject any messages."""
-    strategy = SlidingWindowStrategy(keep_last_groups=2)
-    provider = CompactionProvider(strategy=strategy)
-    state: dict[str, Any] = {}
+async def test_compaction_provider_noop_when_no_context_messages() -> None:
+    """before_run with no context messages does nothing."""
+    provider = CompactionProvider(
+        before_strategy=SlidingWindowStrategy(keep_last_groups=2),
+    )
 
     context = _MockSessionContext()
-    await provider.before_run(agent=None, session=None, context=context, state=state)
+    await provider.before_run(agent=None, session=None, context=context, state={})
 
     assert context.context_messages == {}
+
+
+async def test_compaction_provider_preserves_messages_from_multiple_sources() -> None:
+    """CompactionProvider correctly filters across multiple provider sources."""
+    provider = CompactionProvider(
+        before_strategy=SlidingWindowStrategy(keep_last_groups=2, preserve_system=True),
+    )
+
+    context = _MockSessionContext()
+    context.context_messages["history"] = [
+        Message(role="system", text="sys"),
+        Message(role="user", text="old_user"),
+        Message(role="assistant", text="old_assistant"),
+    ]
+    context.context_messages["rag"] = [
+        Message(role="user", text="recent_rag_context"),
+        Message(role="assistant", text="recent_rag_answer"),
+    ]
+
+    await provider.before_run(agent=None, session=None, context=context, state={})
+
+    all_remaining = context.get_messages()
+    assert any(m.role == "system" for m in all_remaining)
+    assert len(all_remaining) < 5
+
+
+class _MockSession:
+    """Minimal mock for AgentSession used in CompactionProvider after_run tests."""
+
+    def __init__(self) -> None:
+        self.state: dict[str, Any] = {}
+
+
+async def test_compaction_provider_after_run_compacts_stored_history() -> None:
+    """after_run annotates exclusions on stored messages without removing them."""
+    provider = CompactionProvider(
+        after_strategy=SelectiveToolCallCompactionStrategy(keep_last_tool_call_groups=0),
+        history_source_id="in_memory_history",
+    )
+
+    session = _MockSession()
+    session.state["in_memory_history"] = {
+        "messages": [
+            Message(role="user", text="old question"),
+            Message(role="assistant", text="old answer"),
+            _assistant_function_call("c1"),
+            _tool_result("c1", "result"),
+            Message(role="assistant", text="final answer"),
+        ]
+    }
+
+    context = _MockSessionContext()
+    await provider.after_run(agent=None, session=session, context=context, state={})
+
+    stored = session.state["in_memory_history"]["messages"]
+    # All messages are kept; tool-call group is excluded via annotation.
+    assert len(stored) == 5
+    excluded = [m for m in stored if m.additional_properties.get("_excluded", False)]
+    assert len(excluded) == 2  # assistant function_call + tool result
+    assert any(m.text == "final answer" for m in stored if not m.additional_properties.get("_excluded", False))
+
+
+async def test_compaction_provider_after_run_noop_without_history() -> None:
+    """after_run does nothing when there is no history state."""
+    provider = CompactionProvider(
+        after_strategy=SlidingWindowStrategy(keep_last_groups=2),
+        history_source_id="in_memory_history",
+    )
+
+    session = _MockSession()
+    context = _MockSessionContext()
+    await provider.after_run(agent=None, session=session, context=context, state={})
+
+    assert "in_memory_history" not in session.state
+
+
+async def test_compaction_provider_both_strategies() -> None:
+    """Both before_strategy and after_strategy work independently."""
+    provider = CompactionProvider(
+        before_strategy=SlidingWindowStrategy(keep_last_groups=2, preserve_system=True),
+        after_strategy=SelectiveToolCallCompactionStrategy(keep_last_tool_call_groups=0),
+        history_source_id="history",
+    )
+
+    # before_run: compact loaded context
+    context = _MockSessionContext()
+    context.context_messages["history"] = [
+        Message(role="system", text="sys"),
+        Message(role="user", text="u1"),
+        Message(role="assistant", text="a1"),
+        Message(role="user", text="u2"),
+        Message(role="assistant", text="a2"),
+    ]
+    await provider.before_run(agent=None, session=None, context=context, state={})
+    assert len(context.get_messages()) == 3
+
+    # after_run: compact stored history
+    session = _MockSession()
+    session.state["history"] = {
+        "messages": [
+            Message(role="user", text="q"),
+            _assistant_function_call("c1"),
+            _tool_result("c1", "ok"),
+            Message(role="assistant", text="done"),
+        ]
+    }
+    await provider.after_run(agent=None, session=session, context=_MockSessionContext(), state={})
+    stored = session.state["history"]["messages"]
+    excluded = [m for m in stored if m.additional_properties.get("_excluded", False)]
+    assert len(excluded) == 2  # tool-call group excluded
+
+
+async def test_compaction_provider_none_strategies_are_noop() -> None:
+    """When both strategies are None, before_run and after_run are no-ops."""
+    provider = CompactionProvider()
+
+    context = _MockSessionContext()
+    context.context_messages["history"] = [
+        Message(role="user", text="hello"),
+        Message(role="assistant", text="hi"),
+    ]
+
+    await provider.before_run(agent=None, session=None, context=context, state={})
+    assert len(context.get_messages()) == 2
+
+    session = _MockSession()
+    await provider.after_run(agent=None, session=session, context=context, state={})
+    assert "in_memory_history" not in session.state
+
+
+async def test_in_memory_history_provider_skip_excluded() -> None:
+    """InMemoryHistoryProvider with skip_excluded=True omits excluded messages."""
+    from agent_framework._compaction import EXCLUDED_KEY
+    from agent_framework._sessions import InMemoryHistoryProvider as _InMemoryHistoryProvider
+
+    provider = _InMemoryHistoryProvider(skip_excluded=True)
+    state: dict[str, Any] = {
+        "messages": [
+            Message(role="user", text="u1"),
+            Message(role="assistant", text="a1", additional_properties={EXCLUDED_KEY: True}),
+            Message(role="user", text="u2"),
+            Message(role="assistant", text="a2"),
+        ]
+    }
+
+    loaded = await provider.get_messages(session_id="test", state=state)
+    assert len(loaded) == 3
+    assert all(m.text != "a1" for m in loaded)
+
+
+async def test_in_memory_history_provider_default_loads_all() -> None:
+    """InMemoryHistoryProvider with default settings loads all messages including excluded."""
+    from agent_framework._compaction import EXCLUDED_KEY
+    from agent_framework._sessions import InMemoryHistoryProvider as _InMemoryHistoryProvider
+
+    provider = _InMemoryHistoryProvider()
+    state: dict[str, Any] = {
+        "messages": [
+            Message(role="user", text="u1"),
+            Message(role="assistant", text="a1", additional_properties={EXCLUDED_KEY: True}),
+            Message(role="user", text="u2"),
+        ]
+    }
+
+    loaded = await provider.get_messages(session_id="test", state=state)
+    assert len(loaded) == 3
