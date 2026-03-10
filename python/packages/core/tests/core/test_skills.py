@@ -2357,7 +2357,7 @@ class TestSkillsProviderFactories:
         run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
         args_desc = run_tool.parameters()["properties"]["args"]["description"]
         assert "without leading dashes" in args_desc
-        assert "CLI flags automatically" in args_desc
+        assert "script implementation or configured runner" in args_desc
 
     def test_require_script_approval_sets_approval_mode(self) -> None:
         """When require_script_approval=True, the run_skill_script tool has approval_mode='always_require'."""
