@@ -24,6 +24,7 @@ namespace Microsoft.Agents.AI.Compaction;
 public sealed class MessageIndex
 {
     private int _currentTurn;
+    private ChatMessage? _lastProcessedMessage;
 
     /// <summary>
     /// Gets the list of message groups in this collection.
@@ -36,11 +37,6 @@ public sealed class MessageIndex
     public Tokenizer? Tokenizer { get; }
 
     /// <summary>
-    /// Gets the number of raw messages that have been processed into groups.
-    /// </summary>
-    public int ProcessedMessageCount { get; private set; }
-
-    /// <summary>
     /// Initializes a new instance of the <see cref="MessageIndex"/> class with the specified groups.
     /// </summary>
     /// <param name="groups">The message groups.</param>
@@ -49,15 +45,25 @@ public sealed class MessageIndex
     {
         this.Tokenizer = tokenizer;
         this.Groups = groups;
-        this.ProcessedMessageCount = this.Groups.Where(g => g.Kind != MessageGroupKind.Summary).Sum(g => g.MessageCount);
 
-        // Restore turn counter from the last group that has a TurnIndex
+        // Restore turn counter and last processed message from the groups
         for (int index = groups.Count - 1; index >= 0; --index)
         {
+            if (this._lastProcessedMessage is null && this.Groups[index].Kind != MessageGroupKind.Summary)
+            {
+                IReadOnlyList<ChatMessage> groupMessages = this.Groups[index].Messages;
+                this._lastProcessedMessage = groupMessages[^1];
+            }
+
             if (this.Groups[index].TurnIndex.HasValue)
             {
                 this._currentTurn = this.Groups[index].TurnIndex!.Value;
-                break;
+
+                // Both values restored — no need to keep scanning
+                if (this._lastProcessedMessage is not null)
+                {
+                    break;
+                }
             }
         }
     }
@@ -98,40 +104,75 @@ public sealed class MessageIndex
     /// </param>
     /// <remarks>
     /// <para>
-    /// If the message count exceeds <see cref="ProcessedMessageCount"/>, only the new (delta) messages
-    /// are processed and appended as new groups. Existing groups and their compaction state (exclusions)
-    /// are preserved, allowing compaction strategies to build on previous results.
+    /// Uses reference equality on the last processed message to detect changes. If the last
+    /// processed message is found within <paramref name="allMessages"/>, only the messages
+    /// after that position are processed and appended as new groups. Existing groups and their
+    /// compaction state (exclusions) are preserved.
     /// </para>
     /// <para>
-    /// If the message count is less than <see cref="ProcessedMessageCount"/> (e.g., after storage compaction
-    /// replaced messages with summaries), all groups are cleared and rebuilt from scratch.
+    /// If the last processed message is not found (e.group., the message list was replaced entirely
+    /// or a sliding window shifted past it), all groups are cleared and rebuilt from scratch.
     /// </para>
     /// <para>
-    /// If the message count equals <see cref="ProcessedMessageCount"/>, no work is performed.
+    /// If the last message in <paramref name="allMessages"/> is the same reference as the last
+    /// processed message, no work is performed.
     /// </para>
     /// </remarks>
     internal void Update(IList<ChatMessage> allMessages)
     {
-        if (allMessages.Count == this.ProcessedMessageCount)
+        if (allMessages.Count == 0)
         {
-            return; // No new messages
-        }
-
-        if (allMessages.Count < this.ProcessedMessageCount)
-        {
-            // Message list shrank (e.g., after storage compaction). Rebuild from scratch.
-            this.ProcessedMessageCount = 0;
-        }
-
-        if (this.ProcessedMessageCount == 0)
-        {
-            // First update on a manually constructed instance — clear any pre-existing groups
             this.Groups.Clear();
             this._currentTurn = 0;
+            this._lastProcessedMessage = null;
+            return;
         }
 
-        // Process only the delta messages
-        this.AppendFromMessages(allMessages, this.ProcessedMessageCount);
+        // If the last message is unchanged and the list hasn't shrunk, there is nothing new to process.
+        if (this._lastProcessedMessage is not null &&
+            allMessages.Count >= this.RawMessageCount &&
+            allMessages[allMessages.Count - 1].ContentEquals(this._lastProcessedMessage))
+        {
+            return;
+        }
+
+        // Walk backwards to locate where we left off.
+        int foundIndex = -1;
+        if (this._lastProcessedMessage is not null)
+        {
+            for (int i = allMessages.Count - 1; i >= 0; --i)
+            {
+                if (allMessages[i].ContentEquals(this._lastProcessedMessage))
+                {
+                    foundIndex = i;
+                    break;
+                }
+            }
+        }
+
+        if (foundIndex < 0)
+        {
+            // Last processed message not found — total rebuild.
+            this.Groups.Clear();
+            this._currentTurn = 0;
+            this.AppendFromMessages(allMessages, 0);
+            return;
+        }
+
+        // Guard against a sliding window that removed messages from the front:
+        // the number of messages up to (and including) the found position must
+        // match the number of messages already represented by existing groups.
+        if (foundIndex + 1 < this.RawMessageCount)
+        {
+            // Front of the message list was trimmed — rebuild.
+            this.Groups.Clear();
+            this._currentTurn = 0;
+            this.AppendFromMessages(allMessages, 0);
+            return;
+        }
+
+        // Process only the delta messages.
+        this.AppendFromMessages(allMessages, foundIndex + 1);
     }
 
     private void AppendFromMessages(IList<ChatMessage> messages, int startIndex)
@@ -180,7 +221,10 @@ public sealed class MessageIndex
             }
         }
 
-        this.ProcessedMessageCount = messages.Count;
+        if (messages.Count > 0)
+        {
+            this._lastProcessedMessage = messages[^1];
+        }
     }
 
     /// <summary>
@@ -235,37 +279,37 @@ public sealed class MessageIndex
     /// <summary>
     /// Gets the total number of messages across all groups, including excluded ones.
     /// </summary>
-    public int TotalMessageCount => this.Groups.Sum(g => g.MessageCount);
+    public int TotalMessageCount => this.Groups.Sum(group => group.MessageCount);
 
     /// <summary>
     /// Gets the total UTF-8 byte count across all groups, including excluded ones.
     /// </summary>
-    public int TotalByteCount => this.Groups.Sum(g => g.ByteCount);
+    public int TotalByteCount => this.Groups.Sum(group => group.ByteCount);
 
     /// <summary>
     /// Gets the total token count across all groups, including excluded ones.
     /// </summary>
-    public int TotalTokenCount => this.Groups.Sum(g => g.TokenCount);
+    public int TotalTokenCount => this.Groups.Sum(group => group.TokenCount);
 
     /// <summary>
     /// Gets the total number of groups that are not excluded.
     /// </summary>
-    public int IncludedGroupCount => this.Groups.Count(g => !g.IsExcluded);
+    public int IncludedGroupCount => this.Groups.Count(group => !group.IsExcluded);
 
     /// <summary>
     /// Gets the total number of messages across all included (non-excluded) groups.
     /// </summary>
-    public int IncludedMessageCount => this.Groups.Where(g => !g.IsExcluded).Sum(g => g.MessageCount);
+    public int IncludedMessageCount => this.Groups.Where(group => !group.IsExcluded).Sum(group => group.MessageCount);
 
     /// <summary>
     /// Gets the total UTF-8 byte count across all included (non-excluded) groups.
     /// </summary>
-    public int IncludedByteCount => this.Groups.Where(g => !g.IsExcluded).Sum(g => g.ByteCount);
+    public int IncludedByteCount => this.Groups.Where(group => !group.IsExcluded).Sum(group => group.ByteCount);
 
     /// <summary>
     /// Gets the total token count across all included (non-excluded) groups.
     /// </summary>
-    public int IncludedTokenCount => this.Groups.Where(g => !g.IsExcluded).Sum(g => g.TokenCount);
+    public int IncludedTokenCount => this.Groups.Where(group => !group.IsExcluded).Sum(group => group.TokenCount);
 
     /// <summary>
     /// Gets the total number of user turns across all groups (including those with excluded groups).
@@ -280,15 +324,19 @@ public sealed class MessageIndex
     /// <summary>
     /// Gets the total number of groups across all included (non-excluded) groups that are not <see cref="MessageGroupKind.System"/>.
     /// </summary>
-    public int IncludedNonSystemGroupCount => this.Groups.Count(g => !g.IsExcluded && g.Kind != MessageGroupKind.System);
+    public int IncludedNonSystemGroupCount => this.Groups.Count(group => !group.IsExcluded && group.Kind != MessageGroupKind.System);
+
+    /// <summary>
+    /// Gets the total number of original messages (that are not summaries).
+    /// </summary>
+    public int RawMessageCount => this.Groups.Where(group => group.Kind != MessageGroupKind.Summary).Sum(group => group.MessageCount);
 
     /// <summary>
     /// Returns all groups that belong to the specified user turn.
     /// </summary>
     /// <param name="turnIndex">The zero-based turn index.</param>
     /// <returns>The groups belonging to the turn, in order.</returns>
-    public IEnumerable<MessageGroup> GetTurnGroups(int turnIndex) =>
-        this.Groups.Where(g => g.TurnIndex == turnIndex);
+    public IEnumerable<MessageGroup> GetTurnGroups(int turnIndex) => this.Groups.Where(group => group.TurnIndex == turnIndex);
 
     /// <summary>
     /// Computes the UTF-8 byte count for a set of messages.

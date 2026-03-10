@@ -555,7 +555,7 @@ public class MessageIndexTests
         ];
         MessageIndex index = MessageIndex.Create(messages);
         Assert.Equal(2, index.Groups.Count);
-        Assert.Equal(2, index.ProcessedMessageCount);
+        Assert.Equal(2, index.RawMessageCount);
 
         // Act — add 2 more messages and update
         messages.Add(new ChatMessage(ChatRole.User, "Q2"));
@@ -564,7 +564,7 @@ public class MessageIndexTests
 
         // Assert — should have 4 groups total, processed count updated
         Assert.Equal(4, index.Groups.Count);
-        Assert.Equal(4, index.ProcessedMessageCount);
+        Assert.Equal(4, index.RawMessageCount);
         Assert.Equal(MessageGroupKind.User, index.Groups[2].Kind);
         Assert.Equal(MessageGroupKind.AssistantText, index.Groups[3].Kind);
     }
@@ -613,7 +613,56 @@ public class MessageIndexTests
         // Assert — rebuilt from scratch
         Assert.Single(index.Groups);
         Assert.False(index.Groups[0].IsExcluded);
-        Assert.Equal(1, index.ProcessedMessageCount);
+        Assert.Equal(1, index.RawMessageCount);
+    }
+
+    [Fact]
+    public void UpdateWithEmptyListClearsGroups()
+    {
+        // Arrange — create with messages
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+        ];
+        MessageIndex index = MessageIndex.Create(messages);
+        Assert.Equal(2, index.Groups.Count);
+
+        // Act — update with empty list
+        index.Update([]);
+
+        // Assert — fully cleared
+        Assert.Empty(index.Groups);
+        Assert.Equal(0, index.TotalTurnCount);
+        Assert.Equal(0, index.RawMessageCount);
+    }
+
+    [Fact]
+    public void UpdateRebuildsWhenLastProcessedMessageNotFound()
+    {
+        // Arrange — create with messages
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+        ];
+        MessageIndex index = MessageIndex.Create(messages);
+        Assert.Equal(2, index.Groups.Count);
+        index.Groups[0].IsExcluded = true;
+
+        // Act — update with completely different messages (last processed "A1" is absent)
+        List<ChatMessage> replaced =
+        [
+            new ChatMessage(ChatRole.User, "X1"),
+            new ChatMessage(ChatRole.Assistant, "X2"),
+            new ChatMessage(ChatRole.User, "X3"),
+        ];
+        index.Update(replaced);
+
+        // Assert — rebuilt from scratch, exclusion state gone
+        Assert.Equal(3, index.Groups.Count);
+        Assert.All(index.Groups, g => Assert.False(g.IsExcluded));
+        Assert.Equal(3, index.RawMessageCount);
     }
 
     [Fact]
