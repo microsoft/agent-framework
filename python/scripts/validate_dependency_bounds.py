@@ -115,6 +115,8 @@ def _run_package_tasks(
     timeout_seconds: int,
     dry_run: bool,
 ) -> tuple[bool, str | None]:
+    # Test mode intentionally uses the same isolated uv execution model as the optimizer scripts
+    # so the smoke gate matches the environment that lower/upper probes will run in.
     env = dict(os.environ)
     env["UV_PRERELEASE"] = "allow"
     env.pop("VIRTUAL_ENV", None)
@@ -194,6 +196,8 @@ def _run_test_mode(
     _write_json(output_json, report)
     print(f"[cyan]Writing dependency-bounds test report to {output_json}[/cyan]")
 
+    # Smoke both ends of the allowed range: `lowest-direct` approximates lower-bound resolution,
+    # while `highest` exercises the newest versions currently permitted by each package's specifiers.
     scenario_specs = [("lower", "lowest-direct"), ("upper", "highest")]
     for scenario_name, resolution in scenario_specs:
         print(f"[bold]Running {scenario_name} scenario ({resolution})[/bold]")
@@ -424,6 +428,8 @@ def main() -> None:
         )
         raise SystemExit(exit_code)
 
+    # Lower runs first so the subsequent upper pass starts from the widest lower bound that has
+    # already been validated; when `--output-json` is supplied, each pass gets its own suffixed report.
     lower_exit = _run_optimizer_mode(
         workspace_root=workspace_root,
         script_name="_dependency_bounds_lower_impl.py",

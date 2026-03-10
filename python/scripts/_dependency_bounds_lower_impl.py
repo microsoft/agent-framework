@@ -461,6 +461,8 @@ def _collect_targets(
         data = tomli.load(f)
     project = data.get("project", {})
     dependencies: list[str] = list(project.get("dependencies", []) or [])
+    # Lower-bound validation also covers optional extras because those dependency ranges are part
+    # of the supported install surface just as much as base runtime dependencies are.
     for values in (project.get("optional-dependencies", {}) or {}).values():
         dependencies.extend(values or [])
 
@@ -481,6 +483,8 @@ def _collect_targets(
     for dependency_name, entries in sorted(grouped.items()):
         if not entries:
             continue
+        # A dependency can be repeated across base + extra requirements. Only optimize it when the
+        # whole package agrees on one bounded shape so we never "fix" one occurrence but not another.
         allow_prerelease_candidates = any(
             (
                 (entry.lower_version is not None and entry.lower_version.is_prerelease)
@@ -535,6 +539,8 @@ def _build_trial_lower_bounds(
     allow_prerelease: bool,
     max_candidates: int,
 ) -> list[Version]:
+    # Lower-bound probing stays inside the currently supported compatibility lane:
+    # stable tracks never cross a major boundary and 0.x tracks never cross a minor boundary.
     candidates = [version for version in versions if version < lower and version < current_upper]
     # `packaging` treats .dev/.a/.b/.rc as prereleases; only probe them when current spec already uses them.
     if not allow_prerelease:
@@ -569,6 +575,8 @@ def _run_tasks(
     optional_extras: list[str],
     timeout_seconds: int,
 ) -> tuple[bool, str | None]:
+    # Every probe runs inside a fresh isolated uv environment. Clearing VIRTUAL_ENV avoids
+    # leaking the caller's active environment into the subprocess and suppresses uv mismatch warnings.
     env = dict(os.environ)
     env["UV_PRERELEASE"] = "allow"
     env.pop("VIRTUAL_ENV", None)
@@ -798,6 +806,8 @@ def _process_package(
     with tempfile.TemporaryDirectory(prefix=f"dep-lower-{plan.project_path.name}-") as temp_dir:
         temp_root = Path(temp_dir)
         temp_workspace_root = temp_root / source_workspace_root.name
+        # Copy the whole workspace so uv workspace sources and editable internal packages resolve
+        # the same way they do in the real checkout while keeping trial rewrites fully isolated.
         shutil.copytree(
             source_workspace_root,
             temp_workspace_root,

@@ -276,6 +276,8 @@ def _collect_dev_pin_replacements(
             continue
         seen_requirements.add(requirement)
 
+        # Refresh exact dev pins while we already have the file open so outdated test tooling
+        # does not masquerade as a runtime dependency compatibility failure.
         try:
             parsed_requirement = Requirement(requirement)
         except InvalidRequirement:
@@ -563,6 +565,8 @@ def _collect_targets(
     for dependency_name, entries in sorted(grouped.items()):
         if not entries:
             continue
+        # A dependency can be repeated across sections/extras. Only optimize it when every
+        # occurrence agrees on the current bound shape so we never rewrite inconsistent specs.
         allow_prerelease_candidates = any(
             (
                 (entry.lower_version is not None and entry.lower_version.is_prerelease)
@@ -629,6 +633,9 @@ def _build_trial_bounds(
     allow_prerelease: bool,
     max_candidates: int,
 ) -> list[Version]:
+    # Candidate generation mirrors the policy encoded in pyproject bounds:
+    # prerelease tracks only advance one prerelease step, 0.x tracks stay within the
+    # current minor, and stable tracks probe newer versions from highest to lowest.
     if lower is not None and lower.is_prerelease:
         if lower.pre is not None:
             pre_tag, pre_num = lower.pre
@@ -677,6 +684,8 @@ def _run_tasks(
     optional_extras: list[str],
     timeout_seconds: int,
 ) -> tuple[bool, str | None]:
+    # Every probe runs inside a fresh isolated uv environment. Clearing VIRTUAL_ENV avoids
+    # leaking the caller's active environment into the subprocess and suppresses uv mismatch warnings.
     env = dict(os.environ)
     env["UV_PRERELEASE"] = "allow"
     env.pop("VIRTUAL_ENV", None)
@@ -755,6 +764,8 @@ def _optimize_dependency(
     attempted_versions: list[str] = []
     attempts: list[DependencyAttempt] = []
 
+    # Baselines answer two questions before the script widens any range:
+    # does the current floor still work, and does the newest version already in range still work?
     in_range_versions = [
         version
         for version in available_versions
@@ -903,6 +914,8 @@ def _process_package(
     with tempfile.TemporaryDirectory(prefix=f"dep-range-{plan.project_path.name}-") as temp_dir:
         temp_root = Path(temp_dir)
         temp_workspace_root = temp_root / source_workspace_root.name
+        # Copy the whole workspace so uv workspace sources and editable internal packages resolve
+        # the same way they do in the real checkout while keeping trial rewrites fully isolated.
         shutil.copytree(
             source_workspace_root,
             temp_workspace_root,
@@ -1080,7 +1093,8 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Validate candidates but do not update pyprojects.")
     args = parser.parse_args()
 
-    # Preparation/target collection: resolve workspace metadata and package execution plans.
+    # Preparation/target collection: resolve workspace metadata and package execution plans
+    # up front so each worker can operate independently on a package-local temp copy.
     workspace_pyproject = Path(__file__).parent.parent / "pyproject.toml"
     workspace_root = workspace_pyproject.parent
     package_filters = set(args.packages) if args.packages else None

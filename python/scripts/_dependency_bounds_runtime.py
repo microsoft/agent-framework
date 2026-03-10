@@ -30,6 +30,7 @@ _ADDITIONAL_RUNTIME_REQUIREMENTS = (
     "opentelemetry-exporter-otlp-proto-http",
 )
 
+# Run pyright through the current interpreter so its import resolution matches the uv-created environment.
 _PYRIGHT_COMMAND = (
     "import subprocess, sys; "
     "raise SystemExit(subprocess.call([sys.executable, '-m', 'pyright', '--pythonpath', sys.executable]))"
@@ -44,6 +45,8 @@ def load_runtime_tool_requirements(workspace_root: str) -> list[str]:
     data = tomli.loads(pyproject_path.read_text())
     dev_requirements = data.get("dependency-groups", {}).get("dev", []) or []
 
+    # `uv run --isolated` starts from a clean environment, so the validator has to re-attach the
+    # shared tooling that package-level poe tasks expect to find.
     runtime_requirements: list[str] = []
     for requirement in dev_requirements:
         if not isinstance(requirement, str):
@@ -59,6 +62,7 @@ def load_runtime_tool_requirements(workspace_root: str) -> list[str]:
 
 def extend_command_with_runtime_tools(command: list[str], workspace_root: Path) -> None:
     """Append shared tooling requirements to a uv run command."""
+    # Mirror the repo-wide test/lint toolchain inside the temporary environment before adding the task.
     for requirement in load_runtime_tool_requirements(str(workspace_root.resolve())):
         command.extend(["--with", requirement])
     for requirement in _ADDITIONAL_RUNTIME_REQUIREMENTS:
