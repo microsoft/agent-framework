@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.UnitTests.Compaction;
 
@@ -225,7 +226,7 @@ public class CompactionStrategyTests
         /// </summary>
         public bool InvokeTarget(MessageIndex index) => this.Target(index);
 
-        protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken)
+        protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
         {
             this.ApplyCallCount++;
             bool result = this._applyFunc?.Invoke(index) ?? false;

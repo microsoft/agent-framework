@@ -6,6 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Compaction;
@@ -68,7 +69,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     public int MinimumPreserved { get; }
 
     /// <inheritdoc/>
-    protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken)
+    protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
     {
         // Identify protected groups: the N most-recent non-system, non-excluded groups
         List<int> nonSystemIncludedIndices = [];

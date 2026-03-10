@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
@@ -43,13 +44,13 @@ public sealed class PipelineCompactionStrategy : CompactionStrategy
     public IReadOnlyList<CompactionStrategy> Strategies { get; }
 
     /// <inheritdoc/>
-    protected override async ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken)
+    protected override async ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
     {
         bool anyCompacted = false;
 
         foreach (CompactionStrategy strategy in this.Strategies)
         {
-            bool compacted = await strategy.CompactAsync(index, cancellationToken).ConfigureAwait(false);
+            bool compacted = await strategy.CompactAsync(index, logger, cancellationToken).ConfigureAwait(false);
 
             if (compacted)
             {
