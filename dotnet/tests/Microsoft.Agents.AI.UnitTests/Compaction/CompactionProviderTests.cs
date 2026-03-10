@@ -27,7 +27,7 @@ public sealed class CompactionProviderTests
         TruncationCompactionStrategy strategy = new(CompactionTriggers.TokensExceed(100000));
         CompactionProvider provider = new(strategy);
 
-        // Act & Assert — default state key is provider name + strategy type name
+        // Act & Assert — default state key is the strategy type name
         Assert.Single(provider.StateKeys);
         Assert.Equal(nameof(TruncationCompactionStrategy), provider.StateKeys[0]);
     }
