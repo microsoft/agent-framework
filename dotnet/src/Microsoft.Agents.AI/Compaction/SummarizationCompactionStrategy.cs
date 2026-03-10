@@ -65,7 +65,7 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
     /// <param name="minimumPreservedGroups">
     /// The minimum number of most-recent non-system message groups to preserve.
     /// This is a hard floor — compaction will not summarize groups beyond this limit,
-    /// regardless of the target condition. Defaults to 4, preserving the current and recent exchanges.
+    /// regardless of the target condition. Defaults to 8, preserving the current and recent exchanges.
     /// </param>
     /// <param name="summarizationPrompt">
     /// An optional custom system prompt for the summarization LLM call. When <see langword="null"/>,
