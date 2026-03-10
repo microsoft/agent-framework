@@ -6,8 +6,13 @@ See python/CODING_STANDARD.md § Exception Hierarchy for design rationale
 and guidance on choosing the correct exception class.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from ._types import Content
 
 logger = logging.getLogger("agent_framework")
 
@@ -195,7 +200,7 @@ class UserInputRequiredException(ToolException):
 
     def __init__(
         self,
-        contents: list[Any],
+        contents: list[Content],
         message: str = "Tool requires user input to proceed.",
     ) -> None:
         """Create a UserInputRequiredException.
@@ -205,7 +210,7 @@ class UserInputRequiredException(ToolException):
             message: Human-readable description of why user input is needed.
         """
         super().__init__(message, log_level=None)
-        self.contents = contents
+        self.contents: list[Content] = contents
 
 
 # endregion

@@ -1385,13 +1385,11 @@ async def _try_execute_function_calls(
     # Run all function calls concurrently, handling MiddlewareTermination
     from ._middleware import MiddlewareTermination
 
-    extra_user_input_contents: list[Content] = []
-
     async def invoke_with_termination_handling(
         function_call: Content,
         seq_idx: int,
-    ) -> tuple[Content, bool]:
-        """Invoke function and catch MiddlewareTermination, returning (result, should_terminate)."""
+    ) -> tuple[list[Content], bool]:
+        """Invoke function and catch MiddlewareTermination, returning (results, should_terminate)."""
         try:
             result = await _auto_invoke_function(
                 function_call_content=function_call,  # type: ignore[arg-type]
@@ -1402,39 +1400,37 @@ async def _try_execute_function_calls(
                 middleware_pipeline=middleware_pipeline,
                 config=config,
             )
-            return (result, False)
+            return ([result], False)
         except MiddlewareTermination as exc:
             # Middleware requested termination - return result as Content
             # exc.result may already be a Content (set by _auto_invoke_function) or raw value
             if isinstance(exc.result, Content):
-                return (exc.result, True)
+                return ([exc.result], True)
             result_content = Content.from_function_result(
                 call_id=function_call.call_id,  # type: ignore[arg-type]
                 result=exc.result,
             )
-            return (result_content, True)
+            return ([result_content], True)
         except UserInputRequiredException as exc:
             # Sub-agent requires user input — propagate the Content items so
             # _handle_function_call_results can surface them to the parent response.
             if exc.contents:
                 propagated: list[Content] = []
-                for item in exc.contents:
-                    if isinstance(item, Content):
-                        item.call_id = function_call.call_id  # type: ignore[attr-defined]
-                        if not item.id:  # type: ignore[attr-defined]
-                            item.id = function_call.call_id  # type: ignore[attr-defined]
-                        propagated.append(item)
+                for idx, item in enumerate(exc.contents):
+                    item.call_id = function_call.call_id  # type: ignore[attr-defined]
+                    if not item.id:  # type: ignore[attr-defined]
+                        item.id = f"{function_call.call_id}:{idx}"  # type: ignore[attr-defined]
+                    propagated.append(item)
                 if propagated:
-                    # Return the first item; any additional items are appended to
-                    # execution_results via extra_user_input_contents below.
-                    extra_user_input_contents.extend(propagated[1:])
-                    return (propagated[0], False)
+                    return (propagated, False)
             return (
-                Content.from_function_result(
-                    call_id=function_call.call_id,  # type: ignore[arg-type]
-                    result="Tool requires user input but no request details were provided.",
-                    exception="UserInputRequiredException",
-                ),
+                [
+                    Content.from_function_result(
+                        call_id=function_call.call_id,  # type: ignore[arg-type]
+                        result="Tool requires user input but no request details were provided.",
+                        exception="UserInputRequiredException",
+                    )
+                ],
                 False,
             )
 
@@ -1442,10 +1438,10 @@ async def _try_execute_function_calls(
         invoke_with_termination_handling(function_call, seq_idx) for seq_idx, function_call in enumerate(function_calls)
     ])
 
-    # Unpack results - each is (Content, terminate_flag)
-    contents: list[Content] = [result[0] for result in execution_results]
-    # Append any additional user_input_request Content items from multi-item exceptions
-    contents.extend(extra_user_input_contents)
+    # Flatten results in original function_calls order — each task returns (list[Content], terminate_flag)
+    contents: list[Content] = []
+    for result_contents, _ in execution_results:
+        contents.extend(result_contents)
     # If any function requested termination, terminate the loop
     should_terminate = any(result[1] for result in execution_results)
     return (contents, should_terminate)
