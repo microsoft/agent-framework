@@ -57,6 +57,8 @@ PipelineCompactionStrategy compactionPipeline =
 AIAgent agent =
     agentChatClient
         .AsBuilder()
+        // Note: Adding the CompactionProvider at the builder level means it will be applied to all agents
+        // built from this builder and will manage context for both agent messages and tool calls.
         .UseAIContextProviders(new CompactionProvider(compactionPipeline))
         .BuildAIAgent(
             new ChatClientAgentOptions
@@ -74,6 +76,7 @@ AIAgent agent =
                     Tools = [AIFunctionFactory.Create(LookupPrice)]
                 },
                 // Note: AIContextProviders may be specified here instead of ChatClientBuilder.UseAIContextProviders.
+                // Specifying compaction at the agent level skips compaction in the function calling loop.
                 //AIContextProviders = [new CompactionProvider(compactionPipeline)]
             });
 
