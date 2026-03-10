@@ -2,10 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
@@ -98,7 +100,7 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
     public string SummarizationPrompt { get; }
 
     /// <inheritdoc/>
-    protected override async ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken)
+    protected override async ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
     {
         // Count non-system, non-excluded groups to determine which are protected
         int nonSystemIncludedCount = 0;
@@ -152,17 +154,26 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
         }
 
         // Generate summary using the chat client (single LLM call for all marked groups)
+        logger.LogSummarizationStarting(summarized, summarizationMessages.Count - 1, this.ChatClient.GetType().Name);
+
+        using Activity? summarizeActivity = CompactionTelemetry.ActivitySource.StartActivity(CompactionTelemetry.ActivityNames.Summarize);
+        summarizeActivity?.SetTag(CompactionTelemetry.Tags.GroupsSummarized, summarized);
+
         ChatResponse response = await this.ChatClient.GetResponseAsync(
             summarizationMessages,
             cancellationToken: cancellationToken).ConfigureAwait(false);
 
         string summaryText = string.IsNullOrWhiteSpace(response.Text) ? "[Summary unavailable]" : response.Text;
 
+        summarizeActivity?.SetTag(CompactionTelemetry.Tags.SummaryLength, summaryText.Length);
+
         // Insert a summary group at the position of the first summarized group
         ChatMessage summaryMessage = new(ChatRole.Assistant, $"[Summary]\n{summaryText}");
         (summaryMessage.AdditionalProperties ??= [])[MessageGroup.SummaryPropertyKey] = true;
 
         index.InsertGroup(insertIndex, MessageGroupKind.Summary, [summaryMessage]);
+
+        logger.LogSummarizationCompleted(summaryText.Length, insertIndex);
 
         return true;
     }

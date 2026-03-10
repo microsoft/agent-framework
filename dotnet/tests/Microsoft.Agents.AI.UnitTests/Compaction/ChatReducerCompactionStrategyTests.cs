@@ -205,11 +205,11 @@ public class ChatReducerCompactionStrategyTests
     public async Task CompactAsyncPassesCancellationTokenToReducerAsync()
     {
         // Arrange
-        using CancellationTokenSource cts = new();
+        using CancellationTokenSource cancellationSource = new();
         CancellationToken capturedToken = default;
-        TestChatReducer reducer = new((messages, ct) =>
+        TestChatReducer reducer = new((messages, cancellationToken) =>
         {
-            capturedToken = ct;
+            capturedToken = cancellationToken;
             return Task.FromResult<IEnumerable<ChatMessage>>(messages.Skip(messages.Count() - 1).ToList());
         });
 
@@ -221,10 +221,10 @@ public class ChatReducerCompactionStrategyTests
         ]);
 
         // Act
-        await strategy.CompactAsync(index, cts.Token);
+        await strategy.CompactAsync(index, logger: null, cancellationSource.Token);
 
         // Assert
-        Assert.Equal(cts.Token, capturedToken);
+        Assert.Equal(cancellationSource.Token, capturedToken);
     }
 
     /// <summary>

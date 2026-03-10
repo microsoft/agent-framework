@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.UnitTests.Compaction;
 
@@ -198,7 +199,7 @@ public class PipelineCompactionStrategyTests
 
         public int ApplyCallCount { get; private set; }
 
-        protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken)
+        protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
         {
             this.ApplyCallCount++;
             return new(this._applyFunc(index));

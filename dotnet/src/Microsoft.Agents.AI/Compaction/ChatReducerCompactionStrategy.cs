@@ -5,6 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
@@ -55,7 +56,7 @@ public sealed class ChatReducerCompactionStrategy : CompactionStrategy
     public IChatReducer ChatReducer { get; }
 
     /// <inheritdoc/>
-    protected override async ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken)
+    protected override async ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
     {
         // No need to short-circuit on empty conversations, this is handled by <see cref="CompactionStrategy.CompactAsync"/>.
         List<ChatMessage> includedMessages = [.. index.GetIncludedMessages()];

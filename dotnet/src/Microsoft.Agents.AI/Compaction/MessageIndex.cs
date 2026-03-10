@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text;
@@ -89,7 +88,6 @@ public sealed class MessageIndex
     /// </remarks>
     internal static MessageIndex Create(IList<ChatMessage> messages, Tokenizer? tokenizer = null)
     {
-        Debug.WriteLine($"COMPACTION: Creating index x{messages.Count} messages");
         MessageIndex instance = new([], tokenizer);
         instance.AppendFromMessages(messages, 0);
         return instance;

@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
@@ -76,45 +78,6 @@ public abstract class CompactionStrategy
     protected CompactionTrigger Target { get; }
 
     /// <summary>
-    /// Evaluates the <see cref="Trigger"/> and, when it fires, delegates to
-    /// <see cref="CompactCoreAsync"/> and reports compaction metrics.
-    /// </summary>
-    /// <param name="index">The message index to compact. The strategy mutates this collection in place.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
-    /// <returns>A task representing the asynchronous operation. The task result is <see langword="true"/> if compaction occurred, <see langword="false"/> otherwise.</returns>
-    public async ValueTask<bool> CompactAsync(MessageIndex index, CancellationToken cancellationToken = default)
-    {
-        if (index.IncludedNonSystemGroupCount <= 1 || !this.Trigger(index))
-        {
-            return false;
-        }
-
-        int beforeTokens = index.IncludedTokenCount;
-        int beforeGroups = index.IncludedGroupCount;
-        int beforeMessages = index.IncludedMessageCount;
-
-        Stopwatch stopwatch = Stopwatch.StartNew();
-
-        bool compacted = await this.CompactCoreAsync(index, cancellationToken).ConfigureAwait(false);
-
-        stopwatch.Stop();
-
-        if (compacted)
-        {
-            Debug.WriteLine(
-                $"""
-                COMPACTION: {this.GetType().Name}                
-                    Duration {stopwatch.ElapsedMilliseconds}ms
-                    Messages {beforeMessages} => {index.IncludedMessageCount}
-                    Groups {beforeGroups} => {index.IncludedGroupCount}
-                    Tokens {beforeTokens} => {index.IncludedTokenCount}
-                """);
-        }
-
-        return compacted;
-    }
-
-    /// <summary>
     /// Applies the strategy-specific compaction logic to the specified message index.
     /// </summary>
     /// <remarks>
@@ -124,7 +87,70 @@ public abstract class CompactionStrategy
     /// to determine when to stop compacting incrementally.
     /// </remarks>
     /// <param name="index">The message index to compact. The strategy mutates this collection in place.</param>
+    /// <param name="logger">The <see cref="ILogger"/> for emitting compaction diagnostics.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A task whose result is <see langword="true"/> if any compaction was performed, <see langword="false"/> otherwise.</returns>
-    protected abstract ValueTask<bool> CompactCoreAsync(MessageIndex index, CancellationToken cancellationToken);
+    protected abstract ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Evaluates the <see cref="Trigger"/> and, when it fires, delegates to
+    /// <see cref="CompactCoreAsync"/> and reports compaction metrics.
+    /// </summary>
+    /// <param name="index">The message index to compact. The strategy mutates this collection in place.</param>
+    /// <param name="logger">An optional <see cref="ILogger"/> for emitting compaction diagnostics. When <see langword="null"/>, logging is disabled.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>A task representing the asynchronous operation. The task result is <see langword="true"/> if compaction occurred, <see langword="false"/> otherwise.</returns>
+    public async ValueTask<bool> CompactAsync(MessageIndex index, ILogger? logger = null, CancellationToken cancellationToken = default)
+    {
+        string strategyName = this.GetType().Name;
+        logger ??= NullLogger.Instance;
+
+        using Activity? activity = CompactionTelemetry.ActivitySource.StartActivity(CompactionTelemetry.ActivityNames.Compact);
+        activity?.SetTag(CompactionTelemetry.Tags.Strategy, strategyName);
+
+        if (index.IncludedNonSystemGroupCount <= 1 || !this.Trigger(index))
+        {
+            activity?.SetTag(CompactionTelemetry.Tags.Triggered, false);
+            logger.LogCompactionSkipped(strategyName);
+            return false;
+        }
+
+        activity?.SetTag(CompactionTelemetry.Tags.Triggered, true);
+
+        int beforeTokens = index.IncludedTokenCount;
+        int beforeGroups = index.IncludedGroupCount;
+        int beforeMessages = index.IncludedMessageCount;
+
+        Stopwatch stopwatch = Stopwatch.StartNew();
+
+        bool compacted = await this.CompactCoreAsync(index, logger, cancellationToken).ConfigureAwait(false);
+
+        stopwatch.Stop();
+
+        activity?.SetTag(CompactionTelemetry.Tags.Compacted, compacted);
+
+        if (compacted)
+        {
+            activity?
+                .SetTag(CompactionTelemetry.Tags.BeforeTokens, beforeTokens)
+                .SetTag(CompactionTelemetry.Tags.AfterTokens, index.IncludedTokenCount)
+                .SetTag(CompactionTelemetry.Tags.BeforeMessages, beforeMessages)
+                .SetTag(CompactionTelemetry.Tags.AfterMessages, index.IncludedMessageCount)
+                .SetTag(CompactionTelemetry.Tags.BeforeGroups, beforeGroups)
+                .SetTag(CompactionTelemetry.Tags.AfterGroups, index.IncludedGroupCount)
+                .SetTag(CompactionTelemetry.Tags.DurationMs, stopwatch.ElapsedMilliseconds);
+
+            logger.LogCompactionCompleted(
+                strategyName,
+                stopwatch.ElapsedMilliseconds,
+                beforeMessages,
+                index.IncludedMessageCount,
+                beforeGroups,
+                index.IncludedGroupCount,
+                beforeTokens,
+                index.IncludedTokenCount);
+        }
+
+        return compacted;
+    }
 }

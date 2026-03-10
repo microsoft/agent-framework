@@ -2,11 +2,14 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
@@ -33,6 +36,7 @@ public sealed class CompactionProvider : AIContextProvider
 {
     private readonly CompactionStrategy _compactionStrategy;
     private readonly ProviderSessionState<State> _sessionState;
+    private readonly ILoggerFactory? _loggerFactory;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CompactionProvider"/> class.
@@ -41,8 +45,12 @@ public sealed class CompactionProvider : AIContextProvider
     /// <param name="stateKey">
     /// An optional key used to store the provider state in the <see cref="AgentSession.StateBag"/>.
     /// </param>
+    /// <param name="loggerFactory">
+    /// An optional <see cref="ILoggerFactory"/> used to create a logger for provider diagnostics.
+    /// When <see langword="null"/>, logging is disabled.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="compactionStrategy"/> is <see langword="null"/>.</exception>
-    public CompactionProvider(CompactionStrategy compactionStrategy, string? stateKey = null)
+    public CompactionProvider(CompactionStrategy compactionStrategy, string? stateKey = null, ILoggerFactory? loggerFactory = null)
     {
         this._compactionStrategy = Throw.IfNull(compactionStrategy);
         stateKey ??= $"{nameof(CompactionProvider)}:{Convert.ToBase64String(BitConverter.GetBytes(compactionStrategy.GetHashCode()))}";
@@ -51,6 +59,7 @@ public sealed class CompactionProvider : AIContextProvider
             _ => new State(),
             stateKey,
             AgentJsonUtilities.DefaultOptions);
+        this._loggerFactory = loggerFactory;
     }
 
     /// <inheritdoc />
@@ -62,9 +71,10 @@ public sealed class CompactionProvider : AIContextProvider
     /// </summary>
     /// <param name="compactionStrategy">The compaction strategy to apply before each invocation.</param>
     /// <param name="messages">The messages to compact</param>
+    /// <param name="logger">An optional <see cref="ILogger"/> for emitting compaction diagnostics.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns></returns>
-    public static async Task<IEnumerable<ChatMessage>> CompactAsync(CompactionStrategy compactionStrategy, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
+    public static async Task<IEnumerable<ChatMessage>> CompactAsync(CompactionStrategy compactionStrategy, IEnumerable<ChatMessage> messages, ILogger? logger = null, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(compactionStrategy);
         Throw.IfNull(messages);
@@ -72,7 +82,7 @@ public sealed class CompactionProvider : AIContextProvider
         List<ChatMessage> messageList = messages as List<ChatMessage> ?? [.. messages];
         MessageIndex messageIndex = MessageIndex.Create(messageList);
 
-        await compactionStrategy.CompactAsync(messageIndex, cancellationToken).ConfigureAwait(false);
+        await compactionStrategy.CompactAsync(messageIndex, logger, cancellationToken).ConfigureAwait(false);
 
         return messageIndex.GetIncludedMessages();
     }
@@ -88,12 +98,17 @@ public sealed class CompactionProvider : AIContextProvider
     /// </returns>
     protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
+        using Activity? activity = CompactionTelemetry.ActivitySource.StartActivity(CompactionTelemetry.ActivityNames.CompactionProviderInvoke);
+
+        ILoggerFactory loggerFactory = this.GetLoggerFactory(context.Agent);
+        ILogger logger = loggerFactory.CreateLogger<CompactionProvider>();
+
         AgentSession? session = context.Session;
         IEnumerable<ChatMessage>? allMessages = context.AIContext.Messages;
 
         if (session is null || allMessages is null)
         {
-            // No session available or no messages — pass through unchanged.
+            logger.LogCompactionProviderSkipped("no session or no messages");
             return context.AIContext;
         }
 
@@ -101,7 +116,7 @@ public sealed class CompactionProvider : AIContextProvider
         if (chatClientSession is not null &&
             !string.IsNullOrWhiteSpace(chatClientSession.ConversationId))
         {
-            // Session is managed by remote service
+            logger.LogCompactionProviderSkipped("session managed by remote service");
             return context.AIContext;
         }
 
@@ -122,8 +137,21 @@ public sealed class CompactionProvider : AIContextProvider
             messageIndex = MessageIndex.Create(messageList);
         }
 
+        string strategyName = this._compactionStrategy.GetType().Name;
+        int beforeMessages = messageIndex.IncludedMessageCount;
+        logger.LogCompactionProviderApplying(beforeMessages, strategyName);
+
         // Apply compaction
-        await this._compactionStrategy.CompactAsync(messageIndex, cancellationToken).ConfigureAwait(false);
+        await this._compactionStrategy.CompactAsync(
+            messageIndex,
+            loggerFactory.CreateLogger(this._compactionStrategy.GetType()),
+            cancellationToken).ConfigureAwait(false);
+
+        int afterMessages = messageIndex.IncludedMessageCount;
+        if (afterMessages < beforeMessages)
+        {
+            logger.LogCompactionProviderApplied(beforeMessages, afterMessages);
+        }
 
         // Persist the index
         state.MessageGroups.Clear();
@@ -136,6 +164,11 @@ public sealed class CompactionProvider : AIContextProvider
             Tools = context.AIContext.Tools
         };
     }
+
+    private ILoggerFactory GetLoggerFactory(AIAgent agent) =>
+        this._loggerFactory ??
+        agent.GetService<IChatClient>()?.GetService<ILoggerFactory>() ??
+        NullLoggerFactory.Instance;
 
     /// <summary>
     /// Represents the persisted state of a <see cref="CompactionProvider"/> stored in the <see cref="AgentSession.StateBag"/>.
