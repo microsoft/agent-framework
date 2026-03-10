@@ -111,7 +111,7 @@ public sealed class MessageIndex
     /// or a sliding window shifted past it), all groups are cleared and rebuilt from scratch.
     /// </para>
     /// <para>
-    /// If the last message in <paramref name="allMessages"/> is matches the last
+    /// If the last message in <paramref name="allMessages"/> matches the last
     /// processed message, no work is performed.
     /// </para>
     /// </remarks>
