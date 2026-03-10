@@ -508,7 +508,7 @@ We need to decide what AIContent types, each agent response type will be mapped 
 |-|-|
 | AutoGen | Supports a [stop reason](https://microsoft.github.io/autogen/stable/reference/python/autogen_agentchat.base.html#autogen_agentchat.base.TaskResult.stop_reason) which is a freeform text string |
 | Google ADK | [No equivalent present](https://github.com/google/adk-python/blob/main/src/google/adk/events/event.py) |
-| AWS (Strands) | Exposes a [stop_reason](https://strandsagents.com/docs/api/python/strands.agent.agent_result/#agentresult) property on the [AgentResult](https://strandsagents.com/docs/api/python/strands.agent.agent_result/#agentresult) class with options that are tied closely to LLM operations. |
+| AWS (Strands) | Exposes a `stop_reason` property on the [AgentResult](https://strandsagents.com/docs/api/python/strands.agent.agent_result/#agentresult) class with options that are tied closely to LLM operations. |
 | LangGraph | No equivalent present, output contains only [messages](https://langchain-ai.github.io/langgraph/agents/run_agents/#output-format) |
 | Agno | [No equivalent present](https://docs.agno.com/reference/agents/run-response) |
 | A2A | No equivalent present, response only contains a [message](https://a2a-protocol.org/latest/specification/#64-message-object) or [task](https://a2a-protocol.org/latest/specification/#61-task-object). |
