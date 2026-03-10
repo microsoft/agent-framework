@@ -78,7 +78,7 @@ dotnet run
 
 ## Expected Behavior
 
-The sample runs a seven-turn shopping-assistant conversation with tool calls. After each turn it prints the current in-memory message count so you can observe the pipeline compacting the history as the conversation grows.
+The sample runs a seven-turn shopping-assistant conversation with tool calls. After each turn it prints the full message count so you can observe the pipeline compaction doesn't alter the source conversation.
 
 Each of the four compaction strategies has a deliberately low threshold so that it activates during the short demonstration conversation. In a production scenario you would raise the thresholds to match your model's context window and cost requirements.
 

@@ -112,7 +112,8 @@ internal static class ChatMessageContentEquality
 
     private static bool ErrorContentEquals(ErrorContent a, ErrorContent b) =>
         string.Equals(a.Message, b.Message, StringComparison.Ordinal) &&
-        string.Equals(a.ErrorCode, b.ErrorCode, StringComparison.Ordinal);
+        string.Equals(a.ErrorCode, b.ErrorCode, StringComparison.Ordinal) &&
+        Equals(a.Details, b.Details);
 
     private static bool FunctionCallContentEquals(FunctionCallContent a, FunctionCallContent b) =>
         string.Equals(a.CallId, b.CallId, StringComparison.Ordinal) &&

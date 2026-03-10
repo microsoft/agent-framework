@@ -88,7 +88,7 @@ void PrintChatHistory()
     if (session.TryGetInMemoryChatHistory(out var history))
     {
         Console.ForegroundColor = ConsoleColor.Cyan;
-        Console.WriteLine($"\n[Messages: x{history.Count}]\n");
+        Console.WriteLine($"\n[Messages: #{history.Count}]\n");
         Console.ResetColor();
     }
 }
