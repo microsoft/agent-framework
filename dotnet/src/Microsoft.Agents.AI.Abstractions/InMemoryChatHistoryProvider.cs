@@ -92,7 +92,7 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
 
         if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval && this.ChatReducer is not null)
         {
-            // Apply pre-retrieval compaction strategy if configured
+            // Apply pre-retrieval reduction if configured
             await CompactMessagesAsync(this.ChatReducer, state, cancellationToken).ConfigureAwait(false);
         }
 
@@ -110,7 +110,7 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
 
         if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded && this.ChatReducer is not null)
         {
-            // Apply pre-write compaction strategy if configured
+            // Apply pre-write reduction strategy if configured
             await CompactMessagesAsync(this.ChatReducer, state, cancellationToken).ConfigureAwait(false);
         }
     }

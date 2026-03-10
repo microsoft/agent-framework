@@ -16,7 +16,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
-/// A <see cref="MessageAIContextProvider"/> that applies a <see cref="CompactionStrategy"/> to compact
+/// A <see cref="AIContextProvider"/> that applies a <see cref="CompactionStrategy"/> to compact
 /// the message list before each agent invocation.
 /// </summary>
 /// <remarks>
@@ -73,7 +73,7 @@ public sealed class CompactionProvider : AIContextProvider
     /// <param name="messages">The messages to compact</param>
     /// <param name="logger">An optional <see cref="ILogger"/> for emitting compaction diagnostics.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
-    /// <returns></returns>
+    /// <returns>An enumeration of the compacted <see cref="ChatMessage"/> instances.</returns>
     public static async Task<IEnumerable<ChatMessage>> CompactAsync(CompactionStrategy compactionStrategy, IEnumerable<ChatMessage> messages, ILogger? logger = null, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(compactionStrategy);
@@ -94,7 +94,7 @@ public sealed class CompactionProvider : AIContextProvider
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>
     /// A task that represents the asynchronous operation. The task result contains an <see cref="AIContext"/>
-    /// with the compacted message list. If no compaction was needed, the original context is returned unchanged.
+    /// with the compacted message list.
     /// </returns>
     protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
