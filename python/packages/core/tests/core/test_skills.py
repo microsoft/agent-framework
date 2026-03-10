@@ -2304,8 +2304,8 @@ class TestSkillsProviderFactories:
         assert result == "result: test"
 
     @pytest.mark.asyncio
-    async def test_execute_skill_script_llm_args_override_runtime_kwargs(self) -> None:
-        """LLM-provided args should take priority over runtime kwargs on conflict."""
+    async def test_execute_skill_script_conflicting_args_and_kwargs_raises(self) -> None:
+        """Conflicting keys in args and kwargs should raise TypeError."""
         skill = Skill(name="my-skill", description="test", content="body")
 
         @skill.script
@@ -2316,7 +2316,7 @@ class TestSkillsProviderFactories:
         result = await provider._execute_skill_script(
             "my-skill", "process", args={"mode": "llm-value"}, mode="runtime-value"
         )
-        assert result == "mode=llm-value"
+        assert "Error" in result
 
     @pytest.mark.asyncio
     async def test_execute_skill_script_error_on_missing_script(self) -> None:

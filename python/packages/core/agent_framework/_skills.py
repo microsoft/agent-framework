@@ -926,10 +926,14 @@ class SkillsProvider(BaseContextProvider):
         Args:
             skill_name: The name of the owning skill.
             script_name: The script name to look up (case-insensitive).
-            args: Optional keyword arguments for the script.
-            **kwargs: Runtime keyword arguments forwarded to script functions
-                that accept ``**kwargs`` (e.g. arguments passed via
-                ``agent.run(user_id="123")``).
+            args: Optional keyword arguments for the script, provided by the
+                agent/LLM.  These are mapped to the function's declared
+                parameters.
+            **kwargs: Runtime keyword arguments forwarded only to script
+                functions that accept ``**kwargs`` (e.g. arguments passed via
+                ``agent.run(user_id="123")``).  These are **not** merged with
+                *args*; if a key appears in both *args* and *kwargs* a
+                ``TypeError`` is raised.
 
         Returns:
             The execution result, or a user-facing error message on
@@ -953,8 +957,7 @@ class SkillsProvider(BaseContextProvider):
         if script.function is not None:
             try:
                 if script._accepts_kwargs:  # pyright: ignore[reportPrivateUsage]
-                    merged = {**kwargs, **(args or {})}
-                    result = script.function(**merged)
+                    result = script.function(**(args or {}), **kwargs)
                 else:
                     result = script.function(**(args or {}))
                 if inspect.isawaitable(result):
