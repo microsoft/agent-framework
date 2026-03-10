@@ -500,6 +500,11 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 for c in result:
                     if c.type == "text" and c.text:
                         content_blocks.append({"type": "text", "text": c.text})
+                    elif c.type in ("data", "uri"):
+                        logger.warning(
+                            "Claude Agent SDK does not support rich content (images, audio) "
+                            "in tool results. Rich content items will be omitted."
+                        )
                 return {"content": content_blocks or [{"type": "text", "text": ""}]}
             except Exception as e:
                 return {"content": [{"type": "text", "text": f"Error: {e}"}]}

@@ -655,13 +655,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     "function": {"name": content.name, "arguments": args},
                 }
             case "function_result":
-                text = content.result if content.result is not None else ""
-                if content.items:
-                    text_parts = [item.text or "" for item in content.items if item.type == "text"]
-                    text = "\n".join(text_parts) if text_parts else ""
                 return {
                     "tool_call_id": content.call_id,
-                    "content": text,
+                    "content": content.result if content.result is not None else "",
                 }
             case "data" | "uri" if content.has_top_level_media_type("image"):
                 return {

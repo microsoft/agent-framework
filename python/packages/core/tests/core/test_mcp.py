@@ -145,6 +145,29 @@ def test_parse_tool_result_from_mcp_audio_content():
     assert "YXVkaW8=" in result[0].uri
 
 
+def test_parse_tool_result_from_mcp_blob_plain_base64():
+    """Test that plain base64 blob (without data: prefix) is wrapped into a data URI."""
+    mcp_result = types.CallToolResult(
+        content=[
+            types.EmbeddedResource(
+                type="resource",
+                resource=types.BlobResourceContents(
+                    uri=AnyUrl("file://test.bin"),
+                    mimeType="application/pdf",
+                    blob="dGVzdCBkYXRh",
+                ),
+            ),
+        ]
+    )
+    result = _parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "data"
+    assert result[0].media_type == "application/pdf"
+    assert "dGVzdCBkYXRh" in result[0].uri
+
+
 def test_mcp_content_types_to_ai_content_text():
     """Test conversion of MCP text content to AI content."""
     mcp_content = types.TextContent(type="text", text="Sample text")

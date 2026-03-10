@@ -1210,22 +1210,18 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         "output": self._to_local_shell_output_payload(content),
                     }
                 # call_id for the result needs to be the same as the call_id for the function call
-                output: str | list[dict[str, Any]] = content.result if content.result is not None else ""
-                if content.items:
-                    has_rich = any(item.type in ("data", "uri") for item in content.items)
-                    if has_rich:
-                        output_parts: list[dict[str, Any]] = []
-                        for item in content.items:
-                            if item.type == "text":
-                                output_parts.append({"type": "input_text", "text": item.text or ""})
-                            else:
-                                part = self._prepare_content_for_openai("user", item, call_id_to_id)  # type: ignore[arg-type]
-                                if part:
-                                    output_parts.append(part)
-                        if output_parts:
-                            output = output_parts
-                    else:
-                        output = content.result or ""
+                output: str | list[dict[str, Any]] = content.result or ""
+                if content.items and any(item.type in ("data", "uri") for item in content.items):
+                    output_parts: list[dict[str, Any]] = []
+                    for item in content.items:
+                        if item.type == "text":
+                            output_parts.append({"type": "input_text", "text": item.text or ""})
+                        else:
+                            part = self._prepare_content_for_openai("user", item, call_id_to_id)  # type: ignore[arg-type]
+                            if part:
+                                output_parts.append(part)
+                    if output_parts:
+                        output = output_parts
                 return {
                     "call_id": content.call_id,
                     "type": "function_call_output",

@@ -180,10 +180,14 @@ def _parse_tool_result_from_mcp(
                     case types.TextResourceContents():
                         result.append(Content.from_text(item.resource.text))
                     case types.BlobResourceContents():
+                        blob = item.resource.blob
+                        mime = item.resource.mimeType or "application/octet-stream"
+                        if not blob.startswith("data:"):
+                            blob = f"data:{mime};base64,{blob}"
                         result.append(
                             Content.from_uri(
-                                uri=item.resource.blob,
-                                media_type=item.resource.mimeType or "application/octet-stream",
+                                uri=blob,
+                                media_type=mime,
                             )
                         )
             case _:
