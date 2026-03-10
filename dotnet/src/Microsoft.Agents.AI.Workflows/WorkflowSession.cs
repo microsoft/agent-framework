@@ -25,9 +25,24 @@ internal sealed class WorkflowSession : AgentSession
 
     private InMemoryCheckpointManager? _inMemoryCheckpointManager;
 
-    // Key prefix used in StateBag to track pending external requests by their content ID
-    // This enables converting incoming response content back to ExternalResponse when resuming.
-    private const string PendingRequestKeyPrefix = "workflow.pendingRequest:";
+    /// <summary>
+    /// Tracks pending external requests by their content ID (e.g., <see cref="FunctionCallContent.CallId"/>
+    /// or <see cref="UserInputRequestContent.Id"/>). This mapping enables converting incoming response
+    /// content back to <see cref="ExternalResponse"/> when resuming a workflow from a checkpoint.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Entries are added when a <see cref="RequestInfoEvent"/> is received during workflow execution,
+    /// and removed when a matching response is delivered via <see cref="SendMessagesWithResponseConversionAsync"/>.
+    /// </para>
+    /// <para>
+    /// The number of entries is bounded by the number of outstanding external requests in a single workflow run.
+    /// When a session is abandoned, all pending requests are released with the session object.
+    /// Request-level timeouts, if needed, should be implemented in the workflow definition itself
+    /// (e.g., using a timer racing against an external event).
+    /// </para>
+    /// </remarks>
+    private readonly Dictionary<string, ExternalRequest> _pendingRequests = [];
 
     internal static bool VerifyCheckpointingConfiguration(IWorkflowExecutionEnvironment executionEnvironment, [NotNullWhen(true)] out InProcessExecutionEnvironment? inProcEnv)
     {
@@ -94,6 +109,7 @@ internal sealed class WorkflowSession : AgentSession
 
         this.LastCheckpoint = sessionState.LastCheckpoint;
         this.StateBag = sessionState.StateBag;
+        this._pendingRequests = sessionState.PendingRequests ?? [];
     }
 
     public CheckpointInfo? LastCheckpoint { get; set; }
@@ -105,7 +121,8 @@ internal sealed class WorkflowSession : AgentSession
             this.SessionId,
             this.LastCheckpoint,
             this._inMemoryCheckpointManager,
-            this.StateBag);
+            this.StateBag,
+            this._pendingRequests);
 
         return marshaller.Marshal(info);
     }
@@ -270,22 +287,22 @@ internal sealed class WorkflowSession : AgentSession
     };
 
     /// <summary>
-    /// Tries to get a pending request from the state bag by content ID.
+    /// Tries to get a pending request by content ID.
     /// </summary>
     private ExternalRequest? TryGetPendingRequest(string contentId) =>
-        this.StateBag.GetValue<ExternalRequest>(PendingRequestKeyPrefix + contentId);
+        this._pendingRequests.TryGetValue(contentId, out ExternalRequest? request) ? request : null;
 
     /// <summary>
-    /// Adds a pending request to the state bag.
+    /// Adds a pending request indexed by content ID.
     /// </summary>
     private void AddPendingRequest(string contentId, ExternalRequest request) =>
-        this.StateBag.SetValue(PendingRequestKeyPrefix + contentId, request);
+        this._pendingRequests[contentId] = request;
 
     /// <summary>
-    /// Removes a pending request from the state bag.
+    /// Removes a pending request by content ID.
     /// </summary>
     private void RemovePendingRequest(string contentId) =>
-        this.StateBag.TryRemoveValue(PendingRequestKeyPrefix + contentId);
+        this._pendingRequests.Remove(contentId);
 
     internal async
     IAsyncEnumerable<AgentResponseUpdate> InvokeStageAsync(
@@ -430,11 +447,13 @@ internal sealed class WorkflowSession : AgentSession
         string sessionId,
         CheckpointInfo? lastCheckpoint,
         InMemoryCheckpointManager? checkpointManager = null,
-        AgentSessionStateBag? stateBag = null)
+        AgentSessionStateBag? stateBag = null,
+        Dictionary<string, ExternalRequest>? pendingRequests = null)
     {
         public string SessionId { get; } = sessionId;
         public CheckpointInfo? LastCheckpoint { get; } = lastCheckpoint;
         public InMemoryCheckpointManager? CheckpointManager { get; } = checkpointManager;
         public AgentSessionStateBag StateBag { get; } = stateBag ?? new();
+        public Dictionary<string, ExternalRequest>? PendingRequests { get; } = pendingRequests;
     }
 }
