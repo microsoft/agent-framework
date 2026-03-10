@@ -1,34 +1,57 @@
 # A2A Agent Examples
 
-This folder contains examples demonstrating how to create and use agents with the A2A (Agent2Agent) protocol from the `agent_framework` package to communicate with remote A2A agents.
+This sample demonstrates how to host and consume agents using the [A2A (Agent2Agent) protocol](https://a2a-protocol.org/latest/) with the `agent_framework` package. There are two runnable entry points:
 
-By default the A2AAgent waits for the remote agent to finish before returning (`background=False`), so long-running A2A tasks are handled transparently. For advanced scenarios where you need to poll or resubscribe to in-progress tasks using continuation tokens, see the [background responses sample](../../02-agents/background_responses.py).
+| Run this file | To... |
+|---------------|-------|
+| **[`a2a_server.py`](a2a_server.py)** | Host an Agent Framework agent as an A2A-compliant server. |
+| **[`agent_with_a2a.py`](agent_with_a2a.py)** | Connect to an A2A server and send requests (non-streaming and streaming). |
 
-For more information about the A2A protocol specification, visit: https://a2a-protocol.org/latest/
-
-## Examples
+The remaining files are supporting modules used by the server:
 
 | File | Description |
 |------|-------------|
-| [`agent_with_a2a.py`](agent_with_a2a.py) | Demonstrates agent discovery, non-streaming and streaming responses using the A2A protocol. |
+| [`agent_definitions.py`](agent_definitions.py) | Agent and AgentCard factory definitions for invoice, policy, and logistics agents. |
+| [`agent_executor.py`](agent_executor.py) | Bridges the a2a-sdk `AgentExecutor` interface to Agent Framework agents. |
+| [`invoice_data.py`](invoice_data.py) | Mock invoice data and tool functions for the invoice agent. |
+| [`a2a_server.http`](a2a_server.http) | REST Client requests for testing the server directly from VS Code. |
 
 ## Environment Variables
 
-Make sure to set the following environment variables before running the example:
+Make sure to set the following environment variables before running the examples:
 
-### Required
-- `A2A_AGENT_HOST`: URL of a single A2A agent (for simple sample, e.g., `http://localhost:5001/`)
+### Required (Server)
+- `AZURE_AI_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
+- `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` — Model deployment name (e.g. `gpt-4o`)
 
+### Required (Client)
+- `A2A_AGENT_HOST` — URL of the A2A server (e.g. `http://localhost:5001/`)
 
-## Quick Testing with .NET A2A Servers
+## Quick Start
 
-For quick testing and demonstration, you can use the pre-built .NET A2A servers from this repository:
+All commands below should be run from this directory:
 
-**Quick Testing Reference**: Use the .NET A2A Client Server sample at:
-`..\agent-framework\dotnet\samples\05-end-to-end\A2AClientServer`
-
-### Run Python A2A Sample
 ```powershell
-# Simple A2A sample (single agent)
+cd python/samples/04-hosting/a2a
+```
+
+### 1. Start the A2A Server
+
+Pick an agent type and start the server (each in its own terminal):
+
+```powershell
+uv run python a2a_server.py --agent-type invoice --port 5000
+uv run python a2a_server.py --agent-type policy --port 5001
+uv run python a2a_server.py --agent-type logistics --port 5002
+```
+
+You can run one agent or all three — each listens on its own port.
+
+### 2. Run the A2A Client
+
+In a separate terminal (from the same directory), point the client at a running server:
+
+```powershell
+$env:A2A_AGENT_HOST = "http://localhost:5001/"
 uv run python agent_with_a2a.py
 ```
