@@ -55,8 +55,6 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
     /// <param name="agent">The <see cref="AIAgent"/> instance to map the OpenAI Responses endpoints for.</param>
     /// <param name="responsesPath">Custom route path for the responses endpoint.</param>
-    [RequiresUnreferencedCode()]
-    [RequiresDynamicCode()]
     public static IEndpointConventionBuilder MapOpenAIResponses(
         this IEndpointRouteBuilder endpoints,
         AIAgent agent,
@@ -120,8 +118,6 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
     /// <param name="responsesPath">Custom route path for the responses endpoint.</param>
-    [RequiresUnreferencedCode()]
-    [RequiresDynamicCode()]
     public static IEndpointConventionBuilder MapOpenAIResponses(
         this IEndpointRouteBuilder endpoints,
         [StringSyntax("Route")] string? responsesPath)
